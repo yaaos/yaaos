@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Backend CI: lint, format check, modularity, table-access, patch-usage, tests.
+# Runs from apps/backend/ as cwd.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> ruff format --check"
+uv run ruff format --check .
+
+echo "==> ruff check"
+uv run ruff check .
+
+echo "==> bin/sync_modules (regenerates tach.toml + checks layering)"
+"$(git rev-parse --show-toplevel)/bin/sync_modules" --check
+
+echo "==> bin/check_table_access"
+"$(git rev-parse --show-toplevel)/bin/check_table_access"
+
+echo "==> bin/check_patch_usage"
+"$(git rev-parse --show-toplevel)/bin/check_patch_usage"
+
+echo "==> pytest"
+uv run pytest -q
+
+echo "OK"

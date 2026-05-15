@@ -13,7 +13,7 @@ These are the words yaaof uses about itself in code, in commits, in PR descripti
 | **Ticket** | Unit of work yaaof tracks. In M01, every ticket originates from a GitHub PR. |
 | **Pull Request (PR)** | VCS-side artifact yaaof mirrors. A ticket may reference one PR; M01 always does. |
 | **Repo** | A code repository on the allowlist; yaaof acts only on PRs from listed repos. |
-| **Agent** | A configurable reviewer (architecture, security, style). Has a prompt, a model, and a tool list. |
+| **Agent** | A configurable reviewer (architecture, security, style). Has a prompt and a coding-agent plugin id (which CLI runs it). |
 | **Lesson** | A human-supplied piece of feedback persisted per-repo to influence future reviews. |
 | **Review** | A bundle of findings posted on a PR by one agent. Has a verdict. |
 | **Finding** | A single piece of agent feedback: file/line + severity + title + body. |
@@ -32,11 +32,12 @@ Identity persists through state changes. Each is referenced by yaaof UUID intern
 | **Ticket** | UUID | status, title, description (synced from source) |
 | **PullRequest** | UUID; also addressed as `(plugin_id, external_id)` | shas, draft/ready, state, last_synced_at |
 | **Repo** | UUID; also `(plugin_id, external_id)` | language_hint, status |
-| **Agent** | UUID + name | prompt_text, model_id, tool_list |
+| **Agent** | UUID + name | prompt_text, coding_agent_plugin_id, agent_config |
 | **Lesson** | UUID | title, body, source_pr_url |
 | **ReviewJob** | UUID | status, started_at, completed_at, error_message, review_external_id |
 | **WebhookEvent** | external `source_event_id` | processed_at |
 | **AuditEntry** | UUID | none — immutable once written |
+| **Workspace** | UUID | status (creating/active/expired/destroying/destroyed/destroy_failed), plugin_state, destroyed_at, destroy_attempts |
 
 ## Value objects
 
@@ -49,7 +50,8 @@ Immutable; equal by attributes; no identity.
 ### From `domain/vcs`
 - `Diff { raw, files: list[FileSummary] }`
 - `FileSummary { path, status, old_path?, additions, deletions }`
-- `Finding { file?, line_start?, line_end?, severity, title, body }`
+- `Finding { file?, line_start?, line_end?, severity, title, body, rationale?, snippet?: list[FindingSnippetLine], applied_lesson_ids: list[UUID] }`
+- `FindingSnippetLine { line_number, kind ∈ context | add | del, text }`
 - `Review { state, summary_body?, findings: list[Finding] }`
 - `Comment { external_id, body, file?, line?, posted_at, in_reply_to? }`
 
@@ -63,8 +65,12 @@ Immutable; equal by attributes; no identity.
 
 ### Cross-cutting
 - `Actor { kind: ActorKind, login?, agent_id? }` — who did a thing
-- `PromptContext { diff, lessons, language, prior_agent_comments, pr_title, pr_body }` — what reviewer passes to executor as the *context*. The agent itself (with its `prompt_text` and `model_id`) is passed alongside in `executor.run(agent, context)`. **Together they form the frozen ReviewJob snapshot:** both the agent value AND the PromptContext are captured at ReviewJob start time and recorded in `audit_entries` (kind=`prompt_sent`). Mid-flight edits to the agent's prompt, the agent's model selection, the lessons, the PR metadata, or any other input do NOT affect an in-flight job — those changes will be visible to the next job.
-- `ModelInvocation { prompt, response, tokens_in, tokens_out, cost, latency_ms }` — record of one LLM call
+- `AgentSpec { name, prompt_text, coding_agent_plugin_id, agent_config: dict }` — the invocable shape of an agent. Defined in `core/coding_agent`; subclassed by `domain/reviewer.ReviewerAgent` (and future `domain/implementer.ImplementerAgent`) to add persistence fields (id, org_id, timestamps, is_built_in).
+- `AgentPrompt { system_instruction, diff, lessons, language, prior_agent_comments, pr_title, pr_body, output_schema }` — what `reviewer` assembles and passes to `core/coding_agent.invoke()`. The agent CLI receives this as its prompt; it does its own LLM calls + tool use to produce the structured output. **Frozen ReviewJob snapshot** comprises: the AgentSpec, the AgentPrompt, and the workspace's checkout sha — captured at ReviewJob start time and recorded in `audit_entries` (kind=`review_job.prompt_sent`).
+- `AgentInvocationResult { parsed: T, status, raw_output, tokens_in?, tokens_out?, cost_usd?, latency_ms, error_message? }` — what a `CodingAgentPlugin.invoke()` returns. `parsed` is the agent's structured output coerced to the schema yaaof requested (typically a `FindingList`). Token / cost fields are best-effort (only populated if the CLI reports them). Defined in `core/coding_agent`.
+- `WorkspaceSpec { repo, sha, branch_name?, resource_caps, network_policy }` — what's needed to provision a workspace. Lives in `core/workspace`.
+- `ResourceCaps { cpu_count, memory_mb, wallclock_seconds, disk_mb }` — limits enforced by workspace plugins.
+- `NetworkPolicy` — enum: `deny_all` / `github_only` / `allow_all`. M01 in_process_workspace ignores this (no real isolation); future plugins enforce.
 
 ## Aggregates
 
@@ -75,11 +81,12 @@ Each aggregate is its own transactional unit. The root is the only entity refere
 | Ticket | Ticket | status transitions are valid |
 | PullRequest | PullRequest | shas non-empty when state is `open`/`closed`; `(plugin_id, external_id)` unique |
 | Repo | Repo | `(plugin_id, external_id)` unique; can't be active without a plugin install |
-| Agent | Agent | prompt_text non-empty; tool_list well-formed |
+| Agent | Agent | prompt_text non-empty; `coding_agent_plugin_id` references a registered plugin; `agent_config` validates against that plugin's `validate_config` |
 | Lesson | Lesson | body ≤ 1000 chars; belongs to an active Repo |
 | ReviewJob | ReviewJob | state-machine transitions valid; refers to an existing Agent + PR |
 | WebhookEvent | WebhookEvent | source_event_id is the unique idempotency key |
 | AuditEntry | AuditEntry | immutable once created |
+| Workspace | Workspace | status transitions valid (`creating → active → expired/destroying → destroyed/destroy_failed`); `plugin_state` populated by activation time; `destroyed_at` set when terminal |
 
 **Aggregate sizing principle:** keep aggregates small. Cross-aggregate invariants (e.g., "at most one in-flight ReviewJob per PR per agent") are enforced by **domain services**, not by stuffing entities into one big root.
 
@@ -89,9 +96,11 @@ Operations that span multiple aggregates. These are stateless functions in their
 
 | Service | What it does | Spans |
 |---|---|---|
-| **ReviewWorkflow** | For a Ticket: load PR + Repo, fetch Agents, fetch Lessons-for-Repo, fetch Diff via VCS, build PromptContext, create ReviewJob per agent, dispatch via Executor, collect Findings, post Review via VCS, append AuditEntries. | Ticket, PullRequest, Repo, Agent, Lesson, ReviewJob, AuditEntry |
+| **ReviewWorkflow** | For a Ticket: load PR + Repo, fetch Agents, fetch Lessons-for-Repo, fetch Diff via VCS, build the AgentPrompt, create a ReviewJob per agent, provision a Workspace via `core/workspace`, invoke the coding-agent CLI via `core/coding_agent.invoke`, collect Findings, post Review via VCS, append AuditEntries. | Ticket, PullRequest, Repo, Agent, Lesson, ReviewJob, Workspace, AuditEntry |
 | **Intake** | Receive WebhookEvent → verify signature → upsert PullRequest → upsert/create Ticket → schedule ReviewJobs (subject to filtering rules). | WebhookEvent, PullRequest, Ticket, ReviewJob |
 | **PerPRQueueDiscipline** | Enforces "at most one in-flight ReviewJob per PR per agent" by cancelling prior in-flight jobs before queueing a new one. Owned by `reviewer`. | ReviewJob (cross-aggregate invariant) |
+| **WorkspaceReaper** | Periodic `async def` loop in `core/workspace`, started in FastAPI's `lifespan`, that expires over-budget workspaces, retries plugin destroy on failure, and escalates `destroy_failed` rows. Runs every ~30s. | Workspace |
+| **CodingAgentPlugin.invoke** | Spawns the agent CLI in the workspace, waits for completion, parses output into `AgentInvocationResult`. Implemented per-plugin (claude_code in M01; codex / aider / etc. later). | (uses Workspace) |
 | **OnboardingStatus** | Compute "is yaaof ready to operate?" by querying plugin-side state. | (read-only across plugin aggregates) |
 | **CatchUpPoller** | On startup, poll VCS for events missed during downtime; replay through Intake. | WebhookEvent, PullRequest, Ticket |
 
@@ -113,9 +122,10 @@ yaaof is one bounded context, but the modules naturally cluster into sub-domains
 | Sub-domain | Modules | What it owns |
 |---|---|---|
 | **Intake** | `intake`, `vcs`, `plugins/github` | Receiving and normalizing inbound events |
-| **Review** | `reviewer`, `agents`, `memory`, `executor`, `llm`, `plugins/anthropic`, `plugins/in_process_executor` | The review pipeline |
+| **Review** | `reviewer` (owns review_jobs + reviewer_agents), `memory`, `core/coding_agent`, `plugins/claude_code` | The review pipeline (uses workspace from Runtime). yaaof invokes a coding-agent CLI; the CLI owns LLM calls + tool use. |
 | **Catalog** | `repos`, `tickets`, `pull_requests`, `settings` | yaaof's entities + system status |
-| **Operations** | `audit_log`, `events`, `tasks`, `observability`, `database`, `config`, `webserver`, `primitives` | Infrastructure + cross-cutting |
+| **Runtime** | `core/workspace`, `plugins/in_process_workspace` | Provisioned environments where code work happens |
+| **Operations** | `audit_log`, `events`, `observability`, `database`, `config`, `webserver`, `primitives` | Infrastructure + cross-cutting |
 
 ## Module ownership of domain concepts
 
@@ -124,13 +134,14 @@ yaaof is one bounded context, but the modules naturally cluster into sub-domains
 | Ticket aggregate, `TicketStatus` | `domain/tickets` |
 | PullRequest aggregate, `PRState` | `domain/pull_requests` |
 | Repo aggregate | `domain/repos` |
-| Agent aggregate | `domain/agents` |
+| ReviewerAgent aggregate | `domain/reviewer` |
 | Lesson aggregate | `domain/memory` |
 | **ReviewJob aggregate, `ReviewJobStatus`, PerPRQueueDiscipline, ReviewWorkflow, PromptContext** | **`domain/reviewer`** |
+| `AgentSpec`, `AgentInvocationResult[T]`, `CodingAgentPlugin` Protocol, plugin registry | `core/coding_agent` |
+| Workspace aggregate, `WorkspaceSpec`, `Workspace` Protocol, `WorkspaceProvider` Protocol, `ResourceCaps`, `NetworkPolicy`, `WorkspaceStatus`, WorkspaceReaper | `core/workspace` |
 | WebhookEvent aggregate | `plugins/github` |
 | AuditEntry aggregate | `core/audit_log` |
 | `RepoIdentifier`, `PRIdentifier`, `Diff`, `FileSummary`, `Comment`, `Review`, `Finding`, `Severity`, `ReviewVerdict` | `domain/vcs` |
-| `ModelInvocation` | `domain/llm` |
 | `Actor`, `ActorKind` | `core/primitives` |
 | Intake service, CatchUpPoller | `domain/intake` |
 | OnboardingStatus service | `domain/settings` |

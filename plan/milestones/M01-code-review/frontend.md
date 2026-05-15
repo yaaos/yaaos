@@ -53,7 +53,7 @@ One module per UI surface.
 | Module | Responsibility |
 |---|---|
 | `dashboard` | Landing page: empty state, onboarding banners ("install GitHub App", "set model API key", "add a repo"), system-health summary. |
-| `tickets` | Ticket list (filters by repo / author / date range, infinite scroll, SSE-driven live updates) and ticket detail (linked PR summary + single "Re-review" button + tabbed: Agents / Audit log / Memory used). Each ticket in M01 links to one GitHub PR; the UI is ticket-centric so M02+ ticket sources (Linear, Jira, …) slot in without UI restructure. |
+| `tickets` | Ticket list (filters by repo / author / date range, infinite scroll, SSE-driven live updates) and ticket detail (linked PR summary + single "Re-review" button + tabbed: Agents / Audit log). Each ticket in M01 links to one GitHub PR; the UI is ticket-centric so M02+ ticket sources (Linear, Jira, …) slot in without UI restructure. |
 | `repos` | Repo allowlist management UI: list, add (by VCS identifier), remove. |
 | `prompts` | Agent prompt editor: three text areas (architecture / security / style), save with non-empty validation, reset-to-default. |
 | `memory` | Per-repo memory management: list lessons (title / body / source / created-at), create, edit, delete. |
@@ -76,6 +76,7 @@ Anything in `shared/` may be imported by any module. Cross-domain imports betwee
 
 Module boundaries deliberately drawn this way:
 
+- **The frontend is dumb; all business logic lives in the API.** The SPA renders data and dispatches actions — it does not compute verdicts, derive status, run eligibility checks, decide permissions, or hold any rule the backend doesn't also enforce. Frontend-side input validations exist only for UX immediacy and are duplicated authoritatively on the backend. See [architecture.md § Dumb frontend](architecture.md#dumb-frontend-all-business-logic-in-the-api) for the full principle and [patterns.md § Dumb frontend](patterns.md#dumb-frontend--no-business-logic) for practical guidance.
 - **FE modules organize by UI surface, not by backend module.** `prompts` and `memory` are separate FE modules even though they fold into `reviewer` on the backend. `tickets` (FE) shows data sourced from `tickets`, `pull_requests`, and `reviewer` on the backend — same idea. Different pages, different routes, different forms → different FE modules. The asymmetry doesn't leak because all FE modules talk to BE through `core/api`.
 - **`settings` is its own module** (not folded into `dashboard`). Settings will grow; dashboard stays focused on at-a-glance status and onboarding banners.
 - **No `auth` core module in M01.** Slot is reserved (`core/routing` guards file exists empty). Added when auth ships.
@@ -105,6 +106,10 @@ All real-time updates from server to client use SSE (`EventSource`).
 ### 2026-05-13 — openapi-typescript + openapi-fetch over generators that emit hooks
 API codegen produces types + a thin typed fetch client. TanStack Query hooks are hand-written.
 **Why:** generated hook code is opaque to read and reason about; plain TanStack Query usage is transparent and benefits from a vast pool of training data / examples.
+
+### 2026-05-15 — Dumb frontend; all business logic in the API
+SPA is rendering + dispatch only. No business outcomes computed client-side; validations are UX-only and always duplicated on the backend.
+**Why:** prevents drift between two implementations of the same logic; centralizes the future auth/RBAC boundary; non-SPA clients observe identical behavior; behavior changes ship in one image.
 
 ### 2026-05-13 — Frontend module map locked
 7 core, 6 domain. `prompts` and `memory` are separate FE modules despite folding into `reviewer` on the backend, because FE modules organize by UI surface.

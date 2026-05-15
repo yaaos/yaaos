@@ -23,7 +23,7 @@ These apply to both backend and frontend, with one structural difference: **back
 - **No self-imports from `__init__.py` / `index.ts`** within the same module. Use direct internal paths.
 - **Tests live inside the module** (`<module>/test/`).
 - **When `core` needs `domain` capability, use a registry.** `core` defines a registry; `domain` modules register themselves at import time. Keeps `core` domain-neutral while still routing work to `domain` modules.
-- **Plugin registration (backend only).** Each pluggable concern in `domain/` (e.g., `domain/vcs`, `domain/llm`, `domain/executor`) defines a Protocol and a registry. Plugins in `plugins/` register themselves at import time. The bootstrap is responsible for importing the plugin packages that should be active.
+- **Plugin registration (backend only).** Each pluggable concern (e.g., `domain/vcs`, `core/workspace`, `core/coding_agent`) defines a Protocol and a registry. Plugins in `plugins/` register themselves at import time. Note that the host of the Protocol can be **core or domain** — `core/workspace` and `core/coding_agent` host Protocols because their primitives are pure infrastructure, while `domain/vcs` hosts one because PullRequest/Finding/etc. are domain concepts. The bootstrap is responsible for importing the plugin packages that should be active.
 
 ## Backend specifics
 
@@ -41,6 +41,39 @@ These apply to both backend and frontend, with one structural difference: **back
 - **Cross-domain imports are forbidden.** `domain/foo/` cannot import from `domain/bar/`. Move the shared piece to `shared/` or extract a new module.
 - **Biome custom rule** (or ESLint fallback) enforces cross-domain and layering rules in CI.
 
+## Table ownership enforcement (backend)
+
+Tach enforces the **Python-import** boundary between modules. A separate scanner enforces the **SQL-table** boundary so that one module can't read or write another module's tables.
+
+**Rule:** a module may only reference DB tables it owns. Module X cannot `select` / `insert` / `update` / `delete` against a table owned by module Y, and cannot mention Y's table names in a raw `text("...")` SQL string.
+
+**How ownership is determined:** auto-derived, no manual manifest. After importing all SQLAlchemy models, the scanner reads `Base.metadata.tables` and uses each mapped class's `__module__` to compute `table_name → owning_module`. A model class living in `app.domain.reviewer.models` owns its `__tablename__`. This means **table ownership is colocated with the model definition** — moving a model between modules moves ownership automatically.
+
+**How it's enforced:** `bin/check_table_access` is a Python CI script (~150 lines) that:
+
+1. Imports every module to build the `table → owning_module` map from SQLAlchemy metadata.
+2. Walks `apps/backend/app/` and parses each `.py` file with `ast`.
+3. For each file, derives the file's owning module from its path.
+4. Visits AST nodes looking for:
+   - SQLAlchemy ORM calls: `select(Model)`, `insert(Model)`, `update(Model)`, `delete(Model)` — resolves `Model` to its table via the imports in scope.
+   - Raw SQL: `text("...")` string literals — regexes for any known table name from the ownership map.
+   - Literal `Table("name", ...)` definitions outside the owning module.
+5. Fails CI with file/line/table/owning-module if a reference crosses a boundary.
+
+Runs as part of `apps/backend/bin/ci`. Also wired into pre-commit so violations surface before push.
+
+**What it catches:**
+- All ORM-based access (which is ~all of yaaof's DB access).
+- Static raw `text("SELECT ... FROM table")` strings.
+- Literal table-name references in `Table()` definitions.
+
+**What it misses (known limitations, acceptable at POC scale):**
+- Dynamically constructed SQL where the table name comes from a variable resolved at runtime.
+- SQL hidden behind helper functions that take the table name as a parameter.
+- f-strings with non-trivial interpolation.
+
+These are theoretical at M01 — yaaof uses SQLAlchemy ORM everywhere and has no dynamic-SQL paths planned. If the scanner ever needs airtight coverage, a SQLAlchemy `before_execute` event hook (enabled in tests/dev only) closes the gap by inspecting compiled SQL.
+
 ## Tooling: `bin/sync_modules`
 
 Single command runs the complete modularity workflow:
@@ -50,7 +83,8 @@ Single command runs the complete modularity workflow:
 3. **Check internal imports** — fail on relative imports across boundaries or self-imports from a module's `__init__.py`.
 4. **Check layering** — fail if a `core/` module imports from `domain/` or `plugins/`, or if a `domain/` module imports from `plugins/`.
 5. **Run `tach check`** — fail on undeclared dependencies or imports of non-interface symbols.
-6. **Frontend equivalent** — run Biome's custom rule for cross-domain imports and layering.
+6. **Run `bin/check_table_access`** — enforce the SQL-table ownership rule (see [Table ownership enforcement](#table-ownership-enforcement-backend) above). Same exit-on-violation contract as the import checks.
+7. **Frontend equivalent** — run Biome's custom rule for cross-domain imports and layering.
 
 CI runs the same workflow on every PR.
 
@@ -74,6 +108,10 @@ Auto-discover modules, generate `tach.toml`, check internal imports, check layer
 ### 2026-05-13 — Plugins as a third top-level grouping
 `core` < `domain` < `plugins`. `domain` defines plugin interfaces (Protocols + registries); `plugins` are the only place vendor-specific code lives (GitHub, Anthropic, etc.).
 **Why:** keeps `domain` vendor-neutral so swapping or adding providers (GitLab, OpenAI, …) is a config change, not a refactor.
+
+### 2026-05-15 — `bin/check_table_access` enforces table ownership
+A CI scanner derives `table → owning_module` from SQLAlchemy model `__module__` (no manual manifest), then AST-scans backend code for cross-module table references — both ORM calls and raw `text()` strings. Dynamic-SQL gaps are accepted; yaaof doesn't have any.
+**Why:** tach covers Python imports but not SQL access. Auto-derivation from model location keeps ownership colocated with the model and free of drift.
 
 ### 2026-05-14 — Core may define domain-aware data types; business logic stays out
 The "no business logic in core" rule is about *behavior*, not *type awareness*. A core module may define a value object whose values reference yaaof concepts (e.g., `Actor` with `ActorKind ∈ github_user | agent | system`). What it cannot do is encode decisions, workflows, or rules.

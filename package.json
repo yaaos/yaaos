@@ -1,0 +1,11 @@
+{
+  "name": "yaaof",
+  "private": true,
+  "version": "0.0.1",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "dev": "pnpm --filter @yaaof/web dev",
+    "build": "pnpm --filter @yaaof/web build",
+    "test": "pnpm --filter @yaaof/web test"
+  }
+}

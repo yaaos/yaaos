@@ -27,14 +27,14 @@
             │   1-1 (M01)  │
             │              ▼
             │       ┌──────────────┐    ┌────────┐
-            │       │ review_jobs  │───▶│ agents │
+            │       │ review_jobs  │───▶│reviewer_agents│
             │       └──────────────┘    └────────┘
             │
             ▼
      (audit_entries loosely reference any entity by kind+id)
 ```
 
-Plugin tables: `github_app_installations`, `github_settings`, `github_webhook_events`, `anthropic_settings` stand alone (not FK'd to domain tables). `github_poller_state` references `repos` via FK.
+Plugin tables: `github_app_installations`, `github_settings`, `github_webhook_events`, `claude_code_settings` stand alone (not FK'd to domain tables). `github_poller_state` references `repos` via FK. `workspaces` (owned by `core/workspace`) stands alone — the `spec` JSONB references a repo by `(plugin_id, external_id)` but not via FK.
 
 ## Tables
 
@@ -46,9 +46,9 @@ Append-only event timeline. Every meaningful action lands here.
 |---|---|---|
 | `id` | UUID | PK |
 | `org_id` | UUID | always set; index |
-| `entity_kind` | text | `'ticket'` / `'pr'` / `'repo'` / `'agent'` / `'lesson'` / `'review_job'` / `'webhook_event'` / etc. |
+| `entity_kind` | text | `'ticket'` / `'pull_request'` / `'repo'` / `'reviewer_agent'` / `'lesson'` / `'review_job'` / `'webhook_event'` / `'workspace'` / etc. |
 | `entity_id` | UUID | loose ref — no FK constraint |
-| `kind` | text | event type, e.g., `'prompt_sent'`, `'review_posted'`, `'memory_written'`, `'lesson_created'`, `'review_cancelled'` |
+| `kind` | text | event type, follows `<entity>.<verb_past>` convention: `'review_job.prompt_sent'`, `'review_job.posted'`, `'lesson.created'`, `'review_job.cancelled'` |
 | `payload` | JSONB | event-specific data |
 | `actor_kind` | text | `'github_user'` / `'agent'` / `'system'` — matches the `ActorKind` enum |
 | `actor_login` | text \| null | for `github_user` actions, the GitHub login; null otherwise |
@@ -118,35 +118,59 @@ Unique: `(plugin_id, external_id)`.
 
 ### `review_jobs` — owned by `domain/reviewer`
 
-Per-PR-per-agent review job. The unit `core/tasks` schedules. M01 stores task state here even though scheduling is in-process asyncio (for audit + UI). The per-PR queue discipline (cancel/supersede/debounce) is enforced by `reviewer` on this table.
+Per-PR-per-agent review job. **The row IS the durable record of one agent invocation** — yaaof has no separate task/queue table; `review_jobs` is the truth for in-flight tracking, cancellation, and crash recovery. The per-PR queue discipline (cancel/supersede/debounce) is enforced by `reviewer` on this table.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID | PK |
 | `org_id` | UUID | always set |
 | `pr_id` | UUID FK → `pull_requests.id` | |
-| `agent_id` | UUID FK → `agents.id` | |
+| `agent_id` | UUID FK → `reviewer_agents.id` | |
 | `status` | text | `'queued'` / `'running'` / `'posted'` / `'failed'` / `'skipped'` / `'cancelled'` |
-| `skip_reason` | text \| null | when status=`'skipped'`: `'draft'` / `'fork'` / `'bot_author'` / `'trivial_diff'` / `'too_large'` |
+| `skip_reason` | text \| null | when status=`'skipped'`: `'draft'` / `'fork'` / `'bot_author'` / `'trivial_diff'` / `'too_large'` / `'crashed'` |
 | `scheduled_at`, `started_at`, `completed_at` | timestamptz \| null | |
+| `last_heartbeat_at` | timestamptz \| null | bumped every 10s by the running handler; used to detect stuck jobs and drive UI progress |
+| `current_step` | text \| null | free-form coarse phase label set by the handler (`'assembling_prompt'`, `'invoking_agent'`, `'posting_review'`); for UI progress |
+| `prompt_hash` | text \| null | SHA256 of the assembled prompt; populated at prompt-assembly time. Matches the hash in the corresponding `review_job.prompt_sent` audit entry. Denormalized for UI read-speed. |
+| `lessons_applied` | UUID[] \| null | IDs of lessons included in the prompt for this job. Populated at prompt-assembly time. UI uses these to render lesson chips on findings (via `Finding.applied_lesson_ids`) and to link from agent cards to `/memory`. |
+| `tokens_in`, `tokens_out` | int \| null | populated from `AgentInvocationResult` on success |
+| `cost_usd` | numeric(10,4) \| null | populated from `AgentInvocationResult` on success |
+| `duration_s` | int \| null | `completed_at - started_at` computed and stored on completion; lets list views sort/aggregate without recomputation |
 | `error_message` | text \| null | when status=`'failed'` |
 | `review_external_id` | text \| null | when posted, the VCS-side review id |
 | `created_at`, `updated_at` | timestamptz | |
 
-Index: `(pr_id, status, created_at)` for the per-PR queue lookup.
+Indexes:
+- `(pr_id, status, created_at)` for the per-PR queue lookup.
+- `(status, last_heartbeat_at)` for the `list_in_flight()` query and future stuck-job detection.
 
-### `agents` — owned by `domain/agents`
+### `posted_comments` — owned by `domain/reviewer`
 
-Agent definitions. M01: 3 hardcoded rows (architecture, security, style).
+Maps GitHub comment ids → the agent that posted them. Written by reviewer on every successful `post_review`. Read by `intake` to resolve reply-agent lookups.
+
+| Column | Type | Notes |
+|---|---|---|
+| `external_comment_id` | text | PK; the GitHub-side comment id |
+| `org_id` | UUID | always set |
+| `pr_id` | UUID FK → `pull_requests.id` | |
+| `review_job_id` | UUID FK → `review_jobs.id` | which review attempt produced this comment |
+| `agent_id` | UUID FK → `reviewer_agents.id` | denormalized for fast lookup (avoids join through review_jobs) |
+| `posted_at` | timestamptz | |
+
+Index: PK on `external_comment_id` provides O(log n) lookup by id (the only query intake makes).
+
+### `reviewer_agents` — owned by `domain/reviewer`
+
+Review-agent definitions. M01: 3 hardcoded rows (architecture, security, style), all using the `claude_code` plugin. M02+ `domain/implementer` will have its own `implementer_agents` table — no shared "agents" table across workflows.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID | PK |
 | `org_id` | UUID | always set |
 | `name` | text | `'architecture'` / `'security'` / `'style'` |
-| `prompt_text` | text | the agent's *instruction*; non-empty (validated at save) |
-| `model_id` | text | M01: anthropic default; later configurable per agent |
-| `tool_list` | JSONB | array of tool names; **empty in M01** for all three agents |
+| `prompt_text` | text | the system instruction passed to the coding-agent CLI; non-empty (validated at save) |
+| `coding_agent_plugin_id` | text | `'claude_code'` in M01; M02+ may have `'codex'` / `'aider'` / etc. |
+| `agent_config` | JSONB | plugin-specific config (timeout, max iterations, model override, etc.). Defaults to `{}`. The plugin's `validate_config` interprets it. |
 | `is_built_in` | bool | M01: true for all 3 |
 | `created_at`, `updated_at` | timestamptz | |
 
@@ -221,16 +245,42 @@ Per-repo cursor for the catch-up poller. On startup, the plugin queries GitHub f
 
 Unique: `(org_id, repo_id)`.
 
-### `anthropic_settings` — owned by `plugins/anthropic`
+### `workspaces` — owned by `core/workspace`
 
-Singleton-ish per org.
+Every workspace ever provisioned has a row here. The reaper task in `core/workspace` consults this table to enforce wall-clock caps, retry destroys, and escalate failures.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID | PK; the workspace_id callers reference |
+| `org_id` | UUID | always set |
+| `provider_id` | text | `'in_process'` in M01; `'docker'` / `'fly_machine'` / etc. later |
+| `spec` | JSONB | the full `WorkspaceSpec` (repo ref, sha, branch, resource caps, network policy) |
+| `plugin_state` | JSONB \| null | plugin-specific data needed to destroy this workspace (e.g., `{"working_dir": "/tmp/yaaof-ws-abc123"}` for in_process; `{"container_id": "..."}` for docker). Written when status → `'active'`. |
+| `status` | text | `'creating'` / `'active'` / `'expired'` / `'destroying'` / `'destroyed'` / `'destroy_failed'` |
+| `created_at` | timestamptz | when the row was inserted (provisioning started) |
+| `activated_at` | timestamptz \| null | when status flipped to `'active'` |
+| `expires_at` | timestamptz | `activated_at + spec.wallclock_seconds`. Reaper expires workspaces past this. |
+| `destroyed_at` | timestamptz \| null | when destroy completed |
+| `destroy_attempts` | int | default 0; reaper increments on each plugin destroy retry. Capped at 3 in M01; past that → `destroy_failed`. |
+| `last_destroy_attempt_at` | timestamptz \| null | when the most recent destroy attempt fired; reaper uses this to compute exponential backoff before next retry |
+| `last_destroy_error` | text \| null | populated when destroy fails; cleared on success |
+
+Indexes:
+- `(status, expires_at)` — the reaper's primary query (find workspaces to expire/destroy).
+- `(org_id, created_at DESC)` — for an ops view "show me recent workspaces" (future).
+
+### `claude_code_settings` — owned by `plugins/claude_code`
+
+Singleton-ish per org. Holds the Anthropic API key and any CLI-config the plugin needs to invoke `claude`.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID | PK |
 | `org_id` | UUID | |
-| `encrypted_api_key` | bytea | |
-| `default_model` | text | e.g., `'claude-sonnet-4-6'` |
+| `encrypted_anthropic_api_key` | bytea | passed to subprocess as `ANTHROPIC_API_KEY` env var at invoke time |
+| `default_model` | text \| null | optional override (e.g., `'claude-sonnet-4-6'`); else CLI uses its own default |
+| `cli_path` | text \| null | optional override for the `claude` binary path; else looked up on PATH |
+| `default_timeout_seconds` | int | wall-clock cap for each invocation; default 600 |
 | `created_at`, `updated_at` | timestamptz | |
 
 ## Relationship notes
@@ -238,8 +288,9 @@ Singleton-ish per org.
 - **`tickets` ↔ `pull_requests` is 1-1 in M01.** Both sides reference each other (FKs). The schema permits `tickets.pr_id` to be null (for M02+ non-PR sources) but M01 always sets it. `pull_requests.ticket_id` is always set.
 - **Cross-module FKs are real Postgres FKs.** Backend modules own their tables but reference other modules' tables freely via SQLAlchemy. Modularity is enforced at the import boundary, not the FK boundary.
 - **`audit_entries` references entities loosely** (`entity_kind` + `entity_id`, no FK). Lets entities be deleted while the audit log survives. The trade-off: integrity is by convention, not constraint.
-- **`review_jobs.agent_id` is the FK from job to agent.** The agent's prompt at job-run-time is captured in an `audit_entries` row (`kind='prompt_sent'`), not pinned by FK on the job. So prompt edits don't rewrite history.
+- **`review_jobs.agent_id` is the FK from job to agent.** The agent's prompt at job-run-time is captured in an `audit_entries` row (`kind='review_job.prompt_sent'`), not pinned by FK on the job. So prompt edits don't rewrite history.
 - **`review_jobs` invariant: at most one in-flight job per `(pr_id, agent_id)`.** "In-flight" = status in (`queued`, `running`). Enforced by `reviewer`'s `PerPRQueueDiscipline` service on every schedule call, not by a DB constraint (so the audit log can retain prior cancelled/completed rows for the same pair).
+- **`posted_comments` is denormalized for read speed.** `agent_id` could be reached by joining through `review_jobs`, but intake's reply-agent lookup happens on every CommentCreated event and benefits from a single-table read. Reviewer is responsible for keeping the denormalized `agent_id` consistent (only set on insert; never updated).
 
 ## Migrations
 

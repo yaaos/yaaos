@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — ported from plan/design/app/yaaof.css.
+ * oklch values preserved verbatim. Light + dark themes are swapped via
+ * [data-theme="..."] on <html>.
+ */
+
+@layer base {
+  :root,
+  [data-theme="dark"] {
+    --bg: oklch(0.165 0.012 285);
+    --bg-2: oklch(0.195 0.013 285);
+    --surface: oklch(0.215 0.013 285);
+    --surface-2: oklch(0.248 0.014 285);
+    --surface-3: oklch(0.282 0.014 285);
+    --hover: oklch(0.265 0.016 285);
+    --border: oklch(0.305 0.014 285);
+    --border-soft: oklch(0.25 0.013 285);
+    --border-hard: oklch(0.385 0.018 285);
+
+    --text: oklch(0.965 0.005 285);
+    --text-2: oklch(0.77 0.012 285);
+    --text-3: oklch(0.575 0.014 285);
+    --text-4: oklch(0.46 0.014 285);
+
+    --accent: oklch(0.72 0.19 295);
+    --accent-2: oklch(0.8 0.16 295);
+    --accent-dim: oklch(0.46 0.14 295);
+    --accent-bg: oklch(0.3 0.1 295 / 0.3);
+    --accent-bg-2: oklch(0.3 0.1 295 / 0.14);
+    --accent-border: oklch(0.5 0.16 295 / 0.55);
+
+    --success: oklch(0.74 0.17 150);
+    --danger: oklch(0.7 0.2 25);
+    --warning: oklch(0.8 0.16 75);
+    --info: oklch(0.74 0.13 235);
+  }
+
+  [data-theme="light"] {
+    --bg: oklch(0.985 0.003 285);
+    --bg-2: oklch(0.97 0.005 285);
+    --surface: oklch(1 0 0);
+    --surface-2: oklch(0.965 0.005 285);
+    --surface-3: oklch(0.94 0.008 285);
+    --hover: oklch(0.955 0.008 285);
+    --border: oklch(0.89 0.01 285);
+    --border-soft: oklch(0.93 0.008 285);
+    --border-hard: oklch(0.8 0.012 285);
+
+    --text: oklch(0.205 0.012 285);
+    --text-2: oklch(0.38 0.014 285);
+    --text-3: oklch(0.515 0.014 285);
+    --text-4: oklch(0.62 0.014 285);
+
+    --accent: oklch(0.55 0.2 295);
+    --accent-2: oklch(0.48 0.2 295);
+    --accent-dim: oklch(0.78 0.1 295);
+    --accent-bg: oklch(0.75 0.12 295 / 0.2);
+    --accent-bg-2: oklch(0.75 0.12 295 / 0.1);
+    --accent-border: oklch(0.55 0.18 295 / 0.45);
+
+    --success: oklch(0.52 0.16 150);
+    --danger: oklch(0.55 0.2 25);
+    --warning: oklch(0.62 0.15 75);
+    --info: oklch(0.54 0.13 235);
+  }
+
+  html {
+    font-size: 13px;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: "Geist", system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .mono {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Frontend CI: lint + typecheck + tests + build.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> biome check"
+pnpm exec biome check src
+
+echo "==> tsc --noEmit"
+pnpm exec tsc --noEmit
+
+echo "==> vitest"
+pnpm exec vitest run
+
+echo "==> vite build"
+pnpm exec vite build
+
+echo "OK"

@@ -28,7 +28,6 @@ domain/foo/                       (or core/foo/ or plugins/foo/)
 ├── web.py          # (if the module has HTTP routes) FastAPI router + handlers
 ├── service.py      # business-logic functions (or split into more files as needed)
 ├── models.py       # SQLAlchemy + Pydantic types owned by this module
-├── tasks.py        # (if the module registers background tasks) handler functions
 └── test/           # tests live inside the module
 ```
 
@@ -60,17 +59,17 @@ __all__ = ["public_function", "PublicType"]
 
 # Registration side effects (if any) go HERE, at the bottom,
 # AFTER all imports — never inside a function.
-# Examples: registering a plugin (register_vcs_plugin, register_llm_provider),
-# registering HTTP routes (register_domain_routes — done in web.py),
+# Examples: registering a plugin (register_vcs_plugin, register_coding_agent_plugin, register_workspace_provider),
+# registering HTTP routes (register_routes(RouteSpec(...)) — done in web.py),
 # subscribing to SSE event types, etc.
-# Background-task handlers are NOT registered by name — they're referenced
-# directly when enqueued: `await enqueue(handler, payload)`.
+# Background coroutines are NOT registered by name — they're spawned directly
+# via core/primitives.spawn(name, coro) at the call site.
 ```
 
 Rules:
 
 - `__all__` is **always** present and lists the module's public API. Tach uses it to compute the interface.
-- All implementation lives in named submodules (`service.py`, `models.py`, `web.py`, `tasks.py`, etc.). **No business logic in `__init__.py`.**
+- All implementation lives in named submodules (`service.py`, `models.py`, `web.py`, etc.). **No business logic in `__init__.py`.**
 - Re-exports come first. Then `__all__`. Then registration calls.
 - No lazy/conditional imports except for heavy ML model loading; those require an explicit `# noqa: PLC0415` with a one-line reason.
 
@@ -81,20 +80,24 @@ If a module exposes HTTP routes, they live in `web.py`:
 ```python
 # domain/foo/web.py
 from fastapi import APIRouter
-from app.core.webserver import DomainRoutes, register_domain_routes
+from app.core.webserver import RouteSpec, register_routes
 from app.domain.foo import module
 
-router = APIRouter(prefix=f"/api/{module.get_module_name()}", tags=[module.get_module_name()])
+# Router carries NO prefix — core/webserver applies it from RouteSpec.
+router = APIRouter()
 
 @router.get("/")
 async def list_foos(): ...
 
-routes = DomainRoutes(module=module.get_module_name())
-routes.add_router(router)
-register_domain_routes(routes)
+register_routes(RouteSpec(
+    module_name=module.get_module_name(),
+    router=router,
+    # url_prefix defaults to f"/api/{module_name}". Override only if needed.
+    # on_startup=[_startup_recovery] for modules with crash-recovery hooks.
+))
 ```
 
-`web.py` is imported by `__init__.py` so the registration runs at module load.
+`web.py` is imported by `__init__.py` so the registration runs at module load. See [internals/webserver.md § One URL prefix per module](internals/webserver.md#one-url-prefix-per-module-enforced) for the validation rules `register_routes` enforces.
 
 ### Async-first
 
@@ -103,11 +106,21 @@ register_domain_routes(routes)
 - All DB calls go through the async SQLAlchemy session.
 - Where blocking work is unavoidable (e.g., a vendor SDK without an async API), wrap it in `asyncio.to_thread()` at the boundary.
 
+### Filesystem + process work happens inside a workspace, never in yaaof's process
+
+- Never touch the filesystem directly (`open()`, `pathlib`, etc.) for repo/code content.
+- Never spawn processes directly (`subprocess`, `asyncio.subprocess`) for repo/code work.
+- Always go through `core/workspace`: `async with with_workspace(provider_id, spec) as ws:` and use `ws.working_dir` as the `cwd` you hand to the coding-agent CLI. In M01 the `Workspace` Protocol exposes only `working_dir` (a path) and lifecycle hooks — no `read_file` / `list_files` / `search_code` methods, since the coding-agent CLI brings its own tools.
+- The yaaof Python process itself only does pure-Python work — HTTP, DB queries, in-memory orchestration. Anything needing git, tests, builds, or untrusted code execution lives inside a workspace (spawned by the coding-agent plugin, never directly by domain code).
+- Exceptions: `core/database` (Postgres connections), `core/observability` (writing log files), and the few other infrastructure modules that genuinely need direct OS access. None of those touch repo content.
+
 ### Pydantic at every boundary
 
-- Task inputs are Pydantic models, validated by the task runner before the handler runs.
 - HTTP request/response bodies are Pydantic models (FastAPI handles this).
 - Webhook payloads are parsed into Pydantic models before any business logic runs.
+- Coding-agent CLI stdout is parsed into the caller-supplied `response_model` (a Pydantic class) by the plugin before returning to the caller.
+- Audit-log payloads are Pydantic models (see [Audit log discipline](#audit-log-discipline)); plain dicts are rejected.
+- Background coroutines spawned via `core/primitives.spawn()` take a Pydantic input model as their argument when one is passed (see the `ReviewJobInput` example in [internals/reviewer.md](internals/reviewer.md)).
 - Internal cross-module calls do not need Pydantic — use plain types/dataclasses where it makes sense.
 
 ### Imports
@@ -121,15 +134,29 @@ register_domain_routes(routes)
 - **Don't catch exceptions where they're raised.** Let them propagate.
 - Catch only at a few designated **top-level boundaries**:
   - The HTTP middleware (converts unhandled exceptions to 500 JSON; logs).
-  - The `core/tasks` task runner wrapper (marks job failed, writes audit log entry, surfaces to UI status).
+  - The `core/primitives.spawn()` wrapper around background coroutines (logs the failure with structured context + OTel span; the spawned coro itself is responsible for marking its domain row failed before raising).
   - A thin retry wrapper around vendor SDK calls (retries `VCSTransientError`, `VCSRateLimitError`, model-API 5xx).
   - Tests.
 - Domain functions either succeed and return, or raise. They do not `try/except` to translate one error into another unless that translation is genuinely the function's responsibility.
-- Use typed exception hierarchies (`VCSError` + subclasses, `LLMError` + subclasses) so callers that *do* catch can dispatch by type.
+- Use typed exception hierarchies (`VCSError` + subclasses, `CodingAgentError` + subclasses, `WorkspaceError` + subclasses) so callers that *do* catch can dispatch by type.
 
 ## Frontend conventions
 
 These apply to `apps/web/`. Backend conventions above use Python-specific examples; FE has analogous rules with TypeScript idioms.
+
+### Dumb frontend — no business logic
+
+The SPA renders data and dispatches actions; it does not own, compute, or decide anything about yaaof's behavior. **Any rule the backend doesn't also enforce is not a rule.** See [architecture.md § Dumb frontend](architecture.md#dumb-frontend-all-business-logic-in-the-api) for the full statement.
+
+Practically:
+
+- **Forms** — frontend validations (zod schemas, react-hook-form rules) exist for input immediacy. The backend re-validates with its own Pydantic schema; the API returns 4xx with a field-keyed error map on failure, and the form surfaces those errors. Don't ship a rule on the frontend that the backend doesn't also have.
+- **Verdicts / status / derivations** — never computed client-side. If the UI needs a "verdict" label, the API returns it. If the UI needs a count, the API returns it.
+- **Permissions** — show/hide based on a server-supplied capability flag (`can_edit: bool` on the resource), never on a client-side rule. M01 has no auth so every flag is `true`; the shape is in place for the future.
+- **Cache invalidation** — TanStack Query keys are invalidated by mutation responses and SSE events from the backend. No client-side "I bet this is stale now" heuristics.
+- **Search / filter / sort** — client-side filtering of an already-fetched list is fine for snappy UX (e.g., filter-as-you-type over the current page). Filtering that changes which rows the user *acts on* (bulk-select, delete-all-matching) goes through the API so the server applies the same filter.
+
+If a frontend change could alter what gets stored, posted, or counted without a corresponding API change, the logic is in the wrong place.
 
 ### Standard module file layout (FE)
 
@@ -229,21 +256,40 @@ The only mechanism for `core` to invoke `domain` (or `domain` to invoke `plugins
 - `domain` modules call `register_X(...)` at import time, at the bottom of their `__init__.py`.
 - Bootstrap is responsible for importing the right modules so registration runs.
 
-Used for: background tasks, HTTP routers, SSE event types, plugin instances (`VCSPlugin`, `LLMProvider`, `ExecutorPlugin`), audit-log writers, anywhere else "core needs to call domain."
+Used for: HTTP routers (`core/webserver.register_routes`), SSE event types, plugin instances (`VCSPlugin`, `CodingAgentPlugin`, `WorkspaceProvider`), startup-recovery hooks (via `RouteSpec.on_startup`), anywhere else "core needs to call domain."
 
 ### Bootstrap composition order
 
-`apps/backend/app/main.py` (or equivalent entrypoint module) MUST follow this order:
+`apps/backend/app/main.py` (or equivalent entrypoint module) MUST follow this order. Each step's side effects happen *at import time* of the named modules — Python's import semantics do the sequencing, but the import order is load-bearing.
 
-1. **Load environment** (multi-file `.env` precedence, see below).
-2. **Configure core infrastructure** (database engine, OTel SDK, structlog).
-3. **Initialize cross-cutting runtimes** — `core/tasks` scheduler + `core/events` pub/sub bus. Must be ready before any domain module attempts to register tasks or subscribe to events.
-4. **Import domain modules** — this triggers their registration side effects.
-5. **Import plugin modules** — this registers them into the `vcs`, `llm`, and `executor` registries.
-6. **Mount routers** — after all `register_domain_routes(...)` calls have run.
-7. **Start the server** (M01) **or server + worker** (M02+ when TaskIQ is wired).
+1. **Load environment.** `core/config` runs first (pydantic-settings reads `.env` + process env, validates).
+2. **Configure core infrastructure.** Import `core/database` (engine creation), `core/observability` (structlog + conditional OTel SDK — only initialized if `OTEL_EXPORTER_OTLP_ENDPOINT` is set), `core/primitives` (no side effects, but other modules import from it).
+3. **Initialize the events bus.** Import `core/events` *before any domain module*. The pub/sub registry must exist before domain modules subscribe to events at their own import time.
+4. **Import the webserver registry.** Import `core/webserver` *before any domain module*. The `_specs` dict must exist before `register_routes(RouteSpec(...))` calls fire.
+5. **Import domain modules.** All eight: `vcs`, `settings`, `repos`, `intake`, `tickets`, `pull_requests`, `memory`, `reviewer`. Each `__init__.py` runs its registration side effects (route specs, event subscribers, plugin Protocol registries).
+6. **Import plugin modules.** All three: `plugins/github`, `plugins/claude_code`, `plugins/in_process_workspace`. Each calls `register_vcs_plugin` / `register_coding_agent_plugin` / `register_workspace_provider`.
+7. **Construct the FastAPI app.** Call `core.webserver.create_app()`. The lifespan body mounts routers from `_specs`, then runs `on_startup` hooks, then yields.
+8. **Run the server.** `uvicorn` (or equivalent) takes over.
 
-If you flip steps 3 and 5, you'll mount a router before its domain module has registered itself. The order is load-bearing.
+Example `main.py` skeleton:
+
+```python
+# apps/backend/app/main.py
+from app.core import config          # 1
+from app.core import database        # 2
+from app.core import observability   # 2
+from app.core import primitives      # 2
+from app.core import events          # 3
+from app.core import webserver       # 4
+from app.domain import vcs, settings, repos, intake, tickets, pull_requests, memory, reviewer   # 5
+from app.plugins import github, claude_code, in_process_workspace                                # 6
+from app.core.webserver import create_app
+
+app = create_app()                   # 7
+# uvicorn entrypoint runs `app`     # 8
+```
+
+If you flip steps 3–4 with step 5, you'll mount a router before its domain module has registered itself, or subscribe to an event before the bus exists. The order is load-bearing.
 
 ## Configuration
 
@@ -288,39 +334,61 @@ Every Alembic migration uses these helpers instead of raw `op.create_table` / `o
 
 Use a per-migration tracking model: a `schema_migrations` table records every applied migration by version. When a different branch is deployed (e.g., an older branch without the latest migrations), the system reads tracked versions, compares against migration files on disk, ignores missing files (already applied), and only executes versions not yet tracked. This is more robust than Alembic's default single-pointer-revision model for monorepo / multi-developer workflows where multiple migration heads can briefly exist.
 
+**Implementation shape:**
+- Migration files live in `apps/backend/alembic/versions/` and use Alembic's file format + autogeneration tooling.
+- The runner is **not** stock `alembic upgrade head` — `core/database` exposes a `migrate()` function that: reads applied versions from `schema_migrations`, scans `alembic/versions/*.py`, and applies any file whose `revision` isn't in the table (in `down_revision` order), inserting into `schema_migrations` after each.
+- The stock Alembic CLI is **only** used for `alembic revision --autogenerate -m "..."` to scaffold new migration files. Running `alembic upgrade` directly is forbidden — use `core/database.migrate()` (or `bin/migrate` which wraps it).
+- The `schema_migrations` table is created by an idempotent bootstrap step in `core/database` on first connect; no migration creates it.
+
 ## Testing
+
+yaaof tests run entirely against a **self-contained Docker test stack** — no real GitHub, no real Anthropic, no shared test environment. The stack consists of:
+
+1. **Postgres 16** — pre-seeded with realistic fixture data (see below).
+2. **`apps/fake-github`** — a fake GitHub HTTP service (peer app) that fakes every `api.github.com` endpoint yaaof calls. JWT auth, HMAC-signed webhook dispatch to yaaof, in-memory state for what yaaof has posted. Same env var (`GITHUB_API_BASE_URL`) points yaaof at it; the github plugin code is unchanged.
+3. **Coding-agent CLI cache** — file-colocated `.coding_agent_cache.json` per test module. Captures `(prompt, agent_config, response_model_schema) → (stdout, stderr, exit_code)` on first run with `--allow-coding-agent-calls`; replays on every subsequent run. Real Claude Code CLI is **never** invoked in CI.
+
+This means tests run anywhere, offline, deterministically, with no rate-limit exposure and no credential management.
 
 ### Three categories
 
 | Category | Where | What it tests | External deps |
 |---|---|---|---|
 | **Unit** | Inside the module: `<module>/test/test_*.py` | Pure logic (parsers, formatters, rule evaluators). Used sparingly — only for tricky pure code. | None |
-| **Integration** | Inside the module: `<module>/test/test_*.py` | A module's public interface end-to-end. **The primary form** for backend logic. | Real Postgres (transactional rollback). Outbound HTTP mocked via `pytest-httpx`. **No external services need to be running.** |
-| **E2E** | Top-level `apps/e2e/` workspace | Full stack via browser: SPA → backend → DB → real external services. Smoke + critical user flows. | **Real everything.** Real backend process, real Postgres, real Anthropic, real GitHub (test org / test App / test repos). No mocks. |
+| **Integration** | Inside the module: `<module>/test/test_*.py` | A module's public interface end-to-end. **The primary form** for backend logic. | Real Postgres (transactional rollback, empty DB). `apps/fake-github` for any GitHub interaction. CLI cache for any coding-agent invocation. |
+| **E2E** | Top-level `apps/e2e/` workspace | Full stack via browser: SPA → backend → DB → fake-github → cached coding-agent. Smoke + critical user flows. | Real backend process. Real Postgres, **pre-seeded** with fixture data. `apps/fake-github` for GitHub. CLI cache. Everything containerized via `docker-compose.test.yml`. |
 
 ### Integration tests (the default)
 
 - Exercise a module's public interface, not its internals. Test what consumers actually call.
-- **DB:** real Postgres. Each test runs inside a transaction that is rolled back at the end. The session fixture begins a transaction, yields the session, and rolls back unconditionally. No cleanup code; no inter-test state.
+- **DB:** real Postgres. Each test runs inside a transaction that is rolled back at the end. The session fixture begins a transaction, yields the session, and rolls back unconditionally. **Empty DB at the start of each test** — no fixture data preloaded. Tests insert what they need.
 - **Inbound HTTP (testing yaaof's endpoints):** `fastapi.testclient.TestClient`. No network; runs in-process against the ASGI app.
-- **Outbound HTTP (yaaof calling GitHub, Anthropic):** mocked with `pytest-httpx`. Define expected requests + canned responses per test. No real network calls.
-- **LLM calls:** cached on disk via the LLM cache (see below). Tests are deterministic and offline after cache is populated.
+- **Outbound HTTP (yaaof calling GitHub):** routed to `apps/fake-github` via `GITHUB_API_BASE_URL`. Real plugin code paths, including JWT signing + HMAC verification. The fake service is shared across all integration tests in a test session; tests use the fake's `POST /__test/...` control endpoints to seed expected responses where needed.
+- **Coding-agent CLI invocations:** the `claude_code` plugin is tested via the coding-agent CLI cache. Tests are deterministic and offline after the cache is populated.
 
 ### E2E tests
 
 - Live in `apps/e2e/` (pnpm workspace; TypeScript Playwright).
-- **Full environment, no mocks.** Real backend, real Postgres, real Anthropic API, real GitHub (test org / test App / test repos). Whatever yaaof talks to in production, e2e talks to too.
-- The test environment is provisioned ahead of CI runs: a dedicated test GitHub org with a yaaof-test App installed, a dedicated Anthropic API key with a budget cap, a fresh Postgres per run.
-- Cover **golden-path user flows and critical regressions**, not exhaustive coverage. Each e2e test is expensive (real LLM tokens, real GitHub API quota, minutes of wall time) — keep the set small.
-- **Assertions are behavioral, not exact.** "A review was posted under the architecture identity." "Verdict is CHANGES_REQUESTED." "An audit-log entry exists for the review attempt." Avoid asserting on exact LLM output text — it's non-deterministic.
-- **The reason e2e exists despite integration tests:** integration tests mock external HTTP, so they can't catch breaks in our real GitHub App auth, webhook signature handling, Anthropic SDK contract changes, or any production-only oddity. E2E catches those.
+- **Run against the test stack:** `docker compose -f docker/docker-compose.test.yml up` brings up Postgres (seeded) + fake-github + yaaof. Playwright drives the browser; assertions check the UI + DB + audit log.
+- **Pre-seeded DB.** The compose stack runs `apps/backend/bin/seed_test_data` after migrations: 2 repos, 5 tickets across states, 4 lessons, 3 reviewer agents (the built-ins), a "configured" GitHub App install row, a "configured" Anthropic API key, some audit entries. Seed data evolves with the schema via the ORM models — no SQL fixtures.
+- **Triggering flows:** tests call `apps/fake-github`'s `POST /__test/dispatch_webhook` to simulate "a PR was opened on the configured repo." Fake-github signs the payload with the shared HMAC secret and POSTs to yaaof. The full real flow runs (intake → reviewer → coding-agent invocation via CLI cache → vcs.post_review → fake-github records the post).
+- Cover **golden-path user flows and critical regressions**, not exhaustive coverage. Each e2e test is cheap (no real LLM tokens, no real GitHub quota, seconds of wall time) but still slower than integration — keep the set small.
+- **Assertions are behavioral.** "A review was posted under the architecture identity." "Verdict is CHANGES_REQUESTED." "An audit-log entry exists for the review attempt." Avoid asserting on exact rendered text where templates may evolve.
+- **The reason e2e exists despite integration tests:** integration tests run in-process; e2e tests run the real ASGI server, real browser, real cross-container HTTP — catching wire-format bugs, lifespan-order bugs, and frontend ↔ backend integration cracks that in-process tests don't.
+- `apps/e2e/bin/ci` brings up the test stack, runs Playwright, tears down. No external credentials required. Always runs in CI.
+
+### Claude Code CLI contract — manual quarterly regeneration
+
+The CLI cache makes tests deterministic, but it also means **CI never invokes real Claude Code**. If Anthropic ships a Claude Code release with a new JSON output shape, our cache stays green while production breaks.
+
+**Process:** quarterly (or before any major release), a developer with a real Anthropic key reruns the test suite with `--allow-coding-agent-calls`, eyeballs the diff in the cache files, and commits the regenerated cache. This catches drift within ~3 months. Accepted trade-off: zero CI cost, occasional manual ritual.
 
 ### **Every new feature must ship with appropriate tests**
 
 The exact mix depends on the feature, but every PR that adds user-facing behavior must include:
 
 1. **Integration tests** for the backend logic the feature touches.
-2. **E2E test(s)** covering the user-visible flow when the feature is reachable from the UI. If a feature is purely backend (e.g., a new background-task type), an integration test that exercises the full module pipeline is sufficient and no e2e is required.
+2. **E2E test(s)** covering the user-visible flow when the feature is reachable from the UI. If a feature is purely backend (e.g., a new background coroutine or periodic loop), an integration test that exercises the full module pipeline is sufficient and no e2e is required.
 
 When in doubt: add the e2e test. They catch the integration cracks unit and integration tests miss.
 
@@ -330,16 +398,35 @@ When in doubt: add the e2e test. They catch the integration cracks unit and inte
 - Substitute dependencies by **dependency injection**: pass collaborators in as arguments (constructor for the rare classes, function parameters for the common case).
 - The few times an override is genuinely needed (e.g., a singleton that's hard to inject around): use a file-level `# override-patch-prevention:file` comment with an explanation.
 
-### LLM testing cache
+### Coding-agent CLI cache
 
-- An `LLMTestCache` wraps the Anthropic SDK and records request/response pairs to disk on first run.
-- Cache is **file-colocated** alongside the test module (`<test_dir>/.llm_cache.json`).
-- Workflow: write the test → run with `--allow-llm-calls` to populate the cache → commit the cache file → subsequent runs are deterministic and offline.
-- Cache invalidation triggers: prompt change, model parameter change, input content change.
+yaaof doesn't call LLM APIs directly in M01; it shells out to the Claude Code CLI. Tests don't invoke the real CLI (slow, costly, non-deterministic, requires Anthropic credentials), so the `claude_code` plugin runs against a **CLI invocation cache** in every test layer:
+
+- A test-mode wrapper around the plugin's subprocess invocation captures `(prompt, agent_config, response_model_schema) → (stdout, stderr, exit_code)` on first run.
+- Cache is **file-colocated** alongside the test module (`<test_dir>/.coding_agent_cache.json`).
+- Workflow: write the test → run with `--allow-coding-agent-calls` to populate the cache → commit the cache file → subsequent runs are deterministic and offline.
+- Cache invalidation triggers: prompt change, agent_config change, response_model change.
+- **Both integration AND e2e tests use the cache.** No layer invokes the real CLI in CI.
+- CLI contract drift is caught by the quarterly manual regeneration ritual described above.
+
+When `core/llm` returns in M02+ (for non-CLI LLM calls yaaof makes itself — summarization, lesson scoring, etc.), it gets a sibling cache with the same shape.
+
+### Time controls (configurable timings)
+
+Several flows have wall-clock waits that production wants long (reasonable batching) but tests want short or zero. Each gets an env var with prod defaults:
+
+| Variable | Default | Description |
+|---|---|---|
+| `YAAOF_REVIEW_DEBOUNCE_SECONDS` | `30` | Reviewer waits this long before starting a review_job. Tests set to `0`. |
+| `YAAOF_REAPER_INTERVAL_SECONDS` | `30` | How often the workspace reaper sweeps. Tests set to `1` or call the sweep function directly. |
+| `YAAOF_HEARTBEAT_INTERVAL_SECONDS` | `10` | How often the review-job heartbeat coro bumps `last_heartbeat_at`. |
+| `YAAOF_CATCHUP_DELAY_SECONDS` | `10` | Boot-time delay before the GitHub catch-up coro runs (lets the rest of the app initialize first). |
+
+Test stacks set all four to their fast values via the compose file. Code that uses these timings reads them from `core/config` settings, never hardcodes them.
 
 ### Pytest plugin entry-point pattern
 
-Define cross-cutting fixtures (transactional DB session, LLM cache setup, `pytest-httpx` setup) in a small in-repo pytest plugin module. Register via `[project.entry-points."pytest11"]` in `pyproject.toml` so it auto-loads — no conftest gymnastics.
+Define cross-cutting fixtures (transactional DB session, coding-agent CLI cache setup, fake-github base URL) in a small in-repo pytest plugin module. Register via `[project.entry-points."pytest11"]` in `pyproject.toml` so it auto-loads — no conftest gymnastics.
 
 ## Observability
 
@@ -351,13 +438,110 @@ Define cross-cutting fixtures (transactional DB session, LLM cache setup, `pytes
 ### Context-variable threading
 
 - A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, …}` through async code.
-- Web middleware sets it on every request. Workers set it before dispatching a task. Log filters read from it on every log line. Span attributes read from it on every span.
+- Web middleware sets it on every request. `core/primitives.spawn()` propagates the parent's context vars into the spawned coroutine. Log filters read from it on every log line. Span attributes read from it on every span.
 
 ### OpenTelemetry
 
 - OTel SDK initialized in `core/observability`.
-- HTTP, SQLAlchemy, and background tasks all auto-instrumented (HTTP + SQLAlchemy via OTel contrib; tasks instrumented inside `core/tasks`).
+- HTTP, SQLAlchemy, and background coroutines all auto-instrumented (HTTP + SQLAlchemy via OTel contrib; coroutines get a span attached by `core/primitives.spawn()` at spawn time).
 - Trace + span IDs attached to every log line.
+
+### What to instrument with a manual span
+
+Auto-instrumentation covers most things. Add a **manual span** only at meaningful boundaries:
+
+- **Every external call** — VCS API requests, coding-agent CLI invocations, webhook signature verification, any network egress. Attributes: vendor, endpoint, retry-count, outcome.
+- **Every plugin entry point** — `VCSPlugin.post_review`, `CodingAgentPlugin.invoke`, `WorkspaceProvider.provision`. Attributes: `plugin_id`.
+- **Long phases inside a background coro** — for review_jobs, the `assembling_prompt` / `invoking_agent` / `posting_review` phases each get a span so the trace shows where the wall time went.
+
+**Don't** wrap every domain function in a manual span — auto-instrumentation already covers the HTTP-to-DB path, and noise hurts more than detail helps. If a function isn't an external call, a plugin boundary, or a long phase, it doesn't need a span.
+
+## Cross-cutting discipline
+
+These rules apply to every module. They're short because each is meant to fit in your head.
+
+### Three sinks: log / trace / audit
+
+Three sinks, three purposes. One event may legitimately appear in all three — the rules differ.
+
+| Sink | Purpose | Lifetime | Audience |
+|---|---|---|---|
+| **Log** (`structlog` → stdout) | Ephemeral signal for ops debugging — every request, every retry, every transient hiccup. | Days; truncated by log retention. | On-call engineer reading recent activity. |
+| **Trace** (OTel spans) | Causal request graph — who called whom, how long, with what attributes. | Days; sampled by the collector. | Engineer debugging latency or causal chain. |
+| **Audit** (`audit_log` table) | Durable record of business-meaningful state changes — who did what, when, to which entity. | 90 days (M01 deferred); permanent for now. | Operator / user reviewing what happened. |
+
+Rules:
+- **Every log line carries trace + span IDs** (already done by the structlog filter) so the three sinks correlate.
+- **The audit log is for state changes with business meaning, not for debugging.** A failed DB read is a log line. A successful prompt update is an audit entry. A 500 is a log line and a span; it is *not* an audit entry.
+- **Reads never write to `audit_log`.** Only mutations.
+- **Tracing covers everything; logging covers most; auditing covers the smallest set.** When in doubt, log. When the answer to "would an operator want to know this happened to entity X?" is yes, also audit.
+
+### Audit log discipline
+
+Every domain module that owns an entity is responsible for writing audit entries on its mutations. The policy:
+
+- **What gets an audit entry:**
+  - Every user-initiated mutation (prompt edit, lesson create/edit/delete, repo add/remove, "re-review" button click).
+  - Every agent-initiated action (review posted, reply posted, finding logged).
+  - Every state transition with business meaning (review_job `queued → running → posted/failed/cancelled`; workspace `active → expired → destroyed`; ticket `in_review → complete`).
+- **What doesn't:**
+  - Internal helpers' progress steps (those are logs).
+  - Reads.
+  - Routine periodic sweeps that didn't do anything (the reaper that found zero workspaces to destroy).
+- **The `kind` field follows `<entity>.<verb_past>`** — `review_job.scheduled`, `lesson.deleted`, `workspace.destroy_failed`. Lowercase, dotted, past tense. Grep-friendly.
+- **The `actor` field is required and uses the `Actor` value object from `core/primitives`.** Kind is one of `github_user` / `agent` / `system`. Never put PII or secrets in the actor.
+- **The `payload` is a Pydantic model**, not a raw dict. Each `kind` has a corresponding payload class. **Payload classes live in `<module>/audit_payloads.py`** in the owning module, named in PascalCase by the kind suffix (e.g., `review_job.posted` → `ReviewJobPostedPayload`). The class's fields are exactly the fields listed in that module's "Audit log entries" table in its `internals/<module>.md` deep-dive — that table is authoritative; the class definitions mirror it. This keeps the audit log self-describing and makes UI rendering type-safe.
+- **One audit entry per business event.** Don't write three entries for "started, did the thing, finished" — write one entry for the outcome (or one per genuine state transition).
+
+### Org scoping
+
+Every domain function takes `org_id` as a kwarg. Every query is filtered by `org_id`. No exceptions, even in M01 where the value is constant.
+
+```python
+async def get_review_job(review_job_id: UUID, *, org_id: UUID) -> ReviewJob: ...
+```
+
+This is the discipline that makes the future RBAC retrofit a check, not a refactor. A function that "forgot" `org_id` in M01 is a security bug waiting in M02.
+
+A future lint rule will flag domain functions that don't take `org_id`. For now, code review catches it.
+
+### Idempotency at external boundaries
+
+Any handler triggered by an external event MUST be idempotent under retry. Externals retry — networks drop, webhook deliveries duplicate, the operator clicks twice.
+
+Patterns:
+- **Deduplicate by external event id.** `plugins/github` already does this: `INSERT INTO github_webhook_events ... ON CONFLICT (source_event_id) DO NOTHING; if not inserted, skip dispatch`. Every plugin that receives external events follows the same shape.
+- **Upserts use `ON CONFLICT`**, not "check then insert." Two requests racing must produce one row, not two.
+- **State-transition functions must be safe to call twice.** `mark_failed(job_id)` on an already-failed job is a no-op, not an error. Compute the transition off the current state; only write if a transition is actually needed.
+- **Treat "already processed" as success.** Returning 2xx to a duplicate webhook tells the sender to stop retrying.
+
+### Input validation at boundaries
+
+- **Every HTTP request body is a Pydantic model.** FastAPI validates on entry; handlers receive typed inputs. No `request.json()` raw-dict access.
+- **Every external API response is parsed into a Pydantic model** before crossing back into yaaof code. VCS plugin parses GitHub JSON into `PullRequest` / `Finding` / etc. Coding-agent plugin parses CLI stdout into the caller-supplied `response_model`. If parsing fails, it's a known status value (`PARSE_FAILURE`), not an exception.
+- **Past the boundary, every value is typed.** No raw dicts crossing module boundaries. If you need a "kitchen sink" shape internally, that's a Pydantic model with explicit fields, not `dict[str, Any]`.
+- **Frontend validation is UX-only** (see [Dumb frontend](#dumb-frontend--no-business-logic)). The backend re-validates with its own Pydantic schema; the API returns 4xx with a field-keyed error map on failure.
+
+### Time
+
+- **UTC everywhere.** No local-time computation in backend code. Frontend converts to local time for display only.
+- **All timestamp columns are `timestamptz`.** Naïve `timestamp` columns are forbidden.
+- **`datetime.now(UTC)` in code, never `datetime.now()`** (which returns a naïve local-time datetime). A linter rule can enforce this when one of us adds it.
+- **ISO 8601 over the wire** with explicit `Z` or `+00:00`. Pydantic's default serializer does this for `datetime`.
+- **Durations are seconds (int or float)**, not strings. "30 seconds" is `30`, never `"30s"`.
+
+### Secrets and PII
+
+**Secrets:**
+- Stored encrypted at rest in the owning plugin's settings table (Anthropic API key, GitHub App PEM + webhook secret). Encryption key is boot-time env.
+- **Decrypted only at the call site that needs it.** No global "decrypted credentials" cache, no passing decrypted secrets across module boundaries when they're not needed.
+- **Never logged, never echoed in error messages, never included in an audit entry payload.** If an exception message would contain a secret (e.g., HTTP client logging the request), redact before logging.
+- A vendor SDK that wants the key takes it as a function argument at the call site. Plugins that wrap a vendor SDK construct the client per call with the decrypted secret, or hold it in a private attribute that's clearly scoped.
+
+**PII:**
+- yaaof doesn't intentionally store PII. Commit text, PR titles, agent comments, and human-supplied lesson bodies may contain incidental PII (names, emails).
+- **Don't replicate user-supplied content into log lines.** Log identifiers (`pr_id`, `comment_external_id`), not content. The content is already durable in its primary table; the log doesn't need a copy.
+- **Audit payloads keep what's needed for accountability** — actor identity, what changed, before/after if relevant. Not "the full prompt text" (use a hash; see the reviewer's `review_job.prompt_sent` payload for the pattern).
 
 ## Decisions
 
@@ -369,10 +553,14 @@ Portable primitives live in `apps/backend/app/core/`. No `packages/yaaof_core`.
 **Why:** one Python service. Extract only if a second one appears.
 
 ### 2026-05-13 — Test discipline + no DB mocking
-DI-over-patch ban (via the `check_patch_usage` AST scanner), LLM cache (file-colocated, Anthropic-shaped), pytest plugin entry-point. All DB tests run inside a transaction rolled back at teardown.
+DI-over-patch ban (via the `check_patch_usage` AST scanner), coding-agent CLI cache (file-colocated, captures CLI subprocess invocations), pytest plugin entry-point. All DB tests run inside a transaction rolled back at teardown.
 
 ### 2026-05-14 — Three test categories: unit / integration / e2e
-Integration tests are the primary form for backend logic (real Postgres transactional, outbound HTTP mocked with `pytest-httpx`, inbound via `fastapi.testclient.TestClient`, **no external services need to be running**). E2E tests live in `apps/e2e/` (TypeScript Playwright) and cover golden-path user flows against the **full real stack — real Anthropic, real GitHub test org, no mocks**. Earlier wording called integration tests "service tests" — that was wrong terminology.
+Integration tests are the primary form for backend logic — real Postgres (transactional, empty start), `apps/fake-github` for outbound GitHub, CLI cache for coding-agent. E2E lives in `apps/e2e/` (Playwright) and runs against `docker-compose.test.yml` — real backend, pre-seeded Postgres, `apps/fake-github`, CLI cache.
+
+### 2026-05-15 — Tests run entirely against a self-contained Docker stack; no real external services
+No real GitHub, no real Anthropic, no shared test environment. `apps/fake-github` is a peer app that fakes every GitHub endpoint yaaof calls (JWT auth, HMAC-signed webhook dispatch, REST endpoints, test-control routes). Coding-agent CLI invocations replay from file-colocated caches. Pre-seeded Postgres provides realistic UI fixtures for e2e.
+**Why:** real-services testing isn't operationally feasible (token management, rate limits, blowing through API quotas, shared-resource flakiness). A fake service is ~400 LOC of one-time work that gives us fast, offline, deterministic tests forever. The CLI contract is verified by a quarterly manual cache regeneration with real Anthropic credentials — accepted small risk for huge cost savings.
 
 ### 2026-05-14 — Every new feature ships with appropriate tests
 Integration tests for the backend logic touched; e2e tests for user-visible flows. When in doubt, add the e2e test.
@@ -383,6 +571,14 @@ Port `*_if_not_exists` helpers. Every migration is safely re-runnable.
 ### 2026-05-13 — Per-migration tracking (Ecto-style)
 Adopt a `schema_migrations` table pattern rather than Alembic's single-pointer model.
 **Why:** safe branch switching without orphan-recovery pain.
+
+### 2026-05-15 — Cross-cutting discipline locked
+Three sinks (log / trace / audit) with distinct purposes and rules; audit entries only for business-meaningful mutations with `<entity>.<verb_past>` kinds and Pydantic payloads; every domain function takes `org_id` as a kwarg; external-trigger handlers are idempotent under retry; Pydantic at every boundary (in *and* out); UTC + `timestamptz` everywhere; secrets decrypted at call site, never logged / echoed / audited.
+**Why:** these are the rules that prevent the slow drift toward inconsistent logging, partial audit coverage, multi-tenancy bugs, double-processed webhooks, naïve-datetime time bombs, and secret leakage. Each rule is short and grep-able; collected in one place so a new module author has one section to read instead of seven scattered conventions.
+
+### 2026-05-15 — Manual spans only at meaningful boundaries
+External calls, plugin entry points, and long phases inside a background coro get manual spans. Domain functions don't. Auto-instrumentation handles the HTTP-to-DB path.
+**Why:** wrapping every function in a span turns the trace into noise. Detail at the boundaries is where latency questions actually get answered.
 
 ### 2026-05-14 — Standard per-module file layout: `__init__.py`, `module.py`, `web.py`
 `module.py` provides `get_module_name()`; `web.py` is the standard location for FastAPI routes when a module exposes them; `__init__.py` is interface declaration + registration only.

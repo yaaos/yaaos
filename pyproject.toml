@@ -1,0 +1,29 @@
+[project]
+name = "yaaof"
+version = "0.0.1"
+description = "Self-hosted, team-scale agent orchestration service"
+requires-python = ">=3.13,<3.14"
+license = { file = "LICENSE" }
+
+[tool.uv.workspace]
+members = ["apps/backend"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "RUF", # ruff-specific
+    "PLC", # pylint conventions (PLC0415 used as escape hatch)
+]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

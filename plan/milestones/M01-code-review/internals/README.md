@@ -11,15 +11,17 @@ In dependency order — each module's design can be locked before later ones lea
 | # | Module | Why deep-dive needed |
 |---|---|---|
 | 1 | [vcs.md](vcs.md) | Load-bearing Protocol; every plugin and consumer depends on the abstract types and method signatures. |
-| 2 | [llm.md](llm.md) | Sister to `vcs` — same Protocol-plus-registry shape, smaller surface. |
-| 3 | [events.md](events.md) | In-process pub/sub for SSE broadcasting to UI clients. M01 is single-process (simple); the design must accommodate M02's separate worker process (Postgres LISTEN/NOTIFY or similar) without breaking consumers. |
-| 4 | [audit_log.md](audit_log.md) | Schema, query patterns for per-PR timeline, retention pruning. Used by every domain module. |
-| 5 | [plugins-github.md](plugins-github.md) | GitHub App JWT → installation-token flow, webhook signature verify, replay protection. |
-| 6 | [intake.md](intake.md) | Catch-up poller's cursor model, re-review command grammar, dispatch into `tickets` + `pull_requests`. |
-| 7 | [tickets.md](tickets.md) | Unit of work; state machine; relationship to `pull_requests`; data model design for M02+ multi-source intake. |
-| 8 | [pull_requests-backend.md](pull_requests-backend.md) | State machine, per-PR job queue, cancel/supersede/debounce semantics, race handling. |
-| 9 | [agents.md](agents.md) | Agent definition shape; prompt CRUD; how reviewer fetches agents; design for M02+ user-defined agents. |
-| 10 | [executor.md](executor.md) | `ExecutorPlugin` Protocol; in-process M01 impl; how it'll grow to support tool loops and remote execution. |
-| 11 | [reviewer.md](reviewer.md) | Review workflow: per-ticket orchestration of agents + memory + vcs + executor; verdict computation; failure handling per-agent. |
+| 2 | [coding_agent.md](coding_agent.md) | `CodingAgentPlugin` Protocol + registry; invocation lifecycle; output parsing contract. The abstraction that lets yaaof run Claude Code, Codex, Aider, etc. via plugins. |
+| 3 | [plugins-claude_code.md](plugins-claude_code.md) | First concrete `coding_agent` plugin: wraps the Claude Code CLI; subprocess invocation; output parsing; settings table (Anthropic API key, model override, timeout). |
+| 4 | [webserver.md](webserver.md) | FastAPI app factory, route registry, middleware stack, SPA serving, lifespan. |
+| 5 | [events.md](events.md) | In-process pub/sub for SSE broadcasting to UI clients. M01 is single-process (simple); the design must accommodate M02's separate worker process (Postgres LISTEN/NOTIFY or similar) without breaking consumers. |
+| 6 | [audit_log.md](audit_log.md) | Schema, query patterns for per-PR timeline, retention pruning. Used by every domain module. |
+| 7 | [plugins-github.md](plugins-github.md) | GitHub App JWT → installation-token flow, webhook signature verify, replay protection. |
+| 8 | [intake.md](intake.md) | Catch-up poller's cursor model, re-review command grammar, dispatch into `tickets` + `pull_requests` + `reviewer`. |
+| 9 | [tickets.md](tickets.md) | Unit of work; state machine; relationship to `pull_requests`; data model design for M02+ multi-source intake. |
+| 10 | [pull_requests-backend.md](pull_requests-backend.md) | Pure VCS mirror: PR aggregate (yaaof UUID + plugin identifier + cached metadata), state machine reflecting VCS state (open/closed/merged), upsert + state-transition writers. Per-PR review-job queue lives in `reviewer`, not here. |
+| 11 | [workspace.md](workspace.md) | `WorkspaceSpec`, `Workspace` Protocol, `WorkspaceProvider` Protocol; the `workspaces` table + centralized reaper lifecycle; the in_process M01 plugin. |
 | 12 | [memory.md](memory.md) | Per-repo lessons CRUD; retrieval into agent prompts; scope evolution path (per-repo → per-agent → global). |
-| 13 | [tickets-frontend.md](tickets-frontend.md) | Ticket list + detail UI; live-update flow (SSE → TanStack Query cache); subscription lifecycle; how the ticket page composes data from `tickets` + `pull_requests` + `reviewer` backend modules. |
+| 13 | [reviewer.md](reviewer.md) | Review workflow: per-ticket orchestration of agents + memory + vcs + workspace + coding_agent; per-PR queue discipline; verdict computation; failure handling per-agent. Owns the `reviewer_agents` table (agent prompt CRUD). Each review_job gets its own workspace + its own CLI invocation. Also owns in-flight tracking: heartbeat columns, `list_in_flight()`, cancellation polling, startup recovery of pre-restart `running` jobs. |
+| 14 | [tickets-frontend.md](tickets-frontend.md) | Ticket list + detail UI; live-update flow (SSE → TanStack Query cache); subscription lifecycle; how the ticket page composes data from `tickets` + `pull_requests` + `reviewer` backend modules. **Not yet written** — implementer composes from `frontend.md` + the design files in `plan/design/`. |
+| 15 | [testing.md](testing.md) | Self-contained Docker test stack: `apps/fake-github` contract, `bin/seed_test_data`, `docker-compose.test.yml`, CLI cache (`CachingCodingAgentPlugin` + pytest fixture), test secrets, time-control env vars. Read after all backend modules — it ties their test surfaces together. |

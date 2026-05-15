@@ -32,6 +32,9 @@ This matters because in later milestones tickets originate from Linear, Jira, Sl
 - Three specialist agents: **architecture**, **security**, **style**.
 - Each runs independently. All three post under a **single yaaof GitHub App identity**; agent attribution is via a comment-body prefix (`[architecture]` / `[security]` / `[style]`). See Decisions § GitHub integration.
 - Each agent's prompt is editable via the yaaof UI.
+- **Each agent is an invocation of the Claude Code CLI** running inside a workspace where the PR's repo is checked out at the head SHA. Claude Code does its own LLM calls, tool use, and code exploration. yaaof's job is to assemble the prompt, invoke the CLI, parse the output (structured JSON findings), and post the review.
+- **The yaaof Python process never makes an LLM API call in M01.** All LLM work happens inside the Claude Code CLI subprocess.
+- M02+ may add other coding-agent CLIs (Codex, Aider, etc.) as plugins; agents can be configured to use different CLIs.
 
 ### Triggers
 - New PR opened on an allowlisted repo → all three agents review.
@@ -64,7 +67,7 @@ This matters because in later milestones tickets originate from Linear, Jira, Sl
 
 ### UI
 - Ticket list view (all tickets yaaof has touched) with per-agent status.
-- Ticket detail view: linked PR information, audit log, agent verdicts, links to the GitHub PR, **"Re-review" button that reruns all three agents**.
+- Ticket detail view: linked PR information, audit log, agent verdicts, links to the GitHub PR, **"Re-review" button that reruns all three agents**. (No separate "Memory used" tab — current lessons for the repo are assumed-applied.)
 - Repo allowlist management.
 - Agent prompt editor (three prompts, one per agent).
 - Per-repo memory management (list, edit, delete lessons).
@@ -75,7 +78,7 @@ This matters because in later milestones tickets originate from Linear, Jira, Sl
 - Intake from Linear, Jira, Slack, ops alerts. **PRs only.**
 - Ephemeral test environment provisioning.
 - Merge gating or blocking PR status checks.
-- Authentication, users, RBAC.
+- Authentication, users, RBAC. (See [architecture.md § Security](architecture.md#security) for the POC baseline yaaof still maintains without auth — encryption at rest, HMAC webhook verification, parametrized SQL, no shell injection paths, secrets never logged.)
 - Multi-org / multi-tenant.
 - Budget enforcement (cost is tracked in metrics; no hard caps).
 - Aggregated verdict across agents (each comments independently — no roll-up "approve/block").
@@ -104,7 +107,7 @@ Decisions made up-front so implementation can run autonomously. Each is a requir
 
 ### Commit-level triggers
 - **Debounce window: 30 seconds** after the last commit on a PR before triggering a review.
-- **Force push:** triggers a re-review. Prior agent comments on lines that no longer exist are marked as "outdated" before posting the new review.
+- **Force push:** triggers a re-review. On GitHub, prior comments on lines that no longer exist are marked outdated automatically by GitHub itself — yaaof does not call an explicit outdate-marking API. The `vcs.mark_comments_outdated` Protocol method exists for future plugins that lack equivalent automatic behavior; for `plugins/github` it is a no-op.
 - **Trivial-diff skip:** if a commit changes only files on the skip list (see below), no review is triggered.
 - **PR reopen** alone does not trigger; the next commit will.
 - **Mid-review commit:** the in-flight review is cancelled; the debounce timer restarts on the new commit. The discarded work is recorded in the audit log.
@@ -114,8 +117,9 @@ Decisions made up-front so implementation can run autonomously. Each is a requir
 - **Prior agent comments are included as context** in the prompt for re-reviews.
 
 ### Job-start snapshot
-- At the moment a ReviewJob starts, yaaof **snapshots** the agent prompt, the per-repo lessons, the PR diff, the PR metadata, and the prior agent comments into the prompt context. The snapshot is recorded in the audit log (`prompt_sent` entry).
+- At the moment a ReviewJob starts, yaaof **snapshots** the agent prompt, the agent's `coding_agent_plugin_id` + `agent_config`, the per-repo lessons, the PR diff, the PR metadata, the prior agent comments, AND the workspace's checkout sha. The snapshot is recorded in the audit log (`review_job.prompt_sent` entry).
 - **Mid-flight edits do not affect an in-flight job.** If an admin edits the agent prompt or a lesson while a job is running, the in-flight job uses the snapshot taken at start time; the next job picks up the change.
+- **The CLI agent's internal work (LLM calls, file reads, etc.) is NOT yaaof's audit trail.** The CLI may emit its own logs; yaaof captures what it can from the CLI's structured output (token usage, cost, findings) but does not attempt to mirror every internal LLM call or tool dispatch.
 
 ### Cross-agent visibility
 - Each agent **sees the other two yaaof agents' comments** on the PR. (Not human comments.)
@@ -160,7 +164,7 @@ The `@yaaof...` strings are **parsed from comment bodies, not GitHub user mentio
 - **Per-agent status state machine:** `queued` → `running` → one of `posted` / `failed` / `skipped` / `cancelled`. The `skipped` status carries a reason (`draft` / `fork` / `bot_author` / `trivial_diff` / `too_large`).
 
 ### Audit log
-- **Retention:** 90 days, then auto-prune.
+- **Retention target: 90 days** — but **pruning implementation is deferred** for POC. The table grows unbounded in M01 until storage/query perf becomes a real concern; then a periodic prune job is added.
 - **Visible in the yaaof UI** per ticket. Captures every agent action: prompt sent, model invocation, tool call, GitHub API call, comment posted, memory read, memory written, retries, cancellations, skip reasons.
 - **Every entry records an `Actor`** (kind + login if human + agent_id if agent) and a timestamp. Human-originated entries (replies, reactions, re-review commands) link to the originating GitHub comment / reaction.
 
@@ -188,10 +192,9 @@ The `@yaaof...` strings are **parsed from comment bodies, not GitHub user mentio
 
 ### UI: ticket detail
 
-- **Layout:** header with ticket title + linked PR summary + **single "Re-review" button** (reruns all three agents on the underlying PR; **hidden when the linked PR is closed or merged** — the ticket detail still shows the audit log and past results, just no re-trigger affordance) + tabbed view of `Agents` | `Audit log` | `Memory used`.
-- **Agents tab:** each of the three agents' status, verdict, findings count, links to the GitHub review.
+- **Layout:** header with ticket title + linked PR summary + **single "Re-review" button** (reruns all three agents on the underlying PR; **hidden when the linked PR is closed or merged** — the ticket detail still shows the audit log and past results, just no re-trigger affordance) + tabbed view of `Agents` | `Audit log`.
+- **Review tab:** each of the three agents' status, verdict, findings, links to the GitHub review.
 - **Audit log tab:** chronological timeline of every action on this ticket.
-- **Memory used tab:** the lessons that were injected into the prompt for the most recent review on this ticket.
 
 ### Onboarding
 
@@ -221,11 +224,11 @@ The `@yaaof...` strings are **parsed from comment bodies, not GitHub user mentio
 - Replying to an agent's PR comment on GitHub causes that agent to respond.
 - Pushing a new commit causes all three agents to re-review (after the debounce window).
 - Clicking the **"Re-review" button** on the ticket detail page reruns all three agents on the linked PR.
-- Clicking "remember this lesson" in the UI persists a per-repo lesson; the next review on that repo demonstrably includes it in the prompt (verifiable in the audit log's "Memory used" tab).
+- Clicking "remember this lesson" in the UI persists a per-repo lesson; the next review on that repo demonstrably includes it in the prompt (verifiable in the prompt-hash recorded in the audit log).
 - Every action above is visible in the per-ticket audit log timeline.
 - Basic metrics (tickets reviewed, cost per review, failure rate) are visible somewhere queryable.
 - **Per-app `bin/ci` scripts exist and pass on a fresh clone.** Each app owns its own check stack:
   - `apps/backend/bin/ci` — Ruff (lint + format check), tach check, `check_patch_usage` AST scan, pytest (unit + integration).
   - `apps/web/bin/ci` — Biome (lint + format check), TypeScript type-check, Vitest, OpenAPI codegen-drift check.
-  - `apps/e2e/bin/ci` — Playwright run against the e2e environment. Invoked separately from per-app CI (slow + costs real Anthropic / GitHub quota).
+  - `apps/e2e/bin/ci` — brings up `docker/docker-compose.test.yml` (Postgres pre-seeded + fake-github + yaaof), runs Playwright against it, tears down. No external credentials required; fully self-contained.
   - Top-level cross-app tooling (e.g., `bin/sync_modules`) lives in repo-root `bin/`, but **there is no top-level `bin/ci`** — CI runs each per-app script.

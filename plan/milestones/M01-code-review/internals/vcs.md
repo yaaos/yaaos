@@ -20,7 +20,7 @@ It owns **zero** business logic. No filtering, no decisions, no LLM calls. Pure 
 ```python
 # Types
 "RepoRef", "VCSPullRequest", "Diff", "FileSummary", "Comment",
-"Review", "Finding", "Severity", "ReviewState", "ReviewPostResult",
+"Review", "Finding", "FindingSnippetLine", "Severity", "ReviewState", "ReviewPostResult",
 
 # Events
 "VCSEvent",
@@ -31,7 +31,7 @@ It owns **zero** business logic. No filtering, no decisions, no LLM calls. Pure 
 "CommentCreated",
 "ReactionAdded",
 
-# Protocol
+# Protocol — 9 methods (8 async + 1 sync)
 "VCSPlugin",
 
 # Registry
@@ -124,13 +124,21 @@ class Comment(BaseModel):
 Severity = Literal["must-fix", "nit", "suggestion", "info"]
 ReviewState = Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]
 
+class FindingSnippetLine(BaseModel):
+    line_number: int           # source line number (same number repeats for the add/del pair)
+    kind: Literal["context", "add", "del"]
+    text: str                  # raw line content (no leading +/− prefix; UI renders it)
+
 class Finding(BaseModel):
     file: str | None           # None ⇒ goes in review summary, not a line comment
     line_start: int | None
     line_end: int | None
     severity: Severity
     title: str                 # ≤120 chars
-    body: str                  # markdown
+    body: str                  # markdown — the user-facing finding text
+    rationale: str | None      # short justification rendered as a quoted block under body. Empty for trivial findings.
+    snippet: list[FindingSnippetLine] | None    # optional suggested-change diff. None when no concrete code suggestion.
+    applied_lesson_ids: list[UUID] = []          # lessons (by id) the agent attributes this finding to. UI renders chips linking to /memory.
 
 class Review(BaseModel):
     agent_tag: str             # "architecture" | "security" | "style" — prefixed in comment bodies
@@ -216,11 +224,17 @@ class PluginNotFoundError(LookupError): ... # registry miss
 class VCSPlugin(Protocol):
     plugin_id: str
 
-    # Webhook reception. Plugin owns: signature verification, idempotency check
-    # (e.g., have we seen this source_event_id?), parsing → list[VCSEvent].
-    # Plugin's route handler should call its own internal `emit_events(...)` helper
-    # which writes events into the `intake` queue (via a function intake exposes).
-    def register_webhook_route(self, router: APIRouter) -> None: ...
+    # Webhook reception is NOT on the Protocol — plugins register their own
+    # webhook routes directly via core/webserver.register_routes(RouteSpec(...))
+    # at import time (see plugins-github.md for the canonical example).
+    # The plugin owns: signature verification, idempotency check (have we seen
+    # this source_event_id?), parsing → list[VCSEvent], then handing those off
+    # to intake.handle_vcs_events(events, *, org_id=...).
+    #
+    # Reason this isn't on the Protocol: webhook routing is a webserver concern,
+    # not a VCS-vendor concern. Different VCS plugins may not even have webhooks
+    # (a future poller-only plugin wouldn't). Forcing the Protocol method would
+    # couple every plugin to the webhook model.
 
     # Read
     async def fetch_pr(self, external_id: str) -> VCSPullRequest: ...
@@ -235,6 +249,15 @@ class VCSPlugin(Protocol):
     async def post_review(
         self, external_id: str, review: Review
     ) -> ReviewPostResult: ...
+    async def post_comment_reply(
+        self, external_id: str, parent_comment_external_id: str, body: str
+    ) -> str:
+        """Post a reply in a comment thread. Returns the new comment's external_id.
+        For GitHub: POST /repos/{owner}/{repo}/pulls/comments/{parent_id}/replies
+        (for inline review-comment replies) or
+        POST /repos/{owner}/{repo}/issues/{number}/comments
+        with a quote-reference (for top-level comment replies).
+        Plugin chooses the right endpoint based on parent comment type."""
     async def mark_comments_outdated(
         self, external_id: str, comment_external_ids: list[str]
     ) -> None: ...
@@ -273,7 +296,7 @@ Most call sites use `get_plugin_for_repo(repo)`. Webhook routing uses `get_plugi
 
 - Plugin methods raise `VCSError` subclasses on failure.
 - **Consumers do not catch by default.** Exceptions propagate to:
-  - The `core/tasks` task runner wrapper (marks job failed, writes audit log, surfaces to UI).
+  - The `core/primitives.spawn()` wrapper around the background coroutine (logs the failure; the coro itself is responsible for marking its domain row failed before the exception propagates).
   - The HTTP middleware (returns 500 JSON).
   - A thin retry wrapper at the plugin call site that retries `VCSTransientError` and `VCSRateLimitError` with backoff.
 - See [../patterns.md](../patterns.md) Exceptions section.
@@ -309,3 +332,10 @@ Plugins emit clean events (PR ready, synchronized, closed, etc.). Filtering rule
 
 ### 2026-05-13 — Singleton plugin per process
 One instance per plugin, created at bootstrap. Plugin owns its own internal caches.
+
+### 2026-05-15 — `Finding` carries optional `snippet`, `rationale`, and `applied_lesson_ids`
+The coding-agent CLI is asked to produce these fields when relevant. `snippet` is a structured diff (list of `FindingSnippetLine`) so the UI can render line-numbered +/− blocks consistently; agents don't emit raw markdown code fences. `rationale` is a short justification rendered as a quoted block under the finding body. `applied_lesson_ids` lets the agent attribute a finding to specific lessons it consulted.
+**Why:** the UI is the surface where reviewers learn yaaof's reasoning — surfacing why-this-finding and which-lesson-triggered-it makes the agent's output legible and gives users a concrete pivot to "teach yaaof" via the memory loop. Structured snippets (vs. raw markdown) keep rendering consistent across agents.
+
+### 2026-05-15 — `post_comment_reply` added to the Protocol
+Reviewer's targeted-reply workflow needs to post into a specific comment thread (not as a new top-level review). Plugin method posts a reply to a parent comment and returns the new comment's external_id. GitHub plugin picks the right API based on whether the parent is an inline review-comment or a top-level issue-comment.

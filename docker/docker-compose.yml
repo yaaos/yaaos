@@ -1,0 +1,51 @@
+name: yaaof
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: yaaof
+      POSTGRES_PASSWORD: yaaof
+      POSTGRES_DB: yaaof
+    ports:
+      - "5432:5432"
+    volumes:
+      - yaaof-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yaaof -d yaaof"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://yaaof:yaaof@postgres:5432/yaaof
+      YAAOF_ENCRYPTION_KEY: ${YAAOF_ENCRYPTION_KEY:?set YAAOF_ENCRYPTION_KEY in .env}
+      YAAOF_ENV: ${YAAOF_ENV:-prod}
+      YAAOF_PORT: "8080"
+      OTEL_SERVICE_NAME: yaaof
+      # OTEL_EXPORTER_OTLP_ENDPOINT is intentionally unset — OTel disabled silently
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
+  # on the `app` service to `http://otel-collector:4317` to wire it up.
+  #
+  # otel-collector:
+  #   image: otel/opentelemetry-collector-contrib:latest
+  #   command: ["--config=/etc/otel/config.yaml"]
+  #   volumes:
+  #     - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+  #   ports:
+  #     - "4317:4317"   # OTLP gRPC
+  #     - "4318:4318"   # OTLP HTTP
+
+volumes:
+  yaaof-pgdata:
