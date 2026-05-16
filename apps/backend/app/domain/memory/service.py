@@ -19,7 +19,8 @@ from app.domain.memory.models import LessonRow
 class Lesson(BaseModel):
     id: UUID
     org_id: UUID
-    repo_id: UUID
+    plugin_id: str
+    repo_external_id: str
     title: str
     body: str
     source_pr_url: str | None
@@ -31,7 +32,8 @@ class Lesson(BaseModel):
         return cls(
             id=row.id,
             org_id=row.org_id,
-            repo_id=row.repo_id,
+            plugin_id=row.plugin_id,
+            repo_external_id=row.repo_external_id,
             title=row.title,
             body=row.body,
             source_pr_url=row.source_pr_url,
@@ -80,20 +82,24 @@ def _hash(s: str) -> str:
 
 
 async def create(
-    repo_id: UUID,
+    repo_external_id: str,
     title: str,
     body: str,
     source_pr_url: str | None,
     *,
     actor: Actor,
     org_id: UUID,
+    plugin_id: str = "github",
 ) -> Lesson:
     _validate(title, body)
+    if not repo_external_id.strip():
+        raise LessonValidationError("repo_external_id is required")
     async with db_session() as s:
         row = LessonRow(
             id=uuid4(),
             org_id=org_id,
-            repo_id=repo_id,
+            plugin_id=plugin_id,
+            repo_external_id=repo_external_id,
             title=title,
             body=body,
             source_pr_url=source_pr_url,
@@ -113,13 +119,17 @@ async def create(
     return await get(row_id, org_id=org_id)
 
 
-async def list_for_repo(repo_id: UUID, *, org_id: UUID) -> list[Lesson]:
+async def list_for_repo(repo_external_id: str, *, org_id: UUID, plugin_id: str = "github") -> list[Lesson]:
     async with db_session() as s:
         rows = (
             (
                 await s.execute(
                     select(LessonRow)
-                    .where(LessonRow.org_id == org_id, LessonRow.repo_id == repo_id)
+                    .where(
+                        LessonRow.org_id == org_id,
+                        LessonRow.plugin_id == plugin_id,
+                        LessonRow.repo_external_id == repo_external_id,
+                    )
                     .order_by(LessonRow.created_at.desc())
                 )
             )

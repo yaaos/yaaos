@@ -38,6 +38,7 @@ It owns **zero** business logic. No filtering, no decisions, no LLM calls. Pure 
 "register_vcs_plugin",
 "get_plugin",
 "get_plugin_for_repo",
+"get_installation_token",
 "PluginNotFoundError",
 
 # Exceptions
@@ -222,7 +223,7 @@ class PluginNotFoundError(LookupError): ... # registry miss
 
 ```python
 class VCSPlugin(Protocol):
-    plugin_id: str
+    meta: PluginMeta   # id="github", type="vcs", display_name="GitHub", …
 
     # Webhook reception is NOT on the Protocol — plugins register their own
     # webhook routes directly via core/webserver.register_routes(RouteSpec(...))
@@ -261,6 +262,19 @@ class VCSPlugin(Protocol):
     async def mark_comments_outdated(
         self, external_id: str, comment_external_ids: list[str]
     ) -> None: ...
+
+    # Auth
+    async def get_installation_token(self, org_id: UUID) -> str:
+        """Return a freshly-issued installation token for the org. Caller uses
+        it once (e.g., for a `git clone`) and forgets it. Tokens are short-lived
+        (GitHub: ~1h); callers MUST NOT cache. Each call may mint a new token."""
+```
+
+Top-level dispatcher (alongside `get_plugin` / `get_plugin_for_repo`):
+
+```python
+async def get_installation_token(plugin_id: str, org_id: UUID) -> str:
+    return await get_plugin(plugin_id).get_installation_token(org_id)
 ```
 
 ## Plugin registry
@@ -336,6 +350,10 @@ One instance per plugin, created at bootstrap. Plugin owns its own internal cach
 ### 2026-05-15 — `Finding` carries optional `snippet`, `rationale`, and `applied_lesson_ids`
 The coding-agent CLI is asked to produce these fields when relevant. `snippet` is a structured diff (list of `FindingSnippetLine`) so the UI can render line-numbered +/− blocks consistently; agents don't emit raw markdown code fences. `rationale` is a short justification rendered as a quoted block under the finding body. `applied_lesson_ids` lets the agent attribute a finding to specific lessons it consulted.
 **Why:** the UI is the surface where reviewers learn yaaof's reasoning — surfacing why-this-finding and which-lesson-triggered-it makes the agent's output legible and gives users a concrete pivot to "teach yaaof" via the memory loop. Structured snippets (vs. raw markdown) keep rendering consistent across agents.
+
+### 2026-05-16 — `get_installation_token(org_id)` added to the Protocol
+Workspace plugins (e.g., `in_process_workspace.provision`) need VCS auth to `git clone`. They call `vcs.get_installation_token(plugin_id, org_id)` once per operation, use the token via `GIT_ASKPASS` (so it never appears in argv or persists to disk), then forget it.
+**Why:** no long-lived credential anywhere — no internal HTTP endpoint, no cached secret, no daemon. M01 reviewer only needs auth at clone time. M02+ implementer workflows that run for hours use the same primitive: yaaof orchestrates each git operation with a fresh token; the workspace never stores credentials. Token theft surface is reduced to "exactly when an operation is running."
 
 ### 2026-05-15 — `post_comment_reply` added to the Protocol
 Reviewer's targeted-reply workflow needs to post into a specific comment thread (not as a new top-level review). Plugin method posts a reply to a parent comment and returns the new comment's external_id. GitHub plugin picks the right API based on whether the parent is an inline review-comment or a top-level issue-comment.

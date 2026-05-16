@@ -1,6 +1,10 @@
 """Foundational value objects + the spawn() helper.
 
 `Actor` is the who-did-what value object used across audit_log, intake, reviewer, etc.
+`PluginMeta` is the self-description every plugin (VCS, coding-agent, workspace
+provider) exposes via its Protocol — id + type + display_name + optional
+description/docs_url. Used by the Settings UI plugin-discovery endpoint and by
+audit / log lines that reference plugins by something more legible than a code id.
 `spawn()` is the fire-and-forget wrapper around asyncio.create_task — every background
 coroutine in M01 goes through it.
 """
@@ -11,7 +15,7 @@ import asyncio
 import logging
 from collections.abc import Coroutine
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
@@ -67,6 +71,26 @@ class Actor(BaseModel):
     @classmethod
     def agent(cls, agent_id: UUID) -> Actor:
         return cls(kind=ActorKind.AGENT, agent_id=agent_id)
+
+
+PluginType = Literal["vcs", "coding_agent", "workspace"]
+
+
+class PluginMeta(BaseModel):
+    """Self-description every plugin exposes via `plugin.meta`.
+
+    The `id` is the stable code identifier used everywhere a plugin is referenced
+    by string (registry keys, URL paths under `/api/<id>/...`, agent rows'
+    `coding_agent_plugin_id`, `Repo.plugin_id`, …). `display_name` is the human
+    label; the UI shows that, not the id. `type` lets the UI group/format plugins
+    by what they do.
+    """
+
+    id: str
+    type: PluginType
+    display_name: str
+    description: str | None = None
+    docs_url: str | None = None
 
 
 # Module-level set keeps spawned tasks alive (asyncio's standard pitfall — without

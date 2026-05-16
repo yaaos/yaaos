@@ -2,6 +2,7 @@
 
 from app.domain.vcs.registry import (
     _reset_for_tests,
+    get_installation_token,
     get_plugin,
     is_registered,
     register_vcs_plugin,
@@ -68,6 +69,7 @@ __all__ = [
     "VCSTransientError",
     "VCSValidationError",
     "_reset_for_tests",
+    "get_installation_token",
     "get_plugin",
     "is_registered",
     "register_vcs_plugin",

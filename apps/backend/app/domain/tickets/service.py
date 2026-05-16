@@ -26,7 +26,8 @@ class Ticket(BaseModel):
     title: str
     description: str | None
     status: TicketStatus
-    repo_id: UUID
+    plugin_id: str
+    repo_external_id: str
     pr_id: UUID | None
     created_at: datetime
     updated_at: datetime
@@ -41,7 +42,8 @@ class Ticket(BaseModel):
             title=row.title,
             description=row.description,
             status=row.status,  # type: ignore[arg-type]
-            repo_id=row.repo_id,
+            plugin_id=row.plugin_id,
+            repo_external_id=row.repo_external_id,
             pr_id=row.pr_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -49,7 +51,7 @@ class Ticket(BaseModel):
 
 
 class TicketFilter(BaseModel):
-    repo_ids: list[UUID] | None = None
+    repo_external_ids: list[str] | None = None
     author_logins: list[str] | None = None
     created_after: datetime | None = None
     created_before: datetime | None = None
@@ -59,7 +61,7 @@ class TicketFilter(BaseModel):
 class TicketStatusChanged(Event):
     kind: Literal["ticket_status_changed"] = "ticket_status_changed"
     source_module: Literal["tickets"] = "tickets"
-    repo_id: UUID
+    repo_external_id: str
     pr_id: UUID | None
     previous_status: str | None
     new_status: str
@@ -76,7 +78,7 @@ class InvalidTicketTransition(ValueError):
 
 class _TicketCreatedPayload(BaseModel):
     pr_id: UUID
-    repo_id: UUID
+    repo_external_id: str
 
 
 class _TicketStatusChangedPayload(BaseModel):
@@ -86,13 +88,14 @@ class _TicketStatusChangedPayload(BaseModel):
 
 
 async def create_for_pr(
-    repo_id: UUID,
+    repo_external_id: str,
     source_external_id: str,
     title: str,
     description: str | None,
     pr_id: UUID,
     *,
     org_id: UUID,
+    plugin_id: str = "github",
 ) -> Ticket:
     """Idempotent: if a ticket exists for pr_id, return it."""
     async with db_session() as s:
@@ -113,7 +116,8 @@ async def create_for_pr(
             title=title,
             description=description,
             status="in_review",
-            repo_id=repo_id,
+            plugin_id=plugin_id,
+            repo_external_id=repo_external_id,
             pr_id=pr_id,
         )
         s.add(row)
@@ -124,14 +128,14 @@ async def create_for_pr(
     await audit_for_ticket(
         row_id,
         "ticket.created",
-        _TicketCreatedPayload(pr_id=pr_id, repo_id=repo_id),
+        _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
         actor=Actor.system(),
         org_id=org_id,
     )
     await publish(
         TicketStatusChanged(
             ticket_id=row_id,
-            repo_id=repo_id,
+            repo_external_id=repo_external_id,
             pr_id=pr_id,
             previous_status=None,
             new_status="in_review",
@@ -171,8 +175,8 @@ async def list_tickets(
             .order_by(TicketRow.updated_at.desc())
             .limit(limit)
         )
-        if filter.repo_ids:
-            stmt = stmt.where(TicketRow.repo_id.in_(filter.repo_ids))
+        if filter.repo_external_ids:
+            stmt = stmt.where(TicketRow.repo_external_id.in_(filter.repo_external_ids))
         if filter.statuses:
             stmt = stmt.where(TicketRow.status.in_(filter.statuses))
         if filter.created_after is not None:
@@ -209,7 +213,7 @@ async def _transition(
         prev = row.status
         await s.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(status=new_status))
         await s.commit()
-        repo_id = row.repo_id
+        repo_external_id = row.repo_external_id
         pr_id = row.pr_id
 
     await audit_for_ticket(
@@ -222,7 +226,7 @@ async def _transition(
     await publish(
         TicketStatusChanged(
             ticket_id=ticket_id,
-            repo_id=repo_id,
+            repo_external_id=repo_external_id,
             pr_id=pr_id,
             previous_status=prev,
             new_status=new_status,

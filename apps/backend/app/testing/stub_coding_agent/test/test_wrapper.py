@@ -6,30 +6,57 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
 
-from app.core.coding_agent import (
-    AgentInvocationResult,
-    AgentInvocationStatus,
+from app.core.primitives import PluginMeta
+from app.domain.coding_agent import (
     HealthStatus,
+    InvocationStatus,
+    ReplyContext,
+    ReplyResult,
+    ReviewContext,
+    ReviewResult,
     ValidationResult,
 )
+from app.domain.coding_agent.service import _PLUGINS, _reset_plugins_for_tests
+from app.domain.vcs import Diff, VCSPullRequest
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,
 )
 
 
-class _DummyResponse(BaseModel):
-    answer: str
-    score: int = 0
+def _make_pr() -> VCSPullRequest:
+    now = datetime.now(UTC)
+    return VCSPullRequest(
+        plugin_id="github",
+        external_id="acme/web#1",
+        repo_external_id="acme/web",
+        number=1,
+        title="Test",
+        body=None,
+        author_login="alice",
+        author_type="user",
+        base_branch="main",
+        head_branch="feat",
+        base_sha="b",
+        head_sha="h",
+        is_draft=False,
+        is_fork=False,
+        state="open",
+        html_url="http://x",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 class _DummyPlugin:
-    plugin_id = "dummy"
+    meta = PluginMeta(id="dummy", type="coding_agent", display_name="Dummy")
 
-    async def invoke(self, *args, **kwargs) -> AgentInvocationResult[Any]:
-        raise AssertionError("real invoke must not be called when wrapped")
+    async def review(self, *args, **kwargs) -> ReviewResult:
+        raise AssertionError("real review must not be called when wrapped")
+
+    async def reply(self, *args, **kwargs) -> ReplyResult:
+        raise AssertionError("real reply must not be called when wrapped")
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         return ValidationResult(valid=True, errors=[])
@@ -40,47 +67,45 @@ class _DummyPlugin:
 
 class _FakeWorkspace:
     id = "fake"
-    working_dir = "/tmp/fake"
 
     async def info(self):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
-
-@pytest.mark.asyncio
-async def test_invoke_returns_success_for_unknown_response_model() -> None:
-    """Generic case: response_model has fields with defaults → wrapper synthesizes blank."""
-    stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-
-    class WithDefaults(BaseModel):
-        answer: str = "default"
-        score: int = 0
-
-    result = await stub.invoke(_FakeWorkspace(), "prompt", {}, WithDefaults)
-    assert result.status == AgentInvocationStatus.SUCCESS
-    assert isinstance(result.parsed, WithDefaults)
+    async def run_coding_agent_cli(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("workspace must not be reached in stub mode")
 
 
 @pytest.mark.asyncio
-async def test_invoke_synthesizes_finding_list() -> None:
-    """Known shape: FindingList gets one info finding so verdict computation works."""
-    from app.domain.reviewer.finding_types import FindingList  # noqa: PLC0415
-
+async def test_review_returns_canned_success() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    result = await stub.invoke(_FakeWorkspace(), "prompt", {}, FindingList)
-    assert result.status == AgentInvocationStatus.SUCCESS
-    assert result.parsed is not None
-    assert len(result.parsed.findings) == 1
-    assert result.parsed.findings[0].severity == "info"
+    ctx = ReviewContext(
+        persona="be careful",
+        agent_name="architecture",
+        pr=_make_pr(),
+        diff=Diff(raw="", files=[]),
+    )
+    result = await stub.review(_FakeWorkspace(), ctx)
+    assert result.status == InvocationStatus.SUCCESS
+    assert result.state == "APPROVED"
+    assert result.findings == []
+    assert "architecture" in (result.summary_body or "")
+    assert result.telemetry.tokens_in == 1000
 
 
 @pytest.mark.asyncio
-async def test_invoke_synthesizes_reply_response() -> None:
-    from app.domain.reviewer.finding_types import ReplyResponse  # noqa: PLC0415
-
+async def test_reply_returns_canned_success() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    result = await stub.invoke(_FakeWorkspace(), "prompt", {}, ReplyResponse)
-    assert result.status == AgentInvocationStatus.SUCCESS
-    assert result.parsed.body  # non-empty
+    ctx = ReplyContext(
+        persona="be terse",
+        agent_name="security",
+        pr=_make_pr(),
+        diff=Diff(raw="", files=[]),
+        reply_body="why?",
+        parent_comment_external_id="c1",
+    )
+    result = await stub.reply(_FakeWorkspace(), ctx)
+    assert result.status == InvocationStatus.SUCCESS
+    assert result.body and "security" in result.body
 
 
 @pytest.mark.asyncio
@@ -98,15 +123,13 @@ async def test_health_check_always_healthy_in_stub_mode() -> None:
     assert "stub" in h.message.lower()
 
 
-def test_plugin_id_mirrors_wrapped() -> None:
+def test_meta_mirrors_wrapped() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    assert stub.plugin_id == "dummy"
+    assert stub.meta.id == "dummy"
+    assert stub.meta.display_name == "Dummy"
 
 
 def test_wrap_all_is_idempotent() -> None:
-    from app.core.coding_agent import _PLUGINS  # noqa: PLC0415
-    from app.core.coding_agent.service import _reset_plugins_for_tests  # noqa: PLC0415
-
     _reset_plugins_for_tests()
     dummy = _DummyPlugin()
     _PLUGINS["dummy"] = dummy

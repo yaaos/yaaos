@@ -4,7 +4,6 @@ import {
   type HealthResponse,
   type Lesson,
   type OnboardingStatus,
-  type Repo,
   type ReviewJob,
   type ReviewerAgent,
   type Ticket,
@@ -30,34 +29,6 @@ export function useOnboarding() {
     queryKey: ["onboarding"],
     queryFn: () => apiFetch<OnboardingStatus>("/api/settings/onboarding"),
     refetchInterval: 5_000,
-  });
-}
-
-export function useRepos() {
-  return useQuery<Repo[]>({
-    queryKey: ["repos"],
-    queryFn: () => apiFetch<Repo[]>("/api/repos"),
-  });
-}
-
-export function useAddRepo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (external_id: string) =>
-      apiFetch<Repo>("/api/repos", {
-        method: "POST",
-        body: JSON.stringify({ external_id, plugin_id: "github" }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["repos"] }),
-  });
-}
-
-export function useRemoveRepo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (repo_id: string) =>
-      apiFetch<{ status: string }>(`/api/repos/${repo_id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["repos"] }),
   });
 }
 
@@ -110,10 +81,13 @@ export function useRereviewMutation() {
   });
 }
 
-export function useLessons(repo_id?: string) {
+export function useLessons(repo_external_id?: string) {
   return useQuery<Lesson[]>({
-    queryKey: ["memory", repo_id ?? "all"],
-    queryFn: () => apiFetch<Lesson[]>(`/api/memory${repo_id ? `?repo_id=${repo_id}` : ""}`),
+    queryKey: ["memory", repo_external_id ?? "all"],
+    queryFn: () =>
+      apiFetch<Lesson[]>(
+        `/api/memory${repo_external_id ? `?repo_external_id=${encodeURIComponent(repo_external_id)}` : ""}`,
+      ),
   });
 }
 
@@ -121,7 +95,7 @@ export function useCreateLesson() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (l: {
-      repo_id: string;
+      repo_external_id: string;
       title: string;
       body: string;
       source_pr_url?: string | null;
@@ -191,10 +165,108 @@ export function useSetAnthropicKey() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (api_key: string) =>
-      apiFetch<{ status: string }>("/api/settings/anthropic_key", {
+      apiFetch<{ status: string }>("/api/claude_code/api_key", {
         method: "POST",
         body: JSON.stringify({ api_key }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["onboarding"] });
+      qc.invalidateQueries({ queryKey: ["plugin-health", "claude_code"] });
+    },
+  });
+}
+
+export type GithubInstallation = {
+  credentials_configured: boolean;
+  installed: boolean;
+  app_id: string | null;
+  slug: string | null;
+  account_login: string | null;
+  install_external_id: string | null;
+  installed_at: string | null;
+  install_url: string | null;
+  installations_url: string | null;
+};
+
+export type SetGithubCredentialsInput = {
+  app_id: string;
+  slug: string;
+  private_key: string;
+  webhook_secret: string;
+};
+
+export function useSetGithubCredentials() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SetGithubCredentialsInput) =>
+      apiFetch<{ status: string }>("/api/github/credentials", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["github", "installation"] });
+      qc.invalidateQueries({ queryKey: ["onboarding"] });
+      qc.invalidateQueries({ queryKey: ["plugin-health", "github"] });
+    },
+  });
+}
+
+export type PluginHealth = {
+  healthy: boolean;
+  message: string;
+  checked_at: string;
+};
+
+export type PluginType = "vcs" | "coding_agent" | "workspace";
+
+export type PluginMeta = {
+  id: string;
+  type: PluginType;
+  display_name: string;
+  description: string | null;
+  docs_url: string | null;
+};
+
+export type GithubRepository = {
+  full_name: string;
+  html_url: string;
+  private: boolean;
+};
+
+export type GithubRepositoriesResponse = {
+  total_count: number;
+  repositories: GithubRepository[];
+  error?: string;
+};
+
+export function useGithubRepositories(enabled = true) {
+  return useQuery<GithubRepositoriesResponse>({
+    queryKey: ["github", "repositories"],
+    queryFn: () => apiFetch<GithubRepositoriesResponse>("/api/github/repositories"),
+    enabled,
+    refetchInterval: 30_000,
+  });
+}
+
+export function usePluginsList() {
+  return useQuery<PluginMeta[]>({
+    queryKey: ["plugins"],
+    queryFn: () => apiFetch<PluginMeta[]>("/api/settings/plugins"),
+  });
+}
+
+export function useGithubInstallation() {
+  return useQuery<GithubInstallation>({
+    queryKey: ["github", "installation"],
+    queryFn: () => apiFetch<GithubInstallation>("/api/github/installation"),
+    refetchInterval: 10_000,
+  });
+}
+
+export function usePluginHealth(pluginId: string) {
+  return useQuery<PluginHealth>({
+    queryKey: ["plugin-health", pluginId],
+    queryFn: () => apiFetch<PluginHealth>(`/api/${pluginId}/health`),
+    refetchInterval: 10_000,
   });
 }

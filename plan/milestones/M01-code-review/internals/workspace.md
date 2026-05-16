@@ -13,7 +13,7 @@
 - The **reaper background task** that enforces wall-clock caps, retries plugin destroys, and escalates `destroy_failed` rows.
 - The admin HTTP endpoints (`/api/workspaces/*`).
 
-The CLI agent reads/writes files itself inside the workspace's `working_dir`; yaaof doesn't proxy file ops. `core/workspace` only manages the *environment* — provisioning, lifecycle, cleanup.
+The Workspace Protocol exposes **operations** (run a coding-agent CLI inside the workspace), not **paths**. Callers ask the workspace to run their CLI; they never see the internal `working_dir` and never spawn subprocesses themselves. `core/workspace` manages the *environment* — provisioning, lifecycle, cleanup — and forwards CLI invocations to the plugin.
 
 ## Public interface (`__all__`)
 
@@ -74,9 +74,19 @@ class WorkspaceSpec(BaseModel):
     repo: RepoRef                  # from domain/vcs: { plugin_id, external_id }
     sha: str
     branch_name: str | None = None
+    org_id: UUID | None = None     # stamped by create_workspace before provision()
     resource_caps: ResourceCaps = Field(default_factory=ResourceCaps)
     network_policy: NetworkPolicy = NetworkPolicy.GITHUB_ONLY
+
+class CodingAgentCliResult(BaseModel):
+    exit_code: int
+    stdout: str
+    stderr: str
+    timed_out: bool
+    duration_ms: int
 ```
+
+`org_id` is required so workspace plugins can request VCS auth (installation tokens) for the right org. Callers pass it to `create_workspace(org_id, spec)`; the lifecycle service stamps it onto `spec` before calling `provider.provision(spec)`.
 
 `ResourceCaps` and `NetworkPolicy` are advisory in M01 — `in_process_workspace` doesn't enforce them (no isolation). M02 `docker_workspace` will. The values exist now so callers can specify them and the interface is stable.
 
@@ -85,7 +95,6 @@ class WorkspaceInfo(BaseModel):
     id: WorkspaceID
     provider_id: str               # "in_process" / "docker" / etc.
     sha: str
-    working_dir: str               # absolute path on the host
     status: WorkspaceStatus
     created_at: datetime
     activated_at: datetime | None
@@ -94,36 +103,63 @@ class WorkspaceInfo(BaseModel):
     age_seconds: float             # computed: now() - created_at
 ```
 
+`WorkspaceInfo` does NOT expose `working_dir`. Internal paths (or whatever passes for "where work happens" in future Docker/K8s plugins) are plugin-private. Consumers ask the workspace to run things — they don't peek.
+
 ## `Workspace` Protocol (returned to callers)
 
 ```python
 class Workspace(Protocol):
     id: WorkspaceID
-    working_dir: str               # filesystem path; absolute
 
     async def info(self) -> WorkspaceInfo:
         """Fresh snapshot of this workspace's state. Reads from the workspaces table."""
+
+    async def run_coding_agent_cli(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+        timeout_seconds: int | None = None,
+    ) -> CodingAgentCliResult:
+        """Run a coding-agent CLI inside the workspace. The workspace decides
+        where/how (cwd, container, sandbox). Subprocess timeout + process-group
+        kill are the workspace's responsibility, not the caller's.
+
+        Raises WorkspaceExecError if the binary cannot be spawned at all.
+        Non-zero exits and timeouts are returned in the result (not raised)."""
 ```
 
-That's it. No file/search methods. Callers (the `claude_code` plugin in M01) pass `working_dir` to the CLI subprocess as its `cwd`; the CLI does the rest.
+That's it. No file/search methods, no `working_dir`. Callers (the `claude_code` plugin in M01) hand `argv` + `env` + `stdin` to the workspace; the workspace runs the CLI.
+
+**Targeted method, not generic `exec`.** Each new capability (run tests, install deps, push commits) arrives as a deliberate new method with its own policy. A generic `exec(argv)` would silently broaden as features land; explicit methods communicate intent.
 
 ## `WorkspaceProvider` Protocol (plugin contract)
 
 ```python
 class WorkspaceProvider(Protocol):
-    plugin_id: str
+    meta: PluginMeta   # id="in_process", type="workspace", display_name="In-Process Workspace", …
 
-    async def provision(self, spec: WorkspaceSpec) -> tuple[WorkspaceHandle, dict]:
-        """Provision the environment. Returns:
-          - A WorkspaceHandle (mainly a `working_dir: str`).
-          - A plugin_state dict that core/workspace persists. Must be sufficient
-            for destroy() to clean up. Plugin can put anything serializable here
-            (e.g., {"working_dir": "/tmp/yaaof-ws-abc"} for in_process;
-             {"container_id": "...", "volume_id": "..."} for docker).
-
+    async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
+        """Provision the environment. Returns plugin_state: an opaque dict that
+        core/workspace persists. Must be sufficient for destroy() to clean up.
+        Plugin can put anything serializable here:
+          - {"working_dir": "/tmp/yaaof-ws-abc"} for in_process
+          - {"container_id": "...", "volume_id": "..."} for docker
         Should raise WorkspaceProvisionError on failure (with cause)."""
 
-    async def destroy(self, plugin_state: dict) -> None:
+    async def run_coding_agent_cli(
+        self,
+        plugin_state: dict[str, Any],
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+        timeout_seconds: int | None = None,
+    ) -> CodingAgentCliResult:
+        """Run a coding-agent CLI given the plugin_state from provision()."""
+
+    async def destroy(self, plugin_state: dict[str, Any]) -> None:
         """Destroy the workspace given the state from a prior provision().
         MUST be idempotent: if already destroyed, succeed silently.
         Should tolerate partial state (the plugin might have crashed mid-provision
@@ -134,7 +170,7 @@ class WorkspaceProvider(Protocol):
         """Cheap check that the provider is reachable + healthy."""
 ```
 
-`WorkspaceHandle` is what `provision()` returns; `core/workspace` wraps it in a `Workspace` Protocol object for callers. Plugins don't expose the handle directly.
+`plugin_state` is opaque to the lifecycle layer; consumers never see it. `core/workspace` wraps each persisted state in a `Workspace` Protocol object that forwards `run_coding_agent_cli` to the provider.
 
 ## DB lifecycle
 
@@ -214,9 +250,9 @@ Entity is the workspace itself (`audit_for_workspace(workspace_id, ...)` — add
 ## What `core/workspace` does NOT do
 
 - Does not provision anything itself. Always delegates to a plugin.
-- Does not run code inside the workspace. Callers (the `claude_code` plugin) spawn the CLI with `cwd=working_dir`.
+- Does not spawn subprocesses itself. Forwards `run_coding_agent_cli` to the plugin; the plugin owns subprocess + timeout + process-group semantics.
 - Does not enforce `ResourceCaps` or `NetworkPolicy` in M01 — those rely on plugin support (which `in_process_workspace` lacks).
-- Does not provide file-read / file-search / process-exec APIs. CLI agent has its own tools.
+- Does not provide file-read / file-search APIs. CLI agent has its own tools and runs them via `run_coding_agent_cli`.
 - Does not retry `provision()` failures — those are usually permanent (missing creds, repo unreachable, etc.). Reaper only retries `destroy()`.
 
 ## What it explicitly does in POC mode
@@ -268,9 +304,12 @@ Each M01 review_job creates its own workspace, destroyed at invocation end. Thre
 Three agents reviewing one PR = three workspaces (one `git clone` per agent). Wasteful but coordination-free.
 **Why:** sharing a workspace across agents needs reference counting / barriers. POC simplicity over efficiency. Revisit when measurable.
 
-### 2026-05-14 — Workspace Protocol exposes only `id`, `working_dir`, `info()`
-CLI agents read/search files via their own tools — yaaof doesn't proxy. The Workspace is a path-handle, not a filesystem abstraction.
-**Why:** building a file-ops surface for yaaof to call would duplicate what every CLI agent already does.
+### 2026-05-16 — Workspace Protocol exposes `run_coding_agent_cli`, not `working_dir` or generic `exec`
+The Protocol is operations, not paths. Consumers ask the workspace to run a coding-agent CLI; the workspace decides where/how (`cwd`, container, sandbox). `working_dir` is plugin-private; `WorkspaceInfo` doesn't carry it either.
+**Why:** future Docker/K8s workspaces have no "directory on yaaof's host filesystem." Exposing `working_dir` would lock the Protocol to a single implementation. Targeted method (vs generic `exec`) communicates intent and forces M02+ capabilities (run tests, install deps, push commits) to arrive as deliberate new methods, each with its own policy.
+
+### 2026-05-16 — `WorkspaceSpec.org_id` field
+Workspace plugins need to request VCS auth (installation tokens) for the right org at provision time. `create_workspace(org_id, spec)` stamps `spec.org_id` before calling `provider.provision(spec)`.
 
 ### 2026-05-14 — Reaper retries destroy 3 times with exponential backoff; then `destroy_failed`
 3 attempts (delays 0s, 2s, 4s); past that → `destroy_failed` + loud log + audit. Operator investigates manually.

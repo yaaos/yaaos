@@ -121,18 +121,6 @@ async def audit_for_pr(
     return await audit("pull_request", pr_id, kind, payload, actor, org_id=org_id, session=session)
 
 
-async def audit_for_repo(
-    repo_id: UUID,
-    kind: str,
-    payload: BaseModel,
-    *,
-    actor: Actor,
-    org_id: UUID,
-    session: AsyncSession | None = None,
-) -> AuditEntry:
-    return await audit("repo", repo_id, kind, payload, actor, org_id=org_id, session=session)
-
-
 async def audit_for_reviewer_agent(
     agent_id: UUID,
     kind: str,

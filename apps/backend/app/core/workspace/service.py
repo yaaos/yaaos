@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -14,6 +15,7 @@ from app.core.database import session as get_session
 from app.core.primitives import spawn
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import (
+    CodingAgentCliResult,
     HealthStatus,
     Workspace,
     WorkspaceError,
@@ -32,9 +34,9 @@ _PROVIDERS: dict[str, WorkspaceProvider] = {}
 
 
 def register_workspace_provider(provider: WorkspaceProvider) -> None:
-    if provider.plugin_id in _PROVIDERS:
-        raise ValueError(f"workspace provider {provider.plugin_id!r} already registered")
-    _PROVIDERS[provider.plugin_id] = provider
+    if provider.meta.id in _PROVIDERS:
+        raise ValueError(f"workspace provider {provider.meta.id!r} already registered")
+    _PROVIDERS[provider.meta.id] = provider
 
 
 def get_provider(provider_id: str) -> WorkspaceProvider:
@@ -49,14 +51,35 @@ def _reset_providers_for_tests() -> None:
 
 
 class _WorkspaceImpl:
-    """Concrete Workspace that satisfies the Protocol."""
+    """Concrete Workspace that satisfies the Protocol.
 
-    def __init__(self, id: str, working_dir: str) -> None:
+    Holds an opaque `plugin_state` privately (not exposed to consumers) and
+    delegates `run_coding_agent_cli` to the provider that produced the state.
+    """
+
+    def __init__(self, id: str, provider: WorkspaceProvider, plugin_state: dict[str, Any]) -> None:
         self.id = id
-        self.working_dir = working_dir
+        self._provider = provider
+        self._plugin_state = plugin_state
 
     async def info(self) -> WorkspaceInfo:
         return await _read_info(UUID(self.id))
+
+    async def run_coding_agent_cli(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+        timeout_seconds: int | None = None,
+    ) -> CodingAgentCliResult:
+        return await self._provider.run_coding_agent_cli(
+            self._plugin_state,
+            argv,
+            env=env,
+            stdin=stdin,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def _utcnow() -> datetime:
@@ -74,12 +97,10 @@ async def _read_info(workspace_id: UUID) -> WorkspaceInfo:
 
 
 def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
-    working_dir = (row.plugin_state or {}).get("working_dir", "")
     return WorkspaceInfo(
         id=str(row.id),
         provider_id=row.provider_id,
         sha=row.spec.get("sha", ""),
-        working_dir=working_dir,
         status=WorkspaceStatus(row.status),
         created_at=row.created_at,
         activated_at=row.activated_at,
@@ -101,6 +122,11 @@ async def create_workspace(
     provider = get_provider(provider_id)
     expires_at = _utcnow() + timedelta(seconds=spec.resource_caps.wallclock_seconds)
 
+    # Stamp org_id onto the spec so the provider can request auth tokens for
+    # the right org via vcs. The spec passed in may or may not already have it;
+    # we always overwrite to keep the parameter authoritative.
+    spec = spec.model_copy(update={"org_id": org_id})
+
     ws_id = uuid4()
     async with get_session() as s:
         row = WorkspaceRow(
@@ -115,7 +141,7 @@ async def create_workspace(
         await s.commit()
 
     try:
-        handle, plugin_state = await provider.provision(spec)
+        plugin_state = await provider.provision(spec)
     except Exception as e:
         async with get_session() as s:
             await s.execute(
@@ -142,7 +168,7 @@ async def create_workspace(
         await s.commit()
 
     log.info("workspace.created", workspace_id=str(ws_id), provider_id=provider_id)
-    return _WorkspaceImpl(id=str(ws_id), working_dir=handle.working_dir)
+    return _WorkspaceImpl(id=str(ws_id), provider=provider, plugin_state=plugin_state)
 
 
 async def close_workspace(workspace_id: UUID) -> None:

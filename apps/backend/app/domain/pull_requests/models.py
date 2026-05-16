@@ -19,7 +19,7 @@ class PullRequestRow(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     plugin_id: Mapped[str] = mapped_column(String, nullable=False)
     external_id: Mapped[str] = mapped_column(String, nullable=False)
-    repo_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("repos.id"), nullable=False)
+    repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     ticket_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False
     )

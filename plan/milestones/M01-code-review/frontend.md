@@ -46,18 +46,17 @@ Top-level SPA wiring. No feature-specific UI.
 | `notifications` | Toast system (`sonner` wrapped in a thin `notify()` API), confirmation dialogs. |
 | `state` | Zustand store conventions, persistence (if any), DevTools wiring. Domain modules define their own slices; `state` just holds the conventions. |
 
-### Domain (6)
+### Domain (5)
 
 One module per UI surface.
 
 | Module | Responsibility |
 |---|---|
-| `dashboard` | Landing page: empty state, onboarding banners ("install GitHub App", "set model API key", "add a repo"), system-health summary. |
+| `dashboard` | Two-state landing page. **Onboarding state** (any of the three readiness flags false): three-step stepper card driving GitHub App install / Anthropic key set / first repo allowlisted, with completion check marks + a `{X} of 3 complete` badge. **Populated state**: 4 metric tiles (reviews posted, cost, open tickets, failure rate) + live agents in-flight panel (per-ticket review-job statuses, joined client-side from `useTickets()` + `useReviewJobsForTicket()` + `useReviewerAgents()`). Sparklines, 24h deltas, and the right-hand activity feed are deferred (see `plan/design/M01-DELTAS.md` § Dashboard deferrals). |
 | `tickets` | Ticket list (filters by repo / author / date range, infinite scroll, SSE-driven live updates) and ticket detail (linked PR summary + single "Re-review" button + tabbed: Agents / Audit log). Each ticket in M01 links to one GitHub PR; the UI is ticket-centric so M02+ ticket sources (Linear, Jira, …) slot in without UI restructure. |
-| `repos` | Repo allowlist management UI: list, add (by VCS identifier), remove. |
 | `prompts` | Agent prompt editor: three text areas (architecture / security / style), save with non-empty validation, reset-to-default. |
 | `memory` | Per-repo memory management: list lessons (title / body / source / created-at), create, edit, delete. |
-| `settings` | Model API key entry (encrypted server-side; UI just collects), GitHub App install status display. |
+| `settings` | Three independent cards (no gating between them): **GitHub App** (install status + outbound links to install/manage on GitHub), **Model API key** (Anthropic key entry form, always editable), **Plugin health** (one row per plugin — `github`, `claude_code`, `in_process` — each fetched independently via `usePluginHealth(id)`). Each card stands on its own; setting one doesn't unlock another. |
 
 ### Shared (flat bucket)
 

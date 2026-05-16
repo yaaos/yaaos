@@ -110,15 +110,15 @@ register_routes(RouteSpec(
 
 - Never touch the filesystem directly (`open()`, `pathlib`, etc.) for repo/code content.
 - Never spawn processes directly (`subprocess`, `asyncio.subprocess`) for repo/code work.
-- Always go through `core/workspace`: `async with with_workspace(provider_id, spec) as ws:` and use `ws.working_dir` as the `cwd` you hand to the coding-agent CLI. In M01 the `Workspace` Protocol exposes only `working_dir` (a path) and lifecycle hooks — no `read_file` / `list_files` / `search_code` methods, since the coding-agent CLI brings its own tools.
-- The yaaof Python process itself only does pure-Python work — HTTP, DB queries, in-memory orchestration. Anything needing git, tests, builds, or untrusted code execution lives inside a workspace (spawned by the coding-agent plugin, never directly by domain code).
+- Always go through `core/workspace`: `async with with_workspace(provider_id, spec) as ws:`, then call `await ws.run_coding_agent_cli(argv=..., env=..., stdin=..., timeout_seconds=...)`. The workspace decides where/how the CLI runs (host tempdir today, container later) and owns subprocess + timeout + process-group semantics. Consumers never see internal paths like `working_dir`; the Protocol exposes operations, not paths.
+- The yaaof Python process itself only does pure-Python work — HTTP, DB queries, in-memory orchestration. Anything needing git, tests, builds, or untrusted code execution lives inside a workspace (spawned by the coding-agent plugin via `run_coding_agent_cli`, never directly by domain code).
 - Exceptions: `core/database` (Postgres connections), `core/observability` (writing log files), and the few other infrastructure modules that genuinely need direct OS access. None of those touch repo content.
 
 ### Pydantic at every boundary
 
 - HTTP request/response bodies are Pydantic models (FastAPI handles this).
 - Webhook payloads are parsed into Pydantic models before any business logic runs.
-- Coding-agent CLI stdout is parsed into the caller-supplied `response_model` (a Pydantic class) by the plugin before returning to the caller.
+- Coding-agent CLI stdout is parsed into a plugin-internal Pydantic class by the plugin, then converted to vendor-neutral domain types (`vcs.Finding` for reviews) before returning to the caller. Consumers never see plugin-internal shapes.
 - Audit-log payloads are Pydantic models (see [Audit log discipline](#audit-log-discipline)); plain dicts are rejected.
 - Background coroutines spawned via `core/primitives.spawn()` take a Pydantic input model as their argument when one is passed (see the `ReviewJobInput` example in [internals/reviewer.md](internals/reviewer.md)).
 - Internal cross-module calls do not need Pydantic — use plain types/dataclasses where it makes sense.
@@ -353,7 +353,7 @@ yaaof tests run entirely against a **self-contained Docker test stack** — no r
 
 1. **Postgres 16** — pre-seeded with realistic fixture data (see below).
 2. **`apps/fake-github`** — a fake GitHub HTTP service (peer app) that fakes every `api.github.com` endpoint yaaof calls. JWT auth, HMAC-signed webhook dispatch to yaaof, in-memory state for what yaaof has posted. Same env var (`GITHUB_API_BASE_URL`) points yaaof at it; the github plugin code is unchanged.
-3. **Coding-agent CLI cache** — file-colocated `.coding_agent_cache.json` per test module. Captures `(prompt, agent_config, response_model_schema) → (stdout, stderr, exit_code)` on first run with `--allow-coding-agent-calls`; replays on every subsequent run. Real Claude Code CLI is **never** invoked in CI.
+3. **Coding-agent CLI cache** — file-colocated `.coding_agent_cache.json` per test module. Captures `(method, ReviewContext|ReplyContext) → (ReviewResult|ReplyResult)` on first run with `--allow-coding-agent-calls`; replays on every subsequent run. Real Claude Code CLI is **never** invoked in CI.
 
 This means tests run anywhere, offline, deterministically, with no rate-limit exposure and no credential management.
 
@@ -401,18 +401,18 @@ When in doubt: add the e2e test. They catch the integration cracks unit and inte
 
 ### DI over `@patch`
 
-- **No `@patch` decorators**, no `mock.patch()` context managers, no `mocker.patch()`. Enforced by an AST scanner (`bin/check_patch_usage` or similar) wired into CI that flags any use of `unittest.mock.patch`, `mock.patch`, or `mocker.patch`.
+- **No `@patch` decorators**, no `mock.patch()` context managers, no `mocker.patch()`. Enforced by ruff's `flake8-tidy-imports.banned-api` rule (TID251), configured in `apps/backend/pyproject.toml` to ban `unittest.mock.patch`, `unittest.mock.patch.object`, `unittest.mock.patch.multiple`, and `mock.patch`. `mocker.patch` is impossible by construction: `pytest-mock` is not a dependency, so the `mocker` fixture doesn't exist.
 - Substitute dependencies by **dependency injection**: pass collaborators in as arguments (constructor for the rare classes, function parameters for the common case).
-- The few times an override is genuinely needed (e.g., a singleton that's hard to inject around): use a file-level `# override-patch-prevention:file` comment with an explanation.
+- The few times an override is genuinely needed (e.g., a singleton that's hard to inject around): use a per-line `# noqa: TID251` with an explanation, or `# ruff: noqa: TID251` at the top of the file to opt the whole file out.
 
 ### Coding-agent CLI cache
 
 yaaof doesn't call LLM APIs directly in M01; it shells out to the Claude Code CLI. Tests don't invoke the real CLI (slow, costly, non-deterministic, requires Anthropic credentials), so the `claude_code` plugin runs against a **CLI invocation cache** in every test layer:
 
-- A test-mode wrapper around the plugin's subprocess invocation captures `(prompt, agent_config, response_model_schema) → (stdout, stderr, exit_code)` on first run.
+- A test-mode wrapper around the plugin's `review` / `reply` methods captures `(method, context) → result` on first run.
 - Cache is **file-colocated** alongside the test module (`<test_dir>/.coding_agent_cache.json`).
 - Workflow: write the test → run with `--allow-coding-agent-calls` to populate the cache → commit the cache file → subsequent runs are deterministic and offline.
-- Cache invalidation triggers: prompt change, agent_config change, response_model change.
+- Cache invalidation triggers: any change to the `ReviewContext` / `ReplyContext` (PR, diff, lessons, persona, agent_config). The plugin's prompt assembly may change without invalidating the cache, since the cache key is over the input context, not the assembled prompt — that's deliberate: prompt-engineering changes inside the plugin don't force a recapture of every test.
 - **Both integration AND e2e tests use the cache.** No layer invokes the real CLI in CI.
 - CLI contract drift is caught by the quarterly manual regeneration ritual described above.
 
@@ -525,7 +525,7 @@ Patterns:
 ### Input validation at boundaries
 
 - **Every HTTP request body is a Pydantic model.** FastAPI validates on entry; handlers receive typed inputs. No `request.json()` raw-dict access.
-- **Every external API response is parsed into a Pydantic model** before crossing back into yaaof code. VCS plugin parses GitHub JSON into `PullRequest` / `Finding` / etc. Coding-agent plugin parses CLI stdout into the caller-supplied `response_model`. If parsing fails, it's a known status value (`PARSE_FAILURE`), not an exception.
+- **Every external API response is parsed into a Pydantic model** before crossing back into yaaof code. VCS plugin parses GitHub JSON into `PullRequest` / `Finding` / etc. Coding-agent plugin parses CLI stdout into a plugin-internal model, then converts to vendor-neutral domain types before returning. If parsing fails, it's a known status value (`PARSE_FAILURE`), not an exception.
 - **Past the boundary, every value is typed.** No raw dicts crossing module boundaries. If you need a "kitchen sink" shape internally, that's a Pydantic model with explicit fields, not `dict[str, Any]`.
 - **Frontend validation is UX-only** (see [Dumb frontend](#dumb-frontend--no-business-logic)). The backend re-validates with its own Pydantic schema; the API returns 4xx with a field-keyed error map on failure.
 
@@ -560,7 +560,7 @@ Portable primitives live in `apps/backend/app/core/`. No `packages/yaaof_core`.
 **Why:** one Python service. Extract only if a second one appears.
 
 ### 2026-05-13 — Test discipline + no DB mocking
-DI-over-patch ban (via the `check_patch_usage` AST scanner), coding-agent CLI cache (file-colocated, captures CLI subprocess invocations), pytest plugin entry-point. All DB tests run inside a transaction rolled back at teardown.
+DI-over-patch ban (via ruff TID251), coding-agent CLI cache (file-colocated, captures CLI subprocess invocations), pytest plugin entry-point. All DB tests run inside a transaction rolled back at teardown.
 
 ### 2026-05-14 — Three test categories: unit / integration / e2e
 Integration tests are the primary form for backend logic — real Postgres (transactional, empty start), `apps/fake-github` for outbound GitHub, CLI cache for coding-agent. E2E lives in `apps/e2e/` (Playwright) and runs against `docker-compose.test.yml` — real backend, pre-seeded Postgres, `apps/fake-github`, CLI cache.
@@ -590,3 +590,7 @@ External calls, plugin entry points, and long phases inside a background coro ge
 ### 2026-05-14 — Standard per-module file layout: `__init__.py`, `module.py`, `web.py`
 `module.py` provides `get_module_name()`; `web.py` is the standard location for FastAPI routes when a module exposes them; `__init__.py` is interface declaration + registration only.
 **Why:** consistency across modules; renames touch one file; tooling and humans can find routes / module identity in known locations.
+
+### 2026-05-16 — DI-over-@patch enforced by ruff TID251, not a custom AST scanner
+Previously a custom Python AST scanner (`bin/check_patch_usage`) walked test files and flagged `mock.patch` / `mocker.patch` / `unittest.mock.patch`. Replaced by ruff's `flake8-tidy-imports.banned-api` rule, configured in `apps/backend/pyproject.toml`. Opt-out becomes standard `# noqa: TID251` (or `# ruff: noqa: TID251` for whole-file).
+**Why:** ruff already does this; one fewer custom script to maintain; the opt-out mechanism is the standard one developers already know. `mocker.patch` is impossible by construction since `pytest-mock` isn't a dependency.

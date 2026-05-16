@@ -42,7 +42,6 @@ async def main() -> None:
 
     from app.core.config import get_settings  # noqa: PLC0415
     from app.core.database import migrate, session as db_session  # noqa: PLC0415
-    from app.domain import repos as repos_mod  # noqa: PLC0415
     from app.domain.memory.models import LessonRow  # noqa: PLC0415
     from app.domain.reviewer.agent_crud import ensure_builtin_agents  # noqa: PLC0415
     from app.plugins.claude_code.models import ClaudeCodeSettingsRow  # noqa: PLC0415
@@ -114,37 +113,38 @@ async def main() -> None:
             )
         await s.commit()
 
-    # Repos (idempotent via the service)
-    from app.core.primitives import Actor  # noqa: PLC0415
-
-    web = await repos_mod.add_repo("github", "acme/web", actor=Actor.system(), org_id=org_id)
-    api = await repos_mod.add_repo("github", "acme/api", actor=Actor.system(), org_id=org_id)
-
     # Built-in agents
     await ensure_builtin_agents(org_id=org_id)
 
-    # Starter lessons
+    # Starter lessons — keyed by (plugin_id, repo_external_id). No yaaof-side
+    # repos table; the GitHub App's install picks the access scope and yaaof
+    # learns about repos as PRs arrive.
     async with db_session() as s:
         existing = (
             await s.execute(
                 select(LessonRow).where(
-                    LessonRow.repo_id.in_([web.id, api.id])
+                    LessonRow.repo_external_id.in_(["acme/web", "acme/api"])
                 )
             )
         ).scalars().all()
         existing_titles = {l.title for l in existing}
         starter_lessons = [
-            (web.id, "Prefer named exports", "Default exports make grep harder."),
-            (web.id, "Use async/await over .then", "It reads more like the synchronous logic it replaces."),
-            (api.id, "Validate at the boundary", "FastAPI handlers should accept Pydantic models, never raw dicts."),
-            (api.id, "Log identifiers, not content", "Audit + log size stay sane when bodies aren't replicated."),
+            ("acme/web", "Prefer named exports", "Default exports make grep harder."),
+            ("acme/web", "Use async/await over .then", "It reads more like the synchronous logic it replaces."),
+            ("acme/api", "Validate at the boundary", "FastAPI handlers should accept Pydantic models, never raw dicts."),
+            ("acme/api", "Log identifiers, not content", "Audit + log size stay sane when bodies aren't replicated."),
         ]
-        for repo_id, title, body in starter_lessons:
+        for repo_external_id, title, body in starter_lessons:
             if title in existing_titles:
                 continue
             s.add(
                 LessonRow(
-                    id=uuid4(), org_id=org_id, repo_id=repo_id, title=title, body=body
+                    id=uuid4(),
+                    org_id=org_id,
+                    plugin_id="github",
+                    repo_external_id=repo_external_id,
+                    title=title,
+                    body=body,
                 )
             )
         await s.commit()

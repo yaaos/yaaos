@@ -15,6 +15,7 @@ from app.core.workspace.service import (
     with_workspace,
 )
 from app.core.workspace.types import (
+    CodingAgentCliResult,
     HealthStatus,
     NetworkPolicy,
     RepoRefForSpec,
@@ -22,8 +23,8 @@ from app.core.workspace.types import (
     Workspace,
     WorkspaceDestroyError,
     WorkspaceError,
+    WorkspaceExecError,
     WorkspaceExpiredError,
-    WorkspaceHandle,
     WorkspaceInfo,
     WorkspaceNotFoundError,
     WorkspaceProvider,
@@ -33,6 +34,7 @@ from app.core.workspace.types import (
 )
 
 __all__ = [
+    "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",
     "RepoRefForSpec",
@@ -40,8 +42,8 @@ __all__ = [
     "Workspace",
     "WorkspaceDestroyError",
     "WorkspaceError",
+    "WorkspaceExecError",
     "WorkspaceExpiredError",
-    "WorkspaceHandle",
     "WorkspaceInfo",
     "WorkspaceNotFoundError",
     "WorkspaceProvider",

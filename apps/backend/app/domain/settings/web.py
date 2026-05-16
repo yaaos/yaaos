@@ -1,41 +1,24 @@
-"""HTTP routes for settings: onboarding status + plugin credential setters via registry."""
+"""HTTP routes for cross-cutting system-readiness aggregation.
+
+Only the onboarding aggregator lives here — it asks each registered plugin
+"is your prereq satisfied?" via the `register_onboarding_contributor` registry
+in `service.py`. Plugin-specific credential setters and per-plugin health
+checks live under each plugin's own `/api/<plugin>/...` namespace.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter
 
+from app.core.primitives import PluginMeta
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.settings.service import OnboardingStatus, get_onboarding_status, health_summary
+from app.domain.settings.service import OnboardingStatus, get_onboarding_status, list_plugins
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 router = APIRouter()
-
-
-CredentialSetter = Callable[[UUID, str], Awaitable[None]]
-_CREDENTIAL_SETTERS: dict[str, CredentialSetter] = {}
-
-
-def register_credential_setter(name: str, setter: CredentialSetter) -> None:
-    """Plugins register their credential setters here (reverse-import avoided)."""
-    _CREDENTIAL_SETTERS[name] = setter
-
-
-def _reset_credential_setters_for_tests() -> None:
-    _CREDENTIAL_SETTERS.clear()
-
-
-class HealthSummaryResponse(BaseModel):
-    onboarding: OnboardingStatus
-    plugins: dict[str, dict[str, str | bool]]
-
-
-class SetAnthropicKeyRequest(BaseModel):
-    api_key: str
 
 
 @router.get("/onboarding")
@@ -43,22 +26,12 @@ async def onboarding() -> OnboardingStatus:
     return await get_onboarding_status(org_id=M01_ORG_ID)
 
 
-@router.get("/health")
-async def health() -> HealthSummaryResponse:
-    onboard = await get_onboarding_status(org_id=M01_ORG_ID)
-    plugins = await health_summary()
-    return HealthSummaryResponse(onboarding=onboard, plugins=plugins)
-
-
-@router.post("/anthropic_key")
-async def set_anthropic_key(req: SetAnthropicKeyRequest) -> dict[str, str]:
-    if not req.api_key.strip():
-        raise HTTPException(status_code=400, detail={"api_key": "must not be empty"})
-    setter = _CREDENTIAL_SETTERS.get("anthropic_api_key")
-    if setter is None:
-        raise HTTPException(status_code=500, detail="claude_code plugin not registered")
-    await setter(M01_ORG_ID, req.api_key)
-    return {"status": "saved"}
+@router.get("/plugins")
+def plugins() -> list[PluginMeta]:
+    """Discovery: every registered plugin's metadata. UI pairs each entry with
+    its own `/api/<id>/health` for live status. Synchronous — registries are
+    populated at bootstrap and reads are pure in-memory."""
+    return list_plugins()
 
 
 register_routes(RouteSpec(module_name="settings", router=router))

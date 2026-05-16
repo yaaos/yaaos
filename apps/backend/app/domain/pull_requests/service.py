@@ -23,7 +23,7 @@ class PullRequest(BaseModel):
     org_id: UUID
     plugin_id: str
     external_id: str
-    repo_id: UUID
+    repo_external_id: str
     ticket_id: UUID
     number: int
     title: str
@@ -49,7 +49,7 @@ class PullRequest(BaseModel):
             org_id=row.org_id,
             plugin_id=row.plugin_id,
             external_id=row.external_id,
-            repo_id=row.repo_id,
+            repo_external_id=row.repo_external_id,
             ticket_id=row.ticket_id,
             number=row.number,
             title=row.title,
@@ -85,7 +85,6 @@ class _PRStateChangedPayload(BaseModel):
 
 async def upsert(
     pr: VCSPullRequest,
-    repo_id: UUID,
     *,
     ticket_id: UUID | None = None,
     org_id: UUID,
@@ -107,7 +106,7 @@ async def upsert(
                 org_id=org_id,
                 plugin_id=pr.plugin_id,
                 external_id=pr.external_id,
-                repo_id=repo_id,
+                repo_external_id=pr.repo_external_id,
                 ticket_id=ticket_id,
                 number=pr.number,
                 title=pr.title,

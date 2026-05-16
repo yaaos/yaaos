@@ -1,16 +1,25 @@
 # `plugins/claude_code` — Internal Architecture
 
-> First concrete `core/coding_agent` plugin. Wraps the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) as a subprocess.
+> First concrete `domain/coding_agent` plugin. Wraps the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) as a subprocess.
 
 ## Purpose
 
 `plugins/claude_code` is yaaof's adapter for Claude Code, the only coding-agent CLI we support in M01. It:
 
-- Implements every method on `CodingAgentPlugin` (`invoke`, `validate_config`, `health_check`).
-- Manages CLI invocation: builds the command line, sets environment variables, spawns the subprocess in the workspace directory, captures output, parses results.
+- Implements every method on `CodingAgentPlugin` (`review`, `reply`, `validate_config`, `health_check`).
+- **Owns prompt assembly** — system framing, persona injection, diff/lessons/comments sections, JSON-schema appendix. Domain consumers (today: reviewer) describe what they want via `ReviewContext` / `ReplyContext`; the plugin assembles the actual LLM prompt internally.
+- **Owns the output schema** — defines plugin-internal `_FindingDto`, `_FindingList`, `_ReplyResponse` Pydantic models, asks the agent to emit JSON matching them, then converts to vendor-neutral `vcs.Finding` before returning. Consumers never see plugin internals.
+- Builds the CLI command line and environment, then hands them to `workspace.run_coding_agent_cli(argv, env, stdin, timeout_seconds)`. The workspace owns subprocess spawning, process-group timeout enforcement, and where the CLI actually runs (host tempdir today; future Docker container).
+- Parses the CLI wrapper envelope (`{result, usage, total_cost_usd}`) and the agent's JSON response into `ReviewResult` / `ReplyResult`.
 - Owns the `claude_code_settings` table (encrypted Anthropic API key + CLI config).
+- Computes the review verdict (`APPROVED` / `CHANGES_REQUESTED` / `COMMENT`) from the findings the agent emits.
+- **Owns its own HTTP routes** under `/api/claude_code/`:
+  - `POST /api/claude_code/api_key` — sets / rotates the Anthropic key (encrypted at rest via `core/config.yaaof_encryption_key`).
+  - `GET /api/claude_code/health` — wraps `ClaudeCodePlugin.health_check()`; returns `{healthy, message, checked_at}`.
 
-No business logic about review. No knowledge of yaaof tickets, agents, or workspaces beyond the `Workspace` Protocol surface.
+  Wired via `apps/backend/app/plugins/claude_code/web.py` with `register_routes(RouteSpec(module_name="claude_code", router=router))`. Per [backend.md § 2026-05-16 Plugin-owned URL namespaces](../backend.md#decisions), plugin credentials and health checks live in the plugin's own URL space — not under `/api/settings/`.
+
+No knowledge of yaaof tickets, review_jobs, audit log, or the workspace's internal `working_dir`.
 
 ## Public interface (`__all__`)
 
@@ -18,7 +27,7 @@ No business logic about review. No knowledge of yaaof tickets, agents, or worksp
 "ClaudeCodePlugin",   # the CodingAgentPlugin instance, registered at bootstrap
 ```
 
-Everything else is internal. Domain code never imports from this plugin; it uses `core/coding_agent`'s registry.
+Everything else is internal. Domain code never imports from this plugin; it uses `domain/coding_agent`'s registry.
 
 ## Settings table
 
@@ -31,19 +40,16 @@ Everything else is internal. Domain code never imports from this plugin; it uses
 
 Decrypted at plugin construction; held in plugin singleton state. Plugin re-reads if it can't find creds in memory (e.g., admin updated mid-run).
 
-## `invoke()` implementation
+## `review()` and `reply()` implementations
 
 ```python
-async def invoke(
-    self,
-    workspace: Workspace,
-    prompt: str,
-    agent_config: dict[str, Any],
-    response_model: type[BaseModel],
-) -> AgentInvocationResult[T]:
+async def review(self, workspace: Workspace, context: ReviewContext) -> ReviewResult: ...
+async def reply(self, workspace: Workspace, context: ReplyContext) -> ReplyResult: ...
 ```
 
-### Step 1: append the schema instruction to the prompt
+Both share the same machinery; review/reply differ only in (a) the assembled prompt content and (b) the JSON output schema (`_FindingList` vs `_ReplyResponse`). The shared steps:
+
+### Step 1: assemble the prompt + append the schema instruction
 
 ```
 <caller's prompt>
@@ -74,79 +80,56 @@ claude
 
 Prompt is piped via stdin (Claude Code accepts `claude --print` with no positional arg and reads the prompt from stdin). This avoids `ARG_MAX` limits that big diffs would otherwise hit if the prompt were passed as a CLI argument.
 
-### Step 3: prepare environment + spawn subprocess
+### Step 3: prepare environment + run via workspace
 
 ```python
 env = os.environ.copy()
 env["ANTHROPIC_API_KEY"] = self._decrypted_anthropic_key
-# remove any inherited interactive-only variables
-for var in ["ANTHROPIC_LOG", "CLAUDE_CONFIG_DIR", "TERM"]:
-    env.pop(var, None)
 
 timeout = agent_config.get("timeout_seconds") or settings.default_timeout_seconds
 
-proc = await asyncio.create_subprocess_exec(
-    cli_path, "--print", "--output-format=json",
-    "--permission-mode=bypassPermissions",
-    "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch",
-    *model_flags,
-    cwd=workspace.working_dir,
+result = await workspace.run_coding_agent_cli(
+    argv=[
+        cli_path, "--print", "--output-format=json",
+        "--permission-mode=bypassPermissions",
+        "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch",
+        *model_flags,
+    ],
     env=env,
-    stdin=asyncio.subprocess.PIPE,
-    stdout=asyncio.subprocess.PIPE,
-    stderr=asyncio.subprocess.PIPE,
-    process_group=0,    # new process group so we can kill children together
+    stdin=full_prompt.encode("utf-8"),
+    timeout_seconds=timeout,
 )
 ```
 
-### Step 4: write prompt to stdin, wait with timeout
+The workspace owns subprocess lifecycle: it spawns the CLI with whatever `cwd` (or container, in future plugins) corresponds to the repo checkout, enforces the timeout via SIGTERM → grace → SIGKILL of the process group, and returns a `CodingAgentCliResult` with `stdout`, `stderr`, `exit_code`, `timed_out`, `duration_ms`.
+
+### Step 4: handle timeout / non-zero exit
 
 ```python
-start = time.monotonic()
-try:
-    stdout, stderr = await asyncio.wait_for(
-        proc.communicate(input=prompt.encode("utf-8")),
-        timeout=timeout,
-    )
-except asyncio.TimeoutError:
-    # kill process group (the CLI + any child processes it spawned)
-    os.killpg(proc.pid, signal.SIGTERM)
-    await asyncio.sleep(2)
-    if proc.returncode is None:
-        os.killpg(proc.pid, signal.SIGKILL)
+latency_ms = result.duration_ms
+
+if result.timed_out:
     return AgentInvocationResult(
         status=AgentInvocationStatus.TIMEOUT,
-        parsed=None,
-        raw_output="",
-        raw_stderr="",
-        latency_ms=int((time.monotonic() - start) * 1000),
-        error_message=f"Claude Code did not return within {timeout}s",
-        ...
+        latency_ms=latency_ms,
+        error_message=f"claude did not return within {timeout}s",
     )
 
-latency_ms = int((time.monotonic() - start) * 1000)
-```
-
-### Step 5: handle non-zero exit
-
-```python
-if proc.returncode != 0:
+if result.exit_code != 0:
     return AgentInvocationResult(
         status=AgentInvocationStatus.AGENT_ERROR,
-        parsed=None,
-        raw_output=stdout.decode("utf-8", errors="replace"),
-        raw_stderr=stderr.decode("utf-8", errors="replace"),
+        raw_output=result.stdout,
+        raw_stderr=result.stderr,
         latency_ms=latency_ms,
-        error_message=f"claude exited {proc.returncode}: {_first_line(stderr)}",
-        ...
+        error_message=f"claude exited {result.exit_code}: {_first_line(result.stderr)}",
     )
 ```
 
-### Step 6: parse the wrapper envelope
+### Step 5: parse the wrapper envelope
 
 ```python
 try:
-    envelope = json.loads(stdout)
+    envelope = json.loads(result.stdout)
     agent_result_text = envelope["result"]              # the agent's response content
     usage = envelope.get("usage", {})
     tokens_in = usage.get("input_tokens")
@@ -165,38 +148,31 @@ except (json.JSONDecodeError, KeyError) as e:
     )
 ```
 
-### Step 7: strict-parse the agent's response against `response_model`
+### Step 6: strict-parse the agent's response against the plugin-internal model
 
 ```python
+# review path: schema = _FindingList; reply path: schema = _ReplyResponse
 try:
-    parsed_dict = json.loads(agent_result_text)
-    parsed = response_model.model_validate(parsed_dict)
+    parsed_dict = json.loads(agent_text)
+    parsed = _FindingList.model_validate(parsed_dict)
 except (json.JSONDecodeError, ValidationError) as e:
-    return AgentInvocationResult(
-        status=AgentInvocationStatus.PARSE_FAILURE,
-        parsed=None,
-        raw_output=agent_result_text,           # the agent's response text, for debugging
-        raw_stderr=stderr.decode("utf-8", errors="replace"),
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost_usd=cost_usd,
-        latency_ms=latency_ms,
-        error_message=f"Agent response didn't match {response_model.__name__}: {e}",
-        ...
+    return ReviewResult(
+        status=InvocationStatus.PARSE_FAILURE,
+        telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+        error_message=f"agent response didn't match _FindingList: {e}",
     )
 
-return AgentInvocationResult(
-    status=AgentInvocationStatus.SUCCESS,
-    parsed=parsed,
-    raw_output=agent_result_text,
-    raw_stderr=stderr.decode("utf-8", errors="replace"),
-    tokens_in=tokens_in,
-    tokens_out=tokens_out,
-    cost_usd=cost_usd,
-    latency_ms=latency_ms,
-    error_message=None,
+return ReviewResult(
+    status=InvocationStatus.SUCCESS,
+    findings=[_dto_to_finding(f) for f in parsed.findings],   # → vcs.Finding
+    state=_compute_state(parsed.findings),                    # APPROVED / CHANGES_REQUESTED / COMMENT
+    summary_body=None,
+    lesson_ids_consulted=[l.id for l in context.lessons],
+    telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
 )
 ```
+
+The plugin-internal `_FindingDto` → `vcs.Finding` conversion happens here, before the result leaves the plugin. Consumers never see `_FindingDto`.
 
 ## `validate_config()` implementation
 
@@ -252,13 +228,11 @@ Does NOT make an Anthropic API call. Just verifies the CLI is installed + creds 
 
 ## Subprocess cleanup
 
-- `process_group=0` (new pgid for the subprocess) so timeout kill hits the CLI + any children it spawned.
-- On timeout: `SIGTERM` → wait 2s → `SIGKILL` if still alive.
-- On cancellation (asyncio.Task cancelled while waiting on `communicate`): same kill sequence in the `__aexit__` of the subprocess context (we wrap `proc.communicate` in try/finally for this).
+Owned by the workspace, not this plugin. `in_process_workspace.run_coding_agent_cli` spawns with `start_new_session=True`, then on timeout: `os.killpg(SIGTERM)` → wait 2s → `os.killpg(SIGKILL)`. This plugin only reads `result.timed_out` and `result.exit_code` and never sees a subprocess directly.
 
 ## Concurrency
 
-Plugin is a singleton; many concurrent `invoke()` calls are expected (different workspaces, different agents). Each call:
+Plugin is a singleton; many concurrent `review()` / `reply()` calls are expected (different workspaces, different agents). Each call:
 
 - Spawns its own subprocess (no shared state).
 - Reads the decrypted API key from plugin state (immutable after construction; safe under concurrency).
@@ -268,12 +242,12 @@ No locks needed for the common path.
 
 ## Audit-side captures
 
-`core/coding_agent.invoke()` emits a structured log line; the plugin populates the fields it knows from the wrapper envelope. The plugin does NOT write to `audit_log` directly — that's reviewer's job (with full domain context: ticket_id, review_job_id, agent_id, prompt snapshot).
+`domain/coding_agent.review()` / `reply()` emit a structured log line per call; the plugin populates the fields it knows from the wrapper envelope (returned in `ReviewResult.telemetry` / `ReplyResult.telemetry`). The plugin does NOT write to `audit_log` directly — that's reviewer's job (with full domain context: ticket_id, review_job_id, agent_id, prompt hash).
 
 ## What `plugins/claude_code` does NOT do
 
 - Does not build the caller's prompt — reviewer does. Plugin only appends the schema instruction.
-- Does not retry. Each `invoke()` is one attempt. Reviewer marks the review_job `failed` if needed.
+- Does not retry. Each `review()` / `reply()` is one attempt. Reviewer marks the review_job `failed` if needed.
 - Does not stream output. M01 batch only.
 - Does not enforce content policy on what tools the agent uses — the `--allowed-tools` flag is the boundary.
 - Does not parse PARSE_FAILURE outputs for partial findings. If the agent didn't comply with the schema, we discard and audit. (Future: retry with a re-prompt that includes the failed output and asks for correction. Not in M01.)
@@ -292,15 +266,20 @@ No locks needed for the common path.
 **Why:** read + agent-internal tracking is the right surface for review. Web tools (`WebFetch`, `WebSearch`) help with library docs / CVE lookups for security review.
 
 ### 2026-05-15 — Strict JSON parsing of agent output; no markdown-fence fallback
-`json.loads()` of the agent's response → validate against `response_model`. On any failure → `PARSE_FAILURE` with raw output captured. The schema-instruction prompt is the contract.
+`json.loads()` of the agent's response → validate against the plugin-internal Pydantic model (`_FindingList` for review, `_ReplyResponse` for reply). On any failure → `PARSE_FAILURE` with raw output captured in `telemetry.raw_output`. The schema-instruction prompt is the contract.
 **Why:** deterministic parsing. Fallback heuristics mask non-compliance; better to fail visibly and tune the prompt than to silently coax.
 
 ### 2026-05-15 — Prompt delivered via stdin (not CLI arg)
 Avoids `ARG_MAX` limits on big diffs. Cleaner than temp files.
 
-### 2026-05-15 — Plugin runs subprocess in its own process group
-Timeout kills hit the CLI + any children it spawned. Prevents orphaned subprocesses if Claude Code shells out internally (it shouldn't, but defense-in-depth).
+### 2026-05-16 — Subprocess spawning moved out of this plugin into the workspace
+Previously this plugin called `asyncio.create_subprocess_exec` with `cwd=workspace.working_dir`. Now it calls `workspace.run_coding_agent_cli(argv, env, stdin, timeout_seconds)`. The workspace owns where/how the process runs; this plugin owns what to run and how to interpret the output.
+**Why:** `working_dir` is a host-filesystem concept that doesn't generalize to future Docker / K8s workspaces. Operations-not-paths gives those plugins room to spawn inside containers without breaking this plugin. Subprocess timeout + process-group semantics are also a workspace concern (they're identical for any coding-agent CLI), not an agent-vendor concern.
 
 ### 2026-05-15 — `health_check()` does not call Anthropic
 Verifies CLI installed + API key set, nothing more. Real API connectivity is checked only when an invocation happens.
 **Why:** health_check runs frequently (dashboard onboarding status); avoid token spend on probes.
+
+### 2026-05-16 — Plugin owns prompt assembly and the output JSON schema
+Previously `domain/reviewer/prompt.py` assembled the LLM prompt and `domain/reviewer/finding_types.py` defined the response Pydantic models, which were then passed to `core.coding_agent.invoke(prompt, response_model)`. Now both live in this plugin (`_assemble_review_prompt`, `_assemble_reply_prompt`, `_FindingDto`, `_FindingList`, `_ReplyResponse`, `_schema_appendix`). The plugin parses agent output into its internal `_FindingDto` and converts to `vcs.Finding` before returning. Consumers never see the intermediate shape.
+**Why:** different coding-agent CLIs (Codex, Aider) will need different framing conventions, different schema-instruction styles, and different tool-allowance flags. Pushing that into the plugin keeps consumer code agent-agnostic — reviewer just builds a `ReviewContext` and asks for findings — and forces each new plugin author to think explicitly about how their CLI should be prompted.

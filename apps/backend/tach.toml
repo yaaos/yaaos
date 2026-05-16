@@ -9,10 +9,6 @@ path = "app.core.audit_log"
 depends_on = ["app.core.database", "app.core.primitives"]
 
 [[modules]]
-path = "app.core.coding_agent"
-depends_on = ["app.core.workspace"]
-
-[[modules]]
 path = "app.core.config"
 depends_on = []
 
@@ -41,8 +37,12 @@ path = "app.core.workspace"
 depends_on = ["app.core.database", "app.core.primitives"]
 
 [[modules]]
+path = "app.domain.coding_agent"
+depends_on = ["app.core.primitives", "app.core.workspace", "app.domain.memory", "app.domain.vcs"]
+
+[[modules]]
 path = "app.domain.intake"
-depends_on = ["app.core.audit_log", "app.core.database", "app.core.events", "app.core.primitives", "app.domain.pull_requests", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.database", "app.core.events", "app.core.primitives", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.memory"
@@ -53,16 +53,12 @@ path = "app.domain.pull_requests"
 depends_on = ["app.core.audit_log", "app.core.database", "app.core.primitives", "app.domain.vcs"]
 
 [[modules]]
-path = "app.domain.repos"
-depends_on = ["app.core.audit_log", "app.core.database", "app.core.primitives", "app.core.webserver"]
-
-[[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.audit_log", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.events", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.intake", "app.domain.memory", "app.domain.pull_requests", "app.domain.repos", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.config", "app.core.database", "app.core.events", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.memory", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.settings"
-depends_on = ["app.core.coding_agent", "app.core.webserver", "app.core.workspace", "app.domain.repos"]
+depends_on = ["app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -70,20 +66,24 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.events", "app
 
 [[modules]]
 path = "app.domain.vcs"
-depends_on = []
+depends_on = ["app.core.primitives"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.coding_agent", "app.core.config", "app.core.database", "app.core.workspace", "app.domain.settings"]
+depends_on = ["app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.settings", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.config", "app.core.database", "app.core.webserver", "app.domain.intake", "app.domain.settings", "app.domain.vcs"]
+depends_on = ["app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.intake", "app.domain.settings", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.in_process_workspace"
-depends_on = ["app.core.workspace"]
+depends_on = ["app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.vcs"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.coding_agent", "app.core.workspace"]
+depends_on = ["app.core.workspace", "app.domain.coding_agent"]
+
+[[modules]]
+path = "app.testing.stub_workspace"
+depends_on = ["app.core.workspace"]

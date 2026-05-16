@@ -96,7 +96,11 @@ async def ensure_schema_migrations_table() -> None:
 # changes add new versions and the runner skips already-applied ones. The
 # create_all approach is idempotent (CREATE TABLE IF NOT EXISTS underneath) so
 # re-running is safe.
-_M01_MIGRATIONS: tuple[tuple[str, str], ...] = (("001_create_all_m01", "create_all"),)
+_M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("001_create_all_m01", "create_all"),
+    ("002_github_settings_slug", "add_github_settings_slug"),
+    ("003_drop_repos_table", "drop_repos_table"),
+)
 
 
 async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
@@ -107,7 +111,6 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.core.workspace.models",
         "app.plugins.claude_code.models",
         "app.plugins.github.models",
-        "app.domain.repos.models",
         "app.domain.pull_requests.models",
         "app.domain.tickets.models",
         "app.domain.memory.models",
@@ -115,6 +118,62 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
     ):
         importlib.import_module(mod)
     await conn.run_sync(Base.metadata.create_all)
+
+
+async def _apply_add_github_settings_slug(conn) -> None:  # type: ignore[no-untyped-def]
+    # Idempotent ALTER — works on fresh DBs where `create_all` already added the
+    # column from the model, and on existing DBs where 001 ran before the column
+    # was added to the model.
+    await conn.execute(
+        text("ALTER TABLE github_settings ADD COLUMN IF NOT EXISTS slug TEXT NOT NULL DEFAULT ''")
+    )
+
+
+async def _apply_drop_repos_table(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the `repos` table; convert dependents from FK(repo_id) → string(repo_external_id).
+
+    Backfills `repo_external_id` from `repos.external_id` before the FK column
+    goes away. Idempotent. One statement per execute (asyncpg doesn't accept
+    multi-statement prepared statements).
+    """
+    statements: list[str] = [
+        "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS plugin_id TEXT NOT NULL DEFAULT 'github'",
+        "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS repo_external_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS repo_external_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS plugin_id TEXT NOT NULL DEFAULT 'github'",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS repo_external_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE github_poller_state ADD COLUMN IF NOT EXISTS repo_external_id TEXT NOT NULL DEFAULT ''",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+    repos_exists = (await conn.execute(text("SELECT to_regclass('repos') IS NOT NULL"))).scalar()
+    if repos_exists:
+        backfills: list[str] = [
+            "UPDATE lessons l SET plugin_id = r.plugin_id, repo_external_id = r.external_id"
+            " FROM repos r WHERE l.repo_id = r.id",
+            "UPDATE pull_requests p SET repo_external_id = r.external_id FROM repos r WHERE p.repo_id = r.id",
+            "UPDATE tickets t SET plugin_id = r.plugin_id, repo_external_id = r.external_id"
+            " FROM repos r WHERE t.repo_id = r.id",
+            "UPDATE github_poller_state s SET repo_external_id = r.external_id"
+            " FROM repos r WHERE s.repo_id = r.id",
+        ]
+        for stmt in backfills:
+            await conn.execute(text(stmt))
+
+    drops: list[str] = [
+        "ALTER TABLE lessons DROP COLUMN IF EXISTS repo_id",
+        "ALTER TABLE pull_requests DROP COLUMN IF EXISTS repo_id",
+        "ALTER TABLE tickets DROP COLUMN IF EXISTS repo_id",
+        "ALTER TABLE github_poller_state DROP CONSTRAINT IF EXISTS uq_github_poller_state_org_repo",
+        "ALTER TABLE github_poller_state DROP COLUMN IF EXISTS repo_id",
+        "ALTER TABLE github_poller_state"
+        " ADD CONSTRAINT uq_github_poller_state_org_repo UNIQUE (org_id, repo_external_id)",
+        "CREATE INDEX IF NOT EXISTS lessons_repo_idx ON lessons (org_id, plugin_id, repo_external_id)",
+        "DROP TABLE IF EXISTS repos",
+    ]
+    for stmt in drops:
+        await conn.execute(text(stmt))
 
 
 async def migrate() -> None:
@@ -129,6 +188,10 @@ async def migrate() -> None:
         async with get_engine().begin() as conn:
             if kind == "create_all":
                 await _apply_create_all(conn)
+            elif kind == "add_github_settings_slug":
+                await _apply_add_github_settings_slug(conn)
+            elif kind == "drop_repos_table":
+                await _apply_drop_repos_table(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

@@ -1,16 +1,33 @@
-import { useCreateLesson, useDeleteLesson, useLessons, useRepos } from "@core/api";
+import {
+  type Lesson,
+  useCreateLesson,
+  useDeleteLesson,
+  useGithubRepositories,
+  useLessons,
+} from "@core/api";
 import { Button, Card, CardContent, CardHeader } from "@shared/components";
 import { useState } from "react";
 
 export function MemoryPage() {
   const { data: lessons } = useLessons();
-  const { data: repos } = useRepos();
+  const { data: repos } = useGithubRepositories();
   const create = useCreateLesson();
   const remove = useDeleteLesson();
 
-  const [repoId, setRepoId] = useState<string>("");
+  const [repoExternalId, setRepoExternalId] = useState<string>("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+
+  // Build the picker options: union of repos the App can see + repos that
+  // already have lessons (in case the App's access shrank but the lessons
+  // remain). Sorted, deduped.
+  const repoNamesFromLessons = new Set((lessons ?? []).map((l) => l.repo_external_id));
+  const repoNamesFromInstall = new Set(
+    (repos?.repositories ?? []).map((r) => r.full_name).filter(Boolean) as string[],
+  );
+  const pickerOptions = Array.from(
+    new Set([...repoNamesFromInstall, ...repoNamesFromLessons]),
+  ).sort();
 
   return (
     <div className="mx-auto max-w-[900px] flex flex-col gap-3">
@@ -23,9 +40,9 @@ export function MemoryPage() {
             className="flex flex-col gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!repoId || !title.trim() || !body.trim()) return;
+              if (!repoExternalId || !title.trim() || !body.trim()) return;
               create.mutate(
-                { repo_id: repoId, title: title.trim(), body: body.trim() },
+                { repo_external_id: repoExternalId, title: title.trim(), body: body.trim() },
                 {
                   onSuccess: () => {
                     setTitle("");
@@ -37,17 +54,22 @@ export function MemoryPage() {
           >
             <select
               data-testid="lesson-repo"
-              value={repoId}
-              onChange={(e) => setRepoId(e.target.value)}
+              value={repoExternalId}
+              onChange={(e) => setRepoExternalId(e.target.value)}
               className="px-2 py-1.5 text-[12.5px] border border-border-soft rounded bg-bg"
             >
               <option value="">(select a repo)</option>
-              {repos?.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.external_id}
+              {pickerOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>
+            {pickerOptions.length === 0 && (
+              <p className="text-text-4 text-[11px]">
+                No repos yet. Install the GitHub App on at least one repo to populate this list.
+              </p>
+            )}
             <input
               data-testid="lesson-title"
               value={title}
@@ -82,10 +104,11 @@ export function MemoryPage() {
         </CardHeader>
         <CardContent>
           <ul className="flex flex-col gap-2" data-testid="lessons-list">
-            {lessons?.map((l) => (
+            {lessons?.map((l: Lesson) => (
               <li key={l.id} className="border border-border-soft rounded p-2.5 text-[12.5px]">
                 <div className="flex items-center gap-2">
                   <span className="font-medium flex-1">{l.title}</span>
+                  <span className="mono text-text-4 text-[10.5px]">{l.repo_external_id}</span>
                   <button
                     type="button"
                     className="text-text-4 hover:text-danger text-[11px]"

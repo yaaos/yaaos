@@ -10,3 +10,6 @@ __all__ = ["InProcessWorkspaceProvider", "bootstrap", "get_provider"]
 
 # Registration runs at import time.
 bootstrap()
+
+# Side-effect import: register HTTP routes (/api/in_process/health).
+from app.plugins.in_process_workspace import web  # noqa: E402, F401

@@ -16,18 +16,6 @@ export type HealthResponse = {
 export type OnboardingStatus = {
   github_app_installed: boolean;
   anthropic_key_set: boolean;
-  at_least_one_repo: boolean;
-};
-
-export type Repo = {
-  id: string;
-  org_id: string;
-  plugin_id: string;
-  external_id: string;
-  language_hint: string | null;
-  status: string;
-  added_at: string;
-  removed_at: string | null;
 };
 
 export type Ticket = {
@@ -38,7 +26,8 @@ export type Ticket = {
   title: string;
   description: string | null;
   status: "open" | "in_review" | "complete" | "abandoned";
-  repo_id: string;
+  plugin_id: string;
+  repo_external_id: string;
   pr_id: string | null;
   created_at: string;
   updated_at: string;
@@ -47,7 +36,8 @@ export type Ticket = {
 export type Lesson = {
   id: string;
   org_id: string;
-  repo_id: string;
+  plugin_id: string;
+  repo_external_id: string;
   title: string;
   body: string;
   source_pr_url: string | null;

@@ -31,9 +31,10 @@ Three artifacts:
 - **`apps/backend/bin/seed_test_data`** — Python script using ORM models to populate the e2e Postgres.
 - **`docker/docker-compose.test.yml`** — brings up Postgres + fake-github + yaaof with the right env wiring + secrets sharing.
 
-Plus a fourth in-repo concern:
+Plus two in-repo concerns:
 
-- **CLI cache** — file-colocated JSON cache (`<test_dir>/.coding_agent_cache.json`) plus a pytest fixture that swaps the `claude_code` plugin instance for a caching wrapper. Lives in the project's pytest plugin (`apps/backend/app/testing/`).
+- **CLI cache** — file-colocated JSON cache (`<test_dir>/.coding_agent_cache.json`) plus a pytest fixture that swaps the `claude_code` plugin instance for a caching wrapper. Lives in the project's pytest plugin (`apps/backend/app/testing/stub_coding_agent/`).
+- **Stub workspace** — wraps each registered `WorkspaceProvider` with a `StubWorkspaceProvider` that creates an empty tempdir on `provision()` (no git clone, no vcs lookup) and returns a canned no-op `CodingAgentCliResult` on `run_coding_agent_cli`. Lives at `apps/backend/app/testing/stub_workspace/`. Activated alongside the stub coding-agent when `YAAOF_CODING_AGENT_STUB` is set.
 
 ---
 
@@ -211,7 +212,7 @@ services:
 
 ### Integration point — `CachingCodingAgentPlugin` wrapper via pytest fixture
 
-Production code is unaware of the cache. The integration happens via a pytest fixture that **replaces the registered `claude_code` plugin instance** in the `core/coding_agent` registry with a `CachingCodingAgentPlugin` wrapper for the duration of the test session.
+Production code is unaware of the cache. The integration happens via a pytest fixture that **replaces the registered `claude_code` plugin instance** in the `domain/coding_agent` registry with a `CachingCodingAgentPlugin` wrapper for the duration of the test session.
 
 The wrapper:
 
@@ -226,22 +227,21 @@ class CachingCodingAgentPlugin(CodingAgentPlugin):
         self._allow_calls = allow_calls
         self._cache: dict[str, CachedEntry] = self._load_cache()
 
-    async def invoke(self, workspace, prompt, agent_config, response_model):
-        key = self._key(prompt, agent_config, response_model)
+    async def review(self, workspace, context):
+        key = self._key("review", context)
         if key in self._cache:
-            entry = self._cache[key]
-            return self._reconstruct_result(entry, response_model)
+            return self._reconstruct_review(self._cache[key])
         if not self._allow_calls:
             raise CodingAgentCacheMiss(
-                f"No cached invocation for key {key[:16]}... "
-                f"(prompt sha + agent_config sha + schema sha). "
-                f"Re-run pytest with --allow-coding-agent-calls to populate."
+                f"No cached review for key {key[:16]}... "
+                f"(context sha). Re-run pytest with --allow-coding-agent-calls to populate."
             )
-        result = await self._wrapped.invoke(workspace, prompt, agent_config, response_model)
-        self._cache[key] = self._serialize(result)
+        result = await self._wrapped.review(workspace, context)
+        self._cache[key] = self._serialize_review(result)
         self._save_cache()
         return result
 
+    # reply(): symmetric.
     # validate_config + health_check pass through unchanged.
 ```
 
@@ -255,19 +255,15 @@ One JSON file per test module: `<test_module_dir>/.coding_agent_cache.json`.
 {
   "version": 1,
   "entries": {
-    "<sha256(prompt + agent_config_json + response_model_schema_json)>": {
-      "prompt_preview": "first 120 chars of the prompt for human grepping",
-      "agent_config": { "model": "claude-sonnet-4-5", ... },
-      "schema_hash": "<sha256 of the response_model JSON schema>",
+    "<sha256(method + canonical_json(context))>": {
+      "method": "review",
+      "context_preview": "first 120 chars of the context for human grepping",
       "result": {
         "status": "success",
-        "raw_output": "...",
-        "raw_stderr": "",
-        "parsed_json": { /* the structured output */ },
-        "tokens_in": 14820,
-        "tokens_out": 1240,
-        "cost_usd": 0.18,
-        "latency_ms": 18200
+        "findings": [ /* vcs.Finding shape */ ],
+        "state": "COMMENT",
+        "summary_body": null,
+        "telemetry": { "tokens_in": 14820, "tokens_out": 1240, "cost_usd": 0.18, "latency_ms": 18200, ... }
       },
       "recorded_at": "2026-05-15T22:31:20Z"
     }
@@ -275,7 +271,7 @@ One JSON file per test module: `<test_module_dir>/.coding_agent_cache.json`.
 }
 ```
 
-**Keying:** `sha256(prompt_text || "\x00" || canonical_json(agent_config) || "\x00" || canonical_json(response_model.model_json_schema()))`. Any change in prompt, config, or expected output schema produces a new key → cache miss.
+**Keying:** `sha256(method || "\x00" || canonical_json(context.model_dump()))`. Any change in context (PR, diff, lessons, persona, …) produces a new key → cache miss.
 
 **Partial hits don't exist.** Either the exact key is cached or it's not.
 
@@ -304,7 +300,7 @@ When set, the `CachingCodingAgentPlugin` wrapper delegates to the real plugin on
 # apps/backend/app/testing/plugin.py
 @pytest.fixture(autouse=True, scope="session")
 def _swap_coding_agent_plugin(request):
-    from app.core.coding_agent import _PLUGINS  # the module-level registry dict
+    from app.domain.coding_agent import _PLUGINS  # the module-level registry dict
     from app.plugins.claude_code import ClaudeCodePlugin
     from app.testing.caching_coding_agent import CachingCodingAgentPlugin
 
@@ -320,7 +316,7 @@ def _swap_coding_agent_plugin(request):
 
 This is the only place that touches the registry dict directly — production code uses `register_coding_agent_plugin` + `get_plugin`. The fixture lives in `app/testing/` — the **fourth backend layer** (see `modularity.md` § Backend specifics). The layer is tach-tracked like any other; the layering rule `core < domain < plugins < testing` ensures nothing in production code can import from it. The wheel build excludes `app/testing/` so distribution artifacts physically cannot enable test-mode behavior.
 
-> **As built in M01:** the realized form is `app/testing/stub_coding_agent/` — a wrapper plugin that returns deterministic, `response_model`-conforming `AgentInvocationResult`s without a cache file. The `CachingCodingAgentPlugin` described above (record/replay against a real CLI) is the natural sibling for when that capability is needed; it would live at `app/testing/caching_coding_agent/` and follow the same wrap-via-registry pattern.
+> **As built in M01:** the realized form is `app/testing/stub_coding_agent/` — a wrapper plugin whose `review()` returns a canned `ReviewResult` (empty findings, APPROVED, fake telemetry) and whose `reply()` returns a canned `ReplyResult`, both without touching a real CLI or cache file. The `CachingCodingAgentPlugin` described above (record/replay against a real CLI) is the natural sibling for when realistic outputs are needed; it would live at `app/testing/caching_coding_agent/` and follow the same wrap-via-registry pattern.
 
 ---
 
@@ -376,8 +372,11 @@ For backend integration tests, the fake-github service is started **as a subproc
 ### 2026-05-15 — Tests run against a self-contained Docker stack; no real external services
 See [patterns.md § 2026-05-15 — Tests run entirely against a self-contained Docker stack](../patterns.md#decisions) for the policy decision. This doc spells out the implementation.
 
+### 2026-05-16 — `testing/stub_workspace` mirrors `testing/stub_coding_agent` for the workspace layer
+The workspace Protocol now exposes operations (`run_coding_agent_cli`), not paths. Tests that skip the real coding-agent (`YAAOF_CODING_AGENT_STUB`) also skip the real git clone — otherwise integration tests would still hit the network. `wrap_all_registered_workspace_providers()` walks `core.workspace._PROVIDERS` and swaps each entry for a `StubWorkspaceProvider` (idempotent), in lockstep with the coding-agent wrap. The stub's `run_coding_agent_cli` is a no-op because stub coding-agent short-circuits before any workspace call; the method is implemented for Protocol completeness.
+
 ### 2026-05-15 — CLI cache integrates via `CachingCodingAgentPlugin` wrapper + pytest fixture
-The cache lives outside of production code. A pytest fixture replaces the registered `claude_code` plugin instance in the `core/coding_agent` registry with a caching wrapper for the duration of the test session. On cache miss with `--allow-coding-agent-calls`, the wrapper delegates to the real plugin and records. On cache miss without the flag, the wrapper raises `CodingAgentCacheMiss`.
+The cache lives outside of production code. A pytest fixture replaces the registered `claude_code` plugin instance in the `domain/coding_agent` registry with a caching wrapper for the duration of the test session. On cache miss with `--allow-coding-agent-calls`, the wrapper delegates to the real plugin and records. On cache miss without the flag, the wrapper raises `CodingAgentCacheMiss`.
 **Why:** the DI-over-patch ban (`patterns.md § DI over @patch`) forbids monkeypatching the plugin's subprocess invocation. A wrapper plugin satisfies the rule via pure DI and generalizes to future coding-agent plugins (codex, aider) without code changes in their plugin code.
 
 ### 2026-05-15 — `apps/fake-github` is a Python FastAPI peer service, not a yaaof module

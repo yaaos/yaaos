@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "structlog>=24.4",
     "cryptography>=43",
+    "pyjwt>=2.9",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp>=1.27",
@@ -52,3 +53,12 @@ python_files = ["test_*.py"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+extend-select = ["TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"unittest.mock.patch" = { msg = "Use dependency injection, not @patch. See plan/milestones/M01-code-review/patterns.md § DI over @patch." }
+"unittest.mock.patch.object" = { msg = "Use dependency injection, not @patch." }
+"unittest.mock.patch.multiple" = { msg = "Use dependency injection, not @patch." }
+"mock.patch" = { msg = "Use dependency injection, not @patch." }

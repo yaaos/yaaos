@@ -1,11 +1,16 @@
-"""SQLAlchemy model for `lessons`."""
+"""SQLAlchemy model for `lessons`.
+
+Lessons are keyed by `(plugin_id, repo_external_id)` — a stable string identity
+the VCS plugin produces. There is no yaaof-side `repos` table; the GitHub App's
+install picks the access scope, and yaaof learns about repos as PRs arrive.
+"""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, Index, String, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,7 +22,8 @@ class LessonRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
-    repo_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("repos.id"), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String, nullable=False, server_default="github")
+    repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(String, nullable=False)
     source_pr_url: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -27,3 +33,5 @@ class LessonRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+    __table_args__ = (Index("lessons_repo_idx", "org_id", "plugin_id", "repo_external_id"),)

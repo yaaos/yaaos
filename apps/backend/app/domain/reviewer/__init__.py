@@ -12,7 +12,6 @@ from app.domain.reviewer.agent_crud import (
     update_agent_prompt,
 )
 from app.domain.reviewer.models import PostedCommentRow, ReviewerAgentRow, ReviewJobRow
-from app.domain.reviewer.prompt import assemble_prompt, compute_verdict
 from app.domain.reviewer.queue import (
     ReviewJob,
     ReviewJobInput,
@@ -36,9 +35,7 @@ __all__ = [
     "ReviewJobStatusChanged",
     "ReviewerAgent",
     "ReviewerAgentRow",
-    "assemble_prompt",
     "cancel_pending",
-    "compute_verdict",
     "ensure_builtin_agents",
     "get_agent_by_id",
     "get_agent_by_name",

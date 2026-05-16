@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,7 +22,8 @@ class TicketRow(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="in_review")
-    repo_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("repos.id"), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String, nullable=False, server_default="github")
+    repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     pr_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

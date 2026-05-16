@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.domain.vcs.types import PluginNotFoundError, VCSPlugin
 
 _PLUGINS: dict[str, VCSPlugin] = {}
 
 
 def register_vcs_plugin(plugin: VCSPlugin) -> None:
-    if plugin.plugin_id in _PLUGINS:
-        raise ValueError(f"VCS plugin {plugin.plugin_id!r} already registered")
-    _PLUGINS[plugin.plugin_id] = plugin
+    if plugin.meta.id in _PLUGINS:
+        raise ValueError(f"VCS plugin {plugin.meta.id!r} already registered")
+    _PLUGINS[plugin.meta.id] = plugin
 
 
 def get_plugin(plugin_id: str) -> VCSPlugin:
@@ -26,6 +28,12 @@ def is_registered(plugin_id: str) -> bool:
 
 def registered_plugin_ids() -> list[str]:
     return list(_PLUGINS.keys())
+
+
+async def get_installation_token(plugin_id: str, org_id: UUID) -> str:
+    """Top-level dispatcher. Workspace plugins call this for fresh git auth."""
+    plugin = get_plugin(plugin_id)
+    return await plugin.get_installation_token(org_id)
 
 
 def _reset_for_tests() -> None:

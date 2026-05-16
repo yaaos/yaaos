@@ -81,6 +81,15 @@ The design shows `acme` in headers ("acme · last 24h", "acme · N in review · 
 ### Logo — reserve space, no asset yet
 The design's logo is a placeholder "Y" with a `LOGO · PLACEHOLDER` mono caption. **Keep the placeholder slot** (don't restructure the sidebar header), but render a simple "yaaof" wordmark for now. A real logo lands later; the slot is sized for it.
 
+### Dashboard activity feed deferred (2026-05-16)
+The design's right-hand "Activity" panel needs `GET /api/dashboard/activity`, which isn't built yet. The dashboard's populated state runs the "Live agents · in flight" panel full-width until the activity endpoint lands. Revisit when there's user pull for it.
+
+### Dashboard sparklines + 24h deltas deferred (2026-05-16)
+Each metric tile in the design shows a sparkline (Reviews 24h) or a `+delta` indicator. `GET /api/reviewer/metrics` returns lifetime aggregates only — no 24h buckets, no hourly data. Tiles render headline value + subtitle ("all-time") until `GET /api/dashboard/metrics` (24h-windowed, bucketed) is defined. The user-visible difference is the absence of the line/delta widgets; the tile layout and hierarchy are unchanged.
+
+### Settings — three independent cards, no gating (2026-05-16)
+A previous implementation showed an "Onboarding status" badge card + an Anthropic-key form, which read as if Anthropic gated everything else. The Settings page is now three peer cards (GitHub App, Model API key, Plugin health), each with its own status and actions. Each card is independently configurable — the user can save the Anthropic key whether or not the GitHub App is installed, and vice versa. The card-level layering smell that lived in the URL design (`/api/settings/anthropic_key`, `/api/settings/health` exposing GitHub plugin state under a settings namespace) was also fixed: plugin-owned routes now live under `/api/<plugin>/...`. See `plan/milestones/M01-code-review/backend.md` § 2026-05-16.
+
 ### GitHub App — Reinstall behavior
 The `Reinstall` button on the Settings → GitHub App card **re-runs the install flow**: opens `s.github_app.app_url` in a new tab (the GitHub App's install/configuration page). yaaof's backend doesn't manage install state changes — GitHub does — so the button is an outbound link, not a yaaof-side action.
 

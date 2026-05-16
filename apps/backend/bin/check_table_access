@@ -14,18 +14,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-APP = REPO / "apps" / "backend" / "app"
+BACKEND = Path(__file__).resolve().parents[1]
+APP = BACKEND / "app"
 LAYERS = ("core", "domain", "plugins", "testing")
 
 
 def main() -> int:
     # Run inside apps/backend so the venv's site-packages is on the path.
-    backend = REPO / "apps" / "backend"
-    sys.path.insert(0, str(backend))
+    sys.path.insert(0, str(BACKEND))
     # Also add the venv's site-packages if it exists (so this script works when
     # invoked from outside `uv run`).
-    venv_site = backend.parent.parent / ".venv" / "lib"
+    venv_site = BACKEND.parent.parent / ".venv" / "lib"
     if venv_site.exists():
         for py_dir in venv_site.glob("python*"):
             sp = py_dir / "site-packages"

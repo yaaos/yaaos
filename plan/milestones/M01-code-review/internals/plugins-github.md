@@ -7,8 +7,15 @@
 
 `plugins/github` is the bridge between GitHub's REST API + webhooks and yaaof's abstract `domain/vcs` types. It:
 
-- Implements every method on `VCSPlugin` (`fetch_pr`, `fetch_diff`, `list_yaaof_comments`, `list_open_prs_since`, `is_repo_accessible`, `post_review`, `mark_comments_outdated`).
-- Owns the HTTP webhook receiver, signature verification, idempotency check, and payload→`VCSEvent` translation.
+- Implements every method on `VCSPlugin` (`fetch_pr`, `fetch_diff`, `list_yaaof_comments`, `list_open_prs_since`, `is_repo_accessible`, `post_review`, `post_comment_reply`, `mark_comments_outdated`, `get_installation_token`).
+- Owns its HTTP routes under `/api/github/`:
+  - `POST /api/github/webhook` — receives GitHub events; verifies HMAC signature; idempotent by `X-GitHub-Delivery`; updates `github_app_installations` directly for `installation` lifecycle events; dispatches PR-related events into `intake`.
+  - `GET /api/github/manifest-callback?code=…` — completes the [GitHub App Manifest Flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest): exchanges the temporary code at `POST /app-manifests/{code}/conversions`, persists App ID + slug + PEM + webhook secret into `github_settings`, then 303-redirects the browser to `/settings?gh_manifest_ok=1` (or `?gh_manifest_error=…` on failure). The Settings UI builds the manifest client-side and POSTs it to `https://github.com/settings/apps/new` — yaaof never has to know the App's name, owner, or any field that requires GitHub-side user input.
+  - `POST /api/github/credentials` — escape-hatch for operators with a pre-existing App. Accepts App ID + slug + PEM + webhook secret; encrypted with `yaaof_encryption_key` and upserted into `github_settings`. Same destination as the manifest callback; just a manual path.
+  - `GET /api/github/installation` — three-state response driving the Settings UI: `{credentials_configured: bool, installed: bool, app_id, slug, account_login, install_external_id, installed_at, install_url, installations_url}`. Pre-credentials: shows form. Post-credentials, pre-install: shows install button with the right URL. Post-install: shows manage button.
+  - `GET /api/github/health` — three-state too: credentials missing / installed nowhere / ok.
+  
+  Per [backend.md § 2026-05-16 Plugin-owned URL namespaces](../backend.md#decisions), all plugin-owned UI data lives under `/api/github/`, not aggregated under `/api/settings/`.
 - Manages GitHub App auth (JWT signing → installation-token acquisition → caching).
 - Runs the catch-up poller on startup.
 - Owns four DB tables: `github_app_installations`, `github_settings`, `github_webhook_events`, `github_poller_state`.
@@ -28,29 +35,8 @@ Everything else is internal. Domain code never imports from `plugins/github`; it
 
 GitHub Apps use a two-step auth:
 
-1. **App JWT**: signed with the App's private RSA key, ~10min TTL. Identifies the App itself.
-2. **Installation token**: obtained by calling `POST /app/installations/{installation_id}/access_tokens` with the App JWT. ~1hr TTL. Used for all repo-scoped API calls.
-
-### Token caching strategy
-
-In-memory only. The plugin singleton holds a dict:
-
-```python
-@dataclass
-class _CachedToken:
-    token: str
-    expires_at: datetime
-    installation_id: str
-
-_tokens: dict[str, _CachedToken] = {}   # keyed by installation_id
-```
-
-Before every API call:
-1. Look up the installation_id's cached token.
-2. If missing or within 5min of expiry, acquire a fresh one via App JWT + `POST /app/installations/{id}/access_tokens`.
-3. Use it.
-
-Lost on process restart — next API call re-acquires. Acceptable POC trade-off; saves writing a token-refresh background job.
+1. **App JWT**: RS256-signed JWT with `iss=app_id`, `iat=now-60s`, `exp=now+9min`, signed with the App's private RSA key. Produced by `_build_app_jwt(app_id, pem)` via `pyjwt` on every install-token request. (For the fake-github test stack, when the stored PEM lacks a `BEGIN ... PRIVATE KEY` header, the helper falls back to the legacy `jwt-fake-<app_id>` string the fake accepts.)
+2. **Installation token**: obtained by calling `POST /app/installations/{installation_id}/access_tokens` with the App JWT. ~1hr TTL. Used for all repo-scoped API calls. Not cached today — re-acquired on each call. Adding a short-TTL cache is a future optimization; M01 traffic doesn't warrant it.
 
 ### App credentials
 
@@ -59,10 +45,15 @@ Stored in `github_settings` table (per-org row):
 | Column | Source |
 |---|---|
 | `app_id` | GitHub-assigned numeric App id |
+| `slug` | URL handle, e.g. `yaaof-jack` — used to build install/manage URLs |
 | `encrypted_private_key` | the PEM. Encrypted at rest with the boot-time encryption key from `core/config` |
 | `encrypted_webhook_secret` | HMAC signing secret for webhook verification |
 
-Decryption happens at plugin-bootstrap time; decrypted values are kept in plugin singleton state. The plugin re-reads the table if it can't find the credentials in memory (e.g., admin updated them mid-run).
+Operator-provided via the Settings UI form (`POST /api/github/credentials`); encrypted server-side with `yaaof_encryption_key`. The plugin decrypts on demand via `_decrypted_credentials(org_id)`; nothing is held in plugin-singleton state across requests.
+
+### Install lifecycle
+
+The `github_app_installations` table tracks which orgs/users have installed yaaof's App. The webhook handler updates this row directly on `installation.created` / `unsuspend` (upsert via `upsert_installation`) and `installation.deleted` / `suspend` (mark inactive via `mark_installation_inactive(status="uninstalled" | "suspended")`). Install events do NOT flow through `intake` — they're infrastructure state, not VCS work.
 
 ## Webhook receiver
 
@@ -216,6 +207,10 @@ All four are detailed in [../data-model.md](../data-model.md):
 ### 2026-05-14 — Installation tokens cached in-memory only
 Lost on restart; re-acquired on next API call. Refresh ~5min before 1hr TTL expiry.
 **Why:** POC simplicity; no token-refresh background job; the cost of re-acquiring is one HTTP call.
+
+### 2026-05-16 — `get_installation_token(org_id)` is public on the VCSPlugin Protocol
+What was a private `_installation_token(org_id)` helper is now a Protocol-level method. Workspace plugins call it to get fresh auth at clone time and forget the token immediately after. Internal callers (`fetch_pr`, `post_review`, etc.) still go through the same JWT-exchange flow; the cache continues to deduplicate within a TTL window.
+**Why:** see `vcs.md` 2026-05-16 decision. The git client inside a workspace needs auth that's never cached outside the plugin and never travels as argv. Promoting the existing helper to public Protocol status is the minimal change.
 
 ### 2026-05-14 — Force-push detection via GitHub `/compare` API
 For `pull_request.synchronize` events, call `/compare/{before}...{after}`. If `status == "diverged"`, set `force_push=true`.

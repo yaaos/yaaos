@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+import jwt as pyjwt
 import structlog
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.primitives import PluginMeta
 from app.domain.vcs import (
     Comment,
     Diff,
@@ -57,7 +60,13 @@ def verify_webhook_signature(body: bytes, header: str | None, secret: bytes) -> 
 class GitHubPlugin:
     """Implements domain/vcs.VCSPlugin against GitHub's REST API."""
 
-    plugin_id = "github"
+    meta = PluginMeta(
+        id="github",
+        type="vcs",
+        display_name="GitHub",
+        description="GitHub App integration — reads PRs, posts reviews, receives webhooks.",
+        docs_url="https://docs.github.com/en/apps",
+    )
 
     def __init__(self) -> None:
         # Settings are read lazily (in `base_url`) — avoids construction-time
@@ -85,11 +94,14 @@ class GitHubPlugin:
         return row.app_id, pem, secret
 
     async def _installation_token(self, org_id: UUID) -> str:
-        """Trade an App JWT for an installation token. For POC we use a fake JWT
-        ('jwt-fake-<app_id>') — fake-github accepts it. Real GitHub would require
-        a proper RSA-signed JWT here.
+        """Trade an App JWT for an installation token. RS256 JWT signed with the
+        App's stored private key — GitHub validates against the App's public key.
+
+        For the test stack (`apps/fake-github`), if the stored PEM is a sentinel
+        placeholder, falls back to the legacy fake JWT string so the existing
+        fake-github / integration tests keep working without real RSA material.
         """
-        app_id, _pem, _secret = await self._decrypted_credentials(org_id)
+        app_id, pem, _secret = await self._decrypted_credentials(org_id)
         async with db_session() as s:
             install = (
                 await s.execute(
@@ -104,15 +116,25 @@ class GitHubPlugin:
         if install is None:
             raise VCSAuthError("no active GitHub App installation")
 
-        jwt = f"jwt-fake-{app_id}"
+        jwt_token = _build_app_jwt(app_id, pem)
         async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
             resp = await client.post(
                 f"/app/installations/{install.install_external_id}/access_tokens",
-                headers={"Authorization": f"Bearer {jwt}", "Accept": "application/vnd.github+json"},
+                headers={"Authorization": f"Bearer {jwt_token}", "Accept": "application/vnd.github+json"},
             )
         if resp.status_code != 201:
-            raise VCSAuthError(f"installation token acquire failed: {resp.status_code}")
+            raise VCSAuthError(f"installation token acquire failed: {resp.status_code}: {resp.text}")
         return resp.json()["token"]
+
+    async def get_installation_token(self, org_id: UUID) -> str:
+        """Public Protocol method. Returns a freshly-issued installation token.
+
+        Callers (workspace plugin at clone time; future M02+ orchestration at
+        each git push/fetch) must use the token immediately and not cache it
+        across operations. Internally wraps `_installation_token` so the JWT
+        exchange logic stays in one place.
+        """
+        return await self._installation_token(org_id)
 
     async def _api_headers(self, org_id: UUID) -> dict[str, str]:
         token = await self._installation_token(org_id)
@@ -343,11 +365,99 @@ class GitHubPlugin:
                 id=uuid4(),
                 org_id=org_id,
                 app_id=app_id,
+                slug="",
                 encrypted_private_key=fernet.encrypt(pem.encode()),
                 encrypted_webhook_secret=fernet.encrypt(webhook_secret.encode()),
             )
             s.add(row)
             await s.commit()
+
+
+async def set_github_credentials(
+    org_id: UUID,
+    *,
+    app_id: str,
+    slug: str,
+    private_key: str,
+    webhook_secret: str,
+) -> None:
+    """Encrypt + upsert App credentials on `github_settings`. Wipes the cached
+    installation-token (if any) so the next API call re-issues against the new
+    private key.
+    """
+    fernet = Fernet(get_settings().yaaof_encryption_key.encode())
+    enc_key = fernet.encrypt(private_key.encode())
+    enc_secret = fernet.encrypt(webhook_secret.encode())
+    async with db_session() as s:
+        row = (
+            await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == org_id))
+        ).scalar_one_or_none()
+        if row is None:
+            row = GitHubSettingsRow(
+                id=uuid4(),
+                org_id=org_id,
+                app_id=app_id,
+                slug=slug,
+                encrypted_private_key=enc_key,
+                encrypted_webhook_secret=enc_secret,
+            )
+            s.add(row)
+        else:
+            row.app_id = app_id
+            row.slug = slug
+            row.encrypted_private_key = enc_key
+            row.encrypted_webhook_secret = enc_secret
+        await s.commit()
+
+
+async def upsert_installation(
+    *,
+    install_external_id: str,
+    account_login: str,
+    org_id: UUID,
+) -> None:
+    """Write/refresh a `github_app_installations` row for an active install.
+    Called from the webhook handler on `installation.created` / `installation.unsuspend`."""
+    async with db_session() as s:
+        existing = (
+            await s.execute(
+                select(GitHubAppInstallationRow).where(
+                    GitHubAppInstallationRow.install_external_id == install_external_id
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            s.add(
+                GitHubAppInstallationRow(
+                    id=uuid4(),
+                    org_id=org_id,
+                    install_external_id=install_external_id,
+                    account_login=account_login,
+                    status="active",
+                )
+            )
+        else:
+            existing.org_id = org_id
+            existing.account_login = account_login
+            existing.status = "active"
+        await s.commit()
+
+
+async def mark_installation_inactive(*, install_external_id: str, status: str) -> None:
+    """Flip an install row to non-active. Called on `installation.deleted` /
+    `installation.suspend`. `status` is one of `"uninstalled"`, `"suspended"`."""
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(GitHubAppInstallationRow).where(
+                    GitHubAppInstallationRow.install_external_id == install_external_id
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return
+        row.status = status
+        await s.commit()
 
 
 def _format_finding_body(agent_tag: str, f: Any) -> str:
@@ -372,6 +482,21 @@ def _parse(s: str | None) -> datetime:
         return datetime.fromisoformat(s)
     except ValueError:
         return _utcnow()
+
+
+def _build_app_jwt(app_id: str, pem: str) -> str:
+    """Build the App JWT used to exchange for installation tokens.
+
+    Real GitHub requires an RS256-signed JWT with `iss=app_id`, ~10min `exp`,
+    and a small `iat` clock skew. The fake-github test stack accepts any string
+    starting with `jwt-fake-` — so when the stored PEM is the test sentinel,
+    we emit the legacy token instead of trying to RSA-sign a non-key.
+    """
+    if not pem or "BEGIN" not in pem:
+        return f"jwt-fake-{app_id}"
+    now = int(time.time())
+    payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": app_id}
+    return pyjwt.encode(payload, pem, algorithm="RS256")
 
 
 _plugin = GitHubPlugin()

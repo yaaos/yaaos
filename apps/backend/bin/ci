@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Backend CI: lint, format check, modularity, table-access, patch-usage, tests.
-# Runs from apps/backend/ as cwd.
+# Backend CI: lint, format check, modularity, table-access, tests.
+# Runs from apps/backend/ as cwd. (DI-over-@patch is enforced by ruff TID251.)
 
 set -euo pipefail
 
@@ -13,13 +13,10 @@ echo "==> ruff check"
 uv run ruff check .
 
 echo "==> bin/sync_modules (regenerates tach.toml + checks layering)"
-"$(git rev-parse --show-toplevel)/bin/sync_modules" --check
+bin/sync_modules --check
 
 echo "==> bin/check_table_access"
-"$(git rev-parse --show-toplevel)/bin/check_table_access"
-
-echo "==> bin/check_patch_usage"
-"$(git rev-parse --show-toplevel)/bin/check_patch_usage"
+bin/check_table_access
 
 echo "==> pytest"
 uv run pytest -q

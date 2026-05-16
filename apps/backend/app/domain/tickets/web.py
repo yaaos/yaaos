@@ -24,11 +24,11 @@ router = APIRouter()
 
 @router.get("")
 async def list_(
-    repo_id: list[UUID] | None = Query(default=None),
+    repo_external_id: list[str] | None = Query(default=None),
     status: list[str] | None = Query(default=None),
     limit: int = 50,
 ) -> list[Ticket]:
-    filter_ = TicketFilter(repo_ids=repo_id, statuses=status)  # type: ignore[arg-type]
+    filter_ = TicketFilter(repo_external_ids=repo_external_id, statuses=status)  # type: ignore[arg-type]
     return await list_tickets(filter_, org_id=M01_ORG_ID, limit=limit)
 
 

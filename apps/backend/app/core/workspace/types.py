@@ -1,12 +1,21 @@
-"""Value objects + protocols shared across workspace consumers and plugins."""
+"""Value objects + protocols shared across workspace consumers and plugins.
+
+The Workspace Protocol exposes operations (run a coding-agent CLI inside the
+workspace) rather than internal paths. Consumers cannot peek at where files
+live; the workspace owns that detail and forward-compats Docker / K8s pod
+implementations where "working_dir" wouldn't be a host-filesystem path at all.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.core.primitives import PluginMeta
 
 
 class WorkspaceStatus(StrEnum):
@@ -39,18 +48,24 @@ class RepoRefForSpec(BaseModel):
 
 
 class WorkspaceSpec(BaseModel):
+    """What's required to provision a workspace. `org_id` is stamped by
+    `create_workspace` before the spec reaches the plugin's `provision()`.
+    """
+
     repo: RepoRefForSpec
     sha: str
     branch_name: str | None = None
     resource_caps: ResourceCaps = Field(default_factory=ResourceCaps)
     network_policy: NetworkPolicy = NetworkPolicy.GITHUB_ONLY
+    # Stamped by core/workspace.create_workspace before delegating to provision().
+    # Allows the workspace plugin to request auth tokens for the right org via vcs.
+    org_id: UUID | None = None
 
 
 class WorkspaceInfo(BaseModel):
     id: str
     provider_id: str
     sha: str
-    working_dir: str
     status: WorkspaceStatus
     created_at: datetime
     activated_at: datetime | None
@@ -65,25 +80,60 @@ class HealthStatus(BaseModel):
     checked_at: datetime
 
 
+class CodingAgentCliResult(BaseModel):
+    """Result of running a coding-agent CLI inside a workspace.
+
+    Spawn failures (binary not found, can't fork) raise `WorkspaceExecError`.
+    Subprocess-spawned-but-exited-non-zero is a normal CodingAgentCliResult
+    with `exit_code != 0`. Timeouts produce `timed_out=True`.
+    """
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    timed_out: bool
+    duration_ms: int
+
+
 class Workspace(Protocol):
-    """Returned to callers. Just an id + working_dir for M01."""
+    """The view consumers get back from `create_workspace` / `with_workspace`.
+
+    Exposes only operations + identity. Internal paths (in-process tempdir,
+    container id, pod name) are implementation details of the provider.
+    """
 
     id: str
-    working_dir: str
 
     async def info(self) -> WorkspaceInfo: ...
 
-
-class WorkspaceHandle(BaseModel):
-    """What plugins return from provision()."""
-
-    working_dir: str
+    async def run_coding_agent_cli(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+        timeout_seconds: int | None = None,
+    ) -> CodingAgentCliResult: ...
 
 
 class WorkspaceProvider(Protocol):
-    plugin_id: str
+    """Plugin contract. Provision returns opaque plugin_state; `run_coding_agent_cli`
+    operates against that state. The state shape is private to each plugin (e.g.,
+    `{"working_dir": str}` for in-process; `{"container_id": str}` for Docker).
+    """
 
-    async def provision(self, spec: WorkspaceSpec) -> tuple[WorkspaceHandle, dict[str, Any]]: ...
+    meta: PluginMeta
+
+    async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]: ...
+    async def run_coding_agent_cli(
+        self,
+        plugin_state: dict[str, Any],
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+        timeout_seconds: int | None = None,
+    ) -> CodingAgentCliResult: ...
     async def destroy(self, plugin_state: dict[str, Any]) -> None: ...
     async def health_check(self) -> HealthStatus: ...
 
@@ -106,3 +156,9 @@ class WorkspaceExpiredError(WorkspaceError):
 
 class WorkspaceDestroyError(WorkspaceError):
     """Raised by plugins when destroy() fails."""
+
+
+class WorkspaceExecError(WorkspaceError):
+    """Raised by run_coding_agent_cli when the subprocess can't even be spawned
+    (binary missing, fork failure). Process-ran-and-exited-non-zero is NOT an
+    exec error — it's a normal CodingAgentCliResult."""

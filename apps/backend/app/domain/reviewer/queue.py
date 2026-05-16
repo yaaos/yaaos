@@ -12,12 +12,6 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from app.core.audit_log import audit_for_review_job
-from app.core.coding_agent import (
-    AgentInvocationStatus,
-)
-from app.core.coding_agent import (
-    invoke as invoke_agent,
-)
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.events import Event, publish
@@ -29,16 +23,15 @@ from app.core.workspace import (
     WorkspaceSpec,
     with_workspace,
 )
-from app.domain import memory, pull_requests, repos, tickets
-from app.domain.reviewer.agent_crud import get_agent_by_id, get_agent_by_name
-from app.domain.reviewer.finding_types import FindingDto, FindingList, ReplyResponse
-from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
-from app.domain.reviewer.prompt import assemble_prompt, compute_verdict
-from app.domain.vcs import (
-    Finding,
-    FindingSnippetLine,
-    Review,
+from app.domain import coding_agent, memory, pull_requests, tickets
+from app.domain.coding_agent import (
+    InvocationStatus,
+    ReplyContext,
+    ReviewContext,
 )
+from app.domain.reviewer.agent_crud import get_agent_by_id, get_agent_by_name
+from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
+from app.domain.vcs import Review
 from app.domain.vcs import (
     get_plugin as get_vcs_plugin,
 )
@@ -516,11 +509,10 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             await _transition_failed(job_id, "ticket has no linked PR", org_id=org_id)
             return
         pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
-        repo = await repos.get(pr.repo_id, org_id=org_id)
         agent = await get_agent_by_id(input.agent_id, org_id=org_id)
-        lessons = await memory.list_for_repo(repo.id, org_id=org_id)
+        lessons = await memory.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
 
-        vcs_plugin = get_vcs_plugin(repo.plugin_id)
+        vcs_plugin = get_vcs_plugin(pr.plugin_id)
         diff = await vcs_plugin.fetch_diff(pr.external_id)
         prior_comments = await vcs_plugin.list_yaaof_comments(pr.external_id)
         prior_bodies = [c.body for c in prior_comments]
@@ -540,26 +532,28 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             await _transition_skipped(job_id, "too_large", org_id=org_id)
             return
 
-        language = repo.language_hint or _detect_language(diff)
-        if not repo.language_hint and language:
-            try:
-                await repos.set_language_hint(repo.id, language, actor=Actor.system(), org_id=org_id)
-            except Exception:
-                pass
+        # Language autodetected per review (was previously cached on repos.language_hint
+        # — that column went away with the repos table). Cost is negligible: filename
+        # extension scan over the diff's file list.
+        language = _detect_language(diff)
 
-        # Assemble prompt
-        prompt = assemble_prompt(
+        # Build the review context — the plugin owns prompt assembly.
+        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
+        review_ctx = ReviewContext(
+            persona=agent.prompt_text,
             agent_name=agent.name,
-            agent_prompt_text=agent.prompt_text,
-            diff_raw=diff.raw,
+            pr=vcs_pr,
+            diff=diff,
             lessons=lessons,
             language_hint=language,
             prior_yaaof_comment_bodies=prior_bodies,
-            pr_title=pr.title,
-            pr_body=pr.body,
+            agent_config=agent.agent_config,
         )
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
-        lesson_ids = [l.id for l in lessons]
+        # Hash captures everything that influences the agent's output — same
+        # purpose as the old assembled-prompt hash, just over the structured
+        # context rather than the literal string.
+        prompt_hash = hashlib.sha256(review_ctx.model_dump_json().encode()).hexdigest()
+        lesson_ids = [lesson.id for lesson in lessons]
 
         async with db_session() as s:
             await s.execute(
@@ -589,11 +583,12 @@ async def _run_review_job(input: ReviewJobInput) -> None:
         async with with_workspace(
             "in_process",
             WorkspaceSpec(
-                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=repo.external_id),
+                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
                 sha=pr.head_sha,
                 branch_name=pr.head_branch,
                 resource_caps=ResourceCaps(),
                 network_policy=NetworkPolicy.GITHUB_ONLY,
+                org_id=org_id,
             ),
             org_id=org_id,
         ) as ws:
@@ -605,24 +600,20 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             if row is None or row.status != "running":
                 return
 
-            result = await invoke_agent(
+            result = await coding_agent.review(
                 plugin_id=agent.coding_agent_plugin_id,
                 workspace=ws,
-                prompt=prompt,
-                agent_config=agent.agent_config,
-                response_model=FindingList,
+                context=review_ctx,
             )
 
-        if result.status == AgentInvocationStatus.SUCCESS and result.parsed is not None:
-            findings_dto: list[FindingDto] = result.parsed.findings
-            verdict = compute_verdict(findings_dto)
-            review = Review(
+        if result.status == InvocationStatus.SUCCESS:
+            review_obj = Review(
                 agent_tag=agent.name,
-                state=verdict,  # type: ignore[arg-type]
-                summary_body=None,
-                findings=[_dto_to_finding(f) for f in findings_dto],
+                state=result.state or "COMMENT",
+                summary_body=result.summary_body,
+                findings=result.findings,
             )
-            post_result = await vcs_plugin.post_review(pr.external_id, review)
+            post_result = await vcs_plugin.post_review(pr.external_id, review_obj)
             async with db_session() as s:
                 # Record posted comments
                 for cid in post_result.finding_to_comment_external_id.values():
@@ -648,12 +639,14 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                         status="posted",
                         completed_at=_utcnow(),
                         review_external_id=post_result.review_external_id,
-                        tokens_in=result.tokens_in,
-                        tokens_out=result.tokens_out,
-                        cost_usd=float(result.cost_usd) if result.cost_usd is not None else None,
+                        tokens_in=result.telemetry.tokens_in,
+                        tokens_out=result.telemetry.tokens_out,
+                        cost_usd=float(result.telemetry.cost_usd)
+                        if result.telemetry.cost_usd is not None
+                        else None,
                         duration_s=duration,
                         current_step="posted",
-                        findings=[f.model_dump(mode="json") for f in findings_dto],
+                        findings=[f.model_dump(mode="json") for f in result.findings],
                     )
                 )
                 await s.commit()
@@ -661,12 +654,14 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 job_id,
                 "review_job.posted",
                 _PostedPayload(
-                    verdict=verdict,
-                    finding_count=len(findings_dto),
-                    tokens_in=result.tokens_in,
-                    tokens_out=result.tokens_out,
-                    cost_usd=str(result.cost_usd) if result.cost_usd is not None else None,
-                    latency_ms=result.latency_ms,
+                    verdict=result.state or "COMMENT",
+                    finding_count=len(result.findings),
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
+                    cost_usd=str(result.telemetry.cost_usd)
+                    if result.telemetry.cost_usd is not None
+                    else None,
+                    latency_ms=result.telemetry.latency_ms,
                     review_external_id=post_result.review_external_id,
                 ),
                 actor=Actor.agent(agent.id),
@@ -687,7 +682,7 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 result.error_message or f"agent returned status={result.status}",
                 org_id=org_id,
                 invocation_status=str(result.status),
-                raw_output_excerpt=(result.raw_output or "")[:1000],
+                raw_output_excerpt=(result.telemetry.raw_output or "")[:1000],
             )
 
     except Exception as e:
@@ -715,39 +710,40 @@ async def _run_reply_job(input: ReviewJobInput) -> None:
         agent = await get_agent_by_id(input.agent_id, org_id=org_id)
         vcs_plugin = get_vcs_plugin(pr.plugin_id)
         diff = await vcs_plugin.fetch_diff(pr.external_id)
-        prompt = (
-            f"# Agent: {agent.name}\n\n"
-            f"{agent.prompt_text}\n\n"
-            f"A human replied to your earlier comment:\n\n> {input.reply_body or ''}\n\n"
-            f"## Diff (for context)\n```diff\n{diff.raw}\n```\n"
-            "Reply with a short follow-up in JSON form."
+        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
+        reply_ctx = ReplyContext(
+            persona=agent.prompt_text,
+            agent_name=agent.name,
+            pr=vcs_pr,
+            diff=diff,
+            reply_body=input.reply_body or "",
+            parent_comment_external_id=input.parent_comment_external_id or "",
+            agent_config=agent.agent_config,
         )
 
         async with with_workspace(
             "in_process",
             WorkspaceSpec(
-                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.external_id.split("#")[0]),
+                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
                 sha=pr.head_sha,
                 branch_name=pr.head_branch,
                 resource_caps=ResourceCaps(),
                 network_policy=NetworkPolicy.GITHUB_ONLY,
+                org_id=org_id,
             ),
             org_id=org_id,
         ) as ws:
-            result = await invoke_agent(
+            result = await coding_agent.reply(
                 plugin_id=agent.coding_agent_plugin_id,
                 workspace=ws,
-                prompt=prompt,
-                agent_config=agent.agent_config,
-                response_model=ReplyResponse,
+                context=reply_ctx,
             )
 
-        if result.status == AgentInvocationStatus.SUCCESS and result.parsed is not None:
-            reply: ReplyResponse = result.parsed
+        if result.status == InvocationStatus.SUCCESS and result.body is not None:
             new_comment_id = await vcs_plugin.post_comment_reply(
                 pr.external_id,
                 input.parent_comment_external_id or "",
-                f"[{agent.name}] {reply.body}",
+                f"[{agent.name}] {result.body}",
             )
             async with db_session() as s:
                 await s.execute(
@@ -756,9 +752,11 @@ async def _run_reply_job(input: ReviewJobInput) -> None:
                     .values(
                         status="posted",
                         completed_at=_utcnow(),
-                        tokens_in=result.tokens_in,
-                        tokens_out=result.tokens_out,
-                        cost_usd=float(result.cost_usd) if result.cost_usd is not None else None,
+                        tokens_in=result.telemetry.tokens_in,
+                        tokens_out=result.telemetry.tokens_out,
+                        cost_usd=float(result.telemetry.cost_usd)
+                        if result.telemetry.cost_usd is not None
+                        else None,
                     )
                 )
                 await s.commit()
@@ -768,8 +766,8 @@ async def _run_reply_job(input: ReviewJobInput) -> None:
                 _ReplyPostedPayload(
                     comment_external_id=new_comment_id,
                     parent_comment_external_id=input.parent_comment_external_id or "",
-                    tokens_in=result.tokens_in,
-                    tokens_out=result.tokens_out,
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
                 ),
                 actor=Actor.agent(agent.id),
                 org_id=org_id,
@@ -864,25 +862,6 @@ def _detect_language(diff: Any) -> str | None:
     if not counts:
         return None
     return max(counts.items(), key=lambda kv: kv[1])[0]
-
-
-def _dto_to_finding(dto: FindingDto) -> Finding:
-    snippet: list[FindingSnippetLine] | None = None
-    if dto.snippet:
-        snippet = [
-            FindingSnippetLine(line_number=s.line_number, kind=s.kind, text=s.text) for s in dto.snippet
-        ]
-    return Finding(
-        file=dto.file,
-        line_start=dto.line_start,
-        line_end=dto.line_end,
-        severity=dto.severity,
-        title=dto.title,
-        body=dto.body,
-        rationale=dto.rationale,
-        snippet=snippet,
-        applied_lesson_ids=dto.applied_lesson_ids,
-    )
 
 
 # ── Startup recovery ──────────────────────────────────────────────────────────

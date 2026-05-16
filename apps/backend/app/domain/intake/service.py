@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.core.audit_log import audit_for_ticket, audit_for_webhook_event
 from app.core.database import session as db_session
 from app.core.primitives import Actor
-from app.domain import pull_requests, repos, tickets, vcs
+from app.domain import pull_requests, tickets, vcs
 from app.domain.intake.parsing import parse_rereview
 from app.domain.vcs import (
     CommentCreated,
@@ -135,17 +135,15 @@ async def _filter_audit(event: VCSEvent, reason: str, *, org_id: UUID) -> None:
 
 
 async def _handle_pr_ready_for_review(event: PullRequestReadyForReview, *, org_id: UUID) -> None:
-    repo = await repos.get_by_external(event.plugin_id, event.repo_external_id, org_id=org_id)
-    if repo is None or repo.status != "active":
-        await _filter_audit(event, "not_allowlisted", org_id=org_id)
-        return
+    # Repo-allowlist gate dropped 2026-05-16: the GitHub App install picks the
+    # access scope, so any webhook we receive is already authorized.
     if event.pr.is_fork:
         await _filter_audit(event, "fork", org_id=org_id)
         return
     if event.pr.author_type == "bot":
         await _filter_audit(event, "bot_author", org_id=org_id)
         return
-    pr = await refresh_pr_metadata(repo.id, event.pr, org_id=org_id)
+    pr = await refresh_pr_metadata(event.repo_external_id, event.pr, org_id=org_id)
     # Schedule a review for this PR's ticket.
     from app.domain import reviewer  # noqa: PLC0415
 
@@ -171,7 +169,7 @@ async def _handle_pr_synchronized(event: PullRequestSynchronized, *, org_id: UUI
             pr_external_id=event.pr_external_id,
         )
         return
-    fresh = await refresh_pr_metadata_by_id(pr.repo_id, event.pr_external_id, org_id=org_id)
+    fresh = await refresh_pr_metadata_by_id(pr.repo_external_id, event.pr_external_id, org_id=org_id)
     from app.domain import reviewer  # noqa: PLC0415
 
     ticket = await tickets.get_by_pr(fresh.id, org_id=org_id)
@@ -317,33 +315,25 @@ async def _handle_reaction_added(event: ReactionAdded, *, org_id: UUID) -> None:
 
 
 async def refresh_pr_metadata(
-    repo_id: UUID, pr: VCSPullRequest, *, org_id: UUID
+    repo_external_id: str, pr: VCSPullRequest, *, org_id: UUID
 ) -> pull_requests.PullRequest:
     """Upsert pull_requests row + ensure a ticket exists. Returns the PR row.
 
     Two-step: create the ticket lazily on first insert (we need pr.id to set FK on
     ticket; we also need ticket.id to set FK on pr — chicken-and-egg). Approach:
       1. Check if PR row exists. If yes, update it.
-      2. If not, create ticket FIRST with a placeholder source_external_id, then
-         insert the PR row pointing at the ticket, then set ticket.pr_id to the
-         new pr.id.
+      2. If not, create ticket FIRST, then insert the PR row pointing at the
+         ticket, then set ticket.pr_id to the new pr.id.
     """
     existing = await pull_requests.get_by_external(pr.plugin_id, pr.external_id, org_id=org_id)
     if existing is not None:
-        # Update path
-        upserted = await pull_requests.upsert(pr, repo_id, org_id=org_id)
-        # Sync the ticket's title/description
+        upserted = await pull_requests.upsert(pr, org_id=org_id)
         ticket = await tickets.get(existing.ticket_id, org_id=org_id)
         await _sync_ticket_titles(ticket.id, pr.title, pr.body, org_id=org_id)
         return upserted
 
-    # Insert path: create ticket first (with a placeholder pr_id), insert PR, then
-    # link ticket → pr.
     from uuid import uuid4  # noqa: PLC0415
 
-    # The PR FKs the ticket; so we must insert ticket first with pr_id=None, then
-    # the PR row, then link ticket → pr. `tickets.create_for_pr` requires pr_id,
-    # so we do an explicit insert here.
     from app.domain.tickets.models import TicketRow  # noqa: PLC0415
 
     async with db_session() as s:
@@ -355,7 +345,8 @@ async def refresh_pr_metadata(
             title=pr.title,
             description=pr.body,
             status="in_review",
-            repo_id=repo_id,
+            plugin_id=pr.plugin_id,
+            repo_external_id=repo_external_id,
             pr_id=None,
         )
         s.add(ticket_row)
@@ -363,7 +354,7 @@ async def refresh_pr_metadata(
         await s.refresh(ticket_row)
         ticket_id = ticket_row.id
 
-    upserted = await pull_requests.upsert(pr, repo_id, ticket_id=ticket_id, org_id=org_id)
+    upserted = await pull_requests.upsert(pr, ticket_id=ticket_id, org_id=org_id)
 
     async with db_session() as s:
         from sqlalchemy import update as sql_update  # noqa: PLC0415
@@ -371,11 +362,10 @@ async def refresh_pr_metadata(
         await s.execute(sql_update(TicketRow).where(TicketRow.id == ticket_id).values(pr_id=upserted.id))
         await s.commit()
 
-    # Audit + event for the ticket creation.
     await audit_for_ticket(
         ticket_id,
         "ticket.created",
-        _TicketCreatedAuditPayload(pr_id=upserted.id, repo_id=repo_id),
+        _TicketCreatedAuditPayload(pr_id=upserted.id, repo_external_id=repo_external_id),
         actor=Actor.system(),
         org_id=org_id,
     )
@@ -385,7 +375,7 @@ async def refresh_pr_metadata(
     await publish(
         TicketStatusChanged(
             ticket_id=ticket_id,
-            repo_id=repo_id,
+            repo_external_id=repo_external_id,
             pr_id=upserted.id,
             previous_status=None,
             new_status="in_review",
@@ -396,16 +386,16 @@ async def refresh_pr_metadata(
 
 
 async def refresh_pr_metadata_by_id(
-    repo_id: UUID, pr_external_id: str, *, org_id: UUID
+    repo_external_id: str, pr_external_id: str, *, org_id: UUID
 ) -> pull_requests.PullRequest:
     """Catch-up path: fetch fresh PR from VCS, then delegate."""
     pr = await vcs.get_plugin("github").fetch_pr(pr_external_id)
-    return await refresh_pr_metadata(repo_id, pr, org_id=org_id)
+    return await refresh_pr_metadata(repo_external_id, pr, org_id=org_id)
 
 
 class _TicketCreatedAuditPayload(BaseModel):
     pr_id: UUID
-    repo_id: UUID
+    repo_external_id: str
 
 
 async def _sync_ticket_titles(ticket_id: UUID, title: str, body: str | None, *, org_id: UUID) -> None:

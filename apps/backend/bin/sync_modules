@@ -7,7 +7,7 @@ generates `apps/backend/tach.toml`; checks layering rules; runs `tach check`.
 Frontend equivalent (Biome rule) is a TODO — wired in when the FE structure
 stabilizes past the skeleton.
 
-Usage:
+Usage (from apps/backend/):
     bin/sync_modules           # regenerate tach.toml + check
     bin/sync_modules --check   # check only; fail if tach.toml is out of date
 """
@@ -20,8 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-BACKEND = REPO / "apps" / "backend"
+BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
 TACH_TOML = BACKEND / "tach.toml"
 
@@ -185,7 +184,7 @@ def main() -> int:
             return 1
     else:
         TACH_TOML.write_text(new_content)
-        print(f"wrote {TACH_TOML.relative_to(REPO)}")
+        print(f"wrote {TACH_TOML.name}")
 
     errs = check_layering(modules)
     if errs:

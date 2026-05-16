@@ -27,10 +27,11 @@ router = APIRouter()
 
 
 class CreateLessonRequest(BaseModel):
-    repo_id: UUID
+    repo_external_id: str
     title: str
     body: str
     source_pr_url: str | None = None
+    plugin_id: str = "github"
 
 
 class UpdateLessonRequest(BaseModel):
@@ -40,9 +41,9 @@ class UpdateLessonRequest(BaseModel):
 
 
 @router.get("")
-async def list_(repo_id: UUID | None = None) -> list[Lesson]:
-    if repo_id is not None:
-        return await list_for_repo(repo_id, org_id=M01_ORG_ID)
+async def list_(repo_external_id: str | None = None) -> list[Lesson]:
+    if repo_external_id is not None:
+        return await list_for_repo(repo_external_id, org_id=M01_ORG_ID)
     return await list_all(org_id=M01_ORG_ID)
 
 
@@ -50,12 +51,13 @@ async def list_(repo_id: UUID | None = None) -> list[Lesson]:
 async def create_lesson(req: CreateLessonRequest) -> Lesson:
     try:
         return await create(
-            req.repo_id,
+            req.repo_external_id,
             req.title,
             req.body,
             req.source_pr_url,
             actor=Actor.system(),
             org_id=M01_ORG_ID,
+            plugin_id=req.plugin_id,
         )
     except LessonValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))

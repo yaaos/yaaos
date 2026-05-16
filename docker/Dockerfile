@@ -26,6 +26,21 @@ RUN pnpm --filter ./apps/web build
 # ────────────────────────────────────────────────────────────────────────
 FROM python:3.13-slim-bookworm AS backend
 
+# Runtime tools:
+#   - git: plugins/in_process_workspace runs `git clone` during workspace
+#     provision (M01 reviewer needs the repo checked out for the agent's
+#     Read/Glob/Grep tools).
+#   - node + the Claude Code CLI: plugins/claude_code shells out to `claude`
+#     to do the actual review. POC trade-off — when M02+ moves agents into
+#     Docker workspaces, the CLI moves with them and this layer goes away.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv for fast Python installs
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

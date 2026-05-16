@@ -151,7 +151,7 @@ The UI's ticket-detail page reads via the first three for the "Agents" tab; an a
 
 ```python
 class ReviewerAgent(AgentSpec):
-    """Extends core.coding_agent.AgentSpec with persistence fields."""
+    """Extends domain.coding_agent.AgentSpec with persistence fields."""
     id: UUID
     org_id: UUID
     is_built_in: bool
@@ -268,19 +268,21 @@ async def _run_review_job(input: ReviewJobInput) -> None:
         # 6. Language detect (or use repo.language_hint)
         language = repo.language_hint or _detect_language(diff)
 
-        # 7. Build the prompt
-        prompt = _assemble_prompt(
-            agent=agent,
+        # 7. Build the review context — the plugin owns prompt assembly.
+        review_ctx = ReviewContext(
+            persona=agent.prompt_text,
+            agent_name=agent.name,
+            pr=vcs_pr,
             diff=diff,
             lessons=lessons,
-            language=language,
-            prior_yaaof_comments=prior_yaaof_comments,
-            pr_title=pr.title,
-            pr_body=pr.body,
+            language_hint=language,
+            prior_yaaof_comment_bodies=[c.body for c in prior_yaaof_comments],
+            agent_config=agent.agent_config,
         )
 
-        # 8. Compute the prompt hash and snapshot lesson IDs onto the row for UI read-speed
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
+        # 8. Hash the context (everything that influences the agent's output) and
+        #    snapshot lesson IDs onto the row for UI read-speed.
+        prompt_hash = hashlib.sha256(review_ctx.model_dump_json().encode()).hexdigest()
         await _denormalize_run_snapshot(
             job_id,
             prompt_hash=prompt_hash,
@@ -317,26 +319,24 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             if job.status != "running":
                 return  # cancelled while workspace was being provisioned
 
-            result = await core.coding_agent.invoke(
+            result = await coding_agent.review(
                 plugin_id=agent.coding_agent_plugin_id,
                 workspace=ws,
-                prompt=prompt,
-                agent_config=agent.agent_config,
-                response_model=FindingList,    # Pydantic class: { findings: list[Finding] }; Finding carries snippet, rationale, applied_lesson_ids (see vcs.md). Reviewer's system prompt + the appended schema instruction tell the agent how to populate them.
+                context=review_ctx,
             )
 
-        # 10. Handle the result by status
+        # 10. Handle the result by status. `result.findings` are already vcs.Finding;
+        #     `result.state` is the verdict (APPROVED / CHANGES_REQUESTED / COMMENT)
+        #     computed by the plugin. No DTO conversion in reviewer.
         if result.status == "success":
-            findings = result.parsed.findings
-            verdict = _compute_verdict(findings)
             post_result = await vcs.post_review(
                 pr.plugin_id,
                 pr.external_id,
                 Review(
                     agent_tag=agent.name,
-                    state=verdict,
-                    summary_body=None,
-                    findings=findings,
+                    state=result.state or "COMMENT",
+                    summary_body=result.summary_body,
+                    findings=result.findings,
                 ),
             )
             await _write_posted_comments(job_id, agent.id, pr.id, post_result, org_id=org_id)
@@ -344,9 +344,12 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             await audit_log.audit_for_review_job(
                 job_id, kind='review_job.posted',
                 payload=ReviewPostedPayload(
-                    verdict=verdict, finding_count=len(findings),
-                    tokens_in=result.tokens_in, tokens_out=result.tokens_out,
-                    cost_usd=result.cost_usd, latency_ms=result.latency_ms,
+                    verdict=result.state or "COMMENT",
+                    finding_count=len(result.findings),
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
+                    cost_usd=result.telemetry.cost_usd,
+                    latency_ms=result.telemetry.latency_ms,
                 ),
                 actor=Actor(kind='agent', agent_id=agent.id),
                 org_id=org_id,
@@ -358,7 +361,7 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 payload=ReviewFailedPayload(
                     invocation_status=result.status,
                     error=result.error_message,
-                    raw_output_excerpt=result.raw_output[:1000],   # truncate for storage
+                    raw_output_excerpt=result.telemetry.raw_output[:1000],   # truncate for storage
                 ),
                 actor=Actor(kind='system'),
                 org_id=org_id,
@@ -400,7 +403,7 @@ Beyond the lifecycle columns (`status`, `started_at`, `completed_at`, `last_hear
 
 - `prompt_hash` — written at prompt-assembly time (step 8 of the handler), identical to the hash in the `review_job.prompt_sent` audit payload.
 - `lessons_applied: list[UUID]` — IDs of the lessons that went into the prompt. UI uses this to render lesson chips next to findings (via `Finding.applied_lesson_ids`) and to link from the agent card to `/memory`. Per-lesson aggregate counts are **not** maintained (no `applied_count` on lessons).
-- `tokens_in`, `tokens_out`, `cost_usd` — copied from `AgentInvocationResult` on success so the UI doesn't have to dig through audit payloads to display them on the agent card.
+- `tokens_in`, `tokens_out`, `cost_usd` — copied from `ReviewResult.telemetry` on success so the UI doesn't have to dig through audit payloads to display them on the agent card.
 - `duration_s` — computed as `completed_at - started_at` and persisted on completion so list views can sort/aggregate without recomputing.
 
 These are read-only denormalizations of data also captured in the audit log. The audit log remains the historical truth; the row is the convenience view.
@@ -411,69 +414,13 @@ The handler bails out at three points:
 
 1. **Before flipping to `running`** (just after waking from debounce).
 2. **Inside the handler before the workspace is provisioned** — checked at the start, but a long-running step (lessons fetch, diff fetch) could span time during which the job was cancelled.
-3. **After workspace is provisioned, before calling coding_agent.invoke** — last chance to bail before the expensive subprocess.
+3. **After workspace is provisioned, before calling coding_agent.review** — last chance to bail before the expensive subprocess.
 
 If status is no longer `running` at any check, the handler returns early. The workspace context manager closes the workspace (marked `expired`; reaper destroys). No GitHub post happens.
 
-## Prompt assembly
+## Prompt assembly and verdict computation
 
-```python
-def _assemble_prompt(*, agent, diff, lessons, language, prior_yaaof_comments, pr_title, pr_body) -> str:
-    parts = [
-        f"# Agent: {agent.name}",
-        "",
-        agent.prompt_text,
-        "",
-        "## Repository language",
-        f"This repository is primarily {language}.",
-        "",
-        "## Pull request",
-        f"### Title\n{pr_title}",
-        f"### Description\n{pr_body or '(no description)'}",
-        "",
-        "## Diff",
-        "```diff",
-        diff.raw,
-        "```",
-    ]
-
-    if lessons:
-        parts.extend([
-            "",
-            "## Lessons learned from past reviews",
-            "Apply these when reviewing this PR. Each lesson has a stable ID — if a finding is directly motivated by a lesson, include that lesson's ID in the finding's `applied_lesson_ids` field.",
-            "",
-            *[f"### {l.title}  \n_lesson_id: {l.id}_\n{l.body}" for l in lessons],
-        ])
-
-    if prior_yaaof_comments:
-        # Filter to comments from OTHER agents (not this one)
-        other = [c for c in prior_yaaof_comments if not c.body.startswith(f"[{agent.name}]")]
-        if other:
-            parts.extend([
-                "",
-                "## Prior comments from sibling review agents",
-                "These have been posted by other yaaof agents on this PR.",
-                "Don't duplicate them. You may build on them or disagree.",
-                "",
-                *[f"### {c.body[:200]}..." for c in other[:20]],  # truncate for token budget
-            ])
-
-    return "\n".join(parts)
-```
-
-The schema-instruction block is appended by `plugins/claude_code` (not by reviewer).
-
-## Verdict computation
-
-```python
-def _compute_verdict(findings: list[Finding]) -> ReviewState:
-    if not findings:
-        return "APPROVED"
-    if any(f.severity == "must-fix" for f in findings):
-        return "CHANGES_REQUESTED"
-    return "COMMENT"
-```
+**Not in reviewer.** Both moved to `plugins/claude_code` as of 2026-05-16 — see [plugins-claude_code.md](plugins-claude_code.md). Reviewer assembles a `ReviewContext` (PR, diff, lessons, persona, prior comments) and hands it to `coding_agent.review`; the plugin owns the system framing, the output JSON schema, and the verdict logic (APPROVED / CHANGES_REQUESTED / COMMENT based on findings' severities).
 
 ## Reply workflow
 
@@ -481,9 +428,8 @@ def _compute_verdict(findings: list[Finding]) -> ReviewState:
 
 - Same overall shape as `_run_review_job` but with:
   - `kind='reply'` on the review_job row
-  - Prompt includes the agent's original comment + human reply text (fetched via `vcs.list_yaaof_comments` filtered by id)
-  - `response_model=ReplyResponse { body: str }` (no findings)
-  - Output is posted as a reply to the parent comment via `vcs.post_comment_reply(pr, parent_id, body)`.
+  - Assembles a `ReplyContext` (PR, diff, persona, the human's reply body, the parent comment id) and calls `coding_agent.reply(plugin_id, ws, ctx) -> ReplyResult`. The plugin owns the prompt + the JSON output shape internally.
+  - Output is posted as a reply to the parent comment via `vcs.post_comment_reply(pr, parent_id, result.body)`.
   - Not added to `posted_comments` (since it's a thread reply, not a top-level review).
 
 ## Startup recovery
@@ -578,7 +524,11 @@ All written via `audit_log.audit_for_review_job(...)`. Entity is the ReviewJob; 
 Operator re-triggers via the UI re-review button if needed. Avoids infinite-loop on systematic crash causes.
 
 ### 2026-05-15 — Reply is a separate workflow (`_run_reply_job`), not a full review
-Different prompt shape, different output schema (`ReplyResponse`), posted as a thread reply rather than a top-level review. Reuses the workspace + coding_agent infrastructure.
+Different shape from review (single body string, not a list of findings), posted as a thread reply rather than a top-level review. Reuses the workspace + coding_agent infrastructure via the Protocol's `reply` method.
+
+### 2026-05-16 — Reviewer is a coding_agent consumer, not a prompt assembler
+Previously `domain/reviewer/prompt.py` assembled the LLM prompt and `finding_types.py` defined the response schema; reviewer then called `core.coding_agent.invoke(prompt, response_model=FindingList)` and converted DTOs to `vcs.Finding`. As of 2026-05-16, prompt assembly + schema choice + DTO conversion all live in `plugins/claude_code`, and reviewer just builds a `ReviewContext` / `ReplyContext` and calls `coding_agent.review` / `coding_agent.reply`. `coding_agent` moved from `core/` to `domain/` (it returns `vcs.Finding`).
+**Why:** see [coding_agent.md § Decisions](coding_agent.md#decisions). The reviewer's job is to drive the review *workflow* (scheduling, debouncing, cancellation, audit, post-to-VCS). Knowing how to talk to a specific agent CLI is the plugin's job. Splitting them makes the reviewer code smaller and makes future M02+ consumers of `coding_agent` (implementer, TODO-resolver) trivial to add without re-inventing prompt conventions.
 
 ### 2026-05-15 — No cross-agent visibility within a single batch
 Three agents run in parallel and don't see each other's comments from the current batch. Each sees comments from PRIOR batches via `vcs.list_yaaof_comments`. Simpler; no synchronization.

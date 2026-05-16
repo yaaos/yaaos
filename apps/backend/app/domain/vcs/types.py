@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.primitives import PluginMeta
+
 
 class RepoRef(BaseModel):
     plugin_id: str
@@ -191,7 +193,7 @@ class PluginNotFoundError(LookupError):
 
 
 class VCSPlugin(Protocol):
-    plugin_id: str
+    meta: PluginMeta
 
     async def fetch_pr(self, external_id: str) -> VCSPullRequest: ...
     async def fetch_diff(self, external_id: str) -> Diff: ...
@@ -203,3 +205,12 @@ class VCSPlugin(Protocol):
         self, external_id: str, parent_comment_external_id: str, body: str
     ) -> str: ...
     async def mark_comments_outdated(self, external_id: str, comment_external_ids: list[str]) -> None: ...
+
+    async def get_installation_token(self, org_id: UUID) -> str:
+        """Returns a freshly-issued, short-lived (~1h) installation token.
+
+        Callers MUST use the token immediately and forget it; tokens are never
+        cached across operations. Workspace plugins use this at clone time;
+        future M02+ orchestration uses it just before each git push/fetch.
+        """
+        ...

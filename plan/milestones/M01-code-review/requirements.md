@@ -228,7 +228,7 @@ The `@yaaof...` strings are **parsed from comment bodies, not GitHub user mentio
 - Every action above is visible in the per-ticket audit log timeline.
 - Basic metrics (tickets reviewed, cost per review, failure rate) are visible somewhere queryable.
 - **Per-app `bin/ci` scripts exist and pass on a fresh clone.** Each app owns its own check stack:
-  - `apps/backend/bin/ci` — Ruff (lint + format check), tach check, `check_patch_usage` AST scan, pytest (unit + integration).
+  - `apps/backend/bin/ci` — Ruff (lint + format check, incl. TID251 banned-api enforcing the no-`@patch` rule), tach check via `bin/sync_modules --check`, `bin/check_table_access`, pytest (unit + integration).
   - `apps/web/bin/ci` — Biome (lint + format check), TypeScript type-check, Vitest, OpenAPI codegen-drift check.
   - `apps/e2e/bin/ci` — brings up `docker/docker-compose.test.yml` (Postgres pre-seeded + fake-github + yaaof), runs Playwright against it, tears down. No external credentials required; fully self-contained.
-  - Top-level cross-app tooling (e.g., `bin/sync_modules`) lives in repo-root `bin/`, but **there is no top-level `bin/ci`** — CI runs each per-app script.
+  - **No top-level `bin/`.** Per-app tooling (incl. `apps/backend/bin/sync_modules`, `apps/backend/bin/check_table_access`) lives in each app's `bin/` directory. There is no top-level `bin/ci` either — CI runs each per-app script.
