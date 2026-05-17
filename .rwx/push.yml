@@ -32,9 +32,18 @@ tasks:
     # Dockerfile), so we read-only-mount the other doc trees + `plan/` + the
     # repo root markdown files so the check can see them. No image change —
     # production images stay lean.
+    #
+    # bin/ci's pytest also exercises real Postgres (transactional rollback
+    # pattern per apps/backend/docs/patterns.md). We bring up the postgres
+    # service from docker-compose.test.yml, run backend-ci on the same compose
+    # network, and tear it down on exit.
     run: |
+      docker compose -f docker/docker-compose.test.yml up -d --wait postgres
+      trap "docker compose -f docker/docker-compose.test.yml down -v" EXIT
       docker build -f docker/Dockerfile --target backend-ci -t yaaos-backend-ci .
       docker run --rm \
+        --network yaaos-test_default \
+        -e DATABASE_URL=postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos \
         -v "$(pwd)/docs:/app/docs:ro" \
         -v "$(pwd)/docker:/app/docker:ro" \
         -v "$(pwd)/plan:/app/plan:ro" \
