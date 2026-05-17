@@ -17,17 +17,18 @@ The only concrete `core/workspace.WorkspaceProvider` in M01. Implements `provisi
 
 ### `provision(spec)` — git clone with short-lived auth
 
-`spec: WorkspaceSpec` carries `repo` (`plugin_id` + `external_id`), `sha`, `branch_name`, `org_id`. `org_id` required — can't mint a clone token without it.
+`spec: WorkspaceSpec` carries `repo` (`plugin_id` + `external_id`), `sha`, `branch_name`, `base_sha`, `base_branch`, `org_id`. `org_id` required — can't mint a clone token without it.
 
 1. `tempfile.mkdtemp(prefix="yaaos-ws-")`.
 2. `_write_askpass()` — chmod 0700 askpass script in a sibling tempfile (outside `working_dir` because git clone requires an empty target).
 3. `vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)` — fresh token via the VCS plugin registry. Lives only in the Python process and briefly in the subprocess env.
 4. Build clone URL from `plugin_id` + `external_id`. GitHub: `https://github.com/{external_id}.git`. Unknown plugin id raises `WorkspaceProvisionError`.
 5. Subprocess env: copy of `os.environ` plus `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, `YAAOS_GIT_TOKEN`. Token never on argv — git asks via the askpass script.
-6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of branch tip.
+6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of head branch tip.
 7. If `spec.sha` set and not `"HEAD"`: `git fetch --depth=1 origin <sha>` then `git checkout <sha>`. Branch may have advanced; agents must see the PR's head sha.
-8. Write a `.yaaos-workspace` marker file (best-effort).
-9. `finally` unlinks the askpass. Provision failures rmtree the working_dir before re-raising.
+8. If `spec.base_sha` set: `git fetch --depth=1 origin <base_sha>` (best-effort, logged-and-continued on failure). Brings the base commit as an orphan in the shallow store so subagents can run `git diff <base_sha>..HEAD` — diff works on tree endpoints without needing the intermediate chain. Whatever branch the PR targets (not necessarily `main`).
+9. Write a `.yaaos-workspace` marker file (best-effort).
+10. `finally` unlinks the askpass. Provision failures rmtree the working_dir before re-raising.
 
 Returns `{"working_dir": working_dir}` — becomes `Workspace.plugin_state`. Consumers never see the path; they go through the `Workspace` handle.
 

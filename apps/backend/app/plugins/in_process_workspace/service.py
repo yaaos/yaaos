@@ -96,6 +96,27 @@ class InProcessWorkspaceProvider:
                     timeout_seconds=30,
                 )
 
+            # Step 3: fetch the PR's base commit as an orphan in the shallow
+            # store so the agent can run `git diff <base_sha>..HEAD` without us
+            # inlining the diff into its prompt. One extra round-trip, one
+            # object — provisioning stays under a few seconds. The fetch is
+            # best-effort: if it fails (e.g. base_sha unreachable), we log and
+            # proceed; the agent loses git-diff capability but reviewing the
+            # head checkout still works.
+            if spec.base_sha:
+                try:
+                    await self._run_subprocess(
+                        ["git", "-C", working_dir, "fetch", "--depth=1", "origin", spec.base_sha],
+                        env=base_env,
+                        timeout_seconds=120,
+                    )
+                except WorkspaceProvisionError as e:
+                    log.warning(
+                        "workspace.in_process.base_sha_fetch_failed",
+                        base_sha=spec.base_sha,
+                        error=str(e),
+                    )
+
             # Marker for debugging / human inspection.
             try:
                 with open(os.path.join(working_dir, ".yaaos-workspace"), "w", encoding="utf-8") as f:

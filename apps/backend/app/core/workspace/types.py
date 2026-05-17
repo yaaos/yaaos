@@ -55,6 +55,13 @@ class WorkspaceSpec(BaseModel):
     repo: RepoRefForSpec
     sha: str
     branch_name: str | None = None
+    # PR base (the target branch being merged into — not necessarily `main`).
+    # When provided, the workspace also fetches `base_sha` so the agent can
+    # run `git diff base_sha..HEAD` without yaaos inlining the whole diff
+    # into the prompt. Optional: standalone workspace calls (no PR context)
+    # don't have a base.
+    base_sha: str | None = None
+    base_branch: str | None = None
     resource_caps: ResourceCaps = Field(default_factory=ResourceCaps)
     network_policy: NetworkPolicy = NetworkPolicy.GITHUB_ONLY
     # Stamped by core/workspace.create_workspace before delegating to provision().

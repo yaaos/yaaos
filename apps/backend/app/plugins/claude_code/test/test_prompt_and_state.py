@@ -69,12 +69,18 @@ def _ctx(**overrides) -> ReviewContext:
     return ReviewContext(**base)
 
 
-def test_prompt_includes_parent_header_and_diff() -> None:
+def test_prompt_includes_parent_header_and_branch_refs() -> None:
     out = _assemble_review_prompt(_ctx())
     assert "yaaos parent reviewer" in out
     assert "yaaos-architecture" in out  # parent must know its subagents
-    assert "diff --git" in out
     assert "Add widget" in out
+    # Diff is NOT inlined — agent runs git itself. Branch refs must be present
+    # so the agent knows what to diff against.
+    assert "git diff" in out
+    assert "## Branch" in out
+    # Sanity: the raw diff body from the context is no longer dumped into the
+    # prompt. (Token cost on big PRs was the whole point.)
+    assert "diff --git" not in out
 
 
 def test_prompt_includes_language_hint_when_given() -> None:

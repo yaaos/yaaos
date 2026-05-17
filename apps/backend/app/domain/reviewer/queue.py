@@ -477,6 +477,8 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
                 sha=pr.head_sha,
                 branch_name=pr.head_branch,
+                base_sha=ctx.vcs_pr.base_sha,
+                base_branch=ctx.vcs_pr.base_branch,
                 resource_caps=ResourceCaps(),
                 network_policy=NetworkPolicy.GITHUB_ONLY,
                 org_id=org_id,

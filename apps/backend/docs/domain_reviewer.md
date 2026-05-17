@@ -55,7 +55,7 @@ Fire-and-forget coro spawned once per `schedule_review` call.
 5. **Ticket-level skip checks** — `_ticket_skip_reason(pr, diff)` returns `"fork"` / `"bot_author"` / `"trivial_diff"` / `"too_large"` / None. On hit, transition to skipped and return.
 6. **Secrets pre-flight** — `_detect_secrets(diff)`. On match, post ONE refusal review, transition to `skipped(skip_reason="secrets_detected")`, return.
 7. **Language detect.**
-8. **`provisioning_workspace` step.** `with_workspace("in_process", ...)` for the ticket.
+8. **`provisioning_workspace` step.** `with_workspace("in_process", ...)` for the ticket. Passes `pr.head_sha`, `pr.head_branch`, `pr.base_sha`, and `pr.base_branch` — the workspace fetches both the head and the PR's actual base branch (whatever it merges into, not always `main`) so the agent can `git diff base_sha..HEAD` itself.
 9. **Build `ReviewContext`** — pr, diff, lessons, language_hint, prior_yaaos_comment_bodies. No persona, no agent_name — the parent reviewer's prompt and subagent definitions ship as files (see `plugins/claude_code`).
 10. **Hash + snapshot** — `prompt_hash = sha256(ctx.model_dump_json())`, denormalize, write `review_job.prompt_sent` audit (hash, lesson IDs, checkout SHA, language hint).
 11. **`invoking_agent` step.** `coding_agent.review(plugin_id="claude_code", workspace=ws, context=ctx)`.

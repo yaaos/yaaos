@@ -16,7 +16,7 @@ HTTP routes registered by the module under `/api/workspaces/*` (list, get, force
 
 ### Value objects
 
-`WorkspaceSpec` describes what to provision: `repo`, `sha`, optional `branch_name`, `resource_caps`, `network_policy`, and `org_id` (stamped by `create_workspace` so plugins can request VCS auth for the right org). `ResourceCaps` and `NetworkPolicy` are advisory — the in-process plugin doesn't enforce them; the value objects exist so the interface is stable for future plugins.
+`WorkspaceSpec` describes what to provision: `repo`, `sha` (head), optional `branch_name` (head), optional `base_sha` + `base_branch` (the branch this PR will merge into — providers can fetch it so the agent can run `git diff base_sha..HEAD` itself instead of yaaos inlining the diff into the prompt), `resource_caps`, `network_policy`, and `org_id` (stamped by `create_workspace` so plugins can request VCS auth for the right org). `ResourceCaps` and `NetworkPolicy` are advisory — the in-process plugin doesn't enforce them; the value objects exist so the interface is stable for future plugins.
 
 `WorkspaceInfo` is the consumer-facing snapshot (id, provider_id, sha, status, timestamps, `age_seconds`). Does NOT expose `working_dir` — internal paths are plugin-private.
 

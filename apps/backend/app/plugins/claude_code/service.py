@@ -131,10 +131,22 @@ def _assemble_review_prompt(ctx: ReviewContext) -> str:
             f"### Title\n{ctx.pr.title}",
             f"### Description\n{ctx.pr.body or '(no description)'}",
             "",
-            "## Diff",
-            "```diff",
-            ctx.diff.raw.strip() or "(no diff)",
-            "```",
+            "## Branch",
+            f"- Base: `{ctx.pr.base_branch}` at `{ctx.pr.base_sha}` (the branch this PR will merge into)",
+            f"- HEAD: `{ctx.pr.head_branch}` at `{ctx.pr.head_sha}` (currently checked out)",
+            "",
+            "## How to inspect the changes",
+            "Run git commands yourself — the diff is NOT inlined below. You have Bash access "
+            "restricted to read-only git commands (`git diff`, `git log`, `git show`, `git blame`, "
+            "`git ls-files`, `git rev-parse`, `git status`). Useful starting points:",
+            "",
+            f"- `git diff {ctx.pr.base_sha}..HEAD --name-only` — list of changed files",
+            f"- `git diff {ctx.pr.base_sha}..HEAD --stat` — change summary by file",
+            f"- `git diff {ctx.pr.base_sha}..HEAD -- <path>` — diff for one file or directory",
+            f"- `git diff {ctx.pr.base_sha}..HEAD` — full diff (use sparingly on large PRs)",
+            "",
+            "Pass these instructions through to each subagent in its Task brief so the subagent "
+            "can pull only the slice of the diff it needs to review.",
         ]
     )
     if ctx.lessons:
@@ -385,7 +397,14 @@ class ClaudeCodePlugin:
             "--verbose",
             "--permission-mode=bypassPermissions",
             # Task is required so the parent reviewer can dispatch yaaos-* subagents.
-            "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task",
+            # Bash is restricted to read-only git commands so subagents can run
+            # `git diff <base_sha>..HEAD` themselves instead of yaaos inlining
+            # the entire diff into the prompt (saves tens of thousands of
+            # tokens on big PRs and avoids duplicating the diff across N
+            # subagent task briefs).
+            "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
+            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
         ]
         if agent_config.get("model"):
             argv += [f"--model={agent_config['model']}"]
