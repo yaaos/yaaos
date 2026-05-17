@@ -1,7 +1,52 @@
-"""domain/reviewer — review workflow + per-PR queue."""
+"""domain/reviewer — review workflow + per-PR queue + durable findings.
+
+Two generations are live in this module:
+
+- Generation 1: `ReviewJob` row + JSONB findings + `schedule_review` → vcs.post_review.
+  Exported as-is so today's intake/UI keep working.
+- Generation 2: `PRReviewAggregate` + first-class `Finding`/`Review`/threads/acks
+  with a state machine. Not yet reachable from the public schedule_review flow
+  — wires in §13 step 7.
+
+External callers depend on the generation-1 surface for now. Generation-2
+helpers (`SqlAlchemyAggregateRepository`, `acquire_pr_lock`, aggregate types)
+are exported so other modules can extend the durable-findings flow once the
+cut-over lands.
+"""
 
 from app.domain.reviewer import web  # noqa: F401
-from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
+from app.domain.reviewer.aggregate import (
+    AdmissionDrop,
+    PRReviewAggregate,
+    RawFinding,
+)
+from app.domain.reviewer.events import (
+    AgentReplyPosted,
+    CommentReplyReceived,
+    DomainEvent,
+    FindingAcknowledged,
+    FindingAnchorUpdated,
+    FindingRaised,
+    FindingReObserved,
+    FindingResolutionDetected,
+    FindingStaleDetected,
+    FindingStateChanged,
+    ReviewCompleted,
+    ReviewFailed,
+    ReviewRequested,
+    ReviewStarted,
+    ReviewSuperseded,
+)
+from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.models import (
+    AcknowledgmentDecisionRow,
+    CommentMessageRow,
+    CommentThreadRow,
+    FindingObservationRow,
+    FindingRow,
+    PostedCommentRow,
+    ReviewJobRow,
+)
 from app.domain.reviewer.queue import (
     ReviewJob,
     ReviewJobInput,
@@ -14,13 +59,75 @@ from app.domain.reviewer.queue import (
     schedule_review,
     startup_recovery,
 )
+from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.repository_protocol import AggregateRepository
+from app.domain.reviewer.types import (
+    AckKind,
+    AcknowledgmentDecision,
+    AuthorKind,
+    CodeAnchor,
+    CommentMessage,
+    CommentThread,
+    Finding,
+    FindingFingerprint,
+    FindingObservation,
+    FindingState,
+    ReplyIntent,
+    Review,
+    ReviewScope,
+    ReviewScopeKind,
+    ReviewTrigger,
+    Severity,
+)
 
 __all__ = [
+    "AckKind",
+    "AcknowledgmentDecision",
+    "AcknowledgmentDecisionRow",
+    "AdmissionDrop",
+    "AgentReplyPosted",
+    "AggregateRepository",
+    "AuthorKind",
+    "CodeAnchor",
+    "CommentMessage",
+    "CommentMessageRow",
+    "CommentReplyReceived",
+    "CommentThread",
+    "CommentThreadRow",
+    "DomainEvent",
+    "Finding",
+    "FindingAcknowledged",
+    "FindingAnchorUpdated",
+    "FindingFingerprint",
+    "FindingObservation",
+    "FindingObservationRow",
+    "FindingRaised",
+    "FindingReObserved",
+    "FindingResolutionDetected",
+    "FindingRow",
+    "FindingStaleDetected",
+    "FindingState",
+    "FindingStateChanged",
+    "PRReviewAggregate",
     "PostedCommentRow",
+    "RawFinding",
+    "ReplyIntent",
+    "Review",
+    "ReviewCompleted",
+    "ReviewFailed",
     "ReviewJob",
     "ReviewJobInput",
     "ReviewJobRow",
     "ReviewJobStatusChanged",
+    "ReviewRequested",
+    "ReviewScope",
+    "ReviewScopeKind",
+    "ReviewStarted",
+    "ReviewSuperseded",
+    "ReviewTrigger",
+    "Severity",
+    "SqlAlchemyAggregateRepository",
+    "acquire_pr_lock",
     "cancel_pending",
     "get_review_job",
     "list_in_flight",
