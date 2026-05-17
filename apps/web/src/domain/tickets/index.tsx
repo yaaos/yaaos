@@ -1,21 +1,29 @@
 /** Tickets list + detail.
  *
  * List: status-chips filter, repo/kind/author dropdowns, group-by-status toggle,
- *       table rows per the design (verdict dots, cost, source, actor, tokens, updated-ago).
+ *       table rows per the design (verdict dots, source, actor, tokens, updated-ago).
  * Detail: header (status/kind/draft chips, Cancel/Re-review), Review/Audit tabs,
  *         SummaryStrip, AgentCards (queued/running/posted/skipped/failed states with
- *         finding expansion), Teach-yaaos modal.
+ *         status banner + live activity feed + finding expansion), Teach-yaaos modal.
  *
  * Live updates flow via `core/sse` (single EventSource at app root invalidates the
  * relevant Query keys; pages refetch). Polling is also enabled at lower frequency
  * as a fallback — see `useTickets` / `useReviewJobsForTicket` refetchIntervals.
+ *
+ * Activity events are higher-frequency than invalidation can keep up with, so
+ * `useLiveActivity(reviewJobId)` reads from an in-memory ring buffer fed
+ * directly by the SSE subscriber. Merged with `job.activity_log` (persisted
+ * history) so tab-close-then-reopen still shows the full feed.
  */
 import {
   type Finding,
   type ReviewJob,
+  type ReviewJobActivityEvent,
   type Ticket,
   useCancelReviewerJobs,
+  useConversationsForTicket,
   useCreateLesson,
+  useFindingsForTicket,
   useGithubRepositories,
   useRereviewMutation,
   useReviewJobsForTicket,
@@ -23,6 +31,7 @@ import {
   useTicketAudit,
   useTickets,
 } from "@core/api";
+import { useLiveActivity } from "@core/sse";
 import {
   Badge,
   Button,
@@ -306,7 +315,6 @@ function TicketHead({ grouped }: { grouped: boolean }) {
       <span>title</span>
       <span>kind</span>
       <span>verdicts</span>
-      <span>cost</span>
       <span />
       <span>author</span>
       <span />
@@ -315,8 +323,8 @@ function TicketHead({ grouped }: { grouped: boolean }) {
   );
 }
 
-const TIX_COLS = "78px 1.6fr 90px 120px 70px 24px 130px 60px 70px";
-const TIX_COLS_GROUPED = "1.6fr 90px 120px 70px 24px 130px 60px 70px";
+const TIX_COLS = "78px 1.6fr 90px 120px 24px 130px 60px 70px";
+const TIX_COLS_GROUPED = "1.6fr 90px 120px 24px 130px 60px 70px";
 
 function TicketRow({ t, grouped }: { t: Ticket; grouped: boolean }) {
   const cols = grouped ? TIX_COLS_GROUPED : TIX_COLS;
@@ -340,7 +348,6 @@ function TicketRow({ t, grouped }: { t: Ticket; grouped: boolean }) {
       </div>
       <KindChip />
       <VerdictDots ticketId={t.id} />
-      <CostCell ticketId={t.id} />
       <SourceIcon />
       <div className="flex items-center gap-2 min-w-0">
         {t.author_login && (
@@ -445,16 +452,6 @@ function VerdictDot({ job }: { job: ReviewJob | undefined }) {
   return <span className="w-2 h-2 rounded-sm bg-surface-3" />;
 }
 
-function CostCell({ ticketId }: { ticketId: string }) {
-  const { data: jobs } = useReviewJobsForTicket(ticketId);
-  const total = (jobs ?? []).reduce((s, j) => s + (j.cost_usd ?? 0), 0);
-  return (
-    <span className="text-text-3 mono text-[11px] tabular-nums">
-      {total > 0 ? fmtCost(total) : "—"}
-    </span>
-  );
-}
-
 function TokensCell({ ticketId }: { ticketId: string }) {
   const { data: jobs } = useReviewJobsForTicket(ticketId);
   const total = (jobs ?? []).reduce((s, j) => s + (j.tokens_in ?? 0) + (j.tokens_out ?? 0), 0);
@@ -476,11 +473,6 @@ function Avatar({ name }: { name: string }) {
       {initial}
     </div>
   );
-}
-
-function fmtCost(c: number): string {
-  if (c < 1) return `$${c.toFixed(3)}`;
-  return `$${c.toFixed(2)}`;
 }
 
 function fmtTokens(n: number): string {
@@ -633,13 +625,130 @@ function ReviewTab({ ticket, job }: { ticket: Ticket; job: ReviewJob | undefined
   return (
     <div className="flex flex-col gap-4">
       <SummaryStrip jobs={jobs} ticket={ticket} />
+      <AllConversationsSection ticketId={ticket.id} />
+      <DurableFindingsSection ticketId={ticket.id} />
       <AgentCard agentName="yaaos" job={job} repoExternalId={ticket.repo_external_id} />
     </div>
   );
 }
 
+function AllConversationsSection({ ticketId }: { ticketId: string }) {
+  const { data: conversations } = useConversationsForTicket(ticketId);
+  if (!conversations || conversations.length === 0) return null;
+  return (
+    <Card data-testid="all-conversations">
+      <details open className="group">
+        <summary className="cursor-pointer list-none px-4 py-3 border-b border-border-soft flex items-center justify-between">
+          <span className="font-medium">All Conversations</span>
+          <span className="text-text-4 text-[12px]">{conversations.length}</span>
+        </summary>
+        <ul>
+          {conversations.map((c) => (
+            <li
+              key={c.finding_id}
+              className="px-4 py-2 border-b border-border-soft last:border-b-0 flex items-center gap-3"
+              data-testid="conversation-row"
+            >
+              <SeverityPill severity={c.severity} />
+              <StatePill state={c.state} />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{c.title}</div>
+                <div className="text-text-3 text-[12px] truncate">{c.last_message_preview}</div>
+              </div>
+              <div className="text-text-4 text-[12px] mono">{c.reply_count} replies</div>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </Card>
+  );
+}
+
+function DurableFindingsSection({ ticketId }: { ticketId: string }) {
+  const [includeTerminal, setIncludeTerminal] = useState(false);
+  const { data: findings } = useFindingsForTicket(ticketId, includeTerminal);
+  if (!findings || findings.length === 0) return null;
+  return (
+    <Card data-testid="durable-findings">
+      <details className="group">
+        <summary className="cursor-pointer list-none px-4 py-3 border-b border-border-soft flex items-center justify-between">
+          <span className="font-medium">Durable Findings</span>
+          <div className="flex items-center gap-3">
+            <label className="text-text-3 text-[12px] flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={includeTerminal}
+                onChange={(e) => setIncludeTerminal(e.target.checked)}
+                data-testid="include-terminal-toggle"
+              />
+              include resolved/stale
+            </label>
+            <span className="text-text-4 text-[12px]">{findings.length}</span>
+          </div>
+        </summary>
+        <ul>
+          {findings.map((f) => (
+            <li
+              key={f.id}
+              className="px-4 py-2 border-b border-border-soft last:border-b-0 flex items-start gap-3"
+              data-testid="durable-finding-row"
+            >
+              <SeverityPill severity={f.severity} />
+              <StatePill state={f.state} />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium">{f.title}</div>
+                <div className="text-text-3 text-[12px] mono">
+                  {f.file_path}:{f.line_start}
+                  {f.line_end !== f.line_start ? `-${f.line_end}` : ""} · {f.rule_id} · confidence{" "}
+                  {f.confidence}
+                </div>
+                {f.body && <div className="text-text-3 text-[12px] mt-1">{f.body}</div>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </Card>
+  );
+}
+
+function SeverityPill({ severity }: { severity: string }) {
+  const tone =
+    severity === "blocker"
+      ? "bg-danger text-white"
+      : severity === "major"
+        ? "bg-text-3 text-white"
+        : severity === "minor"
+          ? "bg-text-4 text-white"
+          : "bg-border-soft text-text-3";
+  return (
+    <span
+      className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] uppercase font-medium", tone)}
+    >
+      {severity}
+    </span>
+  );
+}
+
+function StatePill({ state }: { state: string }) {
+  const tone =
+    state === "open"
+      ? "bg-danger/15 text-danger"
+      : state === "acknowledged"
+        ? "bg-text-3/15 text-text-3"
+        : state === "resolved_confirmed"
+          ? "bg-success/15 text-success"
+          : "bg-border-soft text-text-4";
+  return (
+    <span
+      className={cn("inline-block rounded px-1.5 py-0.5 text-[10px] uppercase font-medium", tone)}
+    >
+      {state.replace("_", " ")}
+    </span>
+  );
+}
+
 function SummaryStrip({ jobs, ticket }: { jobs: ReviewJob[]; ticket: Ticket }) {
-  const totalCost = jobs.reduce((s, j) => s + (j.cost_usd ?? 0), 0);
   const totalTokens = jobs.reduce((s, j) => s + (j.tokens_in ?? 0) + (j.tokens_out ?? 0), 0);
   const findings = jobs.flatMap((j) => (j.findings ?? []) as Finding[]);
   const mustFix = findings.filter((f) => f.severity === "must-fix").length;
@@ -656,7 +765,6 @@ function SummaryStrip({ jobs, ticket }: { jobs: ReviewJob[]; ticket: Ticket }) {
       sub: mustFix > 0 ? `${mustFix} must-fix` : "no must-fixes",
       tone: mustFix > 0 ? "danger" : undefined,
     },
-    { label: "Total cost", value: fmtCost(totalCost), sub: `${jobs.length} jobs` },
     { label: "Tokens", value: fmtTokens(totalTokens), sub: "in + out" },
     {
       label: "Latency",
@@ -746,6 +854,16 @@ function AgentCard({
           <div className="font-semibold text-[13.5px] capitalize">{agentName}</div>
           <div className="text-text-4 text-[11px] truncate">
             yaaos parent reviewer (dispatches yaaos-* subagents)
+            {job?.model || job?.effort ? (
+              <span className="ml-2">
+                {job.model && <span className="mono">{job.model}</span>}
+                {job.effort && (
+                  <span className="ml-1">
+                    · effort: <span className="mono">{job.effort}</span>
+                  </span>
+                )}
+              </span>
+            ) : null}
           </div>
         </div>
         <AgentStatusBadge status={status} />
@@ -817,9 +935,43 @@ function AgentBody({
       </div>
     );
   }
+  return (
+    <div className="flex flex-col">
+      <StatusBanner status={status} job={job} findingsCount={findings.length} />
+      {job && <ActivityFeed job={job} />}
+      {status === "posted" && findings.length > 0 && (
+        <ul data-testid="findings-list" className="border-t border-border-soft">
+          {findings.map((f, i) => {
+            const key = `${f.file ?? ""}:${f.line_start ?? 0}:${f.title}`;
+            return (
+              <li key={key} className="border-t border-border-soft first:border-t-0">
+                <FindingRow
+                  finding={f}
+                  open={expanded === i}
+                  onToggle={() => setExpanded(expanded === i ? null : i)}
+                  onTeach={() => onTeach(f)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function StatusBanner({
+  status,
+  job,
+  findingsCount,
+}: {
+  status: string;
+  job: ReviewJob | undefined;
+  findingsCount: number;
+}) {
   if (status === "queued") {
     return (
-      <div className="px-4 py-3.5 text-text-3 text-[12px] flex items-center gap-2">
+      <div className="px-4 py-3 text-text-3 text-[12px] flex items-center gap-2">
         <span className="w-2 h-2 rounded-sm bg-surface-3 border border-border-soft" />
         Waiting for an open slot…
       </div>
@@ -828,72 +980,131 @@ function AgentBody({
   if (status === "running") {
     return (
       <div className="px-4 py-3 flex flex-col gap-2">
-        <div className="text-text-2 text-[12px]">{job?.current_step ?? "Working…"}</div>
-        <IndeterminateBar />
-        <div className="flex items-center gap-4 text-text-4 mono text-[11px]">
-          {job?.tokens_in != null && (
-            <span>
-              tokens{" "}
-              <span className="text-text-3">
-                {fmtTokens((job.tokens_in ?? 0) + (job.tokens_out ?? 0))}
-              </span>
-            </span>
-          )}
-          {job?.cost_usd != null && (
-            <span>
-              cost <span className="text-text-3">{fmtCost(job.cost_usd)}</span>
-            </span>
-          )}
+        <div className="text-text-2 text-[12px]">
+          Running · <span className="mono">{job?.current_step ?? "working"}</span>
         </div>
+        <IndeterminateBar />
+        {job?.tokens_in != null && (
+          <div className="text-text-4 mono text-[11px]">
+            tokens{" "}
+            <span className="text-text-3">
+              {fmtTokens((job.tokens_in ?? 0) + (job.tokens_out ?? 0))}
+            </span>
+          </div>
+        )}
       </div>
     );
   }
   if (status === "skipped") {
     return (
-      <div className="px-4 py-3.5 text-text-3 text-[12px]">
+      <div className="px-4 py-3 text-text-3 text-[12px]">
         Skipped: <span className="mono">{job?.skip_reason ?? "(unknown)"}</span>
       </div>
     );
   }
   if (status === "failed") {
     return (
-      <div className="px-4 py-3.5 text-danger text-[12px]">
+      <div className="px-4 py-3 text-danger text-[12px]">
         Failed: {job?.error_message ?? "(unknown error)"}
       </div>
     );
   }
   if (status === "cancelled") {
     return (
-      <div className="px-4 py-3.5 text-text-3 text-[12px]">
+      <div className="px-4 py-3 text-text-3 text-[12px]">
         Cancelled ({job?.skip_reason ?? "user_cancel"})
       </div>
     );
   }
-  // posted — render findings
-  if (findings.length === 0) {
+  // posted
+  if (findingsCount === 0) {
     return (
-      <div className="px-4 py-3.5 text-success text-[12px] flex items-center gap-2">
+      <div className="px-4 py-3 text-success text-[12px] flex items-center gap-2">
         <span className="w-2 h-2 rounded-full bg-success" /> Approved — no findings.
       </div>
     );
   }
   return (
-    <ul data-testid="findings-list">
-      {findings.map((f, i) => {
-        const key = `${f.file ?? ""}:${f.line_start ?? 0}:${f.title}`;
-        return (
-          <li key={key} className="border-t border-border-soft first:border-t-0">
-            <FindingRow
-              finding={f}
-              open={expanded === i}
-              onToggle={() => setExpanded(expanded === i ? null : i)}
-              onTeach={() => onTeach(f)}
-            />
-          </li>
-        );
-      })}
-    </ul>
+    <div className="px-4 py-3 text-text-2 text-[12px]">
+      Posted: <span className="font-medium">{findingsCount}</span> finding
+      {findingsCount === 1 ? "" : "s"}
+    </div>
   );
+}
+
+/** Merge persisted `activity_log` with the live SSE-fed ring buffer, de-duping
+ * by (`ts` + `kind` + `message`). Show the newest 10 inline; everything else
+ * collapses into `<details>`. Newest at the top.
+ */
+function ActivityFeed({ job }: { job: ReviewJob }) {
+  const live = useLiveActivity(job.id);
+  const merged = useMemo(
+    () => mergeActivity(job.activity_log ?? [], live),
+    [job.activity_log, live],
+  );
+  if (merged.length === 0) return null;
+  const recent = merged.slice(0, 10);
+  const rest = merged.slice(10);
+  return (
+    <div
+      className="px-4 py-3 border-t border-border-soft flex flex-col gap-1.5"
+      data-testid="activity-feed"
+    >
+      <div className="text-text-3 text-[10.5px] uppercase tracking-wider font-medium">
+        Recent activity
+      </div>
+      <ul className="flex flex-col gap-1">
+        {recent.map((e) => (
+          <ActivityRow key={activityKey(e)} event={e} />
+        ))}
+      </ul>
+      {rest.length > 0 && (
+        <details className="mt-1">
+          <summary className="text-text-3 text-[11.5px] cursor-pointer hover:text-text-2">
+            All events ({merged.length})
+          </summary>
+          <ul className="flex flex-col gap-1 mt-2">
+            {rest.map((e) => (
+              <ActivityRow key={activityKey(e)} event={e} />
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ActivityRow({ event }: { event: ReviewJobActivityEvent }) {
+  return (
+    <li className="flex items-baseline gap-2 text-[12px]">
+      <span className="text-text-4 mono text-[10.5px] tabular-nums flex-none">
+        {formatTime(event.ts)}
+      </span>
+      <span className="text-text-2 truncate">{event.message}</span>
+    </li>
+  );
+}
+
+function activityKey(e: ReviewJobActivityEvent): string {
+  return `${e.ts}:${e.kind}:${e.message}`;
+}
+
+/** Merge persisted + live, dedupe by (ts+kind+message), newest first. */
+function mergeActivity(
+  persisted: ReviewJobActivityEvent[],
+  live: ReviewJobActivityEvent[],
+): ReviewJobActivityEvent[] {
+  const seen = new Set<string>();
+  const out: ReviewJobActivityEvent[] = [];
+  for (const e of [...persisted, ...live]) {
+    const k = activityKey(e);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(e);
+  }
+  // Newest first.
+  out.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  return out;
 }
 
 function FindingRow({

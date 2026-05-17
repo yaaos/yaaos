@@ -8,9 +8,12 @@ export {
   type Lesson,
   type OnboardingStatus,
   type ReviewJob,
+  type ReviewJobActivityEvent,
   type Ticket,
 } from "./client";
 export {
+  type ConversationRow,
+  type FindingRow,
   type GithubInstallation,
   type GithubRepositoriesResponse,
   type GithubRepository,
@@ -18,8 +21,10 @@ export {
   type PluginMeta,
   type PluginType,
   useCancelReviewerJobs,
+  useConversationsForTicket,
   useCreateLesson,
   useDeleteLesson,
+  useFindingsForTicket,
   useGithubInstallation,
   useGithubRepositories,
   useHealth,

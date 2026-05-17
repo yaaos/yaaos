@@ -65,6 +65,64 @@ export function useReviewJobsForTicket(ticket_id: string) {
   });
 }
 
+/**
+ * Durable-findings list (plan/notes/full-pr-flow.md §9). Open + acknowledged
+ * by default; pass include_terminal to also fetch resolved + stale.
+ */
+export interface FindingRow {
+  id: string;
+  state: "open" | "acknowledged" | "resolved_confirmed" | "resolved_unverified" | "stale";
+  severity: "blocker" | "major" | "minor" | "nit";
+  rule_id: string;
+  title: string;
+  body: string;
+  rationale: string;
+  confidence: number;
+  first_seen_review_id: string;
+  last_observed_review_id: string;
+  file_path: string;
+  line_start: number;
+  line_end: number;
+}
+
+export function useFindingsForTicket(ticket_id: string, includeTerminal = false) {
+  return useQuery<FindingRow[]>({
+    queryKey: ["reviewer", "findings", ticket_id, includeTerminal],
+    queryFn: () =>
+      apiFetch<FindingRow[]>(
+        `/api/reviewer/findings/by-ticket/${ticket_id}${
+          includeTerminal ? "?include_terminal=true" : ""
+        }`,
+      ),
+    enabled: !!ticket_id,
+    refetchInterval: 5_000,
+  });
+}
+
+/**
+ * All-Conversations cross-cut (plan §9.3). Findings with ≥1 dev reply OR open
+ * findings first raised before the latest review. Terminal states excluded.
+ */
+export interface ConversationRow {
+  finding_id: string;
+  state: "open" | "acknowledged";
+  severity: "blocker" | "major" | "minor" | "nit";
+  title: string;
+  first_seen_review_id: string;
+  last_message_preview: string;
+  reply_count: number;
+}
+
+export function useConversationsForTicket(ticket_id: string) {
+  return useQuery<ConversationRow[]>({
+    queryKey: ["reviewer", "conversations", ticket_id],
+    queryFn: () =>
+      apiFetch<ConversationRow[]>(`/api/reviewer/conversations/by-ticket/${ticket_id}`),
+    enabled: !!ticket_id,
+    refetchInterval: 5_000,
+  });
+}
+
 export function useRereviewMutation() {
   const qc = useQueryClient();
   return useMutation({
@@ -135,7 +193,6 @@ export function useMetricsSummary() {
   return useQuery<{
     review_jobs_by_status: Record<string, number>;
     total_reviews_posted: number;
-    total_cost_usd: number;
     failure_count: number;
     failure_rate: number;
   }>({
