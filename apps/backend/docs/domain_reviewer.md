@@ -1,166 +1,160 @@
 # domain/reviewer
 
-> Review workflow orchestrator — reviewer agents, per-PR queue, review-job state machine, heartbeat, secrets pre-flight, frozen-snapshot audit, step-progress SSE, startup recovery.
+> Review workflow orchestrator + durable findings. Two generations live here: today's `ReviewJob` per-PR queue and the new `PRReviewAggregate` with first-class `Finding` + state machine + acknowledgments + threads.
 
 ## Purpose
 
-The busiest backend module. Owns the `ReviewJob` aggregate (one row per `(PR, agent, scheduling event)`), the three built-in reviewer agents (architecture, security, style), and the lifecycle from "needs review" through workspace provisioning, coding-agent invocation, finding parsing, and posting. Does not call LLMs directly — Claude Code does, behind the `domain/coding_agent` Protocol. Owns scheduling, debouncing, cancellation, audit trail, and cooperative-cancellation runtime on `core/primitives.spawn`.
+Owns every artifact tied to "what yaaos has said about a PR". That covers the per-run lifecycle (queue, debounce, secrets pre-flight, frozen-snapshot audit, step-progress SSE, startup recovery — generation 1) AND the durable findings layer that survives across reruns (multi-review history, fingerprint matching, persistent acknowledgments, comment threads, classified developer replies, verify-fix + stale-check evidence — generation 2). Does not call LLMs for code review itself — `domain/coding_agent` plugins do; only the reply classifier here makes a direct LLM call (via `core/llm`).
 
-Each **ticket** gets one workspace; the agents on that ticket share it. The coordinator (`_run_ticket_review`) provisions once and gathers all per-agent invocations against the same checkout.
+Two generations coexist while plan/notes/full-pr-flow.md §13 step 7's cut-over is in flight:
+
+- Generation 1 — `ReviewJob` row, JSONB findings on the row, `schedule_review` → `coding_agent.review` → `vcs.post_review`. Today's public surface.
+- Generation 2 — `PRReviewAggregate` per PR, owning `Review`s, `Finding`s, `FindingObservation`s, `CommentThread`s, `CommentMessage`s, `AcknowledgmentDecision`s. Read API (`findings/by-ticket`, `conversations/by-ticket`) is live; the auto-incremental + reply + verify-fix + stale-check write paths land alongside the UI surface.
 
 ## Public interface
 
 Exported from `app/domain/reviewer/__init__.py`:
 
-- Types — `ReviewJob`, `ReviewJobInput`, `ReviewerAgent`, `ReviewJobStatusChanged`, `ReviewJobRow`, `PostedCommentRow`, `ReviewerAgentRow`, `AgentNotFoundError`.
-- Scheduling — `schedule_review`, `schedule_reply`, `cancel_pending`.
-- Reads — `get_review_job`, `list_review_jobs_for_pr`, `list_in_flight`, `metrics_summary`.
-- Agents — `list_agents`, `get_agent_by_id`, `get_agent_by_name`, `update_agent_prompt`, `reset_agent_prompt`, `ensure_builtin_agents`.
-- Lifecycle — `startup_recovery`.
+- Generation-1 types — `ReviewJob`, `ReviewJobInput`, `ReviewJobStatusChanged`, `ReviewJobRow`, `PostedCommentRow`.
+- Generation-1 functions — `schedule_review`, `cancel_pending`, `get_review_job`, `list_review_jobs_for_pr`, `list_in_flight`, `metrics_summary`, `startup_recovery`.
+- Generation-2 aggregate — `PRReviewAggregate`, `RawFinding`, `AdmissionDrop`.
+- Generation-2 value objects — `Finding`, `FindingState`, `FindingFingerprint`, `CodeAnchor`, `CommentThread`, `CommentMessage`, `AcknowledgmentDecision`, `Review`, `ReviewScope`, `ReviewScopeKind`, `ReviewTrigger`, `Severity`, `AckKind`, `AuthorKind`, `ReplyIntent`.
+- Generation-2 storage — `FindingRow`, `FindingObservationRow`, `CommentThreadRow`, `CommentMessageRow`, `AcknowledgmentDecisionRow`, `AggregateRepository` Protocol, `SqlAlchemyAggregateRepository`.
+- Generation-2 concurrency — `acquire_pr_lock(session, pr_id)`.
+- Generation-2 trigger policy — `decide_trigger`, `TriggerInputs`, `TriggerDecision` (`Skip` | `Debounce` | `Run`), `humanize_skip`.
+- Generation-2 reply classifier — `ClassifyReplyInput`, `ClassifyReplyOutput`, `classify_reply`, `classify_reply_runnable`.
+- Generation-2 service helpers — `apply_classified_reply`, `apply_verify_fix_result`, `apply_stale_check_result`, `is_yaaos_command`, `is_off_topic_message`, `list_findings_view`, `all_conversations_view`, `review_summary`, plus `ReplyAction` / `VerifyFixAction` / `StaleCheckAction` / `FindingView` / `ConversationView`, and the `CLASSIFY_*` / `VERIFY_*` thresholds.
+- Generation-2 events — `ReviewRequested`, `ReviewStarted`, `ReviewCompleted`, `ReviewFailed`, `ReviewSuperseded`, `FindingRaised`, `FindingReObserved`, `FindingStateChanged`, `FindingAcknowledged`, `FindingResolutionDetected`, `FindingStaleDetected`, `FindingAnchorUpdated`, `CommentReplyReceived`, `AgentReplyPosted`, plus `DomainEvent` union.
 
 HTTP routes (`/api/reviewer`):
 
-- `GET /agents` — list the three reviewer agents.
-- `PUT /agents/{name}/prompt` — body `{ prompt_text }`; 400 on empty.
-- `POST /agents/{name}/reset_prompt` — restore built-in default.
 - `POST /rereview` — body `{ ticket_id }`; UI button.
-- `POST /cancel?ticket_id=...` — cancel queued/running jobs.
-- `GET /jobs/by-ticket/{ticket_id}` — every review_job for the ticket's PR.
+- `POST /cancel?ticket_id=…` — cancel queued/running job.
+- `GET /jobs/by-ticket/{ticket_id}` — every review_job for the ticket's PR (generation 1).
+- `GET /findings/by-ticket/{ticket_id}?include_terminal=…` — list open + acknowledged findings (generation 2). Set the query param to `true` to also return resolved + stale.
+- `GET /conversations/by-ticket/{ticket_id}` — All-Conversations cross-cut (generation 2).
 - `GET /metrics` — aggregate counters.
 
-Route spec registers two `on_startup` hooks: `startup_recovery` and `_seed_builtin_agents`.
+`RouteSpec` registers one `on_startup` hook: `startup_recovery`.
 
 ## Module architecture
 
-### Files
+### Entities
 
-- `models.py` — `ReviewerAgentRow`, `ReviewJobRow`, `PostedCommentRow`.
-- `agent_crud.py` — `ReviewerAgent` view model + CRUD.
-- `seeds.py` — `DEFAULT_PROMPTS` and `builtin_prompt(name)`.
-- `queue.py` — events, audit payloads, `schedule_*`/`cancel_pending`, reads, `_run_ticket_review` (the per-ticket coordinator), `_invoke_one_agent` (per-agent work inside the shared workspace), `_run_reply_job`, transitions, secrets detection, language detect, `startup_recovery`.
-- `web.py` — routes.
+- `ReviewJob` — generation-1 run-level state per `(PR x run)`: status, heartbeat, model, effort, JSONB findings, JSONB activity log. Identity = `id` UUID.
+- `Review` — generation-2 run-level state with per-PR `sequence_number`, `trigger_reason`, `scope`, `commit_sha_at_start`, `superseded_by_review_id`, `pending_replay`. Lives in-aggregate today; persists to `review_jobs` via the §13 step 7 cut-over.
+- `Finding` — durable per-PR finding identified across reviews via `FindingFingerprint`. Sticky severity, max-over-observations confidence, anchor that drifts under code changes. State machine: `open → acknowledged | resolved_confirmed | resolved_unverified | stale`.
+- `FindingObservation` — append-only `(finding × review)` sighting; carries the anchor at the time + the agent's raw body.
+- `CommentThread` — 1:1 with `Finding`. Carries the GitHub-side `external_thread_id` indexed for webhook resolution.
+- `CommentMessage` — every yaaos- and human-authored message; carries `external_comment_id` indexed plus optional `classified_intent` + `classification_confidence` on humans.
+- `AcknowledgmentDecision` — persistent dev intent to skip a finding (`intentional` | `wontfix`); survives every future review.
 
-### Per-PR queue discipline
+### Key value objects
 
-"At most one in-flight `ReviewJob` per `(pr_id, agent_id)`" — enforced by service logic, not a unique index. `schedule_review` flips every `queued`/`running` row for the pair to `cancelled` with `skip_reason='superseded'`, writes `review_job.cancelled` audit, inserts the new `queued` row, spawns the handler.
+- `FindingFingerprint` — conceptual identity across reviews: `(file_path, rule_id, anchor_content_hash, body_gist_hash)`. Whitespace-normalized hashes so reindents don't churn fingerprints (plan §2.3).
+- `CodeAnchor` — `(file_path, line_start, line_end, surrounding_content_hash, commit_sha)`. The surrounding hash covers ±3 lines and is what lets `anchor.resolve_anchor` re-find the position after line drift.
+- `FindingState`, `Severity`, `AckKind`, `ReplyIntent`, `AuthorKind`, `ReviewTrigger`, `ReviewScope` — enums + frozen dataclasses per plan §2.3.
+- `RawFinding` — coding-agent output before admission; must include `concrete_failure_scenario` (plan §10.1) or the aggregate drops it.
+- `AdmissionDrop` — audit-log payload for a rejected raw finding: `(rule_id, reason, severity, confidence)` where reason ∈ `malformed | below_threshold | nit_cap | top_cap | matches_ack`.
 
-Cancellation is DB-driven and cooperative. No task IDs. The coro polls its row at three safe points — after debounce, after entity resolution, after workspace provisioning — and returns early when status flips off `queued`/`running`.
+### Core user flows
 
-### `schedule_review` — main entry point
+#### Generation 1 — `schedule_review` (today)
 
-Called by `intake` for `pr_ready`, `pr_synchronized`, `rereview_command`, and the UI's re-review button. Accepts `agent_names="all"` (expands to the three names) or an explicit list. For each agent: cancels in-flight (same `(pr_id, agent_id)`), inserts a queued row, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(status="queued")`. After all rows are created, spawns **ONE** coordinator (`_run_ticket_review`) for the ticket — not one coro per agent. Debounce from `core.config.Settings.yaaos_review_debounce_seconds` (30s prod, 0s tests).
+1. `intake.schedule_review` for `pr_ready` / `pr_synchronized` / `rereview_command` / UI button cancels any in-flight job for the PR, inserts a queued `ReviewJobRow`, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(queued)`, spawns `_run_review_job`.
+2. Worker debounces, flips to `running`, resolves entities + diff, runs `_ticket_skip_reason` (`fork` / `bot_author` / `trivial_diff` / `too_large`), runs secrets pre-flight, language-detects, provisions `in_process` workspace (head + base SHAs, branch names).
+3. Builds `ReviewContext` from PR + diff + lessons + prior yaaos comments. Hashes the context; writes `review_job.prompt_sent` audit; calls `coding_agent.review(plugin_id="claude_code", ws, ctx)`.
+4. Builds `vcs.Review(agent_tag="yaaos", state, summary_body, findings)`; the github plugin posts each finding as its own comment (inline vs top-level by anchor presence) with a per-agent emoji suffix.
+5. Persists `PostedCommentRow` per finding-as-comment, updates the row to `posted` with telemetry + JSONB findings, writes `review_job.posted` audit, publishes `ReviewJobStatusChanged(posted)`.
 
-### `_run_ticket_review` — per-ticket coordinator
+#### Generation 2 — durable findings
 
-Fire-and-forget coro spawned once per `schedule_review` call. Owns the ticket-scoped workspace lifecycle and dispatches every agent in parallel against it.
+1. **Initial review on PR ready** (plan §6.1, write path lands with §13 step 7's cut-over): service acquires the per-PR advisory lock, opens a transaction, loads the aggregate, starts a `Review` via `start_review`, invokes coding_agent in `full_review` mode, maps each `FindingDraft` → `RawFinding`, calls `aggregate.post_process_raw_findings` which applies the malformed / threshold / per-PR nit cap / cross-file dedup / per-review top-10 cap pipeline + dedup vs prior open/acknowledged findings. For each survivor: opens a thread, appends a yaaos message, posts via `vcs.post_review`. Completes the review; saves the aggregate; drains domain events.
+2. **Auto-incremental on push** (plan §6.2, write path WIP): intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run` per §7. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) for each open finding whose anchor file is in the diff, re-resolves the anchor; gone-without-verify → `mark_unverified_resolution`, anchor-moved → invoke `coding_agent.verify_fix` and route the result through `apply_verify_fix_result`. Re-observations dedup silently; new findings flow through the same admission pipeline.
+3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm`; `apply_classified_reply` decides what to do: ≥ 0.85 acknowledgment transitions and posts "Noted…", 0.60-0.84 posts the mid-band confirmation reply, ≥ 0.85 verify_fix kicks off the subflow, everything else stores the message silently.
+4. **Verify-fix subflow** (plan §6.5): coding_agent runs in `verify_fix` mode with the original anchor's code + current code at the resolved anchor; the result feeds `apply_verify_fix_result` per plan §10.4 thresholds.
+5. **Stale-check** (plan §6.2 step 4b): same shape as verify-fix but for anchor-moved-but-still-applies-maybe cases; `apply_stale_check_result` routes the outcome to `record_stale_detection` or a no-op observe.
 
-1. **Debounce sleep.**
-2. **Drop superseded** — re-read the passed job_ids; any not still `queued` were cancelled/superseded during debounce and are dropped from `pending`. If none remain, return.
-3. **Flip all pending to running** — single batched UPDATE; `started_at`, `last_heartbeat_at`, `current_step='resolving_entities'`.
-4. **Ticket-level resolution (once)** — ticket, PR, vcs_plugin, lessons, diff, prior yaaos comments, vcs PR.
-5. **Step progress per job** — `_set_step("fetching_diff", ...)` for each pending job so the UI shows activity.
-6. **Ticket-level skip checks** — `_ticket_skip_reason(pr, diff)` returns `"fork"` / `"bot_author"` / `"trivial_diff"` / `"too_large"` / None. On hit, transitions every pending job to skipped with that reason and returns. These predicates don't vary by agent.
-7. **Secrets pre-flight (once)** — `_detect_secrets(diff)`. On match, post ONE refusal review (tagged with the first agent's name), transition every pending job to `skipped(skip_reason="secrets_detected")`, return. (Previously this posted once per agent — fixed by the move to ticket scope.)
-8. **Language detect (once)** — `_detect_language(diff)`.
-9. **Build `_SharedReviewContext`** — value object capturing pr, diff, lessons, prior_bodies, vcs_pr, language. Reused for every agent's `ReviewContext`.
-10. **Step progress per job** — `_set_step("provisioning_workspace", ...)`.
-11. **Provision workspace** — `with_workspace("in_process", ...)` ONCE for the ticket.
-12. **Parallel agent invocation** — `await asyncio.gather(*[_invoke_one_agent(workspace=ws, job_id=..., ctx=ctx, org_id=org_id) for job in pending])`. Per-agent failures don't fail the gather; the workspace closes after every gather'd coro returns.
+### State machines
 
-Uncaught exceptions in the coordinator log `ticket_review.coordinator_crashed` and mark any still-`running` rows as failed so the UI doesn't show forever-running.
+`FindingState` (per finding, per PR) — plan §3:
 
-### `_invoke_one_agent` + `_complete_to_vcs` — split for caller flexibility
+- `open`
+- `acknowledged` (terminal in this PR for POC; `acknowledged → open` is deferred per plan §11)
+- `resolved_confirmed` (terminal)
+- `resolved_unverified` (terminal)
+- `stale` (terminal)
 
-Per-agent work is two functions, separated so a future `run_review` entry point can do the invoke without forcing a VCS post.
+Transitions:
 
-**`_invoke_one_agent(workspace, job_id, ctx, org_id) → _InvocationOutcome | None`** — pure-ish:
+- `(new) → open` — new fingerprint observed in a review.
+- `open → acknowledged` — developer reply classified as `acknowledgment` with confidence ≥ `CLASSIFY_ACT_THRESHOLD` (0.85); carries an `AckKind`.
+- `open → resolved_confirmed` — `verify_fix` returns "not present" with confidence ≥ `VERIFY_ACT_THRESHOLD` (0.80).
+- `open → resolved_unverified` — anchor gone in the new commit and no verify-fix possible.
+- `open → stale` — `stale_check` returns "no longer applies" with confidence ≥ `VERIFY_ACT_THRESHOLD`.
 
-1. **Cancel check** — bail if the row is no longer `running`.
-2. **Build per-agent `ReviewContext`** — reuses `ctx`'s diff/lessons/prior_bodies; layers in this agent's persona + agent_config.
-3. **Hash + snapshot** — `prompt_hash = sha256(ctx.model_dump_json())`, denormalize hash + `lessons_applied`, write `review_job.prompt_sent` with frozen `_AgentSnapshot`, hash, lesson IDs, checkout SHA, language hint.
-4. **Final cancel check** before the expensive CLI call.
-5. **Step progress** — `_set_step("invoking_agent", ...)`.
-6. **Invoke** — `coding_agent.review(plugin_id, workspace, context)`.
-7. **Return outcome** — `{job_id, agent, result}` on success. On non-success, `_transition_failed` runs and the function returns `None`. On cancel-check miss, also returns `None`.
+Pure transition functions in `state_machine.py`; the aggregate is the only legitimate caller. Low-confidence agent output never causes a state change — fallback is always to leave `open`.
 
-Crashes are caught and converted to `failed`; the gather caller never sees an exception.
+### Per-PR queue discipline (generation 1)
 
-**`_complete_to_vcs(outcome, ctx, org_id) → None`** — takes a successful outcome and posts:
+"At most one in-flight `ReviewJob` per PR" — enforced by service logic, not a unique index. `schedule_review` flips every `queued`/`running` row for the PR to `cancelled` with `skip_reason='superseded'`, writes `review_job.cancelled` audit, inserts the new `queued` row, spawns the handler. Generation-2 concurrency is the PG advisory lock instead — `acquire_pr_lock(session, pr_id)` at the start of every mutating transaction.
 
-1. **Step progress** — `_set_step("posting_review", ...)`.
-2. **Build `vcs.Review`** and call `vcs_plugin.post_review`.
-3. **Persist** — `PostedCommentRow` per finding-that-became-a-comment; update row with `status='posted'`, `destination='vcs'`, telemetry, JSON findings.
-4. **Audit + publish** — `review_job.posted`; `ReviewJobStatusChanged(status="posted")`.
+### Concurrency (generation 2)
 
-Coordinator calls `_invoke_one_agent` for every pending job via `asyncio.gather`, then calls `_complete_to_vcs` on each non-None outcome via a second `asyncio.gather`. Behavior is identical to the prior single-function path; the split is structural prep.
+`lock.acquire_pr_lock` issues `pg_advisory_xact_lock(hashtext('pr:<uuid>')::bigint)` inside the calling transaction. Two webhook events for the same PR serialize cleanly; the lock releases automatically at commit/rollback. Read-only entry points (`list_*` / `get_*`) do NOT take the lock.
 
-### Planned: `run_review` (synchronous entry point for implementer agents)
+### Admission pipeline (plan §10)
 
-Not implemented yet — design recorded here so the future addition is mechanical:
+Inside `aggregate.post_process_raw_findings`, in order:
 
-- **Signature** — `async def run_review(ticket_id, *, agent_names, workspace=None, ..., org_id) -> list[_InvocationOutcome]`.
-- **Behavior** — same coordinator skeleton as `_run_ticket_review` (resolve ctx, skip checks, secrets pre-flight, `asyncio.gather(_invoke_one_agent ...)`) but: (a) does NOT call `_complete_to_vcs`; (b) accepts an existing `workspace` if the caller has one (implementer agents already have a workspace and don't need a duplicate); (c) returns outcomes to the caller; (d) writes the `review_job` row with `triggered_by='implementer_loop'` and `destination='caller'`.
-- **Why not implement now?** No consumer. The exact shape (sync vs async, what `_InvocationOutcome` exposes to callers, whether to return raw `result` or a narrower view) firms up when the implementer module lands.
+1. **Schema gate** — drop raw findings missing `concrete_failure_scenario`. Audit reason: `malformed`.
+2. **Per-severity threshold** — `blocker`/`major` ≥ 75, `minor` ≥ 85, `nit` ≥ 90 (plan §10.2). Audit reason: `below_threshold`.
+3. **Per-PR nit cap** — at most 5 nits ever for this PR (plan §10.5). Audit reason: `nit_cap`.
+4. **Fingerprint match** — vs prior findings on this PR: matches against `acknowledged` drop silently (`matches_ack`); matches against `open` re-observe with sticky severity + `max(stored, new)` confidence.
+5. **Cross-file dedup** — collapse same-rule findings on multiple files into one comment with a file list (plan §10.8).
+6. **Per-review top-10 cap** — rank by `severity_weight × confidence` (blocker=4, major=3, minor=2, nit=1); admit top 10. Re-observations don't count. Audit reason: `top_cap`.
 
-### Concurrency safety in the shared workspace
+### Cancellation — DB flip + task cancel (generation 1)
 
-M01 reviewer agents are read-only against the workspace checkout. Three concurrent CLI subprocesses sharing one working directory is safe as long as no agent writes there. When M02+ implementer agents land and need to write, the workspace Protocol gains claim/release semantics; the shared model stays — only the synchronisation surface grows.
+Two-track:
 
-### Step-progress SSE
+1. **DB-driven** — `cancel_pending` flips the row to `cancelled` and writes the `review_job.cancelled` audit. Always happens; what the UI reads.
+2. **Task-driven** — `cancel_pending` also calls `asyncio.Task.cancel()` on the in-flight task (looked up in a module-level `_inflight_tasks` registry keyed by `review_job_id`). The cancellation propagates through `coding_agent.review` → `workspace.run_coding_agent_cli`, which catches `CancelledError`, kills the subprocess group (SIGTERM → 2s → SIGKILL), drains the pipes, and re-raises.
 
-`_set_step` writes `current_step` + `last_heartbeat_at` and publishes `ReviewJobStepProgress`. Frontend subscribes and invalidates the per-ticket query. Phases: `resolving_entities` → `fetching_diff` → `provisioning_workspace` → `invoking_agent` → `posting_review` → (`posted`|`failed`). Step changes generate no audit entries. Audit captures *scheduled*, *prompt_sent*, *posted*, *failed*, *skipped*, *cancelled*, *reply_posted*.
+### Step-progress SSE (generation 1)
 
-### Heartbeat
+`_set_step` writes `current_step` + `last_heartbeat_at` and publishes `ReviewJobStepProgress`. Phases: `resolving_entities` → `fetching_diff` → `provisioning_workspace` → `invoking_agent` → `posting_review` → (`posted` | `failed`). Step changes generate no audit entries.
 
-`last_heartbeat_at` is bumped on every `_set_step` — no separate heartbeat coroutine. The admin Activity page and stuck-job detection both read it.
+### Reviewer voice + noise control
 
-### Secrets pre-flight
+Generation-2 prompts and prompt-side rules live in `domain/reviewer/llm/` (per plan §5.5):
 
-Five regex rules catch high-confidence shapes: AWS access key, GitHub token, Anthropic key, OpenAI key, PEM private-key block. `_detect_secrets` scans only `+`-prefixed lines in `diff.raw` (excluding `+++` headers), returns the first matching rule id. On match: ONE refusal review posted by the coordinator, every pending job transitions to `skipped(skip_reason="secrets_detected")`. Audit carries the rule id, never the matched bytes.
+- `prompts/classify_reply.prompt.md` — versioned `.prompt.md` file consumed by `core/llm`. Frontmatter pins the cheapest current Anthropic Haiku.
+- Confidence rubric in the prompt's system block matches plan §10.3.
 
-### Reply workflow
-
-`schedule_reply` is lighter. Creates a `kind='reply'` row with `parent_comment_external_id` and `reply_body`, spawns `_run_reply_job` with zero debounce, supersedes any in-flight reply for the same triple. The handler builds a `ReplyContext`, provisions a workspace, calls `coding_agent.reply`, posts via `vcs_plugin.post_comment_reply` (not a top-level review). No `posted_comments` row. Audit kind `review_job.reply_posted`.
-
-### Frozen-snapshot audit payload
-
-`review_job.prompt_sent` carries a full `_AgentSnapshot` (id, name, prompt_text, plugin id, agent_config), prompt hash, lesson IDs, checkout SHA, language hint. Immutable — later prompt edits don't rewrite history.
-
-### Denormalized fields on `review_jobs`
-
-Beyond lifecycle: `prompt_hash`, `lessons_applied` (UUID[]), `tokens_in`, `tokens_out`, `cost_usd`, `duration_s`, `error_message`, `review_external_id`, JSON-dumped `findings`. Convenience views — audit log remains historical truth.
-
-### Caller + destination columns
-
-Two fields on every `review_jobs` row capture who kicked the review off and where the result went:
-
-- **`triggered_by`** — kickoff event. Values today: `pr_ready`, `pr_synchronized`, `rereview_command`, `ui_rereview`. Future: `implementer_loop` once an implementer module calls `run_review`. Same string the `review_job.scheduled` audit payload carries; promoted to a column so the UI can filter ("show me everything triggered by implementer agents") without joining audit.
-- **`destination`** — where findings went. `vcs` today (posted via the VCS plugin). `caller` for future `run_review` invocations that return findings without posting. Disambiguates `status='posted'` between "posted to GitHub" and "returned to caller" without renaming the status enum.
-
-### Agent CRUD + seeding
-
-`ensure_builtin_agents` (idempotent, `on_startup`) inserts missing rows from `DEFAULT_PROMPTS` with `coding_agent_plugin_id="claude_code"`, empty `agent_config`, `is_built_in=True`. `update_agent_prompt` and `reset_agent_prompt` write `reviewer_agent.prompt_updated` audit with `{prior_hash, new_hash, restored_to_default?}` — text not stored in audit.
-
-### Startup recovery
-
-`startup_recovery` (`on_startup`): select `running` ids (crashed processes), flip to `failed` with `skip_reason='crashed'`, select all `queued`. Writes `review_job.failed` per crashed id. Groups queued rows by `ticket_id` (resolved via the PR row) and respawns ONE `_run_ticket_review` per ticket with zero debounce — preserving the ticket-scoped workspace discipline. `queued` rows auto-resume; `failed` requires operator re-review.
-
-### In-flight tracking
-
-`list_in_flight` returns `status in ('queued','running')`. No separate task registry, no broker. The domain row is the truth.
-
-### Metrics
-
-`metrics_summary` walks all rows once: `{review_jobs_by_status, total_reviews_posted, total_cost_usd, failure_count, failure_rate}`. Backs `GET /api/reviewer/metrics`.
+The "do NOT flag" list (plan §10.6) and the target-repo-conventions injection (plan §10.11) land alongside the coding-agent prompt-ownership migration; the contracts are already in place via `coding_agent.FindingDraft`.
 
 ## Data owned
 
-- `reviewer_agents` — one row per agent. Unique on `(org_id, name)`.
-- `review_jobs` — one row per `(PR, agent, scheduling event)`. Indexed on `(pr_id, status, created_at)` and `(status, last_heartbeat_at)`.
-- `posted_comments` — one row per VCS comment yaaos has posted; PK `external_comment_id`. Read by `intake` to resolve "which agent owns this comment".
+Generation 1:
 
-Canonical schema in [core_database.md](core_database.md).
+- `review_jobs` — one row per `(PR x run)`. Indexed on `(pr_id, status, created_at)` and `(status, last_heartbeat_at)`. Carries: status enum, heartbeat, current_step, prompt_hash, lessons_applied, tokens/duration, JSONB findings list, JSONB activity_log, model + effort.
+- `posted_comments` — one row per VCS comment yaaos has posted; PK `external_comment_id`. Read by `intake` to resolve "which review_job owns this comment".
+
+Generation 2 (plan §4.1):
+
+- `findings` — first-class finding. UNIQUE `(pr_id, fingerprint_hash)`. Indexed on `(pr_id, state)` and `fingerprint_hash`. Carries: state, sticky severity, max-confidence, anchor JSONB, `concrete_failure_scenario`, `source_agent`, `first_seen_review_id` + `last_observed_review_id` (unconstrained UUID until §13 step 7 renames `review_jobs` → `reviews`).
+- `finding_observations` — append-only `(finding, review)` sightings. Indexed on `(finding_id, review_id)`. Each row carries the anchor at the time and the agent's raw body.
+- `comment_threads` — 1:1 with `findings`. `external_thread_id` indexed for webhook resolution.
+- `comment_messages` — every yaaos- and human-authored message. `external_comment_id` indexed. `classified_intent` + `classification_confidence` populated for human messages by `classify_reply`.
+- `acknowledgment_decisions` — persistent dev decisions. Survive future reviews — re-observed fingerprints with an ack drop silently in the admission pipeline.
+
+`review_id` columns on generation-2 tables are unconstrained UUIDs by design; the `review_jobs → reviews` rename in §13 step 7 turns them into a real FK. Canonical schema in [core_database.md](core_database.md).
 
 ## How it's tested
 
-`app/domain/reviewer/test/test_detect_secrets.py` exhaustively covers the pre-flight detector. Scheduling, supersession, the handler state machine, replies, and startup recovery are covered by integration suites in `app/test/` and e2e tests in `apps/e2e/`.
+- **Unit tests** for `state_machine.py`, `fingerprint.py`, `anchor.py`, `trigger.py`, the aggregate, the service helpers (`apply_classified_reply` / `apply_verify_fix_result` / `apply_stale_check_result` / `is_yaaos_command` / `is_off_topic_message`), and the classifier (with a canned-output runnable substituting `core/llm`).
+- **In-memory `AggregateRepository`** at `test/in_memory_repository.py` exercises full scenarios from plan §6 — admission pipeline (threshold, nit cap, top cap, cross-file dedup, fingerprint match vs prior open/acknowledged), state transitions, round-trip persistence.
+- **Integration coverage** for generation 1 (`test_detect_secrets.py`, plus the scheduling / supersession / handler / startup-recovery suites in `app/test/` + `apps/e2e/`) continues to gate today's flow.
+- **E2E** for the durable-findings flow (multi-review render + single reply round-trip) lands with the UI commits.
+- **Evals** for the `classify_reply` prompt live under `domain/reviewer/eval/` (one `.eval.py` per prompt + fixtures); evals deliberately bypass `langchain.cache.SQLiteCache` so they always hit the model fresh.

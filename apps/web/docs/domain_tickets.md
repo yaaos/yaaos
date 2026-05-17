@@ -1,14 +1,14 @@
 # domain/tickets
 
-> Ticket list and ticket detail — the product's signature surface where three agents post live reviews.
+> Ticket list and ticket detail — the product's signature surface where the yaaos parent reviewer posts live reviews.
 
 ## Purpose
 
 Two pages under `/tickets`:
 - `/tickets` — filterable, group-able list of every ticket.
-- `/tickets/$ticketId` — detail: per-agent cards (architecture / security / style), expandable findings, audit log, Teach-yaaos modal.
+- `/tickets/$ticketId` — detail: one review card showing findings tagged by the subagent that surfaced each, audit log, Teach-yaaos modal.
 
-The only surface that exercises the full live-update path (webhook → reviewer pipeline → SSE → AgentCard state swap).
+The only surface that exercises the full live-update path (webhook → reviewer pipeline → SSE → review card state swap).
 
 ## Public interface
 
@@ -16,58 +16,54 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 
 ## Module architecture
 
-`apps/web/src/domain/tickets/index.tsx` is a single ~1100-LOC file holding both pages plus ~10 inner components. Pieces are tightly coupled (shared types/helpers/idiom). Split into `list/` + `detail/` + `_shared.tsx` when the file passes ~1500 LOC.
+`apps/web/src/domain/tickets/index.tsx` is a single file holding both pages plus inner components. Pieces are tightly coupled (shared types/helpers/idiom). Split into `list/` + `detail/` + `_shared.tsx` when the file passes ~1500 LOC.
 
 ### List page
 
 `TicketsPage`:
 - **Filter chips (status)** — All / Review / Done with live counts from `useTickets()`.
-- **Filter dropdowns** — `repo` (union of `useGithubRepositories()` and distinct `repo_external_id`s on loaded tickets), `kind` (hardcoded to `feature` — no `kind` field on Ticket yet), `author` (distinct `author_login`s).
+- **Filter dropdowns** — `repo`, `kind` (hardcoded to `feature`), `author`.
 - **Group-by toggle** — None / Status. Status mode renders sub-tables per status.
-- **Row layout (CSS grid)** — status badge · `#PR · repo` + title · kind chip · verdict dots (one per agent) · cost · source icon · author avatar+login · tokens · updated-ago.
-- **Verdict dots** — lazy per-row via `useReviewJobsForTicket(id)` (TanStack Query dedupes). Colors: posted-no-findings green, posted-with-must-fix red, posted-other grey, running pulsing accent, queued grey square, failed red, absent empty.
-- **Cost / tokens cells** — summed across the ticket's review jobs.
+- **Row layout (CSS grid)** — status badge · `#PR · repo` + title · kind chip · verdict dot · source icon · author avatar+login · tokens · updated-ago.
+- **Verdict dot** — lazy per-row via `useReviewJobsForTicket(id)`. Colors: posted-no-findings green, posted-with-must-fix red, posted-other grey, running pulsing accent, queued grey square, failed red, absent empty.
+- **Tokens cell** — read from the latest review job. Cost is not shown — CLI pricing data is not authoritative, so the backend doesn't track it.
 
 ### Detail page
 
 `TicketDetailPage`:
 - **Header** — `#PR · repo`, title, status + kind + draft chips, author byline. Buttons: **Cancel jobs** and **Re-review**.
-- **Tabs** — Review (default) and Audit log, each with live counts. Test IDs `tab-review` / `tab-audit`.
+- **Tabs** — Review (default) and Audit log, each with live counts.
 
 ### Review tab — `SummaryStrip`
 
-Five-cell card: Findings (red if any must-fix), Total cost, Tokens (in + out), Latency (live-ticking `LiveLatency` re-renders every second while any agent is `running`; otherwise the longest completed job's `duration_s`), Lessons applied (count of unique `lessons_applied` UUIDs across jobs).
+Four-cell card: Findings (red if any must-fix), Tokens (in + out), Latency (live-ticking `LiveLatency` while running; otherwise `duration_s`), Lessons applied. Cost cell removed — backend no longer tracks cost.
 
-### Review tab — three `AgentCard`s
+### Review tab — `AgentCard`
 
-One per built-in agent. Each carries `data-testid="agent-card-${name}"` and `data-state="<status>"` so e2e can query `[data-testid^="agent-card-"][data-state="posted"]`.
+One card representing the yaaos parent reviewer. Carries `data-testid="agent-card-yaaos"` and `data-state="<status>"`. The card header shows the job's `model` (alias requested, resolved name on completion) and `effort` next to the subtitle.
 
-| Status | Body |
-|---|---|
-| `no-job` | "no review run yet — click Re-review." |
-| `queued` | grey square + "Waiting for an open slot…" |
-| `running` | `current_step` label + indeterminate bar + live tokens & cost |
-| `posted` | list of `Finding` rows |
-| `skipped` | `Skipped: <skip_reason>.` |
-| `failed` | `Failed: <error_message>.` |
-| `cancelled` | `Cancelled (<skip_reason>).` |
+Body composition (applies to every status with a job — except `no-job` which renders an empty-state CTA):
+- **Status banner** (top) — one-line `Running · resolving_entities` / `Posted: 4 findings` / `Failed: <error_message>` / `Skipped: <skip_reason>` / `Cancelled (<skip_reason>)`. Running shows the indeterminate bar + tokens too.
+- **Activity feed** (`data-testid="activity-feed"`) — newest 10 events from the merged source: `job.activity_log` (hydrated history) ++ `useLiveActivity(job.id)` (live SSE tail), deduped by `ts+kind+message`, sorted newest-first. Format: `<formatTime(ts)> · <message>`.
+- **"All events (N)"** `<details>` — full event list, collapsible.
+- **Findings list** — only when `status === 'posted'` and findings exist; otherwise the banner alone covers the posted state.
 
 ### Finding rows
 
-Inside `findings-list`: severity dot + title + severity label + `file:line`. Click expands → body, italic `rationale`, line-numbered snippet diff with +/-/context coloring. Applied-lesson chip(s) link to `/memory`. **"Teach yaaos…"** button (`data-testid="teach-yaaos"`) opens the modal.
+Inside `findings-list`: severity dot + title + severity label + `file:line` + subagent tag from `source_agent`. Click expands → body, italic `rationale`, line-numbered snippet diff. Applied-lesson chip(s) link to `/memory`. **"Teach yaaos…"** button opens the modal.
 
 ### Teach-yaaos modal
 
-Pre-fills title (empty), body (finding's body, editable, 1000-char cap), repo (the ticket's). Submit → `useCreateLesson` posts `/api/memory/lessons`, invalidates `["memory", repo]`, closes. Uses the shared `Dialog` primitives.
+Pre-fills title (empty), body (finding's body, editable, 1000-char cap), repo (the ticket's). Submit → `useCreateLesson` posts `/api/memory/lessons`, invalidates `["memory", repo]`, closes.
 
 ### Audit tab
 
-Renders `useTicketAudit(id)` as a vertical list: `formatTime(created_at)` · `kind` · `[actor.kind:actor.login]`. Click expands the full payload JSON. Timestamps go through `formatTime` for local TZ.
+Renders `useTicketAudit(id)` as a vertical list: `formatTime(created_at)` · `kind` · `[actor.kind:actor.login]`. Click expands the full payload JSON.
 
 ### Cancel / Re-review
 
-- **Re-review** — `useRereviewMutation` → `POST /api/reviewer/rereview?ticket_id=...`. Cancels in-flight jobs for `(pr_id, agent_id)` pairs via supersede discipline, then schedules a fresh batch.
-- **Cancel jobs** — `useCancelReviewerJobs` → `POST /api/reviewer/cancel?ticket_id=...`. Flips queued + running to `cancelled` with `skip_reason="ui_cancel"`; running coros bail at their next cancel-check.
+- **Re-review** — `useRereviewMutation` → `POST /api/reviewer/rereview`. Cancels in-flight jobs for the PR via supersede discipline, then schedules one new review.
+- **Cancel jobs** — `useCancelReviewerJobs` → `POST /api/reviewer/cancel?ticket_id=...`.
 
 ### Live updates
 
@@ -79,13 +75,4 @@ None. State lives in `core/api` caches; mutations target endpoints owned by `dom
 
 ## How it's tested
 
-E2e specs in `apps/e2e/tests/`:
-- `pr-review-end-to-end.spec.ts` — webhook → 3 agents post → findings render.
-- `pr-resync-reruns-agents.spec.ts` — synchronize event triggers a fresh batch.
-- `manual-rereview-and-cancel.spec.ts` — re-review through UI; cancel through API.
-- `secrets-refuse-to-review.spec.ts` — all 3 transition to `skipped(secrets_detected)`.
-- `teach-yaaos-from-finding.spec.ts` — finding → modal → lesson on Memory page.
-- `lesson-applied-next-review.spec.ts` — seeded lesson surfaces in `prompt_sent` audit payload.
-- `sse-step-progress-live.spec.ts` — AgentCard transitions to `posted` without reload.
-
-No Vitest — components are render-heavy and the e2e specs cover the round-trip.
+E2e specs in `apps/e2e/tests/` exercise the round-trip; assertions check for exactly one `agent-card-` per ticket. No Vitest — components are render-heavy.

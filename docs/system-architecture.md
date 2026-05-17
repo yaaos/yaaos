@@ -16,7 +16,7 @@ How the apps fit together and the conventions spanning them. App-internal archit
 ## Runtime topology
 
 - One Docker image runs FastAPI, serves the built SPA, and runs background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops (workspace reaper, GitHub catch-up poller) start in FastAPI's `lifespan`.
-- Claude Code CLI baked into the image; spawned as a subprocess per agent inside the ticket's shared workspace. One workspace per ticket, shared by every agent on that ticket. The CLI owns all LLM communication — yaaos makes zero direct LLM calls.
+- Claude Code CLI baked into the image; spawned once per review run inside the ticket's workspace. The parent reviewer dispatches `yaaos-*` subagents (architecture, security, line-level, tests, docs, conditional skill) via the Task tool and synthesizes their findings. Subagent definitions are static markdown files installed into `~/.claude/agents/` at backend bootstrap. The CLI owns all LLM communication — yaaos makes zero direct LLM calls.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
 - OpenTelemetry collector recommended but not required; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 
@@ -27,8 +27,8 @@ How the apps fit together and the conventions spanning them. App-internal archit
 1. GitHub (or `fake-github` in tests) sends HMAC-signed `pull_request.opened` to `POST /api/github/webhook`.
 2. `plugins/github` verifies HMAC, parses into a `VCSEvent`, hands to `domain/intake`.
 3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.schedule_review`.
-4. `domain/reviewer` creates 3 review_jobs (architecture / security / style) and spawns ONE coordinator coro per ticket.
-5. Coordinator provisions one workspace for the ticket, then runs all agents in parallel against it via `asyncio.gather`: each `coding_agent.review` → `vcs.post_review` back to GitHub. Workspace destroyed when every agent finishes.
+4. `domain/reviewer` creates ONE review_job and spawns the handler coro.
+5. Handler provisions the workspace and calls `coding_agent.review` once. The parent Claude Code agent dispatches `yaaos-*` subagents in parallel via the Task tool, synthesizes their findings (re-reads cited code to verify, deduplicates, ranks), and returns one merged result. Handler posts a single `vcs.Review` to GitHub with each finding tagged by its `source_agent` subagent.
 
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
@@ -41,6 +41,8 @@ SPA mounts one `EventSource` on `GET /api/events` at app root. Each event invali
 | `ticket_status_changed` | `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]` |
 | `review_job_status_changed` | `["reviewer", "jobs", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]`, `["tickets"]` |
 | `review_job_step_progress` | `["reviewer", "jobs", id]` only — in-place row update |
+
+Events carry `pr_id` + `review_job_id` (no `agent_id` — one job per review run).
 
 Polling (5s / 3s) remains as a safety net.
 

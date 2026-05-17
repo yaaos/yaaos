@@ -49,17 +49,15 @@ def _split_external(external_id: str) -> tuple[str, str, int]:
     return owner, repo, int(num_s)
 
 
-# GitHub's POST /pulls/{n}/reviews `event` field takes action verbs, not the
-# state values it returns on read. Sending APPROVED / CHANGES_REQUESTED yields 422.
-_REVIEW_EVENT_BY_STATE = {
-    "APPROVED": "APPROVE",
-    "CHANGES_REQUESTED": "REQUEST_CHANGES",
-    "COMMENT": "COMMENT",
+# Maps a yaaos subagent name to the emoji rendered in the small attribution
+# suffix on each posted comment. Anything not listed falls back to 🤖.
+_AGENT_EMOJI = {
+    "yaaos-docs": "📝",
+    "yaaos-architecture": "🏗",
+    "yaaos-security": "🛡",
+    "yaaos-tests": "🧪",
+    "yaaos-line-level": "🔍",
 }
-
-
-def _review_event_for_state(state: str) -> str:
-    return _REVIEW_EVENT_BY_STATE[state]
 
 
 def verify_webhook_signature(body: bytes, header: str | None, secret: bytes) -> bool:
@@ -315,50 +313,62 @@ class GitHubPlugin:
             return False
 
     async def post_review(self, external_id: str, review: Review) -> ReviewPostResult:
+        # We post each finding as an independent comment rather than a single
+        # GitHub Review object, so there is no top-level "[yaaos]" wrapper on
+        # the PR. Findings with `file` + `line_start` go to the inline
+        # pull-request-comments endpoint (requires `commit_id`, so we fetch the
+        # PR's head sha once up front). Findings without file/line, plus the
+        # secrets-warning case (no findings, only `summary_body`), go to the
+        # issue-comments endpoint — that's GitHub's path for top-level PR
+        # comments despite the "issues" naming.
         owner, repo, num = _split_external(external_id)
         org_id = await self._resolve_org_id()
-        # Build the GitHub-shape payload.
-        comments_payload: list[dict[str, Any]] = []
-        finding_index_for_comment: list[int] = []
-        for i, f in enumerate(review.findings):
-            if f.file and f.line_start is not None:
-                comments_payload.append(
-                    {
+
+        inline_findings = [
+            (i, f) for i, f in enumerate(review.findings) if f.file and f.line_start is not None
+        ]
+        top_level_findings = [
+            (i, f) for i, f in enumerate(review.findings) if not (f.file and f.line_start is not None)
+        ]
+
+        commit_id: str | None = None
+        if inline_findings:
+            pr = await self.fetch_pr(external_id)
+            commit_id = pr.head_sha
+
+        finding_to_comment: dict[int, str] = {}
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            headers = await self._api_headers(org_id)
+            for i, f in inline_findings:
+                resp = await client.post(
+                    f"/repos/{owner}/{repo}/pulls/{num}/comments",
+                    json={
+                        "commit_id": commit_id,
                         "path": f.file,
                         "line": f.line_end or f.line_start,
-                        "body": _format_finding_body(review.agent_tag, f),
-                    }
+                        "body": _format_finding_body(f),
+                    },
+                    headers=headers,
                 )
-                finding_index_for_comment.append(i)
-        # Summary body collects the agent tag + a one-line title for each finding
-        # that didn't get an inline comment (or as the review body for an APPROVED).
-        body_lines = [f"[{review.agent_tag}]"]
-        if review.summary_body:
-            body_lines.append(review.summary_body)
-        for i, f in enumerate(review.findings):
-            if i not in set(finding_index_for_comment):
-                body_lines.append(f"- **{f.severity}**: {f.title}\n  {f.body}")
-        review_payload = {
-            "body": "\n\n".join(body_lines),
-            "event": _review_event_for_state(review.state),
-            "comments": comments_payload,
-        }
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
-            resp = await client.post(
-                f"/repos/{owner}/{repo}/pulls/{num}/reviews",
-                json=review_payload,
-                headers=await self._api_headers(org_id),
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        # fake-github / real GitHub may both return a list of comment ids; if not,
-        # we leave the map empty.
-        finding_to_comment: dict[int, str] = {}
-        comment_ids = data.get("comment_external_ids") or []
-        for idx, cid in zip(finding_index_for_comment, comment_ids, strict=False):
-            finding_to_comment[idx] = str(cid)
+                resp.raise_for_status()
+                finding_to_comment[i] = str(resp.json().get("id", ""))
+            for i, f in top_level_findings:
+                resp = await client.post(
+                    f"/repos/{owner}/{repo}/issues/{num}/comments",
+                    json={"body": _format_finding_body(f)},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                finding_to_comment[i] = str(resp.json().get("id", ""))
+            if not review.findings and review.summary_body:
+                resp = await client.post(
+                    f"/repos/{owner}/{repo}/issues/{num}/comments",
+                    json={"body": review.summary_body},
+                    headers=headers,
+                )
+                resp.raise_for_status()
         return ReviewPostResult(
-            review_external_id=str(data.get("id", "")),
+            review_external_id="",
             finding_to_comment_external_id=finding_to_comment,
         )
 
@@ -639,10 +649,14 @@ async def mark_installation_inactive(*, install_external_id: str, status: str) -
         await s.commit()
 
 
-def _format_finding_body(agent_tag: str, f: Any) -> str:
-    parts = [f"[{agent_tag}] **{f.title}**", "", f.body]
+def _format_finding_body(f: Any) -> str:
+    parts = [f"**{f.title}**", "", f.body]
     if getattr(f, "rationale", None):
         parts.extend(["", f"> {f.rationale}"])
+    agent = getattr(f, "source_agent", None)
+    if agent:
+        emoji = _AGENT_EMOJI.get(agent, "🤖")
+        parts.extend(["", f"<sub>{emoji} {agent}</sub>"])
     return "\n".join(parts)
 
 

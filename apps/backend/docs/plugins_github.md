@@ -99,14 +99,14 @@ No shared `httpx.AsyncClient` — short-lived per-method against `github_api_bas
 | `GET /repos/{owner}/{repo}/pulls/{n}` | `fetch_pr` |
 | `GET .../pulls/{n}` (diff Accept) + `/files` | `fetch_diff` |
 | `GET .../pulls/{n}/comments`, `/issues/{n}/comments` | `list_yaaos_comments` |
-| `POST .../pulls/{n}/reviews` | `post_review` |
+| `POST .../pulls/{n}/comments` (inline) + `POST .../issues/{n}/comments` (top-level) | `post_review` |
 | `POST .../pulls/{n}/comments/{id}/replies` (`/issues/{n}/comments` fallback on 404) | `post_comment_reply` |
 | `GET .../pulls?state=open` | `list_open_prs_since` / poller |
 | `GET .../compare/{base}...{head}` | `detect_force_push` |
 | `GET /installation/repositories` | repositories route + poller |
 | `GET /repos/{owner}/{repo}` | `is_repo_accessible` |
 
-`post_review` maps internal `ReviewState` to GitHub's `event` verb via `_review_event_for_state` — sending the read-state value to the write endpoint returns 422.
+`post_review` posts each finding as its own comment rather than bundling them into a single `Review` object — no top-level wrapper comment, no `APPROVE` / `REQUEST_CHANGES` verdict (deferred). Findings with `file` + `line_start` go to `POST /pulls/{n}/comments` (the inline-review-comments endpoint, which requires the PR's `head_sha` as `commit_id`); orphan findings and the secrets-warning `summary_body` case route to `POST /issues/{n}/comments` (GitHub's path for non-inline PR comments — naming aside, this is *not* a GitHub Issues operation). `Review.state` is recorded internally but ignored on post; the approve flow will reintroduce it later.
 
 ### Catch-up poller
 
@@ -141,6 +141,6 @@ Unit tests in `app/plugins/github/test/`:
 
 - `test_signature.py` — HMAC verification (valid, invalid, missing header, wrong prefix).
 - `test_payload_parser.py` — every event-mapping branch.
-- `test_post_review_event.py` — `_review_event_for_state` mapping; guards the read-state-vs-write-verb 422.
+- `test_post_review.py` — `post_review` routing (inline / orphan / summary-only / empty) and `_format_finding_body` rendering (agent emoji suffix, fallback, omitted-when-unset).
 
 Full webhook + dispatch, manifest-callback, credentials, installation route, repositories proxy, force-push detection, and catch-up poller exercised end-to-end by `apps/e2e/` Playwright specs against `apps/fake-github`.

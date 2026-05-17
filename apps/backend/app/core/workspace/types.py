@@ -8,6 +8,7 @@ implementations where "working_dir" wouldn't be a host-filesystem path at all.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
@@ -16,6 +17,12 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.primitives import PluginMeta
+
+# Per-line callback used by `run_coding_agent_cli` to stream stdout in real
+# time. When provided, the provider invokes it for each newline-terminated
+# chunk from the CLI; when None, stdout is buffered and returned in the
+# final `CodingAgentCliResult.stdout` instead.
+OnStreamLine = Callable[[bytes], Awaitable[None]]
 
 
 class WorkspaceStatus(StrEnum):
@@ -55,6 +62,13 @@ class WorkspaceSpec(BaseModel):
     repo: RepoRefForSpec
     sha: str
     branch_name: str | None = None
+    # PR base (the target branch being merged into — not necessarily `main`).
+    # When provided, the workspace also fetches `base_sha` so the agent can
+    # run `git diff base_sha..HEAD` without yaaos inlining the whole diff
+    # into the prompt. Optional: standalone workspace calls (no PR context)
+    # don't have a base.
+    base_sha: str | None = None
+    base_branch: str | None = None
     resource_caps: ResourceCaps = Field(default_factory=ResourceCaps)
     network_policy: NetworkPolicy = NetworkPolicy.GITHUB_ONLY
     # Stamped by core/workspace.create_workspace before delegating to provision().
@@ -113,6 +127,7 @@ class Workspace(Protocol):
         env: dict[str, str] | None = None,
         stdin: bytes | None = None,
         timeout_seconds: int | None = None,
+        on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
 
 
@@ -133,6 +148,7 @@ class WorkspaceProvider(Protocol):
         env: dict[str, str] | None = None,
         stdin: bytes | None = None,
         timeout_seconds: int | None = None,
+        on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
     async def destroy(self, plugin_state: dict[str, Any]) -> None: ...
     async def health_check(self) -> HealthStatus: ...

@@ -17,6 +17,7 @@ from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import (
     CodingAgentCliResult,
     HealthStatus,
+    OnStreamLine,
     Workspace,
     WorkspaceError,
     WorkspaceInfo,
@@ -72,6 +73,7 @@ class _WorkspaceImpl:
         env: dict[str, str] | None = None,
         stdin: bytes | None = None,
         timeout_seconds: int | None = None,
+        on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult:
         return await self._provider.run_coding_agent_cli(
             self._plugin_state,
@@ -79,6 +81,7 @@ class _WorkspaceImpl:
             env=env,
             stdin=stdin,
             timeout_seconds=timeout_seconds,
+            on_stream_line=on_stream_line,
         )
 
 

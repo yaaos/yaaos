@@ -11,12 +11,17 @@ from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
     CodingAgentPlugin,
     HealthStatus,
+    IncrementalReviewContext,
+    IncrementalReviewResult,
+    OnActivity,
     PluginNotFoundError,
-    ReplyContext,
-    ReplyResult,
     ReviewContext,
     ReviewResult,
+    StaleCheckContext,
+    StaleCheckResult,
     ValidationResult,
+    VerifyFixContext,
+    VerifyFixResult,
 )
 
 log = structlog.get_logger("coding_agent")
@@ -42,35 +47,80 @@ def _reset_plugins_for_tests() -> None:
     _PLUGINS.clear()
 
 
-async def review(plugin_id: str, workspace: Workspace, context: ReviewContext) -> ReviewResult:
+async def review(
+    plugin_id: str,
+    workspace: Workspace,
+    context: ReviewContext,
+    on_activity: OnActivity | None = None,
+) -> ReviewResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.review(workspace, context)
+    result = await plugin.review(workspace, context, on_activity=on_activity)
     log.info(
         "agent.reviewed",
         plugin_id=plugin_id,
-        agent_name=context.agent_name,
         status=result.status,
         findings=len(result.findings),
         tokens_in=result.telemetry.tokens_in,
         tokens_out=result.telemetry.tokens_out,
-        cost_usd=str(result.telemetry.cost_usd) if result.telemetry.cost_usd is not None else None,
         latency_ms=result.telemetry.latency_ms,
     )
     return result
 
 
-async def reply(plugin_id: str, workspace: Workspace, context: ReplyContext) -> ReplyResult:
+async def incremental_review(
+    plugin_id: str,
+    workspace: Workspace,
+    context: IncrementalReviewContext,
+    on_activity: OnActivity | None = None,
+) -> IncrementalReviewResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.reply(workspace, context)
+    result = await plugin.incremental_review(workspace, context, on_activity=on_activity)
     log.info(
-        "agent.replied",
+        "agent.incremental_reviewed",
         plugin_id=plugin_id,
-        agent_name=context.agent_name,
         status=result.status,
-        tokens_in=result.telemetry.tokens_in,
-        tokens_out=result.telemetry.tokens_out,
-        cost_usd=str(result.telemetry.cost_usd) if result.telemetry.cost_usd is not None else None,
+        findings=len(result.findings),
+        prev_sha=context.prev_sha,
+        head_sha=context.head_sha,
         latency_ms=result.telemetry.latency_ms,
+    )
+    return result
+
+
+async def verify_fix(
+    plugin_id: str,
+    workspace: Workspace,
+    context: VerifyFixContext,
+    on_activity: OnActivity | None = None,
+) -> VerifyFixResult:
+    plugin = get_plugin(plugin_id)
+    result = await plugin.verify_fix(workspace, context, on_activity=on_activity)
+    log.info(
+        "agent.verified_fix",
+        plugin_id=plugin_id,
+        status=result.status,
+        still_present=result.still_present,
+        confidence=result.confidence,
+        rule_id=context.original_rule_id,
+    )
+    return result
+
+
+async def stale_check(
+    plugin_id: str,
+    workspace: Workspace,
+    context: StaleCheckContext,
+    on_activity: OnActivity | None = None,
+) -> StaleCheckResult:
+    plugin = get_plugin(plugin_id)
+    result = await plugin.stale_check(workspace, context, on_activity=on_activity)
+    log.info(
+        "agent.stale_checked",
+        plugin_id=plugin_id,
+        status=result.status,
+        still_applies=result.still_applies,
+        confidence=result.confidence,
+        rule_id=context.original_rule_id,
     )
     return result
 

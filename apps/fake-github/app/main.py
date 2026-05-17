@@ -106,8 +106,8 @@ async def get_repo(
     return {"full_name": f"{owner}/{repo}", "default_branch": "main"}
 
 
-@app.post("/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=200)
-async def post_review(
+@app.post("/repos/{owner}/{repo}/pulls/{number}/comments", status_code=201)
+async def post_inline_comment(
     owner: str,
     repo: str,
     number: int,
@@ -115,40 +115,20 @@ async def post_review(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_bearer(authorization)
-    review_id = state.next_review_id()
-    comment_external_ids: list[str] = []
-    for c in body.get("comments", []) or []:
-        cid = state.next_comment_id()
-        comment_external_ids.append(str(cid))
-        state.posted_comments.append(
-            {
-                "id": cid,
-                "review_id": review_id,
-                "owner": owner,
-                "repo": repo,
-                "number": number,
-                "path": c.get("path"),
-                "line": c.get("line"),
-                "body": c.get("body", ""),
-            }
-        )
-    state.posted_reviews.append(
+    cid = state.next_comment_id()
+    state.posted_comments.append(
         {
-            "id": review_id,
+            "id": cid,
             "owner": owner,
             "repo": repo,
             "number": number,
+            "commit_id": body.get("commit_id"),
+            "path": body.get("path"),
+            "line": body.get("line"),
             "body": body.get("body", ""),
-            "event": body.get("event", "COMMENT"),
-            "comment_external_ids": comment_external_ids,
         }
     )
-    return {
-        "id": review_id,
-        "html_url": f"https://github.com/{owner}/{repo}/pull/{number}#review-{review_id}",
-        "node_id": f"REVIEW_{review_id}",
-        "comment_external_ids": comment_external_ids,
-    }
+    return {"id": cid}
 
 
 @app.get("/repos/{owner}/{repo}/pulls/{number}/comments")
@@ -289,7 +269,7 @@ async def test_dispatch_webhook(body: dict[str, Any]) -> dict[str, Any]:
 
     body_bytes = json.dumps(payload, sort_keys=True).encode()
     sig = "sha256=" + hmac.new(WEBHOOK_SECRET_BYTES, body_bytes, hashlib.sha256).hexdigest()
-    delivery_id = body.get("delivery_id", f"delivery-{state.next_review_id()}")
+    delivery_id = body.get("delivery_id", f"delivery-{state.next_comment_id()}")
     headers = {
         "Content-Type": "application/json",
         "X-GitHub-Event": event,
@@ -303,11 +283,6 @@ async def test_dispatch_webhook(body: dict[str, Any]) -> dict[str, Any]:
         "delivery_id": delivery_id,
         "body": resp.text,
     }
-
-
-@app.get("/__test/posted_reviews")
-async def test_posted_reviews() -> list[dict[str, Any]]:
-    return state.posted_reviews
 
 
 @app.get("/__test/posted_comments")

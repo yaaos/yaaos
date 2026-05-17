@@ -14,7 +14,7 @@ A small dev-only HTTP surface so each Playwright spec composes its own precondit
 
 HTTP routes (prefix `/api/testing`):
 
-- `POST /reset` — truncate every table in `Base.metadata` (FK-safe, `RESTART IDENTITY CASCADE`), then re-run the structural seed (`ensure_builtin_agents`). Post-call: data tables empty; three built-in reviewer agents exist.
+- `POST /reset` — truncate every table in `Base.metadata` (FK-safe, `RESTART IDENTITY CASCADE`). No structural seeding — reviewer specialists are shipped markdown files, not DB rows. Post-call: every table empty.
 - `POST /seed/credentials_and_install` — `{org_login: str = "acme"}`. Populates valid GitHub + Anthropic credentials and an active installation row.
 - `POST /seed/lesson` — `{repo_external_id, title, body}`. Returns `{status, lesson_id}`.
 
@@ -36,7 +36,7 @@ Adding a new module with tables means adding one line here. Otherwise `/reset` s
 
 Truncates `Base.metadata.sorted_tables` (reverse order, `RESTART IDENTITY CASCADE`). Reverse-order list is belt-and-braces for non-CASCADE engines. Empty schema short-circuits.
 
-After truncate, `ensure_builtin_agents(org_id=M01_ORG_ID)` runs — built-in reviewer agents are **structural** (every spec assumes them), not test data. Lessons, credentials, install rows are test data and must be seeded explicitly.
+Reviewer specialists are shipped as markdown files in `app/domain/coding_agent/reviewers/` and installed to `~/.claude/agents/` by the claude_code plugin at backend bootstrap. No DB-level structural seeding needed. Lessons, credentials, install rows are test data and must be seeded explicitly.
 
 ### `seed_credentials_and_install(*, org_login="acme")`
 
@@ -44,7 +44,7 @@ Does not check for existing rows; always inserts. Callers should pair with a fre
 
 - `GitHubSettingsRow` with `app_id="12345"`, `slug="yaaos-test"` (matches fake-github's `/app`), Fernet-encrypted placeholder PEM + webhook secret. fake-github accepts any bearer token; key material is never validated downstream.
 - `GitHubAppInstallationRow` with `install_external_id="fake-install-1"`, status `"active"`, given `account_login`.
-- `ClaudeCodeSettingsRow` with encrypted placeholder Anthropic key, `default_timeout_seconds=600`.
+- `ClaudeCodeSettingsRow` with encrypted placeholder Anthropic key.
 
 After this, the system passes every onboarding contributor check and is ready for webhooks. The matching webhook payload (`installation: {id: "fake-install-1"}`) is built by `apps/e2e/tests/_helpers.ts`.
 

@@ -33,14 +33,14 @@ No HTTP routes. Webhook surface lives in the VCS plugin (e.g., `/api/github/webh
 
 ### Per-event handlers
 
-- `_handle_pr_ready_for_review` — filters forks and bot authors (writing `webhook_event.filtered`), calls `refresh_pr_metadata`, then `reviewer.schedule_review(agent_names="all", trigger_reason="pr_ready")`. No repo-allowlist gate — the GitHub App install picks the access scope.
-- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), schedules an `all` review with `trigger_reason="pr_synchronized"`. The reviewer's debounce + per-PR queue collapses bursts.
+- `_handle_pr_ready_for_review` — filters forks and bot authors (writing `webhook_event.filtered`), calls `refresh_pr_metadata`, then `reviewer.schedule_review(trigger_reason="pr_ready")`. No repo-allowlist gate — the GitHub App install picks the access scope.
+- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), schedules a review with `trigger_reason="pr_synchronized"`. The reviewer's debounce + per-PR queue collapses bursts.
 - `_handle_pr_closed` — updates PR state to `merged` or `closed`, transitions the ticket to `complete` if `in_review`, calls `reviewer.cancel_pending`.
 - `_handle_pr_reopened` — updates PR state to `open`. No review triggered — the next commit does so via `pr_synchronized`.
-- `_handle_comment_created` — skips yaaos bot comments (`YAAOS_BOT_LOGIN = "yaaos[bot]"`) and `author_type == "bot"`. Then tries:
-  1. **Re-review command** — `parse_rereview(event.body)`. On match: write `ticket.rereview_requested` with the GitHub user as actor, call `reviewer.schedule_review` with the named agent or `"all"`, `trigger_reason="rereview_command"`.
-  2. **Inline reply to a yaaos comment** — if `event.comment_kind == "inline"` and `in_reply_to_comment_external_id` is set, look up the parent in `posted_comments` (owned by `reviewer`). On hit: resolve `agent_id`, write `ticket.reply_received`, call `reviewer.schedule_reply`. On miss: no-op.
-- `_handle_reaction_added` — looks up the comment in `posted_comments`. On hit: write `ticket.reaction_received`. Reactions are signal-only — no review or reply triggered.
+- `_handle_comment_created` — skips yaaos bot comments (`YAAOS_BOT_LOGIN = "yaaos[bot]"`) and `author_type == "bot"`. Then:
+  1. **Re-review command** — `parse_rereview(event.body)`. On match: write `ticket.rereview_requested` with the GitHub user as actor, call `reviewer.schedule_review` with `trigger_reason="rereview_command"`.
+  2. **Inline replies are deferred.** A future `review_comments` table will own that lifecycle; intake silently drops them today.
+- `_handle_reaction_added` — looks up the comment in `posted_comments`. On hit: write `ticket.reaction_received`. Reactions are signal-only — no review triggered.
 
 ### Filtering rules
 
@@ -48,7 +48,7 @@ Centralized here, not in plugins. Plugins emit semantic events (e.g., `PullReque
 
 ### `@yaaos rereview` parser
 
-Single case-insensitive regex compiled once: `@yaaos(?:-(?P<agent>architecture|security|style))?\s+rereview`. Returns `(matched, agent_or_None)`; `agent=None` means "all three". Body-parsed token, not a GitHub user mention. Whitespace tolerant. Definition in `app/domain/intake/parsing.py`.
+Single case-insensitive regex compiled once: `@yaaos(?:-[a-z0-9-]+)?\s+rereview`. Legacy `@yaaos-<specialty>` forms still match for backwards compatibility; the specialty is ignored (one reviewer per ticket). Body-parsed token, not a GitHub user mention. Whitespace tolerant. Definition in `app/domain/intake/parsing.py`.
 
 ### Skip-path heuristics
 
@@ -72,9 +72,8 @@ This is the production write path for tickets. `tickets.create_for_pr` exists fo
 | `webhook_event.filtered` | A filter rule rejects an event | `{reason, event_kind, source_event_id}` |
 | `webhook_event.failed` | Per-event try/except catches an exception | `{event_kind, source_event_id, exception_type, message}` |
 | `ticket.created` | First-time PR upsert creates the ticket | `{pr_id, repo_external_id}` |
-| `ticket.rereview_requested` | `@yaaos rereview` comment matched | `{agent_name_or_all, comment_external_id}` |
-| `ticket.reply_received` | Inline reply to a yaaos comment | `{agent_id, parent_comment_external_id, new_comment_external_id}` |
-| `ticket.reaction_received` | Reaction added to a yaaos comment | `{agent_id, reaction, target_comment_external_id}` |
+| `ticket.rereview_requested` | `@yaaos rereview` comment matched | `{comment_external_id}` |
+| `ticket.reaction_received` | Reaction added to a yaaos comment | `{reaction, target_comment_external_id}` |
 
 `webhook_event.*` entries use a synthetic UUID as entity id (intake doesn't have the webhook row id at this layer).
 

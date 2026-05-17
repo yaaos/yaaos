@@ -24,7 +24,7 @@ services:
     ports:
       - "58081:8080"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/__test/posted_reviews').status == 200 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/__test/posted_comments').status == 200 else 1)\""]
       interval: 2s
       timeout: 2s
       retries: 30

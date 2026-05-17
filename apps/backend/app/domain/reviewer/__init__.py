@@ -1,17 +1,58 @@
-"""domain/reviewer — review workflow + agents + per-PR queue."""
+"""domain/reviewer — review workflow + per-PR queue + durable findings.
+
+Two generations are live in this module:
+
+- Generation 1: `ReviewJob` row + JSONB findings + `schedule_review` → vcs.post_review.
+  Exported as-is so today's intake/UI keep working.
+- Generation 2: `PRReviewAggregate` + first-class `Finding`/`Review`/threads/acks
+  with a state machine. Not yet reachable from the public schedule_review flow
+  — wires in §13 step 7.
+
+External callers depend on the generation-1 surface for now. Generation-2
+helpers (`SqlAlchemyAggregateRepository`, `acquire_pr_lock`, aggregate types)
+are exported so other modules can extend the durable-findings flow once the
+cut-over lands.
+"""
 
 from app.domain.reviewer import web  # noqa: F401
-from app.domain.reviewer.agent_crud import (
-    AgentNotFoundError,
-    ReviewerAgent,
-    ensure_builtin_agents,
-    get_agent_by_id,
-    get_agent_by_name,
-    list_agents,
-    reset_agent_prompt,
-    update_agent_prompt,
+from app.domain.reviewer.aggregate import (
+    AdmissionDrop,
+    PRReviewAggregate,
+    RawFinding,
 )
-from app.domain.reviewer.models import PostedCommentRow, ReviewerAgentRow, ReviewJobRow
+from app.domain.reviewer.events import (
+    AgentReplyPosted,
+    CommentReplyReceived,
+    DomainEvent,
+    FindingAcknowledged,
+    FindingAnchorUpdated,
+    FindingRaised,
+    FindingReObserved,
+    FindingResolutionDetected,
+    FindingStaleDetected,
+    FindingStateChanged,
+    ReviewCompleted,
+    ReviewFailed,
+    ReviewRequested,
+    ReviewStarted,
+    ReviewSuperseded,
+)
+from app.domain.reviewer.llm import (
+    ClassifyReplyInput,
+    ClassifyReplyOutput,
+    classify_reply,
+    classify_reply_runnable,
+)
+from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.models import (
+    AcknowledgmentDecisionRow,
+    CommentMessageRow,
+    CommentThreadRow,
+    FindingObservationRow,
+    FindingRow,
+    PostedCommentRow,
+    ReviewJobRow,
+)
 from app.domain.reviewer.queue import (
     ReviewJob,
     ReviewJobInput,
@@ -21,32 +62,141 @@ from app.domain.reviewer.queue import (
     list_in_flight,
     list_review_jobs_for_pr,
     metrics_summary,
-    schedule_reply,
     schedule_review,
     startup_recovery,
 )
+from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.repository_protocol import AggregateRepository
+from app.domain.reviewer.service import (
+    CLASSIFY_ACT_THRESHOLD,
+    CLASSIFY_CONFIRM_THRESHOLD,
+    VERIFY_ACT_THRESHOLD,
+    VERIFY_OBSERVE_THRESHOLD,
+    ConversationView,
+    FindingView,
+    ReplyAction,
+    StaleCheckAction,
+    VerifyFixAction,
+    all_conversations_view,
+    apply_classified_reply,
+    apply_stale_check_result,
+    apply_verify_fix_result,
+    is_off_topic_message,
+    is_yaaos_command,
+    list_findings_view,
+    review_summary,
+)
+from app.domain.reviewer.trigger import (
+    Debounce,
+    Run,
+    Skip,
+    SkipReason,
+    TriggerDecision,
+    TriggerInputs,
+    decide_trigger,
+    humanize_skip,
+)
+from app.domain.reviewer.types import (
+    AckKind,
+    AcknowledgmentDecision,
+    AuthorKind,
+    CodeAnchor,
+    CommentMessage,
+    CommentThread,
+    Finding,
+    FindingFingerprint,
+    FindingObservation,
+    FindingState,
+    ReplyIntent,
+    Review,
+    ReviewScope,
+    ReviewScopeKind,
+    ReviewTrigger,
+    Severity,
+)
 
 __all__ = [
-    "AgentNotFoundError",
+    "CLASSIFY_ACT_THRESHOLD",
+    "CLASSIFY_CONFIRM_THRESHOLD",
+    "VERIFY_ACT_THRESHOLD",
+    "VERIFY_OBSERVE_THRESHOLD",
+    "AckKind",
+    "AcknowledgmentDecision",
+    "AcknowledgmentDecisionRow",
+    "AdmissionDrop",
+    "AgentReplyPosted",
+    "AggregateRepository",
+    "AuthorKind",
+    "ClassifyReplyInput",
+    "ClassifyReplyOutput",
+    "CodeAnchor",
+    "CommentMessage",
+    "CommentMessageRow",
+    "CommentReplyReceived",
+    "CommentThread",
+    "CommentThreadRow",
+    "ConversationView",
+    "Debounce",
+    "DomainEvent",
+    "Finding",
+    "FindingAcknowledged",
+    "FindingAnchorUpdated",
+    "FindingFingerprint",
+    "FindingObservation",
+    "FindingObservationRow",
+    "FindingRaised",
+    "FindingReObserved",
+    "FindingResolutionDetected",
+    "FindingRow",
+    "FindingStaleDetected",
+    "FindingState",
+    "FindingStateChanged",
+    "FindingView",
+    "PRReviewAggregate",
     "PostedCommentRow",
+    "RawFinding",
+    "ReplyAction",
+    "ReplyIntent",
+    "Review",
+    "ReviewCompleted",
+    "ReviewFailed",
     "ReviewJob",
     "ReviewJobInput",
     "ReviewJobRow",
     "ReviewJobStatusChanged",
-    "ReviewerAgent",
-    "ReviewerAgentRow",
+    "ReviewRequested",
+    "ReviewScope",
+    "ReviewScopeKind",
+    "ReviewStarted",
+    "ReviewSuperseded",
+    "ReviewTrigger",
+    "Run",
+    "Severity",
+    "Skip",
+    "SkipReason",
+    "SqlAlchemyAggregateRepository",
+    "StaleCheckAction",
+    "TriggerDecision",
+    "TriggerInputs",
+    "VerifyFixAction",
+    "acquire_pr_lock",
+    "all_conversations_view",
+    "apply_classified_reply",
+    "apply_stale_check_result",
+    "apply_verify_fix_result",
     "cancel_pending",
-    "ensure_builtin_agents",
-    "get_agent_by_id",
-    "get_agent_by_name",
+    "classify_reply",
+    "classify_reply_runnable",
+    "decide_trigger",
     "get_review_job",
-    "list_agents",
+    "humanize_skip",
+    "is_off_topic_message",
+    "is_yaaos_command",
+    "list_findings_view",
     "list_in_flight",
     "list_review_jobs_for_pr",
     "metrics_summary",
-    "reset_agent_prompt",
-    "schedule_reply",
+    "review_summary",
     "schedule_review",
     "startup_recovery",
-    "update_agent_prompt",
 ]

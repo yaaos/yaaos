@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # GitHub API base URL — overridden in the test stack to point at `apps/fake-github`.
     github_api_base_url: str = "https://api.github.com"
 
+    # core/llm gateway. Both unset = direct provider calls via ANTHROPIC_API_KEY.
+    braintrust_api_key: str | None = None
+    braintrust_api_url: str | None = None  # e.g. https://api.braintrust.dev/v1/proxy
+
     # Time controls. Production defaults are reasonable; tests set short.
     # See plan/milestones/M01-code-review/patterns.md § Time controls.
     yaaos_review_debounce_seconds: int = 30

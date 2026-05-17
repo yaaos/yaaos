@@ -1,6 +1,6 @@
 import { cn } from "@shared/utils/cn";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Brain, LayoutDashboard, Pin, PinOff, Settings, Ticket, Wand2 } from "lucide-react";
+import { Brain, LayoutDashboard, Pin, PinOff, Settings, Ticket } from "lucide-react";
 import { useState } from "react";
 import { getSidebarPinned, setSidebarPinned } from "./theme";
 
@@ -8,7 +8,6 @@ const NAV = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/tickets", label: "Tickets", icon: Ticket },
   { path: "/memory", label: "Memory", icon: Brain },
-  { path: "/prompts", label: "Prompts", icon: Wand2 },
   { path: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

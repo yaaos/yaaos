@@ -4,7 +4,7 @@
 
 ## Purpose
 
-End-to-end tests for yaaos's user-visible journeys. Each spec covers one user goal top-to-bottom — webhook arrival, agent posting, lesson creation, settings save. Runs against `docker-compose.test.yml` (Postgres + fake-github + backend with stub coding agent), so zero real-GitHub / real-Anthropic dependency.
+End-to-end tests for yaaos's user-visible journeys. Each spec covers one user goal top-to-bottom — webhook arrival, reviewer posting, lesson creation, settings save. Runs against `docker-compose.test.yml` (Postgres + fake-github + backend with stub coding agent), so zero real-GitHub / real-Anthropic dependency.
 
 Why e2e despite per-module integration tests: integration tests run in-process; e2e tests run the real ASGI server, real browser, real cross-container HTTP — catching wire-format bugs, lifespan-order bugs, and frontend ↔ backend integration cracks.
 
@@ -23,14 +23,14 @@ Prereqs (one-time): `pnpm install` + `pnpm exec playwright install chromium` fro
 | File | User journey |
 |---|---|
 | `onboarding-stepper.spec.ts` | Empty DB → paste credentials + dispatch install webhook + save Anthropic key → dashboard flips to populated. |
-| `pr-review-end-to-end.spec.ts` | PR opens → ticket created → 3 agents post → fake-github recorded the reviews. |
-| `pr-resync-reruns-agents.spec.ts` | `pull_request.synchronize` triggers a fresh batch (also exercises force-push compare). |
-| `secrets-refuse-to-review.spec.ts` | Diff with `AKIA…` → all 3 agents skip with `secrets_detected` → refuse-to-review comment posted. |
+| `pr-review-end-to-end.spec.ts` | PR opens → ticket created → reviewer posts → fake-github recorded the Review. |
+| `pr-resync-reruns-review.spec.ts` | `pull_request.synchronize` triggers a fresh review run (also exercises force-push compare). |
+| `secrets-refuse-to-review.spec.ts` | Diff with `AKIA…` → review skips with `secrets_detected` → refuse-to-review comment posted. |
 | `manual-rereview-and-cancel.spec.ts` | Re-review through UI; cancel through API (`POST /api/reviewer/cancel`); assert `review_job.cancelled` audit entry. |
 | `teach-yaaos-from-finding.spec.ts` | Open a posted finding → Teach modal → save → lesson visible on `/memory`. |
 | `lesson-applied-next-review.spec.ts` | Pre-seed a lesson → run review → audit `prompt_sent` reports `lessons_count >= 1`. |
 | `settings-cards-are-independent.spec.ts` | Save Anthropic without GitHub installed; save GitHub credentials with Anthropic set — no gating. |
-| `sse-step-progress-live.spec.ts` | Open ticket detail, dispatch webhook, AgentCards reach `posted` without page reload — SSE-driven. |
+| `sse-step-progress-live.spec.ts` | Open ticket detail, dispatch webhook, review card reaches `posted` without page reload — SSE-driven. |
 
 Intentionally small. Coverage is golden-path user flows and critical regressions. Each spec is cheap (seconds of wall time) but still slower than backend integration tests — keep the set small.
 
@@ -40,26 +40,26 @@ No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` 
 
 | Helper | What it does |
 |---|---|
-| `resetStack()` | `POST /api/testing/reset` (truncates DB + re-seeds builtin agents) + `POST /__test/reset` on fake-github. Parallel. |
+| `resetStack()` | `POST /api/testing/reset` (truncates every yaaos DB table) + `POST /__test/reset` on fake-github. Parallel. |
 | `seedCredentialsAndInstall()` | `POST /api/testing/seed/credentials_and_install` — writes `github_settings`, `claude_code_settings`, active `github_app_installations`. |
 | `seedLesson({repo_external_id, title, body})` | `POST /api/testing/seed/lesson`. |
 | `dispatchWebhook({event, payload})` | For `pull_request` events: auto-seeds PR JSON into fake-github (so subsequent `fetch_pr` returns 200), then forwards to fake-github's `/__test/dispatch_webhook`. |
 | `seedPRDiff({repo, number, diff, files})` | Sets a specific diff. Used by the secrets spec to inject `AKIA…`. |
 | `seedCompareDiverged(before, after)` | Forces fake-github's `/compare` to return `"diverged"`. |
 | `prPayload(opts)` | Builds the JSON shape yaaos's webhook parser accepts. |
-| `postedReviews()` | Fetches `/__test/posted_reviews` for outbound-call assertions. |
+| `postedComments()` | Fetches `/__test/posted_comments` for outbound-call assertions (both inline review comments and top-level PR comments). |
 
 ## yaaos-side test surface
 
 `/api/testing/*` (gated on `YAAOS_ENV=dev`), owned by [`testing/e2e_setup`](../../backend/docs/testing_e2e_setup.md):
 
-- `POST /reset` — truncates every table then re-seeds built-in reviewer agents.
+- `POST /reset` — truncates every table. No structural seeding (reviewer specialists are shipped markdown).
 - `POST /seed/credentials_and_install` — sets "system ready" without going through the manifest flow or webhook handlers.
 - `POST /seed/lesson` — inserts a single `LessonRow`.
 
 ## fake-github contract
 
-See [`apps/fake-github/docs/README.md`](../../fake-github/docs/README.md). Relevant for specs: `POST /__test/dispatch_webhook`, `POST /__test/seed_pr` (auto-called by `dispatchWebhook`), `POST /__test/seed_diff`, `GET /__test/posted_reviews`.
+See [`apps/fake-github/docs/README.md`](../../fake-github/docs/README.md). Relevant for specs: `POST /__test/dispatch_webhook`, `POST /__test/seed_pr` (auto-called by `dispatchWebhook`), `POST /__test/seed_diff`, `GET /__test/posted_comments`.
 
 ## Why no batch-seed fixture
 
@@ -77,4 +77,4 @@ A prior shape ran `bin/seed_test_data` at container startup; every spec inherite
 - Playwright 1.48 + TypeScript.
 - Own `package.json`; pnpm workspace member.
 - `playwright.config.ts` — `workers: 1`, `fullyParallel: false`, `retries: 0`, 60s per test.
-- Suite runtime: ~30s for all 9 specs on a warm stack.
+- Suite runtime: ~30s for all 10 specs on a warm stack.

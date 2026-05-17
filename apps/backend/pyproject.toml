@@ -20,6 +20,15 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
     "httpx>=0.27",
+    # core/llm — direct LLM calls with structured output. Used today only by the
+    # reviewer's reply classifier; coding_agent plugins shell out to a CLI and
+    # don't pull this in. langchain-community ships SQLiteCache for test replay.
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-community>=0.3",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

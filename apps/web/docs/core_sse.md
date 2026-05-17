@@ -9,6 +9,7 @@ yaaos's UI is driven by a server-side event stream — the reviewer pipeline emi
 ## Public interface
 
 - `<SSESubscriber>` — React component mounted once in `main.tsx` between `QueryClientProvider` and `RouterProvider`. Renders `children` through; the work is a side effect inside a `useEffect`.
+- `useLiveActivity(reviewJobId)` — React hook reading the in-memory ring buffer of `review_job_activity` events for a given review job. Returns the live tail (newest 200); domain pages merge it with the persisted `ReviewJob.activity_log`.
 - `ServerEvent` — envelope type: `{ kind, source_module, ts, ticket_id, [extra]: unknown }`.
 
 ## Module architecture
@@ -24,6 +25,7 @@ yaaos's UI is driven by a server-side event stream — the reviewer pipeline emi
 | `ticket_status_changed` | `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]` |
 | `review_job_status_changed` | `["reviewer", "jobs", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]`, `["tickets"]` |
 | `review_job_step_progress` | `["reviewer", "jobs", id]` only — in-place AgentCard step swap, no metrics/list churn |
+| `review_job_activity` | none — appended to in-memory ring buffer (read via `useLiveActivity`). High-frequency; invalidating per event would thrash. |
 | anything else | silently ignored |
 
 `ticket_id` on the envelope scopes invalidations. Events without it fall back to the global keys (`["tickets"]`, `["reviewer", "metrics"]`).
@@ -46,4 +48,4 @@ None. The `EventSource` is per-mount.
 
 ## How it's tested
 
-End-to-end via `apps/e2e/tests/sse-step-progress-live.spec.ts` — dispatches a webhook, opens the ticket detail page without refreshing, asserts AgentCards transition to `posted` via SSE-driven invalidations alone. No Vitest — mocking `EventSource` would test the mock more than the code.
+End-to-end via `apps/e2e/tests/sse-step-progress-live.spec.ts` — dispatches a webhook, opens the ticket detail page without refreshing, asserts the review card transitions to `posted` via SSE-driven invalidations alone. No Vitest — mocking `EventSource` would test the mock more than the code.

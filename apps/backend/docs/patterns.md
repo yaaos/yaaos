@@ -2,6 +2,22 @@
 
 Conventions applying to every backend module. For cross-app conventions (UTC, audit-log shape, HMAC) see [`docs/system-architecture.md`](../../../docs/system-architecture.md).
 
+## Module documentation
+
+Every shipped module has one `apps/backend/docs/<layer>_<module>.md` following this fixed template, in order:
+
+1. **Purpose** — one paragraph. What the module owns; what it does not.
+2. **Public interface** — what's exported from `__init__.py`, plus HTTP routes if any. No internals.
+3. **Module architecture** — the internal shape, in this order:
+   - **Entities** — DDD entities owned by this module. One bullet per entity: what it represents and what gives it identity.
+   - **Key value objects** — only the load-bearing ones. One bullet, one sentence each.
+   - **Core user flows** — short numbered steps for the main ways callers exercise this module. Prose; no code.
+   - **State machines** — if any. States as bullets, transitions as a small table or `from → to` arrow notation.
+4. **Data owned** — tables / persistent state owned by this module. Per-column purpose only when non-obvious.
+5. **How it's tested** — unit / integration / e2e coverage. Where fixtures live.
+
+Discipline still applies: terse, bullets, no code snippets, no `Decisions` section, link don't repeat. Modules with no entities / no state machines just omit those sub-sections — don't write "N/A".
+
 ## Code style
 
 ### Functional first

@@ -38,6 +38,9 @@ Migration list (in order):
 2. `002_github_settings_slug` — adds `slug` column to `github_settings`.
 3. `003_drop_repos_table` — drops `repos`; converts dependents from FK(`repo_id`) → string(`repo_external_id`), backfilling first.
 4. `004_review_jobs_triggered_by_destination` — adds `triggered_by` (default `'pr_ready'`) and `destination` (default `'vcs'`) to `review_jobs`. Promotes the audit-only `trigger_reason` to a queryable column; preps the row for future `run_review` callers that don't post to VCS.
+5. `005_drop_reviewer_agents` — drops the per-agent `reviewer_agents` table; one row per (PR × review run) is now sufficient.
+6. `006_review_jobs_activity_log_model_effort` — adds `activity_log JSONB DEFAULT '[]'`, `model TEXT`, `effort TEXT`; drops `cost_usd`. Activity log captures pre-rendered Claude Code stream events; cost is not tracked because CLI pricing data is not authoritative.
+7. `007_create_durable_findings_tables` — creates `findings`, `finding_observations`, `comment_threads`, `comment_messages`, `acknowledgment_decisions` (plan/notes/full-pr-flow.md §4.1). Idempotent CREATE TABLE IF NOT EXISTS via `Base.metadata.create_all` on just these tables. Tables are reviewer-owned; FKs from generation-2 tables land in §13 step 7 when `review_jobs` is renamed `reviews`.
 
 Each migration runs in its own transaction; on success the version inserts into `schema_migrations`. Re-running `migrate()` is a no-op for applied versions.
 

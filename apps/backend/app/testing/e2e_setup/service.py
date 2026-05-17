@@ -28,7 +28,6 @@ from app.core.workspace import models as _workspace_models  # noqa: F401
 from app.domain.memory.models import LessonRow
 from app.domain.pull_requests import models as _pr_models  # noqa: F401
 from app.domain.reviewer import models as _reviewer_models  # noqa: F401
-from app.domain.reviewer.agent_crud import ensure_builtin_agents
 from app.domain.tickets import models as _ticket_models  # noqa: F401
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 from app.plugins.github.models import GitHubAppInstallationRow, GitHubSettingsRow
@@ -54,14 +53,11 @@ async def truncate_all_tables() -> None:
 
 
 async def reset() -> None:
-    """Truncate + re-seed structural data (built-in reviewer agents).
-
-    Built-in agents are structural, not test data — every spec assumes the
-    three agents exist. Lessons / credentials / install rows are test data
-    and must be seeded explicitly by specs that need them.
+    """Truncate all tables. Reviewer specialists are defined as shipped
+    markdown files in `domain/coding_agent/reviewers/`, not DB rows — no
+    structural seeding needed.
     """
     await truncate_all_tables()
-    await ensure_builtin_agents(org_id=M01_ORG_ID)
 
 
 async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
@@ -98,7 +94,6 @@ async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
                 id=uuid4(),
                 org_id=M01_ORG_ID,
                 encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
-                default_timeout_seconds=600,
             )
         )
         await s.commit()

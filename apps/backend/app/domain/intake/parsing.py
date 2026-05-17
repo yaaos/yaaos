@@ -2,19 +2,18 @@
 
 import re
 
+# The reviewer is now a single parent agent; specialty selection happens
+# inside the agent's own subagent dispatch. The legacy `@yaaos-<specialty>`
+# form is still accepted but the specialty is ignored.
 _REREVIEW_RE = re.compile(
-    r"@yaaos(?:-(?P<agent>architecture|security|style))?\s+rereview",
+    r"@yaaos(?:-[a-z0-9-]+)?\s+rereview",
     re.IGNORECASE,
 )
 
 
-def parse_rereview(body: str) -> tuple[bool, str | None]:
-    """Returns (matched, agent_name_or_None). agent=None means 'all three'."""
-    m = _REREVIEW_RE.search(body or "")
-    if not m:
-        return False, None
-    agent = m.group("agent")
-    return True, agent.lower() if agent else None
+def parse_rereview(body: str) -> tuple[bool, None]:
+    """Returns (matched, None). Specialty is ignored — one reviewer per ticket."""
+    return bool(_REREVIEW_RE.search(body or "")), None
 
 
 # Skip lists for trivial diffs (per requirements.md)

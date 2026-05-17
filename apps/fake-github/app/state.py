@@ -18,9 +18,7 @@ class FakeGitHubState:
         # `/compare` status field. Default "ahead" (normal push); specs that
         # want to assert force-push handling can seed "diverged".
         self.compare_status: dict[str, str] = {}
-        self.posted_reviews: list[dict[str, Any]] = []
         self.posted_comments: list[dict[str, Any]] = []
-        self._next_review_id = 1000
         self._next_comment_id = 5000
 
     def reset(self) -> None:
@@ -29,15 +27,8 @@ class FakeGitHubState:
         self.seeded_files.clear()
         self.installation_repositories.clear()
         self.compare_status.clear()
-        self.posted_reviews.clear()
         self.posted_comments.clear()
-        self._next_review_id = 1000
         self._next_comment_id = 5000
-
-    def next_review_id(self) -> int:
-        v = self._next_review_id
-        self._next_review_id += 1
-        return v
 
     def next_comment_id(self) -> int:
         v = self._next_comment_id

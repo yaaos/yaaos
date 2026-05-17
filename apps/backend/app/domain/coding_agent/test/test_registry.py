@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -13,9 +12,8 @@ from app.domain.coding_agent import (
     HealthStatus,
     InvocationStatus,
     InvocationTelemetry,
+    OnActivity,
     PluginNotFoundError,
-    ReplyContext,
-    ReplyResult,
     ReviewContext,
     ReviewResult,
     ValidationResult,
@@ -24,7 +22,6 @@ from app.domain.coding_agent import (
     health_check_all,
     register_coding_agent_plugin,
     registered_plugin_ids,
-    reply,
     review,
     validate_config,
 )
@@ -33,20 +30,19 @@ from app.domain.coding_agent import (
 class _StubPlugin:
     meta = PluginMeta(id="stub", type="coding_agent", display_name="Stub")
 
-    async def review(self, workspace: Any, context: ReviewContext) -> ReviewResult:
+    async def review(
+        self,
+        workspace: Any,
+        context: ReviewContext,
+        on_activity: OnActivity | None = None,
+    ) -> ReviewResult:
+        del workspace, context, on_activity
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=[],
             state="APPROVED",
-            summary_body=f"reviewed by {context.agent_name}",
-            telemetry=InvocationTelemetry(tokens_in=1, tokens_out=2, cost_usd=Decimal("0.001"), latency_ms=5),
-        )
-
-    async def reply(self, workspace: Any, context: ReplyContext) -> ReplyResult:
-        return ReplyResult(
-            status=InvocationStatus.SUCCESS,
-            body=f"reply to {context.reply_body}",
-            telemetry=InvocationTelemetry(latency_ms=3),
+            summary_body="reviewed",
+            telemetry=InvocationTelemetry(tokens_in=1, tokens_out=2, latency_ms=5),
         )
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
@@ -108,8 +104,6 @@ async def test_review_dispatch() -> None:
         updated_at=datetime.now(UTC),
     )
     ctx = ReviewContext(
-        persona="focus on architecture",
-        agent_name="architecture",
         pr=pr,
         diff=Diff(raw="", files=[]),
         lessons=[],
@@ -117,45 +111,6 @@ async def test_review_dispatch() -> None:
     result = await review("stub", workspace=None, context=ctx)  # type: ignore[arg-type]
     assert result.status == InvocationStatus.SUCCESS
     assert result.state == "APPROVED"
-    assert "architecture" in (result.summary_body or "")
-
-
-@pytest.mark.asyncio
-async def test_reply_dispatch() -> None:
-    from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
-
-    register_coding_agent_plugin(_StubPlugin())
-    pr = VCSPullRequest(
-        plugin_id="github",
-        external_id="acme/web#1",
-        repo_external_id="acme/web",
-        number=1,
-        title="t",
-        body=None,
-        author_login="alice",
-        author_type="user",
-        base_branch="main",
-        head_branch="feat",
-        base_sha="b",
-        head_sha="h",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://x",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-    )
-    ctx = ReplyContext(
-        persona="be terse",
-        agent_name="security",
-        pr=pr,
-        diff=Diff(raw="", files=[]),
-        reply_body="hi",
-        parent_comment_external_id="c1",
-    )
-    result = await reply("stub", workspace=None, context=ctx)  # type: ignore[arg-type]
-    assert result.status == InvocationStatus.SUCCESS
-    assert result.body == "reply to hi"
 
 
 @pytest.mark.asyncio
@@ -171,9 +126,6 @@ async def test_health_check_all_handles_plugin_exception() -> None:
         meta = PluginMeta(id="broken", type="coding_agent", display_name="Broken")
 
         async def review(self, *a, **kw):
-            raise NotImplementedError
-
-        async def reply(self, *a, **kw):
             raise NotImplementedError
 
         async def validate_config(self, *a, **kw):

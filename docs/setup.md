@@ -45,8 +45,8 @@ The key is encrypted at rest with the Fernet key from your `.env`. It's never wr
 ## 5. First review
 
 - Open a PR on a repo the App can see (not a draft, not a fork).
-- yaaos receives the `pull_request.opened` webhook, creates a ticket, and dispatches three review jobs (architecture / security / style). Each provisions its own workspace, invokes the Claude Code CLI, parses the structured findings, and posts a review back to GitHub.
-- The Tickets page in the UI shows the ticket with live SSE updates as agents transition `queued → running → posted`.
+- yaaos receives the `pull_request.opened` webhook, creates a ticket, schedules one review run, provisions a workspace, and invokes the Claude Code CLI. The parent reviewer dispatches yaaos-* subagents (architecture, security, line-level, tests, docs, conditional skill) via the Task tool, synthesizes their findings, and posts one Review back to GitHub.
+- The Tickets page in the UI shows the ticket with live SSE updates as the job transitions `queued → running → posted`.
 
 ## Local dev (without Docker)
 

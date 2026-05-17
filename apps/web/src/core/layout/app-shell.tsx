@@ -6,7 +6,6 @@ const CRUMB_BY_PATH: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/tickets": "Tickets",
   "/memory": "Memory",
-  "/prompts": "Prompts",
   "/settings": "Settings",
 };
 

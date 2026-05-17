@@ -1,5 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef } from "react";
+import type { ReviewJobActivityEvent } from "../api/client";
+import { pushLiveActivity } from "./activity";
 import type { ServerEvent } from "./types";
 
 /** Mounted once at the app root. Opens an EventSource against `/api/events`
@@ -10,6 +12,8 @@ import type { ServerEvent } from "./types";
  * - `ticket_status_changed` → ["tickets"], ["tickets", ticket_id], ["tickets", ticket_id, "audit"], ["reviewer", "metrics"]
  * - `review_job_status_changed` → ["reviewer", "jobs", ticket_id], ["tickets", ticket_id, "audit"], ["reviewer", "metrics"], ["tickets"]
  * - `review_job_step_progress` → ["reviewer", "jobs", ticket_id] (in-place; no metrics / list churn)
+ * - `review_job_activity` → in-memory ring buffer via `pushLiveActivity` (no
+ *   query invalidation — too high-frequency; `useLiveActivity` reads the tail)
  *
  * Reconnection: native EventSource auto-reconnects on socket drop. We log
  * `onerror` for visibility but otherwise let the browser handle it.
@@ -58,6 +62,17 @@ export function SSESubscriber({ children }: { children: ReactNode }) {
             qc.invalidateQueries({ queryKey: ["reviewer", "jobs", tid] });
           }
           break;
+        case "review_job_activity": {
+          // High-frequency events from the coding-agent stream. Route into
+          // the in-memory ring buffer so `useLiveActivity` rerenders the
+          // open ticket without per-event query refetches.
+          const reviewJobId = typeof evt.review_job_id === "string" ? evt.review_job_id : null;
+          const activityEvent = (evt.event ?? null) as ReviewJobActivityEvent | null;
+          if (reviewJobId && activityEvent) {
+            pushLiveActivity(reviewJobId, activityEvent);
+          }
+          break;
+        }
         default:
           // Unknown event kinds are tolerated — no invalidation, no error.
           break;

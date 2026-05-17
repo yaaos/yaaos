@@ -6,18 +6,19 @@ from app.domain.intake import is_skippable_path, parse_rereview
 
 
 @pytest.mark.parametrize(
-    "body,expected_agent",
+    "body",
     [
-        ("hey @yaaos rereview please", None),
-        ("hello @yaaos-architecture rereview", "architecture"),
-        ("@yaaos-security rereview thanks", "security"),
-        ("@YAAOS-style ReReview", "style"),
+        "hey @yaaos rereview please",
+        # Legacy `@yaaos-<specialty>` form still matches; specialty is ignored.
+        "hello @yaaos-architecture rereview",
+        "@yaaos-security rereview thanks",
+        "@YAAOS-style ReReview",
     ],
 )
-def test_rereview_parses(body: str, expected_agent: str | None) -> None:
+def test_rereview_parses(body: str) -> None:
     matched, agent = parse_rereview(body)
     assert matched
-    assert agent == expected_agent
+    assert agent is None
 
 
 def test_no_match() -> None:

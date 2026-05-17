@@ -34,7 +34,7 @@ A core module has `index.ts` (re-exports), implementation file(s), and optional 
 - Status badges: `<entity>-status` (`github-status`, `apikey-status`).
 - Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
 
-AgentCards additionally carry `data-state="<status>"` so specs can query `[data-testid^="agent-card-"][data-state="posted"]`.
+The review card additionally carries `data-state="<status>"` so specs can query `[data-testid^="agent-card-"][data-state="posted"]`.
 
 ## Cross-cutting wiring
 

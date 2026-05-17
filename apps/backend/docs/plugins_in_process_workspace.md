@@ -17,17 +17,18 @@ The only concrete `core/workspace.WorkspaceProvider` in M01. Implements `provisi
 
 ### `provision(spec)` — git clone with short-lived auth
 
-`spec: WorkspaceSpec` carries `repo` (`plugin_id` + `external_id`), `sha`, `branch_name`, `org_id`. `org_id` required — can't mint a clone token without it.
+`spec: WorkspaceSpec` carries `repo` (`plugin_id` + `external_id`), `sha`, `branch_name`, `base_sha`, `base_branch`, `org_id`. `org_id` required — can't mint a clone token without it.
 
 1. `tempfile.mkdtemp(prefix="yaaos-ws-")`.
 2. `_write_askpass()` — chmod 0700 askpass script in a sibling tempfile (outside `working_dir` because git clone requires an empty target).
 3. `vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)` — fresh token via the VCS plugin registry. Lives only in the Python process and briefly in the subprocess env.
 4. Build clone URL from `plugin_id` + `external_id`. GitHub: `https://github.com/{external_id}.git`. Unknown plugin id raises `WorkspaceProvisionError`.
 5. Subprocess env: copy of `os.environ` plus `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, `YAAOS_GIT_TOKEN`. Token never on argv — git asks via the askpass script.
-6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of branch tip.
+6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of head branch tip.
 7. If `spec.sha` set and not `"HEAD"`: `git fetch --depth=1 origin <sha>` then `git checkout <sha>`. Branch may have advanced; agents must see the PR's head sha.
-8. Write a `.yaaos-workspace` marker file (best-effort).
-9. `finally` unlinks the askpass. Provision failures rmtree the working_dir before re-raising.
+8. If `spec.base_sha` set: `git fetch --depth=1 origin <base_sha>` (best-effort, logged-and-continued on failure). Brings the base commit as an orphan in the shallow store so subagents can run `git diff <base_sha>..HEAD` — diff works on tree endpoints without needing the intermediate chain. Whatever branch the PR targets (not necessarily `main`).
+9. Write a `.yaaos-workspace` marker file (best-effort).
+10. `finally` unlinks the askpass. Provision failures rmtree the working_dir before re-raising.
 
 Returns `{"working_dir": working_dir}` — becomes `Workspace.plugin_state`. Consumers never see the path; they go through the `Workspace` handle.
 
@@ -37,8 +38,17 @@ Lets a coding-agent plugin run a CLI inside the workspace. Provider owns subproc
 
 1. Read `working_dir` from `plugin_state`. Missing/vanished → `WorkspaceExecError`.
 2. `asyncio.create_subprocess_exec` with `cwd=working_dir`, `start_new_session=True` (so SIGKILL can target the process group if the agent spawns children).
-3. `asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout_seconds)`. On `TimeoutError`: `os.killpg(SIGTERM)` → 2s grace → `os.killpg(SIGKILL)`. Then drain.
+3. Branch on `on_stream_line`:
+   - `None` → `asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout_seconds)` (buffered).
+   - Set → stream stdout line-by-line via `proc.stdout.readline()` and invoke the callback per line. stderr is still buffered (small enough; only consulted on failure).
 4. Return `CodingAgentCliResult`. Bytes decoded `errors="replace"` so partial UTF-8 never crashes the caller.
+
+Two kill paths share a single `_kill_process_group(proc)` helper (SIGTERM → 2s grace → SIGKILL of the whole process group):
+
+- **Timeout** — `asyncio.wait_for` raises `TimeoutError`; we kill, drain, return `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
+- **Caller cancel** — outer task is cancelled (e.g., `reviewer.cancel_pending` → `task.cancel()`); `CancelledError` raises inside `wait_for`. We kill, drain (with a 5s upper bound so a wedged child can't block the cancel forever), then re-raise `CancelledError`. The cancellation unwinds normally; the workspace's `async with` exit destroys the tempdir.
+
+Without the cancel kill path, the CLI would keep running until its own timeout even though the row is `cancelled` and the UI shows it.
 
 Provider does not interpret `argv` or `stdout`; schema-aware logic lives in the coding-agent plugin.
 
@@ -55,7 +65,8 @@ Always `healthy=True, message="ok"` in M01. Tempdir is part of the host filesyst
 - `_clone_url_for(plugin_id, external_id)` — builds HTTPS URL. GitHub only; raises for unknown.
 - `_write_askpass()` — chmod 0700 askpass in a sibling tempfile.
 - `_git_env_with_token(askpass_path, token)` — env dict.
-- `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Same SIGTERM/SIGKILL dance.
+- `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Uses `_kill_process_group` on timeout.
+- `_kill_process_group(proc)` — module-level helper; SIGTERM → 2s → SIGKILL of the process group. Shared by `run_coding_agent_cli` (timeout + cancel) and `_run_subprocess` (timeout).
 
 ### Test-mode wrapping
 

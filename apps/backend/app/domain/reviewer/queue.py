@@ -1,9 +1,18 @@
-"""Per-PR queue discipline + the review-job runner."""
+"""Per-PR queue discipline + the review-job runner.
+
+One review job per (PR x review run). The runner provisions a workspace, calls
+the coding agent (which dispatches yaaos-* subagents internally and synthesizes
+their findings), and posts one Review to the VCS.
+
+Reply / verify-fix flows are deferred — a future `review_comments` table will
+own that lifecycle separately. For now no reply path exists.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,17 +32,11 @@ from app.core.workspace import (
     NetworkPolicy,
     RepoRefForSpec,
     ResourceCaps,
-    Workspace,
     WorkspaceSpec,
     with_workspace,
 )
 from app.domain import coding_agent, memory, pull_requests, tickets
-from app.domain.coding_agent import (
-    InvocationStatus,
-    ReplyContext,
-    ReviewContext,
-)
-from app.domain.reviewer.agent_crud import get_agent_by_id, get_agent_by_name
+from app.domain.coding_agent import ActivityEvent, InvocationStatus, ReviewContext
 from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
 from app.domain.vcs import Diff, Review, VCSPullRequest
 from app.domain.vcs import (
@@ -45,6 +48,36 @@ log = structlog.get_logger("reviewer")
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
+# Hard-coded reviewer identity. There's only one reviewer (the parent agent
+# that dispatches subagents); we use this tag on the top-level GitHub review
+# body. Per-comment prefixes come from each finding's `source_agent` field.
+_REVIEWER_TAG = "yaaos"
+_CODING_AGENT_PLUGIN_ID = "claude_code"
+
+# Recorded onto every review_jobs row at insert time. Mirrors the constants
+# in `plugins/claude_code` (`_MODEL`, `_EFFORT`). Duplicated to keep the
+# Tach layering clean — `domain/reviewer` cannot import from `plugins/*`.
+# Future UI configuration replaces both copies with a settings row.
+_DEFAULT_MODEL = "opus"
+_DEFAULT_EFFORT = "medium"
+
+
+# In-flight task registry, keyed by review_job_id. Used by `cancel_pending`
+# to interrupt the running coro mid-CLI: flipping the DB row to cancelled
+# alone leaves the subprocess running until its own timeout. Cancelling the
+# asyncio task propagates `CancelledError` down through `coding_agent.review`
+# → `workspace.run_coding_agent_cli`, which kills the subprocess group
+# (SIGTERM → 2s → SIGKILL) before the cancellation unwinds further. The
+# done callback removes entries automatically; this registry is best-effort
+# (only useful for tasks spawned in the current process — see `startup_recovery`
+# for the cross-restart story).
+_inflight_tasks: dict[UUID, asyncio.Task[None]] = {}
+
+
+def _register_inflight(job_id: UUID, task: asyncio.Task[None]) -> None:
+    _inflight_tasks[job_id] = task
+    task.add_done_callback(lambda _t: _inflight_tasks.pop(job_id, None))
+
 
 # Events
 
@@ -53,22 +86,33 @@ class ReviewJobStatusChanged(Event):
     kind: Literal["review_job_status_changed"] = "review_job_status_changed"
     source_module: Literal["reviewer"] = "reviewer"
     pr_id: UUID
-    agent_id: UUID
     review_job_id: UUID
     status: str
 
 
 class ReviewJobStepProgress(Event):
-    """In-place row update — not an audit entry. Drives the running-state UI
-    so operators can see which phase a long-running review is in.
-    """
+    """In-place row update — not an audit entry. Drives the running-state UI."""
 
     kind: Literal["review_job_step_progress"] = "review_job_step_progress"
     source_module: Literal["reviewer"] = "reviewer"
     pr_id: UUID
-    agent_id: UUID
     review_job_id: UUID
     current_step: str
+
+
+class ReviewJobActivity(Event):
+    """One captured stream event from the coding-agent CLI.
+
+    High-frequency (~50-100 per review). Not persisted as an audit entry —
+    the per-row `activity_log` JSONB column carries the durable copy. SSE
+    consumers push events into a local store keyed by review_job_id.
+    """
+
+    kind: Literal["review_job_activity"] = "review_job_activity"
+    source_module: Literal["reviewer"] = "reviewer"
+    pr_id: UUID
+    review_job_id: UUID
+    event: dict[str, Any]
 
 
 # Audit payloads
@@ -76,7 +120,6 @@ class ReviewJobStepProgress(Event):
 
 class _ScheduledPayload(BaseModel):
     trigger_reason: str
-    agent_id: UUID
     debounce_seconds: int
 
 
@@ -84,23 +127,9 @@ class _CancelledPayload(BaseModel):
     reason: str
 
 
-class _AgentSnapshot(BaseModel):
-    id: UUID
-    name: str
-    prompt_text: str
-    coding_agent_plugin_id: str
-    agent_config: dict[str, Any]
-
-
 class _PromptSentPayload(BaseModel):
-    """Frozen snapshot of everything that influenced this review.
+    """Frozen snapshot of what influenced this review run."""
 
-    Captures the agent definition (so prompt-text rewrites later can't
-    silently change what older audit entries refer to) alongside the
-    content-derived hash and lesson context.
-    """
-
-    agent: _AgentSnapshot
     prompt_hash: str
     lessons_count: int
     lessons_applied: list[UUID]
@@ -111,9 +140,9 @@ class _PromptSentPayload(BaseModel):
 class _PostedPayload(BaseModel):
     verdict: str
     finding_count: int
+    findings_by_agent: dict[str, int]
     tokens_in: int | None
     tokens_out: int | None
-    cost_usd: str | None
     latency_ms: int
     review_external_id: str
 
@@ -128,167 +157,41 @@ class _SkippedPayload(BaseModel):
     skip_reason: str
 
 
-class _ReplyPostedPayload(BaseModel):
-    comment_external_id: str
-    parent_comment_external_id: str
-    tokens_in: int | None
-    tokens_out: int | None
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
 class ReviewJobInput(BaseModel):
     review_job_id: UUID
     ticket_id: UUID
-    agent_id: UUID
     org_id: UUID
     debounce_seconds: int
-    kind: Literal["review", "reply"] = "review"
-    parent_comment_external_id: str | None = None
-    reply_body: str | None = None
 
 
 async def schedule_review(
     ticket_id: UUID,
     *,
-    agent_names: Literal["all"] | list[str],
     trigger_reason: str,
     actor: Actor,
     org_id: UUID,
-) -> list[UUID]:
+) -> UUID | None:
+    """Schedule one review run for the ticket's PR.
+
+    Cancels any in-flight job for the same PR (superseded). Returns the new
+    job id, or None if the ticket has no PR.
+    """
     ticket = await tickets.get(ticket_id, org_id=org_id)
     if ticket.pr_id is None:
-        return []
+        return None
     pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
-    target_names: list[str]
-    if agent_names == "all":
-        target_names = ["architecture", "security", "style"]
-    else:
-        target_names = list(agent_names)
     debounce = get_settings().yaaos_review_debounce_seconds
 
-    new_ids: list[UUID] = []
-    for name in target_names:
-        try:
-            agent = await get_agent_by_name(name, org_id=org_id)
-        except Exception:
-            log.warning("reviewer.schedule_unknown_agent", name=name)
-            continue
-
-        # Cancel any in-flight job for (pr_id, agent_id)
-        async with db_session() as s:
-            inflight = (
-                (
-                    await s.execute(
-                        select(ReviewJobRow).where(
-                            ReviewJobRow.pr_id == pr.id,
-                            ReviewJobRow.agent_id == agent.id,
-                            ReviewJobRow.status.in_(["queued", "running"]),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for row in inflight:
-                await s.execute(
-                    update(ReviewJobRow)
-                    .where(ReviewJobRow.id == row.id)
-                    .values(
-                        status="cancelled",
-                        skip_reason="superseded",
-                        completed_at=_utcnow(),
-                    )
-                )
-            await s.commit()
-            for row in inflight:
-                await audit_for_review_job(
-                    row.id,
-                    "review_job.cancelled",
-                    _CancelledPayload(reason="superseded"),
-                    actor=actor,
-                    org_id=org_id,
-                )
-
-        # Create the new queued row
-        new_id = uuid4()
-        async with db_session() as s:
-            s.add(
-                ReviewJobRow(
-                    id=new_id,
-                    org_id=org_id,
-                    pr_id=pr.id,
-                    agent_id=agent.id,
-                    kind="review",
-                    status="queued",
-                    triggered_by=trigger_reason,
-                    destination="vcs",
-                )
-            )
-            await s.commit()
-        await audit_for_review_job(
-            new_id,
-            "review_job.scheduled",
-            _ScheduledPayload(
-                trigger_reason=trigger_reason,
-                agent_id=agent.id,
-                debounce_seconds=debounce,
-            ),
-            actor=actor,
-            org_id=org_id,
-        )
-        await publish(
-            ReviewJobStatusChanged(
-                ticket_id=ticket_id,
-                pr_id=pr.id,
-                agent_id=agent.id,
-                review_job_id=new_id,
-                status="queued",
-            )
-        )
-        new_ids.append(new_id)
-
-    # Spawn ONE coordinator per ticket. The coordinator provisions a single
-    # workspace and runs every agent against it — the workspace belongs to
-    # the ticket, not to individual review jobs. See `_run_ticket_review`.
-    if new_ids:
-        spawn(
-            f"ticket_review:{ticket_id}",
-            _run_ticket_review(
-                ticket_id=ticket_id,
-                job_ids=new_ids,
-                debounce_seconds=debounce,
-                org_id=org_id,
-            ),
-        )
-    return new_ids
-
-
-async def schedule_reply(
-    ticket_id: UUID,
-    agent_id: UUID,
-    parent_comment_external_id: str,
-    reply_body: str,
-    *,
-    actor: Actor,
-    org_id: UUID,
-) -> UUID:
-    ticket = await tickets.get(ticket_id, org_id=org_id)
-    if ticket.pr_id is None:
-        raise ValueError("ticket has no linked PR")
-    pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
-
-    # Supersede any in-flight reply for (pr, agent, parent_comment_external_id)
+    # Cancel any in-flight job for this PR.
     async with db_session() as s:
         inflight = (
             (
                 await s.execute(
                     select(ReviewJobRow).where(
                         ReviewJobRow.pr_id == pr.id,
-                        ReviewJobRow.agent_id == agent_id,
-                        ReviewJobRow.kind == "reply",
-                        ReviewJobRow.parent_comment_external_id == parent_comment_external_id,
                         ReviewJobRow.status.in_(["queued", "running"]),
                     )
                 )
@@ -303,6 +206,14 @@ async def schedule_reply(
                 .values(status="cancelled", skip_reason="superseded", completed_at=_utcnow())
             )
         await s.commit()
+        for row in inflight:
+            await audit_for_review_job(
+                row.id,
+                "review_job.cancelled",
+                _CancelledPayload(reason="superseded"),
+                actor=actor,
+                org_id=org_id,
+            )
 
     new_id = uuid4()
     async with db_session() as s:
@@ -311,36 +222,34 @@ async def schedule_reply(
                 id=new_id,
                 org_id=org_id,
                 pr_id=pr.id,
-                agent_id=agent_id,
-                kind="reply",
                 status="queued",
-                parent_comment_external_id=parent_comment_external_id,
-                reply_body=reply_body,
+                triggered_by=trigger_reason,
+                destination="vcs",
+                model=_DEFAULT_MODEL,
+                effort=_DEFAULT_EFFORT,
             )
         )
         await s.commit()
     await audit_for_review_job(
         new_id,
         "review_job.scheduled",
-        _ScheduledPayload(trigger_reason="reply", agent_id=agent_id, debounce_seconds=0),
+        _ScheduledPayload(trigger_reason=trigger_reason, debounce_seconds=debounce),
         actor=actor,
         org_id=org_id,
     )
-    spawn(
-        f"reply_job:{new_id}",
-        _run_reply_job(
+    await publish(ReviewJobStatusChanged(pr_id=pr.id, review_job_id=new_id, status="queued"))
+    task = spawn(
+        f"review_job:{new_id}",
+        _run_review_job(
             ReviewJobInput(
                 review_job_id=new_id,
                 ticket_id=ticket_id,
-                agent_id=agent_id,
                 org_id=org_id,
-                debounce_seconds=0,
-                kind="reply",
-                parent_comment_external_id=parent_comment_external_id,
-                reply_body=reply_body,
+                debounce_seconds=debounce,
             )
         ),
     )
+    _register_inflight(new_id, task)
     return new_id
 
 
@@ -378,6 +287,16 @@ async def cancel_pending(
             actor=actor,
             org_id=org_id,
         )
+        # Interrupt the in-flight coro so the CLI subprocess is actually
+        # killed — not just left running until its own timeout. The asyncio
+        # cancel propagates through `coding_agent.review` →
+        # `workspace.run_coding_agent_cli`, which catches `CancelledError`
+        # and kills the subprocess group before the cancellation unwinds.
+        # If no task is registered (e.g., post-restart), this is a no-op;
+        # the DB row is already in `cancelled` and that's what the UI shows.
+        task = _inflight_tasks.get(row.id)
+        if task is not None and not task.done():
+            task.cancel()
     return len(inflight)
 
 
@@ -388,8 +307,6 @@ class ReviewJob(BaseModel):
     id: UUID
     org_id: UUID
     pr_id: UUID
-    agent_id: UUID
-    kind: str
     status: str
     triggered_by: str
     destination: str
@@ -403,11 +320,13 @@ class ReviewJob(BaseModel):
     lessons_applied: list[UUID] | None
     tokens_in: int | None
     tokens_out: int | None
-    cost_usd: float | None
     duration_s: int | None
     error_message: str | None
     review_external_id: str | None
     findings: list[dict[str, Any]] | None
+    activity_log: list[dict[str, Any]]
+    model: str | None
+    effort: str | None
 
     @classmethod
     def from_row(cls, row: ReviewJobRow) -> ReviewJob:
@@ -415,8 +334,6 @@ class ReviewJob(BaseModel):
             id=row.id,
             org_id=row.org_id,
             pr_id=row.pr_id,
-            agent_id=row.agent_id,
-            kind=row.kind,
             status=row.status,
             triggered_by=row.triggered_by,
             destination=row.destination,
@@ -430,11 +347,13 @@ class ReviewJob(BaseModel):
             lessons_applied=row.lessons_applied,
             tokens_in=row.tokens_in,
             tokens_out=row.tokens_out,
-            cost_usd=float(row.cost_usd) if row.cost_usd is not None else None,
             duration_s=row.duration_s,
             error_message=row.error_message,
             review_external_id=row.review_external_id,
             findings=row.findings,
+            activity_log=row.activity_log or [],
+            model=row.model,
+            effort=row.effort,
         )
 
 
@@ -484,25 +403,21 @@ async def list_in_flight(*, org_id: UUID) -> list[ReviewJob]:
 
 
 async def metrics_summary(*, org_id: UUID) -> dict[str, Any]:
-    """Aggregate counters for the basic-metrics requirement (done-means)."""
+    """Aggregate counters for the basic-metrics requirement."""
     async with db_session() as s:
         rows = (await s.execute(select(ReviewJobRow).where(ReviewJobRow.org_id == org_id))).scalars().all()
     statuses: dict[str, int] = {}
-    total_cost = 0.0
     posted = 0
     failed = 0
     for r in rows:
         statuses[r.status] = statuses.get(r.status, 0) + 1
         if r.status == "posted":
             posted += 1
-            if r.cost_usd is not None:
-                total_cost += float(r.cost_usd)
         if r.status == "failed":
             failed += 1
     return {
         "review_jobs_by_status": statuses,
         "total_reviews_posted": posted,
-        "total_cost_usd": round(total_cost, 4),
         "failure_count": failed,
         "failure_rate": (failed / (posted + failed)) if (posted + failed) > 0 else 0.0,
     }
@@ -516,14 +431,8 @@ def _utcnow() -> datetime:
 
 
 @dataclass
-class _SharedReviewContext:
-    """Inputs shared by every agent reviewing the same ticket.
-
-    Resolved once per `_run_ticket_review` call so we don't re-fetch the PR,
-    diff, prior comments, lessons, or recompute the language hint N times.
-    Agent-specific context (persona, agent_config) is layered on per agent
-    inside `_invoke_one_agent`.
-    """
+class _ResolvedContext:
+    """Inputs resolved once per review run."""
 
     ticket_id: UUID
     pr_id: UUID
@@ -537,53 +446,27 @@ class _SharedReviewContext:
     language: str | None
 
 
-async def _run_ticket_review(
-    *,
-    ticket_id: UUID,
-    job_ids: list[UUID],
-    debounce_seconds: int,
-    org_id: UUID,
-) -> None:
-    """Coordinator: one workspace per ticket, shared by every agent.
-
-    Flow: debounce → drop already-cancelled jobs → fetch shared context once →
-    apply ticket-level skip checks + secrets pre-flight (transitioning all
-    pending jobs at once) → provision ONE workspace → run every agent in
-    parallel against it via `asyncio.gather` → workspace closes when all agents
-    return.
-
-    Replaces the prior per-agent `_run_review_job` design where each agent
-    provisioned its own workspace. Each ticket now gets a fully isolated
-    workspace; the agents share it.
+async def _run_review_job(input: ReviewJobInput) -> None:
+    """Run one review job end-to-end: provision workspace, invoke parent
+    reviewer, post one Review to the VCS.
     """
-    if debounce_seconds > 0:
-        await asyncio.sleep(debounce_seconds)
+    job_id = input.review_job_id
+    ticket_id = input.ticket_id
+    org_id = input.org_id
 
-    # Filter to still-queued jobs (others were cancelled or superseded
-    # during the debounce window).
+    if input.debounce_seconds > 0:
+        await asyncio.sleep(input.debounce_seconds)
+
+    # Bail if the job was cancelled during the debounce window.
     async with db_session() as s:
-        rows = (
-            (
-                await s.execute(
-                    select(ReviewJobRow).where(
-                        ReviewJobRow.id.in_(job_ids),
-                        ReviewJobRow.status == "queued",
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-    pending = list(rows)
-    if not pending:
+        row = (await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))).scalar_one_or_none()
+    if row is None or row.status != "queued":
         return
 
-    # Flip every pending job to running BEFORE doing any heavy work so the
-    # UI reflects activity immediately + cancel-checks have something to see.
     async with db_session() as s:
         await s.execute(
             update(ReviewJobRow)
-            .where(ReviewJobRow.id.in_([r.id for r in pending]))
+            .where(ReviewJobRow.id == job_id)
             .values(
                 status="running",
                 started_at=_utcnow(),
@@ -592,53 +475,73 @@ async def _run_ticket_review(
             )
         )
         await s.commit()
+    await publish(ReviewJobStatusChanged(pr_id=row.pr_id, review_job_id=job_id, status="running"))
+
+    # Activity buffer for this review run. Each entry is a dict-serialised
+    # `ActivityEvent`. Capped at ~5 MB total; once exceeded, append a
+    # `log_truncated` marker and stop persisting (live SSE still flows so the
+    # UI keeps updating). Persisted on every terminal transition below.
+    activity_buffer: list[dict[str, Any]] = []
+    activity_bytes = 0
+    activity_truncated = False
+    activity_cap_bytes = 5 * 1024 * 1024
+
+    async def _on_activity(event: ActivityEvent) -> None:
+        nonlocal activity_bytes, activity_truncated
+        entry = event.model_dump(mode="json")
+        if not activity_truncated:
+            entry_size = len(json.dumps(entry))
+            if activity_bytes + entry_size > activity_cap_bytes:
+                activity_buffer.append(
+                    {
+                        "ts": event.ts.isoformat(),
+                        "kind": "log_truncated",
+                        "message": "activity log truncated at 5MB",
+                        "detail": {},
+                    }
+                )
+                activity_truncated = True
+            else:
+                activity_buffer.append(entry)
+                activity_bytes += entry_size
+        # Publish SSE regardless of buffer cap — live updates stay current.
+        await publish(ReviewJobActivity(pr_id=row.pr_id, review_job_id=job_id, event=entry))
 
     try:
         ticket = await tickets.get(ticket_id, org_id=org_id)
         if ticket.pr_id is None:
-            for job in pending:
-                await _transition_failed(job.id, "ticket has no linked PR", org_id=org_id)
+            await _transition_failed(
+                job_id, "ticket has no linked PR", org_id=org_id, activity_log=activity_buffer
+            )
             return
         pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
         vcs_plugin = get_vcs_plugin(pr.plugin_id)
 
-        for job in pending:
-            await _set_step(job.id, "fetching_diff", ticket_id=ticket_id, pr_id=pr.id, agent_id=job.agent_id)
-
+        await _set_step(job_id, "fetching_diff", pr_id=pr.id)
         lessons = await memory.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
         diff = await vcs_plugin.fetch_diff(pr.external_id)
         prior_comments = await vcs_plugin.list_yaaos_comments(pr.external_id)
         prior_bodies = [c.body for c in prior_comments]
         vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
 
-        # Ticket-level skip checks. A skip transitions ALL pending jobs
-        # at once — there's no per-agent variation in these predicates.
+        # Ticket-level skip checks.
         skip_reason = _ticket_skip_reason(pr, diff)
         if skip_reason is not None:
-            for job in pending:
-                await _transition_skipped(job.id, skip_reason, org_id=org_id)
+            await _transition_skipped(job_id, skip_reason, org_id=org_id, activity_log=activity_buffer)
             return
 
-        # Secrets pre-flight: post ONE refusal review (not one per agent
-        # like before) and transition every job to skipped.
+        # Secrets pre-flight.
         secret_rule = _detect_secrets(diff)
         if secret_rule is not None:
             try:
-                # Tag the warning with the first pending agent's name; the
-                # body explains the refusal independent of agent identity.
-                first_agent = await get_agent_by_id(pending[0].agent_id, org_id=org_id)
-                await vcs_plugin.post_review(
-                    pr.external_id, _secrets_warning_review(first_agent.name, secret_rule)
-                )
+                await vcs_plugin.post_review(pr.external_id, _secrets_warning_review(secret_rule))
             except Exception:
-                log.exception("ticket_review.secrets_warning_post_failed", ticket_id=str(ticket_id))
-            for job in pending:
-                await _transition_skipped(job.id, "secrets_detected", org_id=org_id)
+                log.exception("review_job.secrets_warning_post_failed", review_job_id=str(job_id))
+            await _transition_skipped(job_id, "secrets_detected", org_id=org_id, activity_log=activity_buffer)
             return
 
         language = _detect_language(diff)
-
-        ctx = _SharedReviewContext(
+        ctx = _ResolvedContext(
             ticket_id=ticket_id,
             pr_id=pr.id,
             pr_external_id=pr.external_id,
@@ -651,179 +554,61 @@ async def _run_ticket_review(
             language=language,
         )
 
-        for job in pending:
-            await _set_step(
-                job.id, "provisioning_workspace", ticket_id=ticket_id, pr_id=pr.id, agent_id=job.agent_id
-            )
-
-        # ONE workspace for the whole ticket. Agents run in parallel against
-        # it via asyncio.gather — they share the checkout but each invokes
-        # its own coding-agent subprocess. M01 agents are read-only against
-        # the workspace; write isolation is an M02+ concern when implementer
-        # agents land.
+        await _set_step(job_id, "provisioning_workspace", pr_id=pr.id)
         async with with_workspace(
             "in_process",
             WorkspaceSpec(
                 repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
                 sha=pr.head_sha,
                 branch_name=pr.head_branch,
+                base_sha=ctx.vcs_pr.base_sha,
+                base_branch=ctx.vcs_pr.base_branch,
                 resource_caps=ResourceCaps(),
                 network_policy=NetworkPolicy.GITHUB_ONLY,
                 org_id=org_id,
             ),
             org_id=org_id,
         ) as ws:
-            # Invoke every agent in parallel; gather the successful outcomes.
-            # Failed / cancelled / crashed invocations return None and have
-            # already transitioned their row. Successful ones get posted to
-            # VCS in parallel afterwards. The two-phase split (invoke vs.
-            # complete) is what makes a future `run_review(workspace, ctx)`
-            # entry point — for implementer agents — mechanical: it calls
-            # `_invoke_one_agent` per agent and returns outcomes without
-            # the VCS-post phase.
-            outcomes = await asyncio.gather(
-                *(_invoke_one_agent(workspace=ws, job_id=job.id, ctx=ctx, org_id=org_id) for job in pending),
-                return_exceptions=False,
-            )
-            await asyncio.gather(
-                *(_complete_to_vcs(outcome=o, ctx=ctx, org_id=org_id) for o in outcomes if o is not None),
-                return_exceptions=False,
-            )
-
-    except Exception as e:
-        log.exception("ticket_review.coordinator_crashed", ticket_id=str(ticket_id))
-        # Any pending row still in `running` from this coordinator is
-        # stranded — mark them failed so the UI doesn't show forever-running.
-        async with db_session() as s:
-            stuck = (
-                (
-                    await s.execute(
-                        select(ReviewJobRow.id).where(
-                            ReviewJobRow.id.in_([r.id for r in pending]),
-                            ReviewJobRow.status == "running",
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        for jid in stuck:
-            await _transition_failed(
-                jid, f"coordinator crashed: {e}", org_id=org_id, invocation_status="crashed"
-            )
-
-
-@dataclass
-class _InvocationOutcome:
-    """Result of running one agent against the workspace.
-
-    Returned by `_invoke_one_agent`. The caller decides what to do with it:
-    today's `_run_ticket_review` passes it to `_complete_to_vcs` (posts the
-    review, writes the `review_job.posted` audit, flips status). A future
-    `run_review` entry point would return outcomes to its caller without
-    posting — the implementer agent that called `run_review` decides whether
-    to attach findings to a later PR, feed them back into its own loop, or
-    discard.
-    """
-
-    job_id: UUID
-    agent: Any  # ReviewerAgent
-    result: Any  # coding_agent.ReviewResult
-
-
-async def _invoke_one_agent(
-    *,
-    workspace: Workspace,
-    job_id: UUID,
-    ctx: _SharedReviewContext,
-    org_id: UUID,
-) -> _InvocationOutcome | None:
-    """Run one agent against the shared workspace and return its outcome.
-
-    Builds the per-agent `ReviewContext`, audits the frozen-snapshot
-    `prompt_sent`, invokes `coding_agent.review`, and returns the outcome.
-    Does NOT post to VCS, persist the result, or flip status — those are the
-    caller's responsibility (see `_complete_to_vcs`).
-
-    Returns `None` if the job was cancelled at any of the safe-point checks
-    or the agent invocation failed (in which case `_transition_failed` has
-    already been called).
-
-    Side effects: writes `review_job.prompt_sent` audit; updates `prompt_hash`
-    + `lessons_applied` on the row; sets `current_step="invoking_agent"`.
-    Crashes are caught here and converted to `failed`, so the gather caller
-    never sees an exception.
-    """
-    try:
-        # Cancel check before doing any work — operator may have cancelled
-        # the job between the coordinator flipping it to running and this
-        # coroutine getting scheduled.
-        async with db_session() as s:
-            row = (
-                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
-            ).scalar_one_or_none()
-        if row is None or row.status != "running":
-            return None
-        agent_id = row.agent_id
-
-        agent = await get_agent_by_id(agent_id, org_id=org_id)
-        review_ctx = ReviewContext(
-            persona=agent.prompt_text,
-            agent_name=agent.name,
-            pr=ctx.vcs_pr,
-            diff=ctx.diff,
-            lessons=ctx.lessons,
-            language_hint=ctx.language,
-            prior_yaaos_comment_bodies=ctx.prior_bodies,
-            agent_config=agent.agent_config,
-        )
-        prompt_hash = hashlib.sha256(review_ctx.model_dump_json().encode()).hexdigest()
-        lesson_ids = [lesson.id for lesson in ctx.lessons]
-
-        async with db_session() as s:
-            await s.execute(
-                update(ReviewJobRow)
-                .where(ReviewJobRow.id == job_id)
-                .values(prompt_hash=prompt_hash, lessons_applied=lesson_ids)
-            )
-            await s.commit()
-
-        await audit_for_review_job(
-            job_id,
-            "review_job.prompt_sent",
-            _PromptSentPayload(
-                agent=_AgentSnapshot(
-                    id=agent.id,
-                    name=agent.name,
-                    prompt_text=agent.prompt_text,
-                    coding_agent_plugin_id=agent.coding_agent_plugin_id,
-                    agent_config=agent.agent_config,
-                ),
-                prompt_hash=prompt_hash,
-                lessons_count=len(ctx.lessons),
-                lessons_applied=lesson_ids,
-                checkout_sha=ctx.vcs_pr.head_sha,
+            review_ctx = ReviewContext(
+                pr=ctx.vcs_pr,
+                diff=ctx.diff,
+                lessons=ctx.lessons,
                 language_hint=ctx.language,
-            ),
-            actor=Actor.system(),
-            org_id=org_id,
-        )
+                prior_yaaos_comment_bodies=ctx.prior_bodies,
+                agent_config={},
+            )
+            prompt_hash = hashlib.sha256(review_ctx.model_dump_json().encode()).hexdigest()
+            lesson_ids = [lesson.id for lesson in ctx.lessons]
 
-        # Last cancel check before the expensive CLI call.
-        async with db_session() as s:
-            row = (
-                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
-            ).scalar_one_or_none()
-        if row is None or row.status != "running":
-            return None
+            async with db_session() as s:
+                await s.execute(
+                    update(ReviewJobRow)
+                    .where(ReviewJobRow.id == job_id)
+                    .values(prompt_hash=prompt_hash, lessons_applied=lesson_ids)
+                )
+                await s.commit()
 
-        await _set_step(job_id, "invoking_agent", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id)
+            await audit_for_review_job(
+                job_id,
+                "review_job.prompt_sent",
+                _PromptSentPayload(
+                    prompt_hash=prompt_hash,
+                    lessons_count=len(ctx.lessons),
+                    lessons_applied=lesson_ids,
+                    checkout_sha=ctx.vcs_pr.head_sha,
+                    language_hint=ctx.language,
+                ),
+                actor=Actor.system(),
+                org_id=org_id,
+            )
 
-        result = await coding_agent.review(
-            plugin_id=agent.coding_agent_plugin_id,
-            workspace=workspace,
-            context=review_ctx,
-        )
+            await _set_step(job_id, "invoking_agent", pr_id=pr.id)
+            result = await coding_agent.review(
+                plugin_id=_CODING_AGENT_PLUGIN_ID,
+                workspace=ws,
+                context=review_ctx,
+                on_activity=_on_activity,
+            )
 
         if result.status != InvocationStatus.SUCCESS:
             await _transition_failed(
@@ -832,49 +617,18 @@ async def _invoke_one_agent(
                 org_id=org_id,
                 invocation_status=str(result.status),
                 raw_output_excerpt=(result.telemetry.raw_output or "")[:1000],
+                activity_log=activity_buffer,
             )
-            return None
+            return
 
-        return _InvocationOutcome(job_id=job_id, agent=agent, result=result)
-
-    except Exception as e:
-        log.exception("invoke_one_agent.crashed", review_job_id=str(job_id))
-        await _transition_failed(
-            job_id, f"agent invocation crashed: {e}", org_id=org_id, invocation_status="crashed"
-        )
-        return None
-
-
-async def _complete_to_vcs(
-    *,
-    outcome: _InvocationOutcome,
-    ctx: _SharedReviewContext,
-    org_id: UUID,
-) -> None:
-    """Take a successful invocation outcome and post it back to the VCS.
-
-    Posts the review via `vcs_plugin.post_review`, writes one `PostedCommentRow`
-    per finding-that-became-a-comment, flips `status='posted'` + `destination='vcs'`,
-    records telemetry + findings JSON, writes the `review_job.posted` audit
-    entry, and publishes the status-change event.
-
-    Separated from `_invoke_one_agent` so a future `run_review` entry point
-    can call `_invoke_one_agent` without forcing a VCS post — the implementer
-    agent (no PR yet) wants the outcome back as data.
-    """
-    job_id = outcome.job_id
-    agent = outcome.agent
-    result = outcome.result
-
-    try:
-        await _set_step(job_id, "posting_review", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id)
+        # Post one Review to the VCS, then update the row + audit.
+        await _set_step(job_id, "posting_review", pr_id=pr.id)
         review_obj = Review(
-            agent_tag=agent.name,
+            agent_tag=_REVIEWER_TAG,
             state=result.state or "COMMENT",
             summary_body=result.summary_body,
             findings=result.findings,
         )
-        vcs_plugin = get_vcs_plugin(ctx.plugin_id)
         post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
         async with db_session() as s:
             for cid in post_result.finding_to_comment_external_id.values():
@@ -884,7 +638,6 @@ async def _complete_to_vcs(
                         org_id=org_id,
                         pr_id=ctx.pr_id,
                         review_job_id=job_id,
-                        agent_id=agent.id,
                     )
                 )
             started = (
@@ -903,53 +656,72 @@ async def _complete_to_vcs(
                     review_external_id=post_result.review_external_id,
                     tokens_in=result.telemetry.tokens_in,
                     tokens_out=result.telemetry.tokens_out,
-                    cost_usd=float(result.telemetry.cost_usd)
-                    if result.telemetry.cost_usd is not None
-                    else None,
                     duration_s=duration,
                     current_step="posted",
                     findings=[f.model_dump(mode="json") for f in result.findings],
+                    activity_log=activity_buffer,
+                    # CLI may report a resolved model name (e.g. an `opus`
+                    # alias becomes a versioned full name); persist that.
+                    model=result.telemetry.model or _DEFAULT_MODEL,
                 )
             )
             await s.commit()
+
+        by_agent: dict[str, int] = {}
+        for f in result.findings:
+            key = f.source_agent or "unknown"
+            by_agent[key] = by_agent.get(key, 0) + 1
         await audit_for_review_job(
             job_id,
             "review_job.posted",
             _PostedPayload(
                 verdict=result.state or "COMMENT",
                 finding_count=len(result.findings),
+                findings_by_agent=by_agent,
                 tokens_in=result.telemetry.tokens_in,
                 tokens_out=result.telemetry.tokens_out,
-                cost_usd=str(result.telemetry.cost_usd) if result.telemetry.cost_usd is not None else None,
                 latency_ms=result.telemetry.latency_ms,
                 review_external_id=post_result.review_external_id,
             ),
-            actor=Actor.agent(agent.id),
+            actor=Actor.system(),
             org_id=org_id,
         )
-        await publish(
-            ReviewJobStatusChanged(
-                ticket_id=ctx.ticket_id,
-                pr_id=ctx.pr_id,
-                agent_id=agent.id,
-                review_job_id=job_id,
-                status="posted",
-            )
-        )
+        await publish(ReviewJobStatusChanged(pr_id=ctx.pr_id, review_job_id=job_id, status="posted"))
+
+    except asyncio.CancelledError:
+        # Operator-initiated cancel: the DB row was flipped to `cancelled`
+        # and the `review_job.cancelled` audit was written by `cancel_pending`
+        # BEFORE the task was cancelled. The workspace's `async with` exit
+        # has already destroyed the tempdir and the CLI subprocess was killed
+        # by `workspace.run_coding_agent_cli`'s CancelledError handler. Attach
+        # whatever activity we captured before re-raising; cancel_pending
+        # already wrote the status + audit.
+        log.info("review_job.cancelled_mid_flight", review_job_id=str(job_id))
+        if activity_buffer:
+            try:
+                async with db_session() as s:
+                    await s.execute(
+                        update(ReviewJobRow)
+                        .where(ReviewJobRow.id == job_id)
+                        .values(activity_log=activity_buffer)
+                    )
+                    await s.commit()
+            except Exception:
+                log.exception("review_job.cancel_persist_failed", review_job_id=str(job_id))
+        raise
+
     except Exception as e:
-        log.exception("complete_to_vcs.crashed", review_job_id=str(job_id))
+        log.exception("review_job.handler_crashed", review_job_id=str(job_id))
         await _transition_failed(
-            job_id, f"vcs post crashed: {e}", org_id=org_id, invocation_status="post_failed"
+            job_id,
+            f"handler crashed: {e}",
+            org_id=org_id,
+            invocation_status="crashed",
+            activity_log=activity_buffer,
         )
 
 
 def _ticket_skip_reason(pr: Any, diff: Diff) -> str | None:
-    """Return a skip reason if the whole ticket should be skipped, else None.
-
-    These checks are ticket-level — they don't vary by agent. Centralising
-    them avoids posting three skip-audit entries with the same reason and
-    keeps the coordinator's flow linear.
-    """
     if pr.is_fork:
         return "fork"
     if pr.author_type == "bot":
@@ -962,95 +734,6 @@ def _ticket_skip_reason(pr: Any, diff: Diff) -> str | None:
     return None
 
 
-async def _run_reply_job(input: ReviewJobInput) -> None:
-    org_id = input.org_id
-    job_id = input.review_job_id
-
-    async with db_session() as s:
-        await s.execute(
-            update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
-            .values(status="running", started_at=_utcnow(), current_step="building_prompt")
-        )
-        await s.commit()
-    try:
-        ticket = await tickets.get(input.ticket_id, org_id=org_id)
-        if ticket.pr_id is None:
-            await _transition_failed(job_id, "no PR", org_id=org_id)
-            return
-        pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
-        agent = await get_agent_by_id(input.agent_id, org_id=org_id)
-        vcs_plugin = get_vcs_plugin(pr.plugin_id)
-        diff = await vcs_plugin.fetch_diff(pr.external_id)
-        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
-        reply_ctx = ReplyContext(
-            persona=agent.prompt_text,
-            agent_name=agent.name,
-            pr=vcs_pr,
-            diff=diff,
-            reply_body=input.reply_body or "",
-            parent_comment_external_id=input.parent_comment_external_id or "",
-            agent_config=agent.agent_config,
-        )
-
-        async with with_workspace(
-            "in_process",
-            WorkspaceSpec(
-                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
-                sha=pr.head_sha,
-                branch_name=pr.head_branch,
-                resource_caps=ResourceCaps(),
-                network_policy=NetworkPolicy.GITHUB_ONLY,
-                org_id=org_id,
-            ),
-            org_id=org_id,
-        ) as ws:
-            result = await coding_agent.reply(
-                plugin_id=agent.coding_agent_plugin_id,
-                workspace=ws,
-                context=reply_ctx,
-            )
-
-        if result.status == InvocationStatus.SUCCESS and result.body is not None:
-            new_comment_id = await vcs_plugin.post_comment_reply(
-                pr.external_id,
-                input.parent_comment_external_id or "",
-                f"[{agent.name}] {result.body}",
-            )
-            async with db_session() as s:
-                await s.execute(
-                    update(ReviewJobRow)
-                    .where(ReviewJobRow.id == job_id)
-                    .values(
-                        status="posted",
-                        completed_at=_utcnow(),
-                        tokens_in=result.telemetry.tokens_in,
-                        tokens_out=result.telemetry.tokens_out,
-                        cost_usd=float(result.telemetry.cost_usd)
-                        if result.telemetry.cost_usd is not None
-                        else None,
-                    )
-                )
-                await s.commit()
-            await audit_for_review_job(
-                job_id,
-                "review_job.reply_posted",
-                _ReplyPostedPayload(
-                    comment_external_id=new_comment_id,
-                    parent_comment_external_id=input.parent_comment_external_id or "",
-                    tokens_in=result.telemetry.tokens_in,
-                    tokens_out=result.telemetry.tokens_out,
-                ),
-                actor=Actor.agent(agent.id),
-                org_id=org_id,
-            )
-        else:
-            await _transition_failed(job_id, result.error_message or "agent_error", org_id=org_id)
-    except Exception as e:
-        log.exception("reply_job.handler_crashed", review_job_id=str(job_id))
-        await _transition_failed(job_id, f"handler crashed: {e}", org_id=org_id)
-
-
 async def _transition_failed(
     job_id: UUID,
     error: str,
@@ -1058,18 +741,18 @@ async def _transition_failed(
     org_id: UUID,
     invocation_status: str = "agent_error",
     raw_output_excerpt: str = "",
+    activity_log: list[dict[str, Any]] | None = None,
 ) -> None:
+    values: dict[str, Any] = {
+        "status": "failed",
+        "completed_at": _utcnow(),
+        "error_message": error,
+        "current_step": "failed",
+    }
+    if activity_log is not None:
+        values["activity_log"] = activity_log
     async with db_session() as s:
-        await s.execute(
-            update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
-            .values(
-                status="failed",
-                completed_at=_utcnow(),
-                error_message=error,
-                current_step="failed",
-            )
-        )
+        await s.execute(update(ReviewJobRow).where(ReviewJobRow.id == job_id).values(**values))
         await s.commit()
     await audit_for_review_job(
         job_id,
@@ -1084,13 +767,22 @@ async def _transition_failed(
     )
 
 
-async def _transition_skipped(job_id: UUID, reason: str, *, org_id: UUID) -> None:
+async def _transition_skipped(
+    job_id: UUID,
+    reason: str,
+    *,
+    org_id: UUID,
+    activity_log: list[dict[str, Any]] | None = None,
+) -> None:
+    values: dict[str, Any] = {
+        "status": "skipped",
+        "skip_reason": reason,
+        "completed_at": _utcnow(),
+    }
+    if activity_log is not None:
+        values["activity_log"] = activity_log
     async with db_session() as s:
-        await s.execute(
-            update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
-            .values(status="skipped", skip_reason=reason, completed_at=_utcnow())
-        )
+        await s.execute(update(ReviewJobRow).where(ReviewJobRow.id == job_id).values(**values))
         await s.commit()
     await audit_for_review_job(
         job_id,
@@ -1107,10 +799,6 @@ def _is_skip_path(path: str) -> bool:
     return is_skippable_path(path)
 
 
-# Patterns for the pre-flight secrets check. Only the high-confidence shapes —
-# anything entropy-only would false-positive at POC scale. Each match raises a
-# refuse-to-review on the PR; the audit log captures *which rule* matched, never
-# the secret itself.
 _SECRET_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
@@ -1121,12 +809,6 @@ _SECRET_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 def _detect_secrets(diff: Diff) -> str | None:
-    """Scan added lines in `diff.raw` for high-confidence secret shapes.
-
-    Returns the rule id that matched first, or None if nothing matched.
-    Only `+`-prefixed lines are scanned — `-` and context lines are pre-existing
-    content and are out of scope for the pre-flight refuse-to-review check.
-    """
     for raw_line in (diff.raw or "").splitlines():
         if not raw_line.startswith("+") or raw_line.startswith("+++"):
             continue
@@ -1136,31 +818,17 @@ def _detect_secrets(diff: Diff) -> str | None:
     return None
 
 
-def _secrets_warning_review(agent_name: str, rule_id: str) -> Review:
-    """One-shot review posted when the secrets pre-flight refuses to proceed."""
+def _secrets_warning_review(rule_id: str) -> Review:
     body = (
         "yaaos refused to review this PR — the diff contains content that "
         f"looks like a leaked secret (rule: `{rule_id}`). Remove the secret, "
         "rotate it on the upstream provider, then push a fresh commit and the "
         "review will run automatically."
     )
-    return Review(agent_tag=agent_name, state="COMMENT", summary_body=body, findings=[])
+    return Review(agent_tag=_REVIEWER_TAG, state="COMMENT", summary_body=body, findings=[])
 
 
-async def _set_step(
-    job_id: UUID,
-    step: str,
-    *,
-    ticket_id: UUID,
-    pr_id: UUID,
-    agent_id: UUID,
-) -> None:
-    """Update `current_step` + heartbeat and publish a step-progress event.
-
-    Step changes do NOT generate audit entries (M01 decision: heartbeat noise
-    isn't worth durable history). The SSE event drives the UI; the column
-    drives polling fallback.
-    """
+async def _set_step(job_id: UUID, step: str, *, pr_id: UUID) -> None:
     async with db_session() as s:
         await s.execute(
             update(ReviewJobRow)
@@ -1168,15 +836,7 @@ async def _set_step(
             .values(current_step=step, last_heartbeat_at=_utcnow())
         )
         await s.commit()
-    await publish(
-        ReviewJobStepProgress(
-            ticket_id=ticket_id,
-            pr_id=pr_id,
-            agent_id=agent_id,
-            review_job_id=job_id,
-            current_step=step,
-        )
-    )
+    await publish(ReviewJobStepProgress(pr_id=pr_id, review_job_id=job_id, current_step=step))
 
 
 def _detect_language(diff: Any) -> str | None:
@@ -1208,15 +868,8 @@ def _detect_language(diff: Any) -> str | None:
     return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
-# ── Startup recovery ──────────────────────────────────────────────────────────
-
-
 async def startup_recovery() -> None:
-    """Mark any running jobs from a prior process as failed; respawn queued
-    jobs grouped by ticket (one coordinator per ticket, not per job).
-    """
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-
+    """Mark any `running` jobs from a prior process as failed; respawn `queued` jobs."""
     async with db_session() as s:
         crashed = (
             (await s.execute(select(ReviewJobRow.id).where(ReviewJobRow.status == "running"))).scalars().all()
@@ -1250,10 +903,9 @@ async def startup_recovery() -> None:
             org_id=M01_ORG_ID,
         )
 
-    # Group queued jobs by ticket_id (resolved via the PR row) so one
-    # coordinator respawns per ticket — matching the ticket-scoped workspace
-    # discipline used by `schedule_review`.
-    by_ticket: dict[UUID, dict[str, Any]] = {}
+    # Resolve ticket_id per queued job (via the PR row) so we can respawn.
+    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+
     for row in queued:
         async with db_session() as s:
             pr_row = (
@@ -1261,16 +913,14 @@ async def startup_recovery() -> None:
             ).scalar_one_or_none()
         if pr_row is None:
             continue
-        entry = by_ticket.setdefault(pr_row.ticket_id, {"job_ids": [], "org_id": row.org_id})
-        entry["job_ids"].append(row.id)
-
-    for ticket_id, entry in by_ticket.items():
         spawn(
-            f"ticket_review:{ticket_id}",
-            _run_ticket_review(
-                ticket_id=ticket_id,
-                job_ids=entry["job_ids"],
-                debounce_seconds=0,
-                org_id=entry["org_id"],
+            f"review_job:{row.id}",
+            _run_review_job(
+                ReviewJobInput(
+                    review_job_id=row.id,
+                    ticket_id=pr_row.ticket_id,
+                    org_id=row.org_id,
+                    debounce_seconds=0,
+                )
             ),
         )

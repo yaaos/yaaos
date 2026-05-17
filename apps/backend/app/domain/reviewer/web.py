@@ -1,4 +1,4 @@
-"""HTTP routes for reviewer agents + review-job operations."""
+"""HTTP routes for review-job + durable-findings operations."""
 
 from __future__ import annotations
 
@@ -8,17 +8,10 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.database import session
 from app.core.primitives import Actor
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
-from app.domain.reviewer.agent_crud import (
-    AgentNotFoundError,
-    ReviewerAgent,
-    ensure_builtin_agents,
-    list_agents,
-    reset_agent_prompt,
-    update_agent_prompt,
-)
 from app.domain.reviewer.queue import (
     ReviewJob,
     cancel_pending,
@@ -27,37 +20,15 @@ from app.domain.reviewer.queue import (
     schedule_review,
     startup_recovery,
 )
+from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.service import (
+    all_conversations_view,
+    list_findings_view,
+)
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 router = APIRouter()
-
-
-class UpdatePromptRequest(BaseModel):
-    prompt_text: str
-
-
-@router.get("/agents")
-async def list_agents_route() -> list[ReviewerAgent]:
-    return await list_agents(org_id=M01_ORG_ID)
-
-
-@router.put("/agents/{name}/prompt")
-async def set_prompt(name: str, req: UpdatePromptRequest) -> ReviewerAgent:
-    if not req.prompt_text or not req.prompt_text.strip():
-        raise HTTPException(status_code=400, detail={"prompt_text": "must not be empty"})
-    try:
-        return await update_agent_prompt(name, req.prompt_text, actor=Actor.system(), org_id=M01_ORG_ID)
-    except AgentNotFoundError:
-        raise HTTPException(status_code=404, detail="agent not found")
-
-
-@router.post("/agents/{name}/reset_prompt")
-async def reset_prompt(name: str) -> ReviewerAgent:
-    try:
-        return await reset_agent_prompt(name, actor=Actor.system(), org_id=M01_ORG_ID)
-    except AgentNotFoundError:
-        raise HTTPException(status_code=404, detail="agent not found")
 
 
 class RereviewRequest(BaseModel):
@@ -70,19 +41,21 @@ async def rereview_ticket(req: RereviewRequest) -> dict[str, Any]:
         await tickets.get(req.ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-    ids = await schedule_review(
+    job_id = await schedule_review(
         ticket_id=req.ticket_id,
-        agent_names="all",
         trigger_reason="ui_button",
         actor=Actor.system(),
         org_id=M01_ORG_ID,
     )
-    return {"scheduled_count": len(ids), "review_job_ids": [str(i) for i in ids]}
+    return {
+        "scheduled_count": 1 if job_id else 0,
+        "review_job_id": str(job_id) if job_id else None,
+    }
 
 
 @router.post("/cancel")
 async def cancel_jobs(ticket_id: UUID) -> dict[str, int]:
-    """Cancel queued/running review jobs for a ticket. Wraps `cancel_pending`."""
+    """Cancel queued/running review jobs for a ticket."""
     try:
         await tickets.get(ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
@@ -107,18 +80,71 @@ async def metrics() -> dict[str, Any]:
     return await metrics_summary(org_id=M01_ORG_ID)
 
 
-async def _seed_builtin_agents() -> None:
-    """Idempotent — ensures the three built-in reviewer agents exist on every boot.
-    Runs alongside `startup_recovery`. Without this, schedule_review() silently
-    no-ops with `reviewer.schedule_unknown_agent` warnings and no jobs ever
-    spawn."""
-    await ensure_builtin_agents(org_id=M01_ORG_ID)
+@router.get("/findings/by-ticket/{ticket_id}")
+async def findings_by_ticket(ticket_id: UUID, include_terminal: bool = False) -> list[dict[str, Any]]:
+    """List open + acknowledged findings for the ticket's PR.
+
+    Set `include_terminal=true` to also return resolved + stale findings.
+    """
+    try:
+        t = await tickets.get(ticket_id, org_id=M01_ORG_ID)
+    except tickets.TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if t.pr_id is None:
+        return []
+    async with session() as s:
+        repo = SqlAlchemyAggregateRepository(s)
+        aggregate = await repo.load(pr_id=t.pr_id, org_id=M01_ORG_ID)
+    return [
+        {
+            "id": str(f.id),
+            "state": f.state.value,
+            "severity": f.severity,
+            "rule_id": f.rule_id,
+            "title": f.title,
+            "body": f.body,
+            "rationale": f.rationale,
+            "confidence": f.confidence,
+            "first_seen_review_id": str(f.first_seen_review_id),
+            "last_observed_review_id": str(f.last_observed_review_id),
+            "file_path": f.file_path,
+            "line_start": f.line_start,
+            "line_end": f.line_end,
+        }
+        for f in list_findings_view(aggregate, include_terminal=include_terminal)
+    ]
+
+
+@router.get("/conversations/by-ticket/{ticket_id}")
+async def conversations_by_ticket(ticket_id: UUID) -> list[dict[str, Any]]:
+    """All-Conversations cross-cut (plan §9.3) for the ticket's PR."""
+    try:
+        t = await tickets.get(ticket_id, org_id=M01_ORG_ID)
+    except tickets.TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if t.pr_id is None:
+        return []
+    async with session() as s:
+        repo = SqlAlchemyAggregateRepository(s)
+        aggregate = await repo.load(pr_id=t.pr_id, org_id=M01_ORG_ID)
+    return [
+        {
+            "finding_id": str(c.finding_id),
+            "state": c.state.value,
+            "severity": c.severity,
+            "title": c.title,
+            "first_seen_review_id": str(c.first_seen_review_id),
+            "last_message_preview": c.last_message_preview,
+            "reply_count": c.reply_count,
+        }
+        for c in all_conversations_view(aggregate)
+    ]
 
 
 register_routes(
     RouteSpec(
         module_name="reviewer",
         router=router,
-        on_startup=[startup_recovery, _seed_builtin_agents],
+        on_startup=[startup_recovery],
     )
 )

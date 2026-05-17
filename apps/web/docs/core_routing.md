@@ -23,14 +23,13 @@ The module also declares the TanStack module augmentation so the `Register` inte
 | `/tickets` | `TicketsPage` | `@domain/tickets` |
 | `/tickets/$ticketId` | `TicketDetailPage` | `@domain/tickets` |
 | `/memory` | `MemoryPage` | `@domain/memory` |
-| `/prompts` | `PromptsPage` | `@domain/prompts` |
 | `/settings` | `SettingsPage` | `@domain/settings` |
 
 Every route is a direct child of root. Root's `component` is `AppShell`; each child renders inside the shell's `<Outlet />`. The `/` route uses `beforeLoad` to redirect to `/dashboard`.
 
 ### Per-module route registration
 
-Not used — central declaration is easier to read at 6 paths. Refactor to per-feature route exports when the surface grows beyond ~20 paths or starts requiring nested layouts.
+Not used — central declaration is easier to read at 5 paths. Refactor to per-feature route exports when the surface grows beyond ~20 paths or starts requiring nested layouts.
 
 ### Code-splitting
 

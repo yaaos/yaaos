@@ -11,8 +11,6 @@ from app.core.primitives import PluginMeta
 from app.domain.coding_agent import (
     HealthStatus,
     InvocationStatus,
-    ReplyContext,
-    ReplyResult,
     ReviewContext,
     ReviewResult,
     ValidationResult,
@@ -55,9 +53,6 @@ class _DummyPlugin:
     async def review(self, *args, **kwargs) -> ReviewResult:
         raise AssertionError("real review must not be called when wrapped")
 
-    async def reply(self, *args, **kwargs) -> ReplyResult:
-        raise AssertionError("real reply must not be called when wrapped")
-
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         return ValidationResult(valid=True, errors=[])
 
@@ -78,12 +73,7 @@ class _FakeWorkspace:
 @pytest.mark.asyncio
 async def test_review_returns_canned_success() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    ctx = ReviewContext(
-        persona="be careful",
-        agent_name="architecture",
-        pr=_make_pr(),
-        diff=Diff(raw="", files=[]),
-    )
+    ctx = ReviewContext(pr=_make_pr(), diff=Diff(raw="", files=[]))
     result = await stub.review(_FakeWorkspace(), ctx)
     assert result.status == InvocationStatus.SUCCESS
     assert result.state == "COMMENT"
@@ -91,25 +81,8 @@ async def test_review_returns_canned_success() -> None:
     # and Teach-yaaos flow without needing a real LLM. See service.review.
     assert len(result.findings) == 1
     assert result.findings[0].file == "src/example.ts"
-    assert "architecture" in result.findings[0].title
-    assert "architecture" in (result.summary_body or "")
+    assert result.findings[0].source_agent == "yaaos-architecture"
     assert result.telemetry.tokens_in == 1000
-
-
-@pytest.mark.asyncio
-async def test_reply_returns_canned_success() -> None:
-    stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    ctx = ReplyContext(
-        persona="be terse",
-        agent_name="security",
-        pr=_make_pr(),
-        diff=Diff(raw="", files=[]),
-        reply_body="why?",
-        parent_comment_external_id="c1",
-    )
-    result = await stub.reply(_FakeWorkspace(), ctx)
-    assert result.status == InvocationStatus.SUCCESS
-    assert result.body and "security" in result.body
 
 
 @pytest.mark.asyncio

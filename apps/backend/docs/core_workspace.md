@@ -16,13 +16,15 @@ HTTP routes registered by the module under `/api/workspaces/*` (list, get, force
 
 ### Value objects
 
-`WorkspaceSpec` describes what to provision: `repo`, `sha`, optional `branch_name`, `resource_caps`, `network_policy`, and `org_id` (stamped by `create_workspace` so plugins can request VCS auth for the right org). `ResourceCaps` and `NetworkPolicy` are advisory — the in-process plugin doesn't enforce them; the value objects exist so the interface is stable for future plugins.
+`WorkspaceSpec` describes what to provision: `repo`, `sha` (head), optional `branch_name` (head), optional `base_sha` + `base_branch` (the branch this PR will merge into — providers can fetch it so the agent can run `git diff base_sha..HEAD` itself instead of yaaos inlining the diff into the prompt), `resource_caps`, `network_policy`, and `org_id` (stamped by `create_workspace` so plugins can request VCS auth for the right org). `ResourceCaps` and `NetworkPolicy` are advisory — the in-process plugin doesn't enforce them; the value objects exist so the interface is stable for future plugins.
 
 `WorkspaceInfo` is the consumer-facing snapshot (id, provider_id, sha, status, timestamps, `age_seconds`). Does NOT expose `working_dir` — internal paths are plugin-private.
 
 ### `Workspace` Protocol
 
-Carries `id` plus two methods: `info()` returns `WorkspaceInfo`; `run_coding_agent_cli(argv, *, env=None, stdin=None, timeout_seconds=None)` returns `CodingAgentCliResult`. That's the entire surface. No file or search methods, no `working_dir`. Callers hand `argv` + `env` + `stdin` to the workspace; the workspace forwards to the provider, which decides where and how (cwd, container, sandbox). Subprocess timeout + process-group kill are the provider's responsibility.
+Carries `id` plus two methods: `info()` returns `WorkspaceInfo`; `run_coding_agent_cli(argv, *, env=None, stdin=None, timeout_seconds=None, on_stream_line=None)` returns `CodingAgentCliResult`. That's the entire surface. No file or search methods, no `working_dir`. Callers hand `argv` + `env` + `stdin` to the workspace; the workspace forwards to the provider, which decides where and how (cwd, container, sandbox). Subprocess timeout + process-group kill are the provider's responsibility.
+
+`on_stream_line: Callable[[bytes], Awaitable[None]] | None` is optional. When provided, the provider reads stdout line-by-line and invokes the callback per line (consumers parse JSON inline so they can react live, e.g. the Claude Code plugin rendering activity events). When `None`, the provider buffers stdout to completion — the existing behaviour. Timeout + cancel kill paths are unchanged either way.
 
 Each new capability (run tests, install deps, push commits) arrives as a deliberate new method with its own policy. A generic `exec(argv)` would silently broaden as features land.
 

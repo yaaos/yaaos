@@ -9,7 +9,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-22 modules: **8 core · 8 domain · 3 plugins · 3 testing**. Each has a doc with five fixed sections.
+23 modules: **9 core · 8 domain · 3 plugins · 3 testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 
@@ -23,6 +23,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [core_workspace](core_workspace.md) | `Workspace` + `WorkspaceProvider` Protocols; lifecycle + reaper. |
 | [core_observability](core_observability.md) | structlog + conditional OTel SDK. |
 | [core_primitives](core_primitives.md) | `Actor`, `PluginMeta`, `spawn()`. |
+| [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 
 ### Domain — business logic, vendor-neutral
 

@@ -31,7 +31,7 @@ test("Teach yaaos from a finding creates a lesson on the finding's repo", async 
     .poll(() => page.locator('[data-testid^="agent-card-"][data-state="posted"]').count(), {
       timeout: 30_000,
     })
-    .toBe(3);
+    .toBe(1);
 
   // Expand the first finding and click Teach.
   await page.getByTestId("findings-list").locator("li").first().click();

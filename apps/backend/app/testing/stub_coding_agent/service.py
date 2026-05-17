@@ -3,8 +3,8 @@
 The bootstrap (when `YAAOS_CODING_AGENT_STUB` is set) walks the
 `domain/coding_agent` registry and replaces each registered plugin with a
 `StubCodingAgentPlugin` wrapping it. From every consumer's perspective, nothing
-changes — `coding_agent.review("claude_code", ...)` returns the same
-`ReviewResult` shape; it just never touches a real CLI or vendor API.
+changes — `coding_agent.review(...)` returns the same `ReviewResult` shape; it
+just never touches a real CLI or vendor API.
 
 The stub returns canned success results. It has zero knowledge of prompt
 content — that's the real plugin's responsibility. `validate_config` passes
@@ -14,21 +14,28 @@ through; `health_check` reports stub mode.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 import structlog
 
 from app.core.workspace import Workspace
 from app.domain.coding_agent import (
+    ActivityEvent,
+    FindingAnchor,
+    FindingDraft,
     HealthStatus,
+    IncrementalReviewContext,
+    IncrementalReviewResult,
     InvocationStatus,
     InvocationTelemetry,
-    ReplyContext,
-    ReplyResult,
+    OnActivity,
     ReviewContext,
     ReviewResult,
+    StaleCheckContext,
+    StaleCheckResult,
     ValidationResult,
+    VerifyFixContext,
+    VerifyFixResult,
 )
 from app.domain.vcs import Finding
 
@@ -38,60 +45,143 @@ log = structlog.get_logger("testing.stub_coding_agent")
 _STUB_TELEMETRY = InvocationTelemetry(
     tokens_in=1000,
     tokens_out=200,
-    cost_usd=Decimal("0.0050"),
     latency_ms=10,
     raw_output="",
     raw_stderr="",
+    model="opus",
 )
 
 
-class StubCodingAgentPlugin:
-    """Wraps a real `CodingAgentPlugin`; intercepts `review` and `reply`.
+def _canned_activity() -> list[ActivityEvent]:
+    """Default sequence emitted by the stub — enough events to exercise the
+    persisted activity log + SSE path without inventing realistic content."""
+    now = datetime.now(UTC)
+    return [
+        ActivityEvent(
+            ts=now,
+            kind="session_start",
+            message="Session started · model opus",
+            detail={"model": "opus", "session_id": "stub-session"},
+        ),
+        ActivityEvent(
+            ts=now,
+            kind="subagent_dispatched",
+            message="Dispatching yaaos-architecture",
+            detail={"subagent": "yaaos-architecture"},
+        ),
+        ActivityEvent(
+            ts=now,
+            kind="tool_call_started",
+            message="Read src/example.ts",
+            detail={"tool": "Read", "input": {"file_path": "src/example.ts"}},
+        ),
+        ActivityEvent(
+            ts=now,
+            kind="result",
+            message="Review complete",
+            detail={"num_turns": 1},
+        ),
+    ]
 
-    Constructor takes the wrapped plugin; mirrors its `plugin_id` so the
-    registry consumer can't tell the difference. `validate_config` passes
-    through (config validation is config-shape work, not LLM behavior).
-    """
+
+class StubCodingAgentPlugin:
+    """Wraps a real `CodingAgentPlugin`; intercepts `review`."""
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self.meta = wrapped.meta
 
-    async def review(self, workspace: Workspace, context: ReviewContext) -> ReviewResult:
+    async def review(
+        self,
+        workspace: Workspace,
+        context: ReviewContext,
+        on_activity: OnActivity | None = None,
+    ) -> ReviewResult:
         del workspace
-        # Emit one synthetic finding so UI flows that depend on findings
-        # (Teach-yaaos entry-point, expandable rows) have something to act
-        # against. The verdict stays APPROVED — this is decoration, not a
-        # real "must-fix". Tests that need a specific shape can layer over
-        # this by injecting their own stub.
+        # Emit a canned event sequence so consumers exercise the activity-log
+        # path (persistence + SSE) the same way the real CLI would.
+        if on_activity is not None:
+            for event in _canned_activity():
+                try:
+                    await on_activity(event)
+                except Exception:
+                    log.exception("stub_coding_agent.on_activity_failed")
+        # Emit one synthetic finding tagged with a subagent so e2e flows that
+        # depend on findings have something to act against.
         finding = Finding(
             file="src/example.ts",
             line_start=1,
             line_end=1,
             severity="suggestion",
-            title=f"[stub] {context.agent_name} sample suggestion",
-            body=(
-                f"Stub finding from `{context.agent_name}`. Used by e2e specs that "
-                "exercise the finding-expansion + Teach-yaaos flow."
-            ),
+            title="[stub] sample suggestion",
+            body="Stub finding. Used by e2e specs that exercise the finding-expansion + Teach-yaaos flow.",
             rationale=None,
             snippet=None,
             applied_lesson_ids=[],
+            source_agent="yaaos-architecture",
         )
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=[finding],
             state="COMMENT",
-            summary_body=f"[stub] {context.agent_name} review",
+            summary_body="[stub] yaaos review",
             lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=_STUB_TELEMETRY,
         )
 
-    async def reply(self, workspace: Workspace, context: ReplyContext) -> ReplyResult:
-        del workspace
-        return ReplyResult(
+    async def incremental_review(
+        self,
+        workspace: Workspace,
+        context: IncrementalReviewContext,
+        on_activity: OnActivity | None = None,
+    ) -> IncrementalReviewResult:
+        del workspace, context, on_activity
+        # One synthetic FindingDraft with `concrete_failure_scenario` populated
+        # so it survives the reviewer aggregate's schema check.
+        return IncrementalReviewResult(
             status=InvocationStatus.SUCCESS,
-            body=f"[stub] {context.agent_name} reply",
+            findings=[
+                FindingDraft(
+                    severity="minor",
+                    rule_id="stub/incremental",
+                    title="[stub] incremental finding",
+                    body="Stub incremental finding for e2e flows.",
+                    concrete_failure_scenario="N/A — stub plugin output.",
+                    confidence=90,
+                    rationale="Stub plugin: emitted for e2e coverage.",
+                    anchor=FindingAnchor(file_path="src/example.ts", line_start=1, line_end=1),
+                )
+            ],
+            telemetry=_STUB_TELEMETRY,
+        )
+
+    async def verify_fix(
+        self,
+        workspace: Workspace,
+        context: VerifyFixContext,
+        on_activity: OnActivity | None = None,
+    ) -> VerifyFixResult:
+        del workspace, context, on_activity
+        return VerifyFixResult(
+            status=InvocationStatus.SUCCESS,
+            still_present=False,
+            confidence=0.95,
+            reasoning="Stub plugin: always reports the issue as fixed.",
+            telemetry=_STUB_TELEMETRY,
+        )
+
+    async def stale_check(
+        self,
+        workspace: Workspace,
+        context: StaleCheckContext,
+        on_activity: OnActivity | None = None,
+    ) -> StaleCheckResult:
+        del workspace, context, on_activity
+        return StaleCheckResult(
+            status=InvocationStatus.SUCCESS,
+            still_applies=True,
+            confidence=0.95,
+            reasoning="Stub plugin: always reports the finding as still applying.",
             telemetry=_STUB_TELEMETRY,
         )
 
@@ -103,12 +193,7 @@ class StubCodingAgentPlugin:
 
 
 def wrap_all_registered_plugins() -> int:
-    """Replace every entry in `domain.coding_agent._PLUGINS` with a stub wrapping it.
-
-    Returns the count of wrapped plugins. Called from `app/main.py` when
-    `YAAOS_CODING_AGENT_STUB` is set; the testing layer is the only thing
-    permitted to reach into the registry like this.
-    """
+    """Replace every entry in `domain.coding_agent._PLUGINS` with a stub wrapping it."""
     from app.domain.coding_agent import _PLUGINS  # noqa: PLC0415 — registry access
 
     count = 0

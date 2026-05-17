@@ -25,10 +25,9 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 | Module | Responsibility |
 |---|---|
 | [domain_dashboard](domain_dashboard.md) | Two-state landing page: onboarding stepper or populated metrics + in-flight. |
-| [domain_tickets](domain_tickets.md) | Ticket list + detail (AgentCards, findings, Teach-yaaos modal). |
+| [domain_tickets](domain_tickets.md) | Ticket list + detail (review card, findings tagged by source subagent, Teach-yaaos modal). |
 | [domain_settings](domain_settings.md) | Three peer cards: GitHub App, Model API key, Plugin health. |
 | [domain_memory](domain_memory.md) | Per-repo lessons CRUD. |
-| [domain_prompts](domain_prompts.md) | Built-in reviewer-agent prompt editor. |
 
 ## Directory shape
 

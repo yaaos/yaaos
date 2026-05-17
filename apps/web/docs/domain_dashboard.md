@@ -28,15 +28,16 @@ Single card with two stepper rows (Install GitHub App / Add Anthropic key). Each
 
 Header reads "Overview" (one org in M01).
 
-**Metrics row — 4 tiles** from `useMetricsSummary()` + `useTickets()`:
+**Metrics row — 3 tiles** from `useMetricsSummary()` + `useTickets()`:
 1. Reviews posted (`total_reviews_posted`, "all-time").
-2. Cost (`total_cost_usd`, "all-time").
-3. Open tickets (count where `status === "in_review"`).
-4. Failure rate (`failure_rate * 100`, with `failure_count` failed subtitle).
+2. Open tickets (count where `status === "in_review"`).
+3. Failure rate (`failure_rate * 100`, with `failure_count` failed subtitle).
+
+Cost is not surfaced — CLI pricing data is not authoritative, so the backend doesn't track it.
 
 Sparklines and 24h delta indicators are deferred — `/api/reviewer/metrics` returns lifetime aggregates only.
 
-**Live agents · in flight panel** — full-width card listing tickets where `status === "in_review"`. Each row is a `<Link to="/tickets/$ticketId">` with PR number + repo + truncated title, updated-ago, and three agent labels (architecture / security / style) with `status` + `current_step` from `useReviewJobsForTicket(ticket.id)`.
+**Live · in flight panel** — full-width card listing tickets where `status === "in_review"`. Each row is a `<Link to="/tickets/$ticketId">` with PR number + repo + truncated title, updated-ago, and one `yaaos` status badge sourced from the latest review job via `useReviewJobsForTicket(ticket.id)`.
 
 The per-row hook is N+1; TanStack Query dedupes shared keys and the cost is negligible at POC scale. A future `GET /api/dashboard/in-flight` would consolidate. The activity feed from the original design is deferred — `GET /api/dashboard/activity` isn't built.
 

@@ -2,14 +2,14 @@
  * Pre-flight secrets check refuses to review and posts a single warning.
  *
  * Boundary: a PR whose diff contains an AWS-access-key-shaped string arrives;
- * all three agents transition to `skipped(secrets_detected)`; fake-github
- * received at least one refuse-to-review comment.
+ * the review job transitions to `skipped(secrets_detected)`; fake-github
+ * received the refuse-to-review comment.
  */
 
 import { expect, test } from "@playwright/test";
 import {
   dispatchWebhook,
-  postedReviews,
+  postedComments,
   prPayload,
   resetStack,
   seedCredentialsAndInstall,
@@ -21,7 +21,7 @@ test.beforeEach(async () => {
   await seedCredentialsAndInstall();
 });
 
-test("PR with secret in diff is refused; agents skip", async ({ page }) => {
+test("PR with secret in diff is refused; review skips", async ({ page }) => {
   await seedPRDiff({
     repo: "acme/api",
     number: 99,
@@ -44,18 +44,19 @@ test("PR with secret in diff is refused; agents skip", async ({ page }) => {
   await page.goto("/tickets");
   await page.getByText("Add env file with credentials").click();
 
-  // All three agents reach `skipped` (none should reach `posted`).
+  // The review reaches `skipped` (must not reach `posted`).
   await expect
     .poll(() => page.locator('[data-testid^="agent-card-"][data-state="skipped"]').count(), {
       timeout: 30_000,
     })
-    .toBe(3);
+    .toBe(1);
   await expect(
     page.locator('[data-testid^="agent-card-"][data-state="posted"]'),
   ).toHaveCount(0);
 
-  // fake-github received the refuse-to-review review(s).
-  const reviews = await postedReviews();
-  const refusalBodies = reviews.map((r) => String(r.body ?? ""));
-  expect(refusalBodies.some((b) => b.toLowerCase().includes("secret"))).toBe(true);
+  // fake-github received the refuse-to-review notification as a top-level
+  // PR comment (issue-comments endpoint).
+  const comments = await postedComments();
+  const bodies = comments.map((c) => String(c.body ?? ""));
+  expect(bodies.some((b) => b.toLowerCase().includes("secret"))).toBe(true);
 });

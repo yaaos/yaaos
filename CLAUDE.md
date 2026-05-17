@@ -37,7 +37,7 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 - `apps/<app>/docs/README.md` — entry into that app: stack, top-level structure, where module docs live.
 - `apps/<app>/docs/modularity.md` — that app's module model + import rules.
 - `apps/<app>/docs/patterns.md` — conventions specific to that app.
-- `apps/<app>/docs/<layer>_<module>.md` — one file per module. Follows the fixed template: Purpose · Public interface · Module architecture · Data owned · How it's tested. **No decisions section; no historical log.** Never re-explains the app or the system.
+- `apps/<app>/docs/<layer>_<module>.md` — one file per module. Follows the fixed template: Purpose · Public interface · Module architecture · Data owned · How it's tested. The Module architecture section is itself structured (Entities · Key value objects · Core user flows · State machines) — see each app's `docs/patterns.md` for the full template. **No decisions section; no historical log.** Never re-explains the app or the system.
 
 ## Mode by location
 
@@ -53,7 +53,9 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 
 ## Documentation discipline
 
-- **Every change updates the docs in the same PR.** Code change without a doc update is incomplete. If behavior moved, a public API renamed, a module split, or a default flipped — the relevant `apps/<app>/docs/<layer>_<module>.md` (and `patterns.md` / `system-architecture.md` if cross-cutting) lands in the same commit.
+- **EVERY CODE CHANGE UPDATES DOCS IN THE SAME COMMIT. NO EXCEPTIONS.** If you touched code and didn't touch a doc, the task is not done. This applies whether you added a feature, renamed a function, deleted a module, changed a default, simplified a schema, or anything else that alters how the system works. Before saying "done" or "ready", grep `apps/**/docs/` + `docs/` for every symbol/concept you changed and update each hit. Use a final pass: `grep -rn "<old-thing>" apps/*/docs docs` should return zero matches. The CI gates this less than it should; **you** are the gate. Skipping this is the single most common way contributors break the codebase's docs/code coherence — don't.
+
+- **Same-PR doc updates: which docs are in scope.** If behavior moved, a public API renamed, a module split, or a default flipped — the relevant `apps/<app>/docs/<layer>_<module>.md` lands in the same commit. If it's cross-cutting, `apps/<app>/docs/patterns.md`, `docs/system-architecture.md`, `docs/glossary.md`, and `docs/setup.md` all need a look. If you deleted a UI page or route, the per-page doc + the README index + the routing doc all need updates. If you changed an audit payload, the writing module's audit table needs updating.
 - **Terse.** Default to bullets. Cut filler. If a paragraph could be three bullets, make it three bullets. If a sentence could be five words, make it five words. A doc that takes 10 minutes to read explains less than one that takes 2.
 - **No code snippets.** Docs describe *principles* and *behavior*, not code. Reference real paths (`apps/backend/app/domain/reviewer/queue.py:200`) when readers need detail — they can read the source. The source is the truth; copied snippets drift silently.
 - **Capture the *why* inline when non-obvious** — next to the description of how it works, as a one-liner. No `## Decisions` heading, no dated entries, no alternatives-considered. If the why is obvious from the what, omit. The git log is the audit trail.
@@ -76,6 +78,7 @@ When writing or changing code:
 - **Red-Green-Refactor TDD.** Write the failing test first (Red), then the minimum code to make it pass (Green), then refactor. Do not write production code without a failing test that demands it.
 - **Read the module's existing docs before changing the module.** Context first; don't reinvent prior choices silently. Where to look: `apps/<app>/docs/<layer>_<module>.md` if the module has shipped, otherwise its deep-dive in `plan/milestones/<active-milestone>/`.
 - **Run lint, format, tach, and tests before declaring a task done.** No "I think it works" without verification. Run the **relevant per-app `bin/ci` scripts**: `apps/backend/bin/ci` for backend changes, `apps/web/bin/ci` for frontend changes, both if you touched both. Every check must pass. (There is no top-level `bin/ci`; e2e is invoked separately via `apps/e2e/bin/ci`.)
+- **Before declaring done: grep the docs for everything you changed.** For every symbol, table, route, page, payload field, or concept you touched, run `grep -rn "<thing>" apps/*/docs docs` and update every hit. The backend CI's `check_doc_links` only catches broken markdown links — it does NOT catch stale references to renamed functions or deleted tables. If you skipped this step, you skipped the task.
 - **When tach fails after adding or changing a module interface, run `apps/backend/bin/sync_modules`.** That's the usual cause; running the sync command fixes the false errors.
 - **Fix root causes, not symptoms.** If a test fails, fix the bug; don't soften the assertion. If a type check fails, fix the type; don't add `# type: ignore`. If an assertion was wrong from the start, that's a real change worth surfacing.
 - **No backward-compatibility shims for code you're refactoring.** Change every caller when you change a signature. The project is too young for compat layers; they accumulate and rot.

@@ -79,3 +79,15 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8080
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--app-dir", "apps/backend"]
+
+# ────────────────────────────────────────────────────────────────────────
+# Stage 3: backend CI image
+# Adds dev extras (pytest, ruff, etc.) for running `apps/backend/bin/ci`.
+# Inherits everything from the prod `backend` stage, including the
+# non-root `yaaos` user.
+# ────────────────────────────────────────────────────────────────────────
+FROM backend AS backend-ci
+
+# Re-sync with --extra dev to pull in test/lint tooling.
+RUN uv sync --frozen --package yaaos-backend --extra dev 2>/dev/null \
+    || uv sync --package yaaos-backend --extra dev

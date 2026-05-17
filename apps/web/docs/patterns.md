@@ -2,6 +2,22 @@
 
 Cross-app conventions (UTC on the wire, audit-log shape) live in [`docs/system-architecture.md`](../../../docs/system-architecture.md).
 
+## Module documentation
+
+Every shipped module has one `apps/web/docs/<layer>_<module>.md` following this fixed template, in order:
+
+1. **Purpose** — one paragraph. What the module owns; what it does not.
+2. **Public interface** — what's exported from `index.ts(x)` (components, hooks, queries). No internals.
+3. **Module architecture** — the internal shape, in this order:
+   - **Entities** — domain concepts owned by this module (usually views over backend data). One bullet each.
+   - **Key value objects** — load-bearing types / props shapes. One bullet, one sentence each.
+   - **Core user flows** — short numbered steps for the main ways the user exercises this module. Prose; no code.
+   - **State machines** — if any. States as bullets, transitions as `from → to` arrow notation.
+4. **Data owned** — query keys, client-side caches, local component state worth noting.
+5. **How it's tested** — e2e coverage (no FE unit test discipline today; see [README](README.md)).
+
+Discipline still applies: terse, bullets, no code snippets, no `Decisions` section, link don't repeat. Modules with no state machines just omit that sub-section.
+
 ## Dumb frontend
 
 The SPA renders data and dispatches actions. It owns no rules yaaos's backend doesn't also enforce.

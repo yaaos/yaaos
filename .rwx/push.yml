@@ -1,0 +1,41 @@
+on:
+  github:
+    push:
+      init:
+        commit-sha: ${{ event.git.sha }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.2
+
+tasks:
+  - key: code
+    call: git/clone 2.0.7
+    with:
+      repository: https://github.com/JackKora/yaaos.git
+      ref: ${{ init.commit-sha }}
+
+  - key: backend-ci
+    use: [code]
+    docker: true
+    filter:
+      - apps/backend/**
+      - pyproject.toml
+      - uv.lock
+      - docker/Dockerfile
+    run: |
+      docker build --target backend-ci -t yaaos-backend-ci .
+      docker run --rm yaaos-backend-ci sh -c "cd apps/backend && bin/ci"
+
+  - key: web-ci
+    use: [code]
+    docker: true
+    filter:
+      - apps/web/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - docker/Dockerfile
+    run: |
+      docker build --target web-builder -t yaaos-web-ci .
+      docker run --rm yaaos-web-ci sh -c "cd apps/web && bin/ci"

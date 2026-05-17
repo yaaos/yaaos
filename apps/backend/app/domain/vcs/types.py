@@ -79,6 +79,10 @@ class Finding(BaseModel):
     rationale: str | None = None
     snippet: list[FindingSnippetLine] | None = None
     applied_lesson_ids: list[UUID] = []
+    # Which yaaos subagent surfaced this finding (e.g. "yaaos-architecture").
+    # Set by the parent reviewer when it synthesizes its subagents' outputs.
+    # Used for the per-comment prefix on GitHub.
+    source_agent: str | None = None
 
 
 class Review(BaseModel):

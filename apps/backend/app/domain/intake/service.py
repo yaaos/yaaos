@@ -43,18 +43,10 @@ class _WebhookFilteredPayload(BaseModel):
 
 
 class _RereviewRequestedPayload(BaseModel):
-    agent_name_or_all: str
     comment_external_id: str
 
 
-class _ReplyReceivedPayload(BaseModel):
-    agent_id: UUID
-    parent_comment_external_id: str
-    new_comment_external_id: str
-
-
 class _ReactionReceivedPayload(BaseModel):
-    agent_id: UUID
     reaction: str
     target_comment_external_id: str
 
@@ -152,7 +144,6 @@ async def _handle_pr_ready_for_review(event: PullRequestReadyForReview, *, org_i
         return
     await reviewer.schedule_review(
         ticket_id=ticket.id,
-        agent_names="all",
         trigger_reason="pr_ready",
         actor=Actor.system(),
         org_id=org_id,
@@ -177,7 +168,6 @@ async def _handle_pr_synchronized(event: PullRequestSynchronized, *, org_id: UUI
         return
     await reviewer.schedule_review(
         ticket_id=ticket.id,
-        agent_names="all",
         trigger_reason="pr_synchronized",
         actor=Actor.system(),
         org_id=org_id,
@@ -221,13 +211,12 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
     if ticket is None:
         return
 
-    matched, agent = parse_rereview(event.body)
+    matched, _agent = parse_rereview(event.body)
     if matched:
         await audit_for_ticket(
             ticket.id,
             "ticket.rereview_requested",
             _RereviewRequestedPayload(
-                agent_name_or_all=agent or "all",
                 comment_external_id=event.comment_external_id,
             ),
             actor=Actor.github_user(event.author_login),
@@ -235,51 +224,16 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
         )
         from app.domain import reviewer  # noqa: PLC0415
 
-        agents = "all" if agent is None else [agent]
         await reviewer.schedule_review(
             ticket_id=ticket.id,
-            agent_names=agents,
             trigger_reason="rereview_command",
             actor=Actor.github_user(event.author_login),
             org_id=org_id,
         )
         return
 
-    # Inline reply to a yaaos comment?
-    if event.comment_kind == "inline" and event.in_reply_to_comment_external_id:
-        from app.domain.reviewer.models import PostedCommentRow  # noqa: PLC0415
-
-        async with db_session() as s:
-            posted = (
-                await s.execute(
-                    select(PostedCommentRow).where(
-                        PostedCommentRow.external_comment_id == event.in_reply_to_comment_external_id
-                    )
-                )
-            ).scalar_one_or_none()
-        if posted is None:
-            return
-        from app.domain import reviewer  # noqa: PLC0415
-
-        await audit_for_ticket(
-            ticket.id,
-            "ticket.reply_received",
-            _ReplyReceivedPayload(
-                agent_id=posted.agent_id,
-                parent_comment_external_id=event.in_reply_to_comment_external_id,
-                new_comment_external_id=event.comment_external_id,
-            ),
-            actor=Actor.github_user(event.author_login),
-            org_id=org_id,
-        )
-        await reviewer.schedule_reply(
-            ticket_id=ticket.id,
-            agent_id=posted.agent_id,
-            parent_comment_external_id=event.in_reply_to_comment_external_id,
-            reply_body=event.body,
-            actor=Actor.github_user(event.author_login),
-            org_id=org_id,
-        )
+    # Inline replies to yaaos comments are deferred. The future review_comments
+    # table will own that lifecycle. For now we silently drop them.
 
 
 async def _handle_reaction_added(event: ReactionAdded, *, org_id: UUID) -> None:
@@ -302,7 +256,6 @@ async def _handle_reaction_added(event: ReactionAdded, *, org_id: UUID) -> None:
         ticket.id,
         "ticket.reaction_received",
         _ReactionReceivedPayload(
-            agent_id=posted.agent_id,
             reaction=event.reaction,
             target_comment_external_id=event.target_comment_external_id,
         ),

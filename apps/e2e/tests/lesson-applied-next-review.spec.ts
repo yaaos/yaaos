@@ -39,7 +39,7 @@ test("a pre-existing lesson shows up in the prompt_sent audit payload", async ({
     .poll(() => page.locator('[data-testid^="agent-card-"][data-state="posted"]').count(), {
       timeout: 30_000,
     })
-    .toBe(3);
+    .toBe(1);
 
   // Cross-check via the audit-log API rather than the UI (the audit
   // payload is JSON; the UI renders a summary). Pull the ticket id from
@@ -54,6 +54,6 @@ test("a pre-existing lesson shows up in the prompt_sent audit payload", async ({
     payload: { lessons_count?: number };
   }>;
   const promptSent = audit.filter((e) => e.kind === "review_job.prompt_sent");
-  expect(promptSent.length).toBeGreaterThanOrEqual(3);
+  expect(promptSent.length).toBeGreaterThanOrEqual(1);
   expect(promptSent.every((e) => (e.payload.lessons_count ?? 0) >= 1)).toBe(true);
 });

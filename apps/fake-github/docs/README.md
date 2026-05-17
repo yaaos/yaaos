@@ -20,9 +20,9 @@ Not a yaaos backend module — absent from `tach.toml`, the module map, layering
 | `GET .../pulls?state=open` | All seeded PRs for the repo. |
 | `GET .../pulls/{number}/comments` | Inline comments yaaos has posted (in-memory). |
 | `GET .../issues/{number}/comments` | Top-level comments yaaos has posted. |
-| `POST .../pulls/{number}/reviews` | Records the review. Returns `{id, html_url, comment_external_ids}`. |
+| `POST .../pulls/{number}/comments` | Records an inline review comment. Returns `{id}`. |
 | `POST .../pulls/{number}/comments/{parent}/replies` | Records an inline reply. |
-| `POST .../issues/{number}/comments` | Records an issue-comment fallback. |
+| `POST .../issues/{number}/comments` | Records a top-level (non-inline) PR comment. |
 | `GET /installation/repositories` | Seeded repo list. Drives the catch-up poller and the Settings repo list. |
 | `GET .../compare/{before}...{after}` | `{status: <seeded or "ahead">}`. Force-push spec seeds `"diverged"`. |
 
@@ -37,8 +37,7 @@ Bearer-protected endpoints accept any bearer — the fake validates only that on
 | `POST /__test/seed_diff` | `{owner, repo, number, diff, files}`. |
 | `POST /__test/seed_compare_status` | `{base_to_head, status}`. Force-push spec uses this to inject `"diverged"`. |
 | `POST /__test/dispatch_webhook` | `{event, payload, target_url, delivery_id?}`. HMAC-signs with the shared test webhook secret, POSTs to `target_url` with `X-Hub-Signature-256` + `X-GitHub-Event` + `X-GitHub-Delivery`. How specs simulate "a PR opened on GitHub." |
-| `GET /__test/posted_reviews` | What yaaos has POSTed. Used for outbound-call assertions. |
-| `GET /__test/posted_comments` | Same shape, for comments. |
+| `GET /__test/posted_comments` | What yaaos has POSTed (both inline review comments and top-level PR comments). Used for outbound-call assertions. |
 
 ## Auth
 
@@ -56,8 +55,8 @@ App private key is not real RSA. yaaos's `_build_app_jwt` detects the missing `B
 - `seeded_files: dict[str, list[dict]]` — same key → file summaries.
 - `installation_repositories: list[dict]`.
 - `compare_status: dict[str, str]` — `"before...after"` → status.
-- `posted_reviews`, `posted_comments` — what yaaos has POSTed.
-- `_next_review_id`, `_next_comment_id` — auto-increment counters.
+- `posted_comments` — what yaaos has POSTed (inline + top-level PR comments).
+- `_next_comment_id` — auto-increment counter.
 
 `POST /__test/reset` clears everything and re-seeds defaults from `app/seeds.py`: PRs `acme/web#1`, `acme/api#1`; repo entries `acme/web`, `acme/api`.
 
