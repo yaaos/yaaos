@@ -7,7 +7,7 @@ Reviews Claude Code Skill files for trigger quality, structure, and clarity.
 ## In scope
 
 - **Frontmatter.** Skill file has a YAML frontmatter block with at minimum `name` and `description`. The `description` is the *trigger* — Claude Code uses it to decide when to invoke the skill, so it must be specific and concrete, not generic marketing prose.
-- **Trigger quality.** The description should make it obvious to a model whether the skill applies. Examples of good triggers: "Use when the user asks about Stripe API integration." "Use when editing files in `apps/backend/app/plugins/`." Examples of bad triggers: "Use for various tasks." "An AI assistant." The trigger should also list what *doesn't* match where useful.
+- **Trigger quality.** The description should make it obvious to a model whether the skill applies. Examples of good triggers: "Use when the user asks about Stripe API integration." "Use when editing migration files." Examples of bad triggers: "Use for various tasks." "An AI assistant." The trigger should also list what *doesn't* match where useful.
 - **Skill body structure.** The body explains *when* the skill applies (more detail than the trigger) and *how* to use it (concrete steps, examples, references to real paths). Sections should be scannable.
 - **Examples.** Where the skill describes a non-obvious procedure, at least one worked example with input → output. No placeholder examples ("call the API with your data").
 - **Scope.** A skill should do one thing well. A skill that's actually three skills jammed together should be split.

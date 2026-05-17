@@ -35,7 +35,7 @@ Single parent invocation. The CLI is given the Task tool so the parent can dispa
 
 `_load_settings_for_invocation` selects the single `claude_code_settings` row and decrypts the Anthropic key. Returns `(api_key, cli_path, default_timeout_seconds)`. No key or no CLI path: early `AGENT_ERROR`.
 
-Argv: `claude --print --output-format=json --permission-mode=bypassPermissions --allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task` plus optional `--model` / `--max-turns` from `agent_config`. `Task` is what lets the parent reviewer dispatch yaaos-* subagents — without it the parent can't fan out. No `Bash`, `Write`, `Edit`. `agent_config["timeout_seconds"]` overrides the 600s default.
+Argv: `claude --print --output-format=stream-json --verbose --permission-mode=bypassPermissions --allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task` plus optional `--model` / `--max-turns` from `agent_config`. `Task` is what lets the parent reviewer dispatch yaaos-* subagents — without it the parent can't fan out. No `Bash`, `Write`, `Edit`. `agent_config["timeout_seconds"]` overrides the 600s default. `stream-json` (requires `--verbose`) emits one JSON event per line as work progresses — we parse it post-hoc to log a per-event trace so stuck or timed-out runs leave readable diagnostics.
 
 Env: copy of `os.environ` with `ANTHROPIC_API_KEY` injected. Key never on argv.
 
@@ -51,9 +51,11 @@ Workspace owns subprocess lifecycle (`cwd`, process group, SIGTERM → 2s grace 
 
 `WorkspaceExecError` → `AGENT_ERROR`. `timed_out=True` → `TIMEOUT`. Non-zero exit → `AGENT_ERROR` with first stderr line.
 
-**Step 4 — parse wrapper envelope:**
+**Step 4 — parse stream-json events:**
 
-`--output-format=json` emits `{result, usage: {input_tokens, output_tokens}, total_cost_usd}`. Plugin extracts `result` and populates `InvocationTelemetry` with latency, tokens, cost. `total_cost_usd` left None when absent. Envelope-parse failure → `AGENT_ERROR` with raw output in `telemetry.raw_output`.
+`--output-format=stream-json --verbose` emits one JSON event per line: `system` (init), `assistant` (model turn, may contain `tool_use` blocks — Task dispatches surface here with the target subagent name), `user` (tool_result blocks), terminal `result` (with `usage`, `total_cost_usd`, final `result` text). `_parse_stream_events(stdout)` parses every line (skipping blank / non-JSON noise); `_log_stream_event` emits one structured log entry per event with type-appropriate fields (tool name + subagent for `tool_use`, excerpt + is_error for `tool_result`, duration + turns + cost for `result`). The terminal `result` event populates `InvocationTelemetry` and supplies `agent_text`. Missing `result` event → `AGENT_ERROR` with raw output captured.
+
+Per-event logging runs on every code path including timeout and non-zero exit — the partial trace from a stuck run is the primary diagnostic. The log line `claude_code.stream.tool_use` with `tool=Task` shows which subagent was in flight; absence of multiple Task tool_use events in a single `claude_code.stream.assistant` turn indicates the parent is dispatching serially rather than in parallel.
 
 **Step 5 — strict-parse agent response:**
 
@@ -104,5 +106,6 @@ Unit tests in `app/plugins/claude_code/test/`:
 
 - `test_prompt_and_state.py` — parent prompt assembly (subagent list, diff, lessons, prior-comment truncation) and verdict computation.
 - `test_installer.py` — installer writes frontmatter, is idempotent, leaves unrelated files alone.
+- `test_stream_parsing.py` — `_parse_stream_events` handles well-formed streams, blank lines, garbage interleaved with valid JSON, and partial streams (timeout case with no `result` event). `_log_stream_event` smoke-tests every event type and tolerates missing fields.
 
 CLI subprocess + envelope parsing + Anthropic auth probe are exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1` swapping in `StubCodingAgentPlugin`.

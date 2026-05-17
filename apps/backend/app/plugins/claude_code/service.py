@@ -101,7 +101,7 @@ You have these subagents available (installed in `~/.claude/agents/`):
 
 1. **Read the diff** below to understand what changed.
 2. **Decide which subagents to dispatch.** All five always-on subagents plus `yaaos-skill` if and only if the diff touches a skill file. Do not run unnecessary subagents.
-3. **Dispatch them in parallel via the Task tool**, one Task call per subagent. Give each subagent the same brief: the PR title/body and the diff. Each subagent will return a JSON object with `findings`.
+3. **DISPATCH ALL RELEVANT SUBAGENTS IN ONE TURN, IN PARALLEL.** In a single assistant response, emit one `Task` tool_use block per relevant subagent. Multiple Task tool_use blocks in the same message run concurrently; sequential Task calls across separate turns run serially and waste minutes. Do not wait for one subagent's result before dispatching the next. Each subagent gets the same brief: the PR title/body and the diff. Each will return a JSON object with `findings`.
 4. **Collect their findings.** For each finding, tag it with `source_agent` set to the subagent's name (e.g. `"yaaos-architecture"`).
 5. **Synthesize.** Drop duplicates (two subagents finding the same thing — keep the one with better evidence). For each surviving finding, re-read the cited file to confirm the finding is accurate; drop hallucinated findings whose snippet doesn't match what's actually at that location.
 6. **Rank by severity** (must-fix > suggestion > nit > info) within each `source_agent` group.
@@ -169,6 +169,95 @@ def _schema_appendix(response_model: type[BaseModel]) -> str:
         "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
         f"{json.dumps(response_model.model_json_schema(), indent=2)}\n"
     )
+
+
+# ── Stream-json parsing + per-event logging ───────────────────────────────────
+#
+# Claude Code's `--output-format=stream-json --verbose` emits one JSON object
+# per line as work progresses (system init → assistant turns with tool_use
+# blocks → user turns with tool_result blocks → terminal `result` event).
+# We parse the captured stdout post-hoc (the workspace API doesn't stream
+# live yet) and log each event so a timed-out / failed review leaves a
+# readable trace in the backend logs.
+
+
+def _parse_stream_events(stdout: str) -> list[dict[str, Any]]:
+    """Parse newline-delimited JSON. Skip blank / unparseable lines silently —
+    Claude Code occasionally interleaves non-JSON noise (e.g., progress dots)
+    and we'd rather drop those than abandon the trace."""
+    events: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(ev, dict):
+            events.append(ev)
+    return events
+
+
+def _log_stream_event(event: dict[str, Any]) -> None:
+    """Emit one structured log line per stream event.
+
+    Event types: `system` (session init), `assistant` (model output, may
+    contain `tool_use` blocks — these are how subagents get dispatched via
+    Task), `user` (tool_result blocks — these are subagent return values),
+    `result` (terminal envelope with usage + final text).
+    """
+    et = event.get("type")
+    if et == "system":
+        log.info(
+            "claude_code.stream.system",
+            subtype=event.get("subtype"),
+            session_id=event.get("session_id"),
+            model=event.get("model"),
+        )
+    elif et == "assistant":
+        msg = event.get("message", {}) or {}
+        for block in msg.get("content", []) or []:
+            btype = block.get("type")
+            if btype == "tool_use":
+                inp = block.get("input") or {}
+                # For Task tool calls, surface which subagent was dispatched.
+                subagent = inp.get("subagent_type") if isinstance(inp, dict) else None
+                log.info(
+                    "claude_code.stream.tool_use",
+                    tool=block.get("name"),
+                    tool_use_id=block.get("id"),
+                    subagent=subagent,
+                )
+            elif btype == "text":
+                text = (block.get("text") or "").strip()
+                if text:
+                    log.debug("claude_code.stream.assistant_text", excerpt=text[:200])
+    elif et == "user":
+        msg = event.get("message", {}) or {}
+        for block in msg.get("content", []) or []:
+            if block.get("type") == "tool_result":
+                content = block.get("content")
+                if isinstance(content, list):
+                    summary = " ".join(
+                        str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content
+                    )
+                else:
+                    summary = str(content or "")
+                log.info(
+                    "claude_code.stream.tool_result",
+                    tool_use_id=block.get("tool_use_id"),
+                    is_error=block.get("is_error", False),
+                    excerpt=summary[:200],
+                )
+    elif et == "result":
+        log.info(
+            "claude_code.stream.result",
+            subtype=event.get("subtype"),
+            duration_ms=event.get("duration_ms"),
+            num_turns=event.get("num_turns"),
+            total_cost_usd=event.get("total_cost_usd"),
+        )
 
 
 # ── Verdict ───────────────────────────────────────────────────────────────────
@@ -287,7 +376,13 @@ class ClaudeCodePlugin:
         argv = [
             cli_path,
             "--print",
-            "--output-format=json",
+            # stream-json emits one JSON event per line as work progresses.
+            # We parse it post-hoc (after the subprocess returns / times out)
+            # to log per-event observability — which Task got dispatched, when
+            # each subagent returned, what tool calls each made. `--verbose`
+            # is required when streaming JSON.
+            "--output-format=stream-json",
+            "--verbose",
             "--permission-mode=bypassPermissions",
             # Task is required so the parent reviewer can dispatch yaaos-* subagents.
             "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task",
@@ -326,11 +421,21 @@ class ClaudeCodePlugin:
 
         telemetry = InvocationTelemetry(latency_ms=result.duration_ms, raw_stderr=result.stderr)
 
+        # Parse stream-json events even on timeout / non-zero exit — they're
+        # the only diagnostic we have for "where did this get stuck?". Log
+        # every event so operators can read the trace in backend logs.
+        events = _parse_stream_events(result.stdout)
+        for ev in events:
+            _log_stream_event(ev)
+        final_result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+
         if result.timed_out:
             return ReviewResult(
                 status=InvocationStatus.TIMEOUT,
-                telemetry=telemetry,
-                error_message=f"claude did not return within {timeout}s",
+                telemetry=telemetry.model_copy(update={"raw_output": result.stdout}),
+                error_message=(
+                    f"claude did not return within {timeout}s (parsed {len(events)} stream events)"
+                ),
             )
 
         if result.exit_code != 0:
@@ -341,20 +446,19 @@ class ClaudeCodePlugin:
                 error_message=f"claude exited {result.exit_code}: {first_line}",
             )
 
-        try:
-            envelope = json.loads(result.stdout)
-            agent_text = envelope.get("result", "")
-            usage = envelope.get("usage", {})
-            tokens_in = usage.get("input_tokens")
-            tokens_out = usage.get("output_tokens")
-            cost = envelope.get("total_cost_usd")
-            cost_usd = Decimal(str(cost)) if cost is not None else None
-        except (json.JSONDecodeError, AttributeError, KeyError) as e:
+        if final_result_event is None:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
                 telemetry=telemetry.model_copy(update={"raw_output": result.stdout}),
-                error_message=f"could not parse claude wrapper output: {e}",
+                error_message="claude stream contained no `result` event",
             )
+
+        agent_text = final_result_event.get("result", "")
+        usage = final_result_event.get("usage", {}) or {}
+        tokens_in = usage.get("input_tokens")
+        tokens_out = usage.get("output_tokens")
+        cost = final_result_event.get("total_cost_usd")
+        cost_usd = Decimal(str(cost)) if cost is not None else None
 
         telemetry = telemetry.model_copy(
             update={"tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd}
