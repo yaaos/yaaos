@@ -33,9 +33,9 @@ Single parent invocation. The CLI is given the Task tool so the parent can dispa
 
 **Step 1 — load settings + build argv (`_prepare_invocation`):**
 
-`_load_settings_for_invocation` selects the single `claude_code_settings` row and decrypts the Anthropic key. Returns `(api_key, cli_path, default_timeout_seconds)`. No key or no CLI path: early `AGENT_ERROR`.
+`_load_settings_for_invocation` selects the single `claude_code_settings` row and decrypts the Anthropic key. Returns `(api_key, cli_path)`. No key or no CLI path: early `AGENT_ERROR`. The default timeout is a module constant (`_DEFAULT_TIMEOUT_SECONDS = 1200`); per-call override via `agent_config["timeout_seconds"]`.
 
-Argv: `claude --print --output-format=stream-json --verbose --permission-mode=bypassPermissions --allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)` plus optional `--model` / `--max-turns` from `agent_config`. `Task` lets the parent dispatch yaaos-* subagents. `Bash` is restricted to read-only git commands so the agent can `git diff base_sha..HEAD` itself rather than yaaos inlining the diff into the prompt (saves tens of thousands of tokens on large PRs and avoids duplicating the diff across N subagent task briefs). No `Bash` for non-git, no `Write`, no `Edit`. `agent_config["timeout_seconds"]` overrides the 600s default. `stream-json` (requires `--verbose`) emits one JSON event per line as work progresses — we parse it post-hoc to log a per-event trace so stuck or timed-out runs leave readable diagnostics.
+Argv: `claude --print --output-format=stream-json --verbose --permission-mode=bypassPermissions --allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)` plus optional `--model` / `--max-turns` from `agent_config`. `Task` lets the parent dispatch yaaos-* subagents. `Bash` is restricted to read-only git commands so the agent can `git diff base_sha..HEAD` itself rather than yaaos inlining the diff into the prompt (saves tens of thousands of tokens on large PRs and avoids duplicating the diff across N subagent task briefs). No `Bash` for non-git, no `Write`, no `Edit`. Timeout: `agent_config["timeout_seconds"]` overrides the `_DEFAULT_TIMEOUT_SECONDS` module constant (1200s / 20 min) — sized for real-PR reviews where the parent fans out to multiple subagents. `stream-json` (requires `--verbose`) emits one JSON event per line as work progresses — we parse it post-hoc to log a per-event trace so stuck or timed-out runs leave readable diagnostics.
 
 Env: copy of `os.environ` with `ANTHROPIC_API_KEY` injected. Key never on argv.
 
@@ -98,7 +98,7 @@ This file never branches on test env vars. When `YAAOS_CODING_AGENT_STUB` is set
 
 ## Data owned
 
-- `claude_code_settings` — one row per org. Columns: `encrypted_anthropic_api_key`, `default_model` (optional), `cli_path` (optional), `default_timeout_seconds` (default 600).
+- `claude_code_settings` — one row per org. Columns: `encrypted_anthropic_api_key`, `default_model` (optional), `cli_path` (optional).
 
 ## How it's tested
 

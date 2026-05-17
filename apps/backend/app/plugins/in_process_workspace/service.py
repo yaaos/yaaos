@@ -44,6 +44,23 @@ exec printf '%s\\n' "$YAAOS_GIT_TOKEN"
 """
 
 
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Best-effort SIGTERM → 2s grace → SIGKILL of the subprocess's group.
+
+    `start_new_session=True` at spawn time put the subprocess in its own
+    group, so `killpg` reaches every descendant (the Claude Code CLI shells
+    out to its own children — `git`, tool subprocesses — and we want them
+    all reaped). Used from both the timeout path and the caller-cancel path.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        await asyncio.sleep(2)
+        if proc.returncode is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 class InProcessWorkspaceProvider:
     meta = PluginMeta(
         id="in_process",
@@ -159,8 +176,14 @@ class InProcessWorkspaceProvider:
         """Run a coding-agent CLI inside the workspace.
 
         cwd is the workspace's internal tempdir (private to this plugin).
-        Timeout uses SIGTERM → 2s grace → SIGKILL of the process group so
-        child processes are also reaped.
+        Two kill paths share the same SIGTERM → 2s grace → SIGKILL escalation
+        against the process group (so the CLI's child processes are reaped too):
+
+        - **Timeout** (`asyncio.wait_for(..., timeout=timeout_seconds)`) — returns
+          a `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
+        - **Cancellation** — caller (e.g. `reviewer.cancel_pending`) cancels the
+          surrounding task. We kill the process group, then re-raise
+          `CancelledError` so the cancellation unwinds normally.
         """
         working_dir = plugin_state.get("working_dir")
         if not working_dir or not os.path.isdir(working_dir):
@@ -190,18 +213,22 @@ class InProcessWorkspaceProvider:
             )
         except TimeoutError:
             timed_out = True
-            # Best-effort kill of the whole process group.
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                await asyncio.sleep(2)
-                if proc.returncode is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            await _kill_process_group(proc)
             try:
                 stdout_b, stderr_b = await proc.communicate()
             except Exception:
                 stdout_b, stderr_b = b"", b""
+        except asyncio.CancelledError:
+            # Caller-initiated cancel — kill the subprocess group, drain pipes
+            # (with a short timeout so a stuck child doesn't block the cancel
+            # forever), then propagate the cancellation. The drain runs inside
+            # the except block so a subsequent re-cancel doesn't fire here.
+            await _kill_process_group(proc)
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=5)
+            except (TimeoutError, Exception):
+                pass
+            raise
 
         duration_ms = int((time.monotonic() - start) * 1000)
         exit_code = proc.returncode if proc.returncode is not None else -1
@@ -296,13 +323,7 @@ class InProcessWorkspaceProvider:
                 timeout=timeout_seconds,
             )
         except TimeoutError as e:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                await asyncio.sleep(2)
-                if proc.returncode is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            await _kill_process_group(proc)
             raise WorkspaceProvisionError(f"{argv[0]} timed out after {timeout_seconds}s") from e
 
         if proc.returncode != 0:

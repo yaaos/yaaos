@@ -54,6 +54,23 @@ _REVIEWER_TAG = "yaaos"
 _CODING_AGENT_PLUGIN_ID = "claude_code"
 
 
+# In-flight task registry, keyed by review_job_id. Used by `cancel_pending`
+# to interrupt the running coro mid-CLI: flipping the DB row to cancelled
+# alone leaves the subprocess running until its own timeout. Cancelling the
+# asyncio task propagates `CancelledError` down through `coding_agent.review`
+# → `workspace.run_coding_agent_cli`, which kills the subprocess group
+# (SIGTERM → 2s → SIGKILL) before the cancellation unwinds further. The
+# done callback removes entries automatically; this registry is best-effort
+# (only useful for tasks spawned in the current process — see `startup_recovery`
+# for the cross-restart story).
+_inflight_tasks: dict[UUID, asyncio.Task[None]] = {}
+
+
+def _register_inflight(job_id: UUID, task: asyncio.Task[None]) -> None:
+    _inflight_tasks[job_id] = task
+    task.add_done_callback(lambda _t: _inflight_tasks.pop(job_id, None))
+
+
 # Events
 
 
@@ -197,7 +214,7 @@ async def schedule_review(
         org_id=org_id,
     )
     await publish(ReviewJobStatusChanged(pr_id=pr.id, review_job_id=new_id, status="queued"))
-    spawn(
+    task = spawn(
         f"review_job:{new_id}",
         _run_review_job(
             ReviewJobInput(
@@ -208,6 +225,7 @@ async def schedule_review(
             )
         ),
     )
+    _register_inflight(new_id, task)
     return new_id
 
 
@@ -245,6 +263,16 @@ async def cancel_pending(
             actor=actor,
             org_id=org_id,
         )
+        # Interrupt the in-flight coro so the CLI subprocess is actually
+        # killed — not just left running until its own timeout. The asyncio
+        # cancel propagates through `coding_agent.review` →
+        # `workspace.run_coding_agent_cli`, which catches `CancelledError`
+        # and kills the subprocess group before the cancellation unwinds.
+        # If no task is registered (e.g., post-restart), this is a no-op;
+        # the DB row is already in `cancelled` and that's what the UI shows.
+        task = _inflight_tasks.get(row.id)
+        if task is not None and not task.done():
+            task.cancel()
     return len(inflight)
 
 
@@ -601,6 +629,17 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             org_id=org_id,
         )
         await publish(ReviewJobStatusChanged(pr_id=ctx.pr_id, review_job_id=job_id, status="posted"))
+
+    except asyncio.CancelledError:
+        # Operator-initiated cancel: the DB row was flipped to `cancelled`
+        # and the `review_job.cancelled` audit was written by `cancel_pending`
+        # BEFORE the task was cancelled. The workspace's `async with` exit
+        # has already destroyed the tempdir and the CLI subprocess was killed
+        # by `workspace.run_coding_agent_cli`'s CancelledError handler. There
+        # is nothing more to do here — let the cancellation propagate so the
+        # task ends cleanly.
+        log.info("review_job.cancelled_mid_flight", review_job_id=str(job_id))
+        raise
 
     except Exception as e:
         log.exception("review_job.handler_crashed", review_job_id=str(job_id))

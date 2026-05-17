@@ -38,8 +38,15 @@ Lets a coding-agent plugin run a CLI inside the workspace. Provider owns subproc
 
 1. Read `working_dir` from `plugin_state`. Missing/vanished → `WorkspaceExecError`.
 2. `asyncio.create_subprocess_exec` with `cwd=working_dir`, `start_new_session=True` (so SIGKILL can target the process group if the agent spawns children).
-3. `asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout_seconds)`. On `TimeoutError`: `os.killpg(SIGTERM)` → 2s grace → `os.killpg(SIGKILL)`. Then drain.
+3. `asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout_seconds)`.
 4. Return `CodingAgentCliResult`. Bytes decoded `errors="replace"` so partial UTF-8 never crashes the caller.
+
+Two kill paths share a single `_kill_process_group(proc)` helper (SIGTERM → 2s grace → SIGKILL of the whole process group):
+
+- **Timeout** — `asyncio.wait_for` raises `TimeoutError`; we kill, drain, return `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
+- **Caller cancel** — outer task is cancelled (e.g., `reviewer.cancel_pending` → `task.cancel()`); `CancelledError` raises inside `wait_for`. We kill, drain (with a 5s upper bound so a wedged child can't block the cancel forever), then re-raise `CancelledError`. The cancellation unwinds normally; the workspace's `async with` exit destroys the tempdir.
+
+Without the cancel kill path, the CLI would keep running until its own timeout even though the row is `cancelled` and the UI shows it.
 
 Provider does not interpret `argv` or `stdout`; schema-aware logic lives in the coding-agent plugin.
 
@@ -56,7 +63,8 @@ Always `healthy=True, message="ok"` in M01. Tempdir is part of the host filesyst
 - `_clone_url_for(plugin_id, external_id)` — builds HTTPS URL. GitHub only; raises for unknown.
 - `_write_askpass()` — chmod 0700 askpass in a sibling tempfile.
 - `_git_env_with_token(askpass_path, token)` — env dict.
-- `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Same SIGTERM/SIGKILL dance.
+- `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Uses `_kill_process_group` on timeout.
+- `_kill_process_group(proc)` — module-level helper; SIGTERM → 2s → SIGKILL of the process group. Shared by `run_coding_agent_cli` (timeout + cancel) and `_run_subprocess` (timeout).
 
 ### Test-mode wrapping
 

@@ -94,7 +94,6 @@ async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
                 id=uuid4(),
                 org_id=M01_ORG_ID,
                 encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
-                default_timeout_seconds=600,
             )
         )
         await s.commit()

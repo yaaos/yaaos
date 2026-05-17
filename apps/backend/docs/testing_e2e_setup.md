@@ -44,7 +44,7 @@ Does not check for existing rows; always inserts. Callers should pair with a fre
 
 - `GitHubSettingsRow` with `app_id="12345"`, `slug="yaaos-test"` (matches fake-github's `/app`), Fernet-encrypted placeholder PEM + webhook secret. fake-github accepts any bearer token; key material is never validated downstream.
 - `GitHubAppInstallationRow` with `install_external_id="fake-install-1"`, status `"active"`, given `account_login`.
-- `ClaudeCodeSettingsRow` with encrypted placeholder Anthropic key, `default_timeout_seconds=600`.
+- `ClaudeCodeSettingsRow` with encrypted placeholder Anthropic key.
 
 After this, the system passes every onboarding contributor check and is ready for webhooks. The matching webhook payload (`installation: {id: "fake-install-1"}`) is built by `apps/e2e/tests/_helpers.ts`.
 

@@ -46,6 +46,13 @@ from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 log = structlog.get_logger("claude_code")
 
 
+# Default per-invocation timeout for the Claude Code CLI. Big PRs with parallel
+# subagent dispatch + per-finding verification can legitimately take 10-15 min
+# on first run; 20 min gives headroom. Per-call override available via
+# `ReviewContext.agent_config["timeout_seconds"]`.
+_DEFAULT_TIMEOUT_SECONDS = 1200
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -315,12 +322,13 @@ class ClaudeCodePlugin:
         docs_url="https://docs.claude.com/en/docs/claude-code",
     )
 
-    async def _load_settings_for_invocation(self) -> tuple[str | None, str | None, int]:
-        """Returns (decrypted_api_key, cli_path, timeout_seconds)."""
+    async def _load_settings_for_invocation(self) -> tuple[str | None, str | None]:
+        """Returns (decrypted_api_key, cli_path). Timeout is a constant — see
+        `_DEFAULT_TIMEOUT_SECONDS`. Per-call override via `agent_config["timeout_seconds"]`."""
         async with db_session() as s:
             row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
         if row is None:
-            return None, None, 600
+            return None, None
         api_key: str | None = None
         if row.encrypted_anthropic_api_key:
             try:
@@ -328,7 +336,7 @@ class ClaudeCodePlugin:
                 api_key = fernet.decrypt(row.encrypted_anthropic_api_key).decode()
             except InvalidToken:
                 log.warning("claude_code.api_key_decrypt_failed")
-        return api_key, row.cli_path, row.default_timeout_seconds
+        return api_key, row.cli_path
 
     async def review(self, workspace: Workspace, context: ReviewContext) -> ReviewResult:
         prep = await self._prepare_invocation(context.agent_config)
@@ -369,7 +377,7 @@ class ClaudeCodePlugin:
 
         (Reply path coerces the result; same error shape applies.)
         """
-        api_key, cli_path_setting, default_timeout = await self._load_settings_for_invocation()
+        api_key, cli_path_setting = await self._load_settings_for_invocation()
         if not api_key:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
@@ -384,7 +392,7 @@ class ClaudeCodePlugin:
 
         env = os.environ.copy()
         env["ANTHROPIC_API_KEY"] = api_key
-        timeout = agent_config.get("timeout_seconds") or default_timeout
+        timeout = agent_config.get("timeout_seconds") or _DEFAULT_TIMEOUT_SECONDS
         argv = [
             cli_path,
             "--print",
@@ -503,7 +511,7 @@ class ClaudeCodePlugin:
         return ValidationResult(valid=not errors, errors=errors)
 
     async def health_check(self) -> HealthStatus:
-        api_key, cli_path_setting, _ = await self._load_settings_for_invocation()
+        api_key, cli_path_setting = await self._load_settings_for_invocation()
         if not api_key:
             return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
         cli_path = cli_path_setting or shutil.which("claude")
@@ -613,7 +621,6 @@ async def _set_anthropic_key(org_id: UUID, raw_key: str) -> None:
                 id=uuid4(),
                 org_id=org_id,
                 encrypted_anthropic_api_key=enc,
-                default_timeout_seconds=600,
             )
             s.add(row)
         else:

@@ -38,7 +38,14 @@ Route spec registers one `on_startup` hook: `startup_recovery`.
 
 "At most one in-flight `ReviewJob` per PR" — enforced by service logic, not a unique index. `schedule_review` flips every `queued`/`running` row for the PR to `cancelled` with `skip_reason='superseded'`, writes `review_job.cancelled` audit, inserts the new `queued` row, spawns the handler.
 
-Cancellation is DB-driven and cooperative. No task IDs. The coro polls its row at safe points and returns early when status flips off `queued`/`running`.
+### Cancellation — DB flip + task cancel
+
+Two-track:
+
+1. **DB-driven** — `cancel_pending` flips the row to `cancelled` and writes the `review_job.cancelled` audit. Always happens; what the UI reads.
+2. **Task-driven** — `cancel_pending` also calls `asyncio.Task.cancel()` on the in-flight task (looked up in a module-level `_inflight_tasks` registry keyed by `review_job_id`). The cancellation propagates through `coding_agent.review` → `workspace.run_coding_agent_cli`, which catches `CancelledError`, kills the subprocess group (SIGTERM → 2s → SIGKILL), drains the pipes, and re-raises. The handler's outer `except asyncio.CancelledError` swallows the propagation (DB state is already terminal) and lets the cancellation finish unwinding.
+
+Without the task-cancel half, the CLI would keep running until its own timeout (10 minutes default) even though the UI shows `cancelled`. Restart-survivability: `_inflight_tasks` is per-process; a task from a previous process is gone, but `cancel_pending` is a no-op for those (DB row is already cancelled, no live task to find).
 
 ### `schedule_review` — main entry point
 
