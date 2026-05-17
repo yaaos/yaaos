@@ -37,6 +37,7 @@ Migration list (in order):
 1. `001_create_all_m01` — imports every module's `models`, calls `Base.metadata.create_all`.
 2. `002_github_settings_slug` — adds `slug` column to `github_settings`.
 3. `003_drop_repos_table` — drops `repos`; converts dependents from FK(`repo_id`) → string(`repo_external_id`), backfilling first.
+4. `004_review_jobs_triggered_by_destination` — adds `triggered_by` (default `'pr_ready'`) and `destination` (default `'vcs'`) to `review_jobs`. Promotes the audit-only `trigger_reason` to a queryable column; preps the row for future `run_review` callers that don't post to VCS.
 
 Each migration runs in its own transaction; on success the version inserts into `schema_migrations`. Re-running `migrate()` is a no-op for applied versions.
 

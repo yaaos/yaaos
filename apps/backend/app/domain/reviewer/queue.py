@@ -222,6 +222,8 @@ async def schedule_review(
                     agent_id=agent.id,
                     kind="review",
                     status="queued",
+                    triggered_by=trigger_reason,
+                    destination="vcs",
                 )
             )
             await s.commit()
@@ -389,6 +391,8 @@ class ReviewJob(BaseModel):
     agent_id: UUID
     kind: str
     status: str
+    triggered_by: str
+    destination: str
     skip_reason: str | None
     scheduled_at: datetime
     started_at: datetime | None
@@ -414,6 +418,8 @@ class ReviewJob(BaseModel):
             agent_id=row.agent_id,
             kind=row.kind,
             status=row.status,
+            triggered_by=row.triggered_by,
+            destination=row.destination,
             skip_reason=row.skip_reason,
             scheduled_at=row.scheduled_at,
             started_at=row.started_at,
@@ -667,8 +673,20 @@ async def _run_ticket_review(
             ),
             org_id=org_id,
         ) as ws:
-            await asyncio.gather(
+            # Invoke every agent in parallel; gather the successful outcomes.
+            # Failed / cancelled / crashed invocations return None and have
+            # already transitioned their row. Successful ones get posted to
+            # VCS in parallel afterwards. The two-phase split (invoke vs.
+            # complete) is what makes a future `run_review(workspace, ctx)`
+            # entry point — for implementer agents — mechanical: it calls
+            # `_invoke_one_agent` per agent and returns outcomes without
+            # the VCS-post phase.
+            outcomes = await asyncio.gather(
                 *(_invoke_one_agent(workspace=ws, job_id=job.id, ctx=ctx, org_id=org_id) for job in pending),
+                return_exceptions=False,
+            )
+            await asyncio.gather(
+                *(_complete_to_vcs(outcome=o, ctx=ctx, org_id=org_id) for o in outcomes if o is not None),
                 return_exceptions=False,
             )
 
@@ -695,19 +713,46 @@ async def _run_ticket_review(
             )
 
 
+@dataclass
+class _InvocationOutcome:
+    """Result of running one agent against the workspace.
+
+    Returned by `_invoke_one_agent`. The caller decides what to do with it:
+    today's `_run_ticket_review` passes it to `_complete_to_vcs` (posts the
+    review, writes the `review_job.posted` audit, flips status). A future
+    `run_review` entry point would return outcomes to its caller without
+    posting — the implementer agent that called `run_review` decides whether
+    to attach findings to a later PR, feed them back into its own loop, or
+    discard.
+    """
+
+    job_id: UUID
+    agent: Any  # ReviewerAgent
+    result: Any  # coding_agent.ReviewResult
+
+
 async def _invoke_one_agent(
     *,
     workspace: Workspace,
     job_id: UUID,
     ctx: _SharedReviewContext,
     org_id: UUID,
-) -> None:
-    """Run one agent against the shared workspace.
+) -> _InvocationOutcome | None:
+    """Run one agent against the shared workspace and return its outcome.
 
     Builds the per-agent `ReviewContext`, audits the frozen-snapshot
-    `prompt_sent`, invokes `coding_agent.review`, posts the review, and
-    updates the job row. Each invocation is independent — one agent failing
-    doesn't affect the others, and the gather caller awaits all of them.
+    `prompt_sent`, invokes `coding_agent.review`, and returns the outcome.
+    Does NOT post to VCS, persist the result, or flip status — those are the
+    caller's responsibility (see `_complete_to_vcs`).
+
+    Returns `None` if the job was cancelled at any of the safe-point checks
+    or the agent invocation failed (in which case `_transition_failed` has
+    already been called).
+
+    Side effects: writes `review_job.prompt_sent` audit; updates `prompt_hash`
+    + `lessons_applied` on the row; sets `current_step="invoking_agent"`.
+    Crashes are caught here and converted to `failed`, so the gather caller
+    never sees an exception.
     """
     try:
         # Cancel check before doing any work — operator may have cancelled
@@ -718,7 +763,7 @@ async def _invoke_one_agent(
                 await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
             ).scalar_one_or_none()
         if row is None or row.status != "running":
-            return
+            return None
         agent_id = row.agent_id
 
         agent = await get_agent_by_id(agent_id, org_id=org_id)
@@ -770,7 +815,7 @@ async def _invoke_one_agent(
                 await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
             ).scalar_one_or_none()
         if row is None or row.status != "running":
-            return
+            return None
 
         await _set_step(job_id, "invoking_agent", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id)
 
@@ -780,80 +825,7 @@ async def _invoke_one_agent(
             context=review_ctx,
         )
 
-        if result.status == InvocationStatus.SUCCESS:
-            await _set_step(
-                job_id, "posting_review", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id
-            )
-            review_obj = Review(
-                agent_tag=agent.name,
-                state=result.state or "COMMENT",
-                summary_body=result.summary_body,
-                findings=result.findings,
-            )
-            vcs_plugin = get_vcs_plugin(ctx.plugin_id)
-            post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
-            async with db_session() as s:
-                for cid in post_result.finding_to_comment_external_id.values():
-                    s.add(
-                        PostedCommentRow(
-                            external_comment_id=cid,
-                            org_id=org_id,
-                            pr_id=ctx.pr_id,
-                            review_job_id=job_id,
-                            agent_id=agent.id,
-                        )
-                    )
-                started = (
-                    await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
-                ).scalar_one_or_none()
-                duration = None
-                if started and started.started_at:
-                    duration = int((_utcnow() - started.started_at).total_seconds())
-                await s.execute(
-                    update(ReviewJobRow)
-                    .where(ReviewJobRow.id == job_id)
-                    .values(
-                        status="posted",
-                        completed_at=_utcnow(),
-                        review_external_id=post_result.review_external_id,
-                        tokens_in=result.telemetry.tokens_in,
-                        tokens_out=result.telemetry.tokens_out,
-                        cost_usd=float(result.telemetry.cost_usd)
-                        if result.telemetry.cost_usd is not None
-                        else None,
-                        duration_s=duration,
-                        current_step="posted",
-                        findings=[f.model_dump(mode="json") for f in result.findings],
-                    )
-                )
-                await s.commit()
-            await audit_for_review_job(
-                job_id,
-                "review_job.posted",
-                _PostedPayload(
-                    verdict=result.state or "COMMENT",
-                    finding_count=len(result.findings),
-                    tokens_in=result.telemetry.tokens_in,
-                    tokens_out=result.telemetry.tokens_out,
-                    cost_usd=str(result.telemetry.cost_usd)
-                    if result.telemetry.cost_usd is not None
-                    else None,
-                    latency_ms=result.telemetry.latency_ms,
-                    review_external_id=post_result.review_external_id,
-                ),
-                actor=Actor.agent(agent.id),
-                org_id=org_id,
-            )
-            await publish(
-                ReviewJobStatusChanged(
-                    ticket_id=ctx.ticket_id,
-                    pr_id=ctx.pr_id,
-                    agent_id=agent.id,
-                    review_job_id=job_id,
-                    status="posted",
-                )
-            )
-        else:
+        if result.status != InvocationStatus.SUCCESS:
             await _transition_failed(
                 job_id,
                 result.error_message or f"agent returned status={result.status}",
@@ -861,11 +833,113 @@ async def _invoke_one_agent(
                 invocation_status=str(result.status),
                 raw_output_excerpt=(result.telemetry.raw_output or "")[:1000],
             )
+            return None
+
+        return _InvocationOutcome(job_id=job_id, agent=agent, result=result)
 
     except Exception as e:
         log.exception("invoke_one_agent.crashed", review_job_id=str(job_id))
         await _transition_failed(
             job_id, f"agent invocation crashed: {e}", org_id=org_id, invocation_status="crashed"
+        )
+        return None
+
+
+async def _complete_to_vcs(
+    *,
+    outcome: _InvocationOutcome,
+    ctx: _SharedReviewContext,
+    org_id: UUID,
+) -> None:
+    """Take a successful invocation outcome and post it back to the VCS.
+
+    Posts the review via `vcs_plugin.post_review`, writes one `PostedCommentRow`
+    per finding-that-became-a-comment, flips `status='posted'` + `destination='vcs'`,
+    records telemetry + findings JSON, writes the `review_job.posted` audit
+    entry, and publishes the status-change event.
+
+    Separated from `_invoke_one_agent` so a future `run_review` entry point
+    can call `_invoke_one_agent` without forcing a VCS post — the implementer
+    agent (no PR yet) wants the outcome back as data.
+    """
+    job_id = outcome.job_id
+    agent = outcome.agent
+    result = outcome.result
+
+    try:
+        await _set_step(job_id, "posting_review", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id)
+        review_obj = Review(
+            agent_tag=agent.name,
+            state=result.state or "COMMENT",
+            summary_body=result.summary_body,
+            findings=result.findings,
+        )
+        vcs_plugin = get_vcs_plugin(ctx.plugin_id)
+        post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
+        async with db_session() as s:
+            for cid in post_result.finding_to_comment_external_id.values():
+                s.add(
+                    PostedCommentRow(
+                        external_comment_id=cid,
+                        org_id=org_id,
+                        pr_id=ctx.pr_id,
+                        review_job_id=job_id,
+                        agent_id=agent.id,
+                    )
+                )
+            started = (
+                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
+            ).scalar_one_or_none()
+            duration = None
+            if started and started.started_at:
+                duration = int((_utcnow() - started.started_at).total_seconds())
+            await s.execute(
+                update(ReviewJobRow)
+                .where(ReviewJobRow.id == job_id)
+                .values(
+                    status="posted",
+                    destination="vcs",
+                    completed_at=_utcnow(),
+                    review_external_id=post_result.review_external_id,
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
+                    cost_usd=float(result.telemetry.cost_usd)
+                    if result.telemetry.cost_usd is not None
+                    else None,
+                    duration_s=duration,
+                    current_step="posted",
+                    findings=[f.model_dump(mode="json") for f in result.findings],
+                )
+            )
+            await s.commit()
+        await audit_for_review_job(
+            job_id,
+            "review_job.posted",
+            _PostedPayload(
+                verdict=result.state or "COMMENT",
+                finding_count=len(result.findings),
+                tokens_in=result.telemetry.tokens_in,
+                tokens_out=result.telemetry.tokens_out,
+                cost_usd=str(result.telemetry.cost_usd) if result.telemetry.cost_usd is not None else None,
+                latency_ms=result.telemetry.latency_ms,
+                review_external_id=post_result.review_external_id,
+            ),
+            actor=Actor.agent(agent.id),
+            org_id=org_id,
+        )
+        await publish(
+            ReviewJobStatusChanged(
+                ticket_id=ctx.ticket_id,
+                pr_id=ctx.pr_id,
+                agent_id=agent.id,
+                review_job_id=job_id,
+                status="posted",
+            )
+        )
+    except Exception as e:
+        log.exception("complete_to_vcs.crashed", review_job_id=str(job_id))
+        await _transition_failed(
+            job_id, f"vcs post crashed: {e}", org_id=org_id, invocation_status="post_failed"
         )
 
 

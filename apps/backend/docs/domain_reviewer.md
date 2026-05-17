@@ -69,9 +69,11 @@ Fire-and-forget coro spawned once per `schedule_review` call. Owns the ticket-sc
 
 Uncaught exceptions in the coordinator log `ticket_review.coordinator_crashed` and mark any still-`running` rows as failed so the UI doesn't show forever-running.
 
-### `_invoke_one_agent` — per-agent work in shared workspace
+### `_invoke_one_agent` + `_complete_to_vcs` — split for caller flexibility
 
-Each parallel task does:
+Per-agent work is two functions, separated so a future `run_review` entry point can do the invoke without forcing a VCS post.
+
+**`_invoke_one_agent(workspace, job_id, ctx, org_id) → _InvocationOutcome | None`** — pure-ish:
 
 1. **Cancel check** — bail if the row is no longer `running`.
 2. **Build per-agent `ReviewContext`** — reuses `ctx`'s diff/lessons/prior_bodies; layers in this agent's persona + agent_config.
@@ -79,9 +81,26 @@ Each parallel task does:
 4. **Final cancel check** before the expensive CLI call.
 5. **Step progress** — `_set_step("invoking_agent", ...)`.
 6. **Invoke** — `coding_agent.review(plugin_id, workspace, context)`.
-7. **Post result** — on `SUCCESS`: build `vcs.Review`, call `post_review`, write one `PostedCommentRow` per finding-that-became-a-comment, update row (`status='posted'`, telemetry, JSON findings); write `review_job.posted` audit; publish status change. Non-success → `_transition_failed`.
+7. **Return outcome** — `{job_id, agent, result}` on success. On non-success, `_transition_failed` runs and the function returns `None`. On cancel-check miss, also returns `None`.
 
-Uncaught exceptions log `invoke_one_agent.crashed` and convert to `failed`. One failing agent doesn't affect the others — they keep running.
+Crashes are caught and converted to `failed`; the gather caller never sees an exception.
+
+**`_complete_to_vcs(outcome, ctx, org_id) → None`** — takes a successful outcome and posts:
+
+1. **Step progress** — `_set_step("posting_review", ...)`.
+2. **Build `vcs.Review`** and call `vcs_plugin.post_review`.
+3. **Persist** — `PostedCommentRow` per finding-that-became-a-comment; update row with `status='posted'`, `destination='vcs'`, telemetry, JSON findings.
+4. **Audit + publish** — `review_job.posted`; `ReviewJobStatusChanged(status="posted")`.
+
+Coordinator calls `_invoke_one_agent` for every pending job via `asyncio.gather`, then calls `_complete_to_vcs` on each non-None outcome via a second `asyncio.gather`. Behavior is identical to the prior single-function path; the split is structural prep.
+
+### Planned: `run_review` (synchronous entry point for implementer agents)
+
+Not implemented yet — design recorded here so the future addition is mechanical:
+
+- **Signature** — `async def run_review(ticket_id, *, agent_names, workspace=None, ..., org_id) -> list[_InvocationOutcome]`.
+- **Behavior** — same coordinator skeleton as `_run_ticket_review` (resolve ctx, skip checks, secrets pre-flight, `asyncio.gather(_invoke_one_agent ...)`) but: (a) does NOT call `_complete_to_vcs`; (b) accepts an existing `workspace` if the caller has one (implementer agents already have a workspace and don't need a duplicate); (c) returns outcomes to the caller; (d) writes the `review_job` row with `triggered_by='implementer_loop'` and `destination='caller'`.
+- **Why not implement now?** No consumer. The exact shape (sync vs async, what `_InvocationOutcome` exposes to callers, whether to return raw `result` or a narrower view) firms up when the implementer module lands.
 
 ### Concurrency safety in the shared workspace
 
@@ -110,6 +129,13 @@ Five regex rules catch high-confidence shapes: AWS access key, GitHub token, Ant
 ### Denormalized fields on `review_jobs`
 
 Beyond lifecycle: `prompt_hash`, `lessons_applied` (UUID[]), `tokens_in`, `tokens_out`, `cost_usd`, `duration_s`, `error_message`, `review_external_id`, JSON-dumped `findings`. Convenience views — audit log remains historical truth.
+
+### Caller + destination columns
+
+Two fields on every `review_jobs` row capture who kicked the review off and where the result went:
+
+- **`triggered_by`** — kickoff event. Values today: `pr_ready`, `pr_synchronized`, `rereview_command`, `ui_rereview`. Future: `implementer_loop` once an implementer module calls `run_review`. Same string the `review_job.scheduled` audit payload carries; promoted to a column so the UI can filter ("show me everything triggered by implementer agents") without joining audit.
+- **`destination`** — where findings went. `vcs` today (posted via the VCS plugin). `caller` for future `run_review` invocations that return findings without posting. Disambiguates `status='posted'` between "posted to GitHub" and "returned to caller" without renaming the status enum.
 
 ### Agent CRUD + seeding
 

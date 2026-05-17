@@ -100,6 +100,7 @@ _M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("001_create_all_m01", "create_all"),
     ("002_github_settings_slug", "add_github_settings_slug"),
     ("003_drop_repos_table", "drop_repos_table"),
+    ("004_review_jobs_triggered_by_destination", "add_review_jobs_triggered_by_destination"),
 )
 
 
@@ -176,6 +177,23 @@ async def _apply_drop_repos_table(conn) -> None:  # type: ignore[no-untyped-def]
         await conn.execute(text(stmt))
 
 
+async def _apply_add_review_jobs_triggered_by_destination(conn) -> None:  # type: ignore[no-untyped-def]
+    """Promote audit-only `trigger_reason` into a queryable column and add
+    `destination` so future `run_review` callers can be distinguished from
+    today's `schedule_review → post-to-VCS` flow.
+
+    Idempotent — works on fresh DBs (where `create_all` already added the
+    columns from the model) and on existing DBs where this migration is the
+    first time they appear.
+    """
+    statements: list[str] = [
+        "ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'pr_ready'",
+        "ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS destination TEXT NOT NULL DEFAULT 'vcs'",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 async def migrate() -> None:
     """Apply any un-applied migrations. Idempotent."""
     await ensure_schema_migrations_table()
@@ -192,6 +210,8 @@ async def migrate() -> None:
                 await _apply_add_github_settings_slug(conn)
             elif kind == "drop_repos_table":
                 await _apply_drop_repos_table(conn)
+            elif kind == "add_review_jobs_triggered_by_destination":
+                await _apply_add_review_jobs_triggered_by_destination(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

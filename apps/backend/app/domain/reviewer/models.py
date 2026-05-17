@@ -57,6 +57,14 @@ class ReviewJobRow(Base):
     )
     kind: Mapped[str] = mapped_column(String, nullable=False, default="review")
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    # Why this review was scheduled. Values: `pr_ready`, `pr_synchronized`,
+    # `rereview_command`, `ui_rereview`. Future: `implementer_loop` once an
+    # implementer module exists to call `run_review`.
+    triggered_by: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_ready")
+    # Where the review result went. `vcs` (today: posted via the VCS plugin).
+    # Future: `caller` when `run_review` returns findings without posting (used
+    # by implementer agents that have no PR to post against yet).
+    destination: Mapped[str] = mapped_column(String, nullable=False, server_default="vcs")
     skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
