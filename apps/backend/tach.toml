@@ -58,7 +58,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.primitives", 
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.audit_log", "app.core.config", "app.core.database", "app.core.events", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.memory", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.memory", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.settings"

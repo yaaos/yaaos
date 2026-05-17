@@ -37,6 +37,12 @@ from app.domain.reviewer.events import (
     ReviewStarted,
     ReviewSuperseded,
 )
+from app.domain.reviewer.llm import (
+    ClassifyReplyInput,
+    ClassifyReplyOutput,
+    classify_reply,
+    classify_reply_runnable,
+)
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import (
     AcknowledgmentDecisionRow,
@@ -98,6 +104,8 @@ __all__ = [
     "AgentReplyPosted",
     "AggregateRepository",
     "AuthorKind",
+    "ClassifyReplyInput",
+    "ClassifyReplyOutput",
     "CodeAnchor",
     "CommentMessage",
     "CommentMessageRow",
@@ -145,6 +153,8 @@ __all__ = [
     "TriggerInputs",
     "acquire_pr_lock",
     "cancel_pending",
+    "classify_reply",
+    "classify_reply_runnable",
     "decide_trigger",
     "get_review_job",
     "humanize_skip",
