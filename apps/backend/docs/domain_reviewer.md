@@ -6,6 +6,8 @@
 
 The busiest backend module. Owns the `ReviewJob` aggregate (one row per `(PR, agent, scheduling event)`), the three built-in reviewer agents (architecture, security, style), and the lifecycle from "needs review" through workspace provisioning, coding-agent invocation, finding parsing, and posting. Does not call LLMs directly — Claude Code does, behind the `domain/coding_agent` Protocol. Owns scheduling, debouncing, cancellation, audit trail, and cooperative-cancellation runtime on `core/primitives.spawn`.
 
+Each **ticket** gets one workspace; the agents on that ticket share it. The coordinator (`_run_ticket_review`) provisions once and gathers all per-agent invocations against the same checkout.
+
 ## Public interface
 
 Exported from `app/domain/reviewer/__init__.py`:
@@ -35,7 +37,7 @@ Route spec registers two `on_startup` hooks: `startup_recovery` and `_seed_built
 - `models.py` — `ReviewerAgentRow`, `ReviewJobRow`, `PostedCommentRow`.
 - `agent_crud.py` — `ReviewerAgent` view model + CRUD.
 - `seeds.py` — `DEFAULT_PROMPTS` and `builtin_prompt(name)`.
-- `queue.py` — events, audit payloads, `schedule_*`/`cancel_pending`, reads, `_run_review_job`, `_run_reply_job`, transitions, secrets detection, language detect, `startup_recovery`.
+- `queue.py` — events, audit payloads, `schedule_*`/`cancel_pending`, reads, `_run_ticket_review` (the per-ticket coordinator), `_invoke_one_agent` (per-agent work inside the shared workspace), `_run_reply_job`, transitions, secrets detection, language detect, `startup_recovery`.
 - `web.py` — routes.
 
 ### Per-PR queue discipline
@@ -46,29 +48,44 @@ Cancellation is DB-driven and cooperative. No task IDs. The coro polls its row a
 
 ### `schedule_review` — main entry point
 
-Called by `intake` for `pr_ready`, `pr_synchronized`, `rereview_command`, and the UI's re-review button. Accepts `agent_names="all"` (expands to the three names) or an explicit list. For each: cancels in-flight, inserts queued, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(status="queued")`, spawns `_run_review_job`. Debounce from `core.config.Settings.yaaos_review_debounce_seconds` (30s prod, 0s tests).
+Called by `intake` for `pr_ready`, `pr_synchronized`, `rereview_command`, and the UI's re-review button. Accepts `agent_names="all"` (expands to the three names) or an explicit list. For each agent: cancels in-flight (same `(pr_id, agent_id)`), inserts a queued row, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(status="queued")`. After all rows are created, spawns **ONE** coordinator (`_run_ticket_review`) for the ticket — not one coro per agent. Debounce from `core.config.Settings.yaaos_review_debounce_seconds` (30s prod, 0s tests).
 
-### `_run_review_job` — state machine handler
+### `_run_ticket_review` — per-ticket coordinator
 
-Fire-and-forget coro:
+Fire-and-forget coro spawned once per `schedule_review` call. Owns the ticket-scoped workspace lifecycle and dispatches every agent in parallel against it.
 
-1. **Debounce sleep** if positive.
-2. **Bail check** — re-read; if no longer `queued`, return. Freshly-scheduled reviews win the race.
-3. **Flip to running** — status, `started_at`, `last_heartbeat_at`, `current_step='resolving_entities'`.
-4. **Resolve entities** — ticket, PR, agent.
-5. **Step progress** — `_set_step("fetching_diff", ...)` updates `current_step`, bumps heartbeat, publishes `ReviewJobStepProgress`.
-6. **Fetch context** — lessons via `memory.list_for_repo`, diff via `vcs_plugin.fetch_diff`, prior yaaos comments via `vcs_plugin.list_yaaos_comments`.
-7. **Skip checks** — `is_fork`, `author_type == "bot"`, every diff file matches `intake.is_skippable_path` (trivial), or `additions + deletions > 5000` (too large). On match → `skipped(skip_reason=...)`.
-8. **Secrets pre-flight** — `_detect_secrets(diff)`. On match, post a one-shot refusal review, transition `skipped(skip_reason="secrets_detected")`.
-9. **Language detect** — walks `diff.files`, returns most common extension or `None`.
-10. **Build `ReviewContext`** — plugin owns prompt assembly and response-schema choice.
-11. **Hash + snapshot** — `prompt_hash = sha256(ctx.model_dump_json())`, denormalize hash and `lessons_applied`, write `review_job.prompt_sent` audit with frozen `_AgentSnapshot`, hash, lesson IDs, checkout SHA, language hint.
-12. **Provision workspace** — `with_workspace("in_process", ...)`.
-13. **Final bail check** inside the workspace context.
-14. **Invoke** — `coding_agent.review(plugin_id, workspace, context)`.
-15. **Post result** — on `SUCCESS`: build `vcs.Review`, call `post_review`, write one `PostedCommentRow` per finding-that-became-a-comment, update row (`status='posted'`, telemetry, JSON findings); write `review_job.posted` audit; publish status change. Non-success → `_transition_failed`.
+1. **Debounce sleep.**
+2. **Drop superseded** — re-read the passed job_ids; any not still `queued` were cancelled/superseded during debounce and are dropped from `pending`. If none remain, return.
+3. **Flip all pending to running** — single batched UPDATE; `started_at`, `last_heartbeat_at`, `current_step='resolving_entities'`.
+4. **Ticket-level resolution (once)** — ticket, PR, vcs_plugin, lessons, diff, prior yaaos comments, vcs PR.
+5. **Step progress per job** — `_set_step("fetching_diff", ...)` for each pending job so the UI shows activity.
+6. **Ticket-level skip checks** — `_ticket_skip_reason(pr, diff)` returns `"fork"` / `"bot_author"` / `"trivial_diff"` / `"too_large"` / None. On hit, transitions every pending job to skipped with that reason and returns. These predicates don't vary by agent.
+7. **Secrets pre-flight (once)** — `_detect_secrets(diff)`. On match, post ONE refusal review (tagged with the first agent's name), transition every pending job to `skipped(skip_reason="secrets_detected")`, return. (Previously this posted once per agent — fixed by the move to ticket scope.)
+8. **Language detect (once)** — `_detect_language(diff)`.
+9. **Build `_SharedReviewContext`** — value object capturing pr, diff, lessons, prior_bodies, vcs_pr, language. Reused for every agent's `ReviewContext`.
+10. **Step progress per job** — `_set_step("provisioning_workspace", ...)`.
+11. **Provision workspace** — `with_workspace("in_process", ...)` ONCE for the ticket.
+12. **Parallel agent invocation** — `await asyncio.gather(*[_invoke_one_agent(workspace=ws, job_id=..., ctx=ctx, org_id=org_id) for job in pending])`. Per-agent failures don't fail the gather; the workspace closes after every gather'd coro returns.
 
-Uncaught exceptions log `review_job.handler_crashed` and convert to `failed` (no re-raise — fire-and-forget).
+Uncaught exceptions in the coordinator log `ticket_review.coordinator_crashed` and mark any still-`running` rows as failed so the UI doesn't show forever-running.
+
+### `_invoke_one_agent` — per-agent work in shared workspace
+
+Each parallel task does:
+
+1. **Cancel check** — bail if the row is no longer `running`.
+2. **Build per-agent `ReviewContext`** — reuses `ctx`'s diff/lessons/prior_bodies; layers in this agent's persona + agent_config.
+3. **Hash + snapshot** — `prompt_hash = sha256(ctx.model_dump_json())`, denormalize hash + `lessons_applied`, write `review_job.prompt_sent` with frozen `_AgentSnapshot`, hash, lesson IDs, checkout SHA, language hint.
+4. **Final cancel check** before the expensive CLI call.
+5. **Step progress** — `_set_step("invoking_agent", ...)`.
+6. **Invoke** — `coding_agent.review(plugin_id, workspace, context)`.
+7. **Post result** — on `SUCCESS`: build `vcs.Review`, call `post_review`, write one `PostedCommentRow` per finding-that-became-a-comment, update row (`status='posted'`, telemetry, JSON findings); write `review_job.posted` audit; publish status change. Non-success → `_transition_failed`.
+
+Uncaught exceptions log `invoke_one_agent.crashed` and convert to `failed`. One failing agent doesn't affect the others — they keep running.
+
+### Concurrency safety in the shared workspace
+
+M01 reviewer agents are read-only against the workspace checkout. Three concurrent CLI subprocesses sharing one working directory is safe as long as no agent writes there. When M02+ implementer agents land and need to write, the workspace Protocol gains claim/release semantics; the shared model stays — only the synchronisation surface grows.
 
 ### Step-progress SSE
 
@@ -80,7 +97,7 @@ Uncaught exceptions log `review_job.handler_crashed` and convert to `failed` (no
 
 ### Secrets pre-flight
 
-Five regex rules catch high-confidence shapes: AWS access key, GitHub token, Anthropic key, OpenAI key, PEM private-key block. `_detect_secrets` scans only `+`-prefixed lines in `diff.raw` (excluding `+++` headers), returns the first matching rule id. On match: one refusal review (`state="COMMENT"`, empty findings) and `skipped(skip_reason="secrets_detected")`. Audit carries the rule id, never the matched bytes. Three agents run independently — up to three warnings may post; deduping out of scope.
+Five regex rules catch high-confidence shapes: AWS access key, GitHub token, Anthropic key, OpenAI key, PEM private-key block. `_detect_secrets` scans only `+`-prefixed lines in `diff.raw` (excluding `+++` headers), returns the first matching rule id. On match: ONE refusal review posted by the coordinator, every pending job transitions to `skipped(skip_reason="secrets_detected")`. Audit carries the rule id, never the matched bytes.
 
 ### Reply workflow
 
@@ -100,7 +117,7 @@ Beyond lifecycle: `prompt_hash`, `lessons_applied` (UUID[]), `tokens_in`, `token
 
 ### Startup recovery
 
-`startup_recovery` (`on_startup`) does in one transaction: select `running` ids (crashed processes), flip them to `failed` with `skip_reason='crashed'`, select all `queued`. After commit, writes `review_job.failed` per crashed id and respawns `_run_review_job` for each queued (zero debounce). `queued` rows auto-resume; `failed` requires operator re-review.
+`startup_recovery` (`on_startup`): select `running` ids (crashed processes), flip to `failed` with `skip_reason='crashed'`, select all `queued`. Writes `review_job.failed` per crashed id. Groups queued rows by `ticket_id` (resolved via the PR row) and respawns ONE `_run_ticket_review` per ticket with zero debounce — preserving the ticket-scoped workspace discipline. `queued` rows auto-resume; `failed` requires operator re-review.
 
 ### In-flight tracking
 

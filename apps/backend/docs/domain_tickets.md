@@ -69,9 +69,18 @@ Every transition (including creation) publishes `TicketStatusChanged` with `prev
 - A future repo-removal flow → `tickets.abandon(ticket_id, reason='repo_removed')`.
 - The audit endpoint reads but never writes.
 
+### Relationship to workspaces
+
+The "one workspace per ticket" principle is enforced by **runtime scope**, not by ticket data. Each review batch's coordinator (`_run_ticket_review` in `domain/reviewer`) opens one `core/workspace.with_workspace(...)` per coordinator call and gathers every agent against it; the workspace is destroyed when the last agent returns. There is no `tickets.workspace_id` column and no `workspaces.ticket_id` FK — workspaces are anonymous from the ticket's point of view.
+
+The ticket aggregate does not own, expose, or coordinate workspace lifecycle. It owns identity and lifecycle state only.
+
+This may change when a second workspace consumer lands (M02+ implementer agents would share workspaces across rounds on the same ticket — at which point `domain/tickets` is the natural home for a `with_ticket_workspace(ticket_id)` helper and a persistent linkage). Until then the runtime scoping is sufficient and keeps the ticket schema clean.
+
 ### What the module does not do
 
 - Doesn't own PR mirror state (`pull_requests`) or review state (`domain/reviewer`).
+- Doesn't own workspace lifecycle (see above).
 - Doesn't subscribe to its own events.
 - Doesn't write audit entries beyond `ticket.created` and `ticket.status_changed`.
 - Doesn't accept `source != "github_pr"` — future sources require new validation.

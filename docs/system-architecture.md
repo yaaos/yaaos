@@ -16,7 +16,7 @@ How the apps fit together and the conventions spanning them. App-internal archit
 ## Runtime topology
 
 - One Docker image runs FastAPI, serves the built SPA, and runs background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops (workspace reaper, GitHub catch-up poller) start in FastAPI's `lifespan`.
-- Claude Code CLI baked into the image; spawned as a subprocess per review_job inside a workspace tempdir. The CLI owns all LLM communication — yaaos makes zero direct LLM calls.
+- Claude Code CLI baked into the image; spawned as a subprocess per agent inside the ticket's shared workspace. One workspace per ticket, shared by every agent on that ticket. The CLI owns all LLM communication — yaaos makes zero direct LLM calls.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
 - OpenTelemetry collector recommended but not required; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 
@@ -27,8 +27,8 @@ How the apps fit together and the conventions spanning them. App-internal archit
 1. GitHub (or `fake-github` in tests) sends HMAC-signed `pull_request.opened` to `POST /api/github/webhook`.
 2. `plugins/github` verifies HMAC, parses into a `VCSEvent`, hands to `domain/intake`.
 3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.schedule_review`.
-4. `domain/reviewer` creates 3 review_jobs (architecture / security / style), each spawned via `core/primitives.spawn`.
-5. Per job: `workspace.provision` → `coding_agent.review` → `vcs.post_review` back to GitHub.
+4. `domain/reviewer` creates 3 review_jobs (architecture / security / style) and spawns ONE coordinator coro per ticket.
+5. Coordinator provisions one workspace for the ticket, then runs all agents in parallel against it via `asyncio.gather`: each `coding_agent.review` → `vcs.post_review` back to GitHub. Workspace destroyed when every agent finishes.
 
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 

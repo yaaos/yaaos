@@ -14,7 +14,7 @@ yaaos is **not** a coding agent. It does not review code. It does not write code
 - **Bring your favourite coding agent.** Each agent is a plugin behind a small Protocol. Add a new agent by implementing `review(workspace, context)` / `reply(workspace, context)` — yaaos doesn't care which model or framework runs inside.
 - **Configurable.** Agent personas (prompts), per-repo lessons, model API keys, webhook routing, time-control intervals, plugin selection — all editable at runtime via the UI or DB.
 - **Workspaces are separable from the service.** A workspace is provisioned through a `WorkspaceProvider` plugin. Today: in-process tempdir + git clone. Tomorrow: Docker containers, Fly machines, K8s pods. The service Protocol doesn't change.
-- **Every ticket gets its own fully isolated workspace.** Three agents reviewing the same PR get three workspaces. No cross-ticket state contamination. Wasteful at POC scale; lays the foundation for stronger isolation guarantees later.
+- **Every ticket gets its own fully isolated workspace.** One workspace per ticket, shared by every agent on that ticket. Provisioned once when the review batch starts; destroyed once every agent finishes. No cross-ticket state contamination.
 - **Security by default.** Credentials encrypted at rest (Fernet, key in env). API tokens never written to a workspace's filesystem. HMAC verification on every inbound webhook. No shell-string subprocess invocations. Secrets never logged or audited.
 
 ## How it fits together (at a glance)

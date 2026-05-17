@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -21,6 +23,7 @@ from app.core.workspace import (
     NetworkPolicy,
     RepoRefForSpec,
     ResourceCaps,
+    Workspace,
     WorkspaceSpec,
     with_workspace,
 )
@@ -32,7 +35,7 @@ from app.domain.coding_agent import (
 )
 from app.domain.reviewer.agent_crud import get_agent_by_id, get_agent_by_name
 from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
-from app.domain.vcs import Diff, Review
+from app.domain.vcs import Diff, Review, VCSPullRequest
 from app.domain.vcs import (
     get_plugin as get_vcs_plugin,
 )
@@ -242,20 +245,21 @@ async def schedule_review(
                 status="queued",
             )
         )
+        new_ids.append(new_id)
 
+    # Spawn ONE coordinator per ticket. The coordinator provisions a single
+    # workspace and runs every agent against it — the workspace belongs to
+    # the ticket, not to individual review jobs. See `_run_ticket_review`.
+    if new_ids:
         spawn(
-            f"review_job:{new_id}",
-            _run_review_job(
-                ReviewJobInput(
-                    review_job_id=new_id,
-                    ticket_id=ticket_id,
-                    agent_id=agent.id,
-                    org_id=org_id,
-                    debounce_seconds=debounce,
-                )
+            f"ticket_review:{ticket_id}",
+            _run_ticket_review(
+                ticket_id=ticket_id,
+                job_ids=new_ids,
+                debounce_seconds=debounce,
+                org_id=org_id,
             ),
         )
-        new_ids.append(new_id)
     return new_ids
 
 
@@ -505,26 +509,75 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-async def _run_review_job(input: ReviewJobInput) -> None:
-    import asyncio  # noqa: PLC0415
+@dataclass
+class _SharedReviewContext:
+    """Inputs shared by every agent reviewing the same ticket.
 
-    org_id = input.org_id
-    job_id = input.review_job_id
+    Resolved once per `_run_ticket_review` call so we don't re-fetch the PR,
+    diff, prior comments, lessons, or recompute the language hint N times.
+    Agent-specific context (persona, agent_config) is layered on per agent
+    inside `_invoke_one_agent`.
+    """
 
-    if input.debounce_seconds > 0:
-        await asyncio.sleep(input.debounce_seconds)
+    ticket_id: UUID
+    pr_id: UUID
+    pr_external_id: str
+    repo_external_id: str
+    plugin_id: str
+    vcs_pr: VCSPullRequest
+    diff: Diff
+    prior_bodies: list[str]
+    lessons: list[Any]
+    language: str | None
 
-    # Bail check after debounce
+
+async def _run_ticket_review(
+    *,
+    ticket_id: UUID,
+    job_ids: list[UUID],
+    debounce_seconds: int,
+    org_id: UUID,
+) -> None:
+    """Coordinator: one workspace per ticket, shared by every agent.
+
+    Flow: debounce → drop already-cancelled jobs → fetch shared context once →
+    apply ticket-level skip checks + secrets pre-flight (transitioning all
+    pending jobs at once) → provision ONE workspace → run every agent in
+    parallel against it via `asyncio.gather` → workspace closes when all agents
+    return.
+
+    Replaces the prior per-agent `_run_review_job` design where each agent
+    provisioned its own workspace. Each ticket now gets a fully isolated
+    workspace; the agents share it.
+    """
+    if debounce_seconds > 0:
+        await asyncio.sleep(debounce_seconds)
+
+    # Filter to still-queued jobs (others were cancelled or superseded
+    # during the debounce window).
     async with db_session() as s:
-        row = (await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))).scalar_one_or_none()
-    if row is None or row.status != "queued":
+        rows = (
+            (
+                await s.execute(
+                    select(ReviewJobRow).where(
+                        ReviewJobRow.id.in_(job_ids),
+                        ReviewJobRow.status == "queued",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    pending = list(rows)
+    if not pending:
         return
 
-    # Flip to running
+    # Flip every pending job to running BEFORE doing any heavy work so the
+    # UI reflects activity immediately + cancel-checks have something to see.
     async with db_session() as s:
         await s.execute(
             update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
+            .where(ReviewJobRow.id.in_([r.id for r in pending]))
             .values(
                 status="running",
                 started_at=_utcnow(),
@@ -535,87 +588,158 @@ async def _run_review_job(input: ReviewJobInput) -> None:
         await s.commit()
 
     try:
-        ticket = await tickets.get(input.ticket_id, org_id=org_id)
+        ticket = await tickets.get(ticket_id, org_id=org_id)
         if ticket.pr_id is None:
-            await _transition_failed(job_id, "ticket has no linked PR", org_id=org_id)
+            for job in pending:
+                await _transition_failed(job.id, "ticket has no linked PR", org_id=org_id)
             return
         pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
-        agent = await get_agent_by_id(input.agent_id, org_id=org_id)
+        vcs_plugin = get_vcs_plugin(pr.plugin_id)
 
-        await _set_step(
-            job_id,
-            "fetching_diff",
-            ticket_id=input.ticket_id,
-            pr_id=pr.id,
-            agent_id=agent.id,
-        )
+        for job in pending:
+            await _set_step(job.id, "fetching_diff", ticket_id=ticket_id, pr_id=pr.id, agent_id=job.agent_id)
 
         lessons = await memory.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
-
-        vcs_plugin = get_vcs_plugin(pr.plugin_id)
         diff = await vcs_plugin.fetch_diff(pr.external_id)
         prior_comments = await vcs_plugin.list_yaaos_comments(pr.external_id)
         prior_bodies = [c.body for c in prior_comments]
+        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
 
-        # Skip checks
-        if pr.is_fork:
-            await _transition_skipped(job_id, "fork", org_id=org_id)
-            return
-        if pr.author_type == "bot":
-            await _transition_skipped(job_id, "bot_author", org_id=org_id)
-            return
-        if diff.files and all(_is_skip_path(f.path) for f in diff.files):
-            await _transition_skipped(job_id, "trivial_diff", org_id=org_id)
-            return
-        total_lines = sum(f.additions + f.deletions for f in diff.files)
-        if total_lines > 5000:
-            await _transition_skipped(job_id, "too_large", org_id=org_id)
+        # Ticket-level skip checks. A skip transitions ALL pending jobs
+        # at once — there's no per-agent variation in these predicates.
+        skip_reason = _ticket_skip_reason(pr, diff)
+        if skip_reason is not None:
+            for job in pending:
+                await _transition_skipped(job.id, skip_reason, org_id=org_id)
             return
 
-        # Pre-flight: refuse to review if the diff appears to leak a secret.
-        # Per requirements.md edge cases — post a single warning then skip the
-        # rest of the pipeline. In M01 each of the three agents runs this
-        # independently; they may each post a warning. POC tolerance.
+        # Secrets pre-flight: post ONE refusal review (not one per agent
+        # like before) and transition every job to skipped.
         secret_rule = _detect_secrets(diff)
         if secret_rule is not None:
             try:
-                await vcs_plugin.post_review(pr.external_id, _secrets_warning_review(agent.name, secret_rule))
+                # Tag the warning with the first pending agent's name; the
+                # body explains the refusal independent of agent identity.
+                first_agent = await get_agent_by_id(pending[0].agent_id, org_id=org_id)
+                await vcs_plugin.post_review(
+                    pr.external_id, _secrets_warning_review(first_agent.name, secret_rule)
+                )
             except Exception:
-                log.exception("review_job.secrets_warning_post_failed", review_job_id=str(job_id))
-            await _transition_skipped(job_id, "secrets_detected", org_id=org_id)
+                log.exception("ticket_review.secrets_warning_post_failed", ticket_id=str(ticket_id))
+            for job in pending:
+                await _transition_skipped(job.id, "secrets_detected", org_id=org_id)
             return
 
-        # Language autodetected per review (was previously cached on repos.language_hint
-        # — that column went away with the repos table). Cost is negligible: filename
-        # extension scan over the diff's file list.
         language = _detect_language(diff)
 
-        # Build the review context — the plugin owns prompt assembly.
-        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
+        ctx = _SharedReviewContext(
+            ticket_id=ticket_id,
+            pr_id=pr.id,
+            pr_external_id=pr.external_id,
+            repo_external_id=pr.repo_external_id,
+            plugin_id=pr.plugin_id,
+            vcs_pr=vcs_pr,
+            diff=diff,
+            prior_bodies=prior_bodies,
+            lessons=lessons,
+            language=language,
+        )
+
+        for job in pending:
+            await _set_step(
+                job.id, "provisioning_workspace", ticket_id=ticket_id, pr_id=pr.id, agent_id=job.agent_id
+            )
+
+        # ONE workspace for the whole ticket. Agents run in parallel against
+        # it via asyncio.gather — they share the checkout but each invokes
+        # its own coding-agent subprocess. M01 agents are read-only against
+        # the workspace; write isolation is an M02+ concern when implementer
+        # agents land.
+        async with with_workspace(
+            "in_process",
+            WorkspaceSpec(
+                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
+                sha=pr.head_sha,
+                branch_name=pr.head_branch,
+                resource_caps=ResourceCaps(),
+                network_policy=NetworkPolicy.GITHUB_ONLY,
+                org_id=org_id,
+            ),
+            org_id=org_id,
+        ) as ws:
+            await asyncio.gather(
+                *(_invoke_one_agent(workspace=ws, job_id=job.id, ctx=ctx, org_id=org_id) for job in pending),
+                return_exceptions=False,
+            )
+
+    except Exception as e:
+        log.exception("ticket_review.coordinator_crashed", ticket_id=str(ticket_id))
+        # Any pending row still in `running` from this coordinator is
+        # stranded — mark them failed so the UI doesn't show forever-running.
+        async with db_session() as s:
+            stuck = (
+                (
+                    await s.execute(
+                        select(ReviewJobRow.id).where(
+                            ReviewJobRow.id.in_([r.id for r in pending]),
+                            ReviewJobRow.status == "running",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for jid in stuck:
+            await _transition_failed(
+                jid, f"coordinator crashed: {e}", org_id=org_id, invocation_status="crashed"
+            )
+
+
+async def _invoke_one_agent(
+    *,
+    workspace: Workspace,
+    job_id: UUID,
+    ctx: _SharedReviewContext,
+    org_id: UUID,
+) -> None:
+    """Run one agent against the shared workspace.
+
+    Builds the per-agent `ReviewContext`, audits the frozen-snapshot
+    `prompt_sent`, invokes `coding_agent.review`, posts the review, and
+    updates the job row. Each invocation is independent — one agent failing
+    doesn't affect the others, and the gather caller awaits all of them.
+    """
+    try:
+        # Cancel check before doing any work — operator may have cancelled
+        # the job between the coordinator flipping it to running and this
+        # coroutine getting scheduled.
+        async with db_session() as s:
+            row = (
+                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
+            ).scalar_one_or_none()
+        if row is None or row.status != "running":
+            return
+        agent_id = row.agent_id
+
+        agent = await get_agent_by_id(agent_id, org_id=org_id)
         review_ctx = ReviewContext(
             persona=agent.prompt_text,
             agent_name=agent.name,
-            pr=vcs_pr,
-            diff=diff,
-            lessons=lessons,
-            language_hint=language,
-            prior_yaaos_comment_bodies=prior_bodies,
+            pr=ctx.vcs_pr,
+            diff=ctx.diff,
+            lessons=ctx.lessons,
+            language_hint=ctx.language,
+            prior_yaaos_comment_bodies=ctx.prior_bodies,
             agent_config=agent.agent_config,
         )
-        # Hash captures everything that influences the agent's output — same
-        # purpose as the old assembled-prompt hash, just over the structured
-        # context rather than the literal string.
         prompt_hash = hashlib.sha256(review_ctx.model_dump_json().encode()).hexdigest()
-        lesson_ids = [lesson.id for lesson in lessons]
+        lesson_ids = [lesson.id for lesson in ctx.lessons]
 
         async with db_session() as s:
             await s.execute(
                 update(ReviewJobRow)
                 .where(ReviewJobRow.id == job_id)
-                .values(
-                    prompt_hash=prompt_hash,
-                    lessons_applied=lesson_ids,
-                )
+                .values(prompt_hash=prompt_hash, lessons_applied=lesson_ids)
             )
             await s.commit()
 
@@ -631,64 +755,34 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                     agent_config=agent.agent_config,
                 ),
                 prompt_hash=prompt_hash,
-                lessons_count=len(lessons),
+                lessons_count=len(ctx.lessons),
                 lessons_applied=lesson_ids,
-                checkout_sha=pr.head_sha,
-                language_hint=language,
+                checkout_sha=ctx.vcs_pr.head_sha,
+                language_hint=ctx.language,
             ),
             actor=Actor.system(),
             org_id=org_id,
         )
 
-        await _set_step(
-            job_id,
-            "provisioning_workspace",
-            ticket_id=input.ticket_id,
-            pr_id=pr.id,
-            agent_id=agent.id,
+        # Last cancel check before the expensive CLI call.
+        async with db_session() as s:
+            row = (
+                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
+            ).scalar_one_or_none()
+        if row is None or row.status != "running":
+            return
+
+        await _set_step(job_id, "invoking_agent", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id)
+
+        result = await coding_agent.review(
+            plugin_id=agent.coding_agent_plugin_id,
+            workspace=workspace,
+            context=review_ctx,
         )
-
-        async with with_workspace(
-            "in_process",
-            WorkspaceSpec(
-                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
-                sha=pr.head_sha,
-                branch_name=pr.head_branch,
-                resource_caps=ResourceCaps(),
-                network_policy=NetworkPolicy.GITHUB_ONLY,
-                org_id=org_id,
-            ),
-            org_id=org_id,
-        ) as ws:
-            # last cancel check before expensive call
-            async with db_session() as s:
-                row = (
-                    await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
-                ).scalar_one_or_none()
-            if row is None or row.status != "running":
-                return
-
-            await _set_step(
-                job_id,
-                "invoking_agent",
-                ticket_id=input.ticket_id,
-                pr_id=pr.id,
-                agent_id=agent.id,
-            )
-
-            result = await coding_agent.review(
-                plugin_id=agent.coding_agent_plugin_id,
-                workspace=ws,
-                context=review_ctx,
-            )
 
         if result.status == InvocationStatus.SUCCESS:
             await _set_step(
-                job_id,
-                "posting_review",
-                ticket_id=input.ticket_id,
-                pr_id=pr.id,
-                agent_id=agent.id,
+                job_id, "posting_review", ticket_id=ctx.ticket_id, pr_id=ctx.pr_id, agent_id=agent.id
             )
             review_obj = Review(
                 agent_tag=agent.name,
@@ -696,15 +790,15 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 summary_body=result.summary_body,
                 findings=result.findings,
             )
-            post_result = await vcs_plugin.post_review(pr.external_id, review_obj)
+            vcs_plugin = get_vcs_plugin(ctx.plugin_id)
+            post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
             async with db_session() as s:
-                # Record posted comments
                 for cid in post_result.finding_to_comment_external_id.values():
                     s.add(
                         PostedCommentRow(
                             external_comment_id=cid,
                             org_id=org_id,
-                            pr_id=pr.id,
+                            pr_id=ctx.pr_id,
                             review_job_id=job_id,
                             agent_id=agent.id,
                         )
@@ -752,8 +846,8 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             )
             await publish(
                 ReviewJobStatusChanged(
-                    ticket_id=input.ticket_id,
-                    pr_id=pr.id,
+                    ticket_id=ctx.ticket_id,
+                    pr_id=ctx.pr_id,
                     agent_id=agent.id,
                     review_job_id=job_id,
                     status="posted",
@@ -769,8 +863,29 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             )
 
     except Exception as e:
-        log.exception("review_job.handler_crashed", review_job_id=str(job_id))
-        await _transition_failed(job_id, f"handler crashed: {e}", org_id=org_id, invocation_status="crashed")
+        log.exception("invoke_one_agent.crashed", review_job_id=str(job_id))
+        await _transition_failed(
+            job_id, f"agent invocation crashed: {e}", org_id=org_id, invocation_status="crashed"
+        )
+
+
+def _ticket_skip_reason(pr: Any, diff: Diff) -> str | None:
+    """Return a skip reason if the whole ticket should be skipped, else None.
+
+    These checks are ticket-level — they don't vary by agent. Centralising
+    them avoids posting three skip-audit entries with the same reason and
+    keeps the coordinator's flow linear.
+    """
+    if pr.is_fork:
+        return "fork"
+    if pr.author_type == "bot":
+        return "bot_author"
+    if diff.files and all(_is_skip_path(f.path) for f in diff.files):
+        return "trivial_diff"
+    total_lines = sum(f.additions + f.deletions for f in diff.files)
+    if total_lines > 5000:
+        return "too_large"
+    return None
 
 
 async def _run_reply_job(input: ReviewJobInput) -> None:
@@ -1023,7 +1138,11 @@ def _detect_language(diff: Any) -> str | None:
 
 
 async def startup_recovery() -> None:
-    """Mark any running jobs from a prior process as failed; respawn queued jobs."""
+    """Mark any running jobs from a prior process as failed; respawn queued
+    jobs grouped by ticket (one coordinator per ticket, not per job).
+    """
+    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+
     async with db_session() as s:
         crashed = (
             (await s.execute(select(ReviewJobRow.id).where(ReviewJobRow.status == "running"))).scalars().all()
@@ -1057,25 +1176,27 @@ async def startup_recovery() -> None:
             org_id=M01_ORG_ID,
         )
 
+    # Group queued jobs by ticket_id (resolved via the PR row) so one
+    # coordinator respawns per ticket — matching the ticket-scoped workspace
+    # discipline used by `schedule_review`.
+    by_ticket: dict[UUID, dict[str, Any]] = {}
     for row in queued:
-        # Resolve ticket_id via the PR row
         async with db_session() as s:
-            from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-
             pr_row = (
                 await s.execute(select(PullRequestRow).where(PullRequestRow.id == row.pr_id))
             ).scalar_one_or_none()
         if pr_row is None:
             continue
+        entry = by_ticket.setdefault(pr_row.ticket_id, {"job_ids": [], "org_id": row.org_id})
+        entry["job_ids"].append(row.id)
+
+    for ticket_id, entry in by_ticket.items():
         spawn(
-            f"review_job:{row.id}",
-            _run_review_job(
-                ReviewJobInput(
-                    review_job_id=row.id,
-                    ticket_id=pr_row.ticket_id,
-                    agent_id=row.agent_id,
-                    org_id=row.org_id,
-                    debounce_seconds=0,
-                )
+            f"ticket_review:{ticket_id}",
+            _run_ticket_review(
+                ticket_id=ticket_id,
+                job_ids=entry["job_ids"],
+                debounce_seconds=0,
+                org_id=entry["org_id"],
             ),
         )
