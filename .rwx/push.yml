@@ -3,6 +3,9 @@ on:
     push:
       init:
         commit-sha: ${{ event.git.sha }}
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
 
 base:
   image: ubuntu:24.04
@@ -15,27 +18,35 @@ tasks:
       repository: https://github.com/JackKora/yaaos.git
       ref: ${{ init.commit-sha }}
 
+  # No filters: RWX caches at the task level (same code SHA + same run script =
+  # task skipped entirely) and Docker's BuildKit cache inside the persistent
+  # `docker: true` daemon handles incremental rebuilds. Filter lists are a
+  # maintenance trap and would have missed the cross-stage `COPY --from=
+  # web-builder` dependency on the web inputs anyway.
+
   - key: backend-ci
     use: [code]
     docker: true
-    filter:
-      - apps/backend/**
-      - pyproject.toml
-      - uv.lock
-      - docker/Dockerfile
+    # bin/check_doc_links walks the whole repo's docs and verifies cross-app
+    # links resolve. The prod image only ships `apps/backend` (line 60 of the
+    # Dockerfile), so we read-only-mount the other doc trees + `plan/` + the
+    # repo root markdown files so the check can see them. No image change —
+    # production images stay lean.
     run: |
-      docker build --target backend-ci -t yaaos-backend-ci .
-      docker run --rm yaaos-backend-ci sh -c "cd apps/backend && bin/ci"
+      docker build -f docker/Dockerfile --target backend-ci -t yaaos-backend-ci .
+      docker run --rm \
+        -v "$(pwd)/docs:/app/docs:ro" \
+        -v "$(pwd)/docker:/app/docker:ro" \
+        -v "$(pwd)/plan:/app/plan:ro" \
+        -v "$(pwd)/CLAUDE.md:/app/CLAUDE.md:ro" \
+        -v "$(pwd)/apps/web/docs:/app/apps/web/docs:ro" \
+        -v "$(pwd)/apps/e2e/docs:/app/apps/e2e/docs:ro" \
+        -v "$(pwd)/apps/fake-github/docs:/app/apps/fake-github/docs:ro" \
+        yaaos-backend-ci sh -c "cd apps/backend && bin/ci"
 
   - key: web-ci
     use: [code]
     docker: true
-    filter:
-      - apps/web/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - docker/Dockerfile
     run: |
-      docker build --target web-builder -t yaaos-web-ci .
+      docker build -f docker/Dockerfile --target web-builder -t yaaos-web-ci .
       docker run --rm yaaos-web-ci sh -c "cd apps/web && bin/ci"
