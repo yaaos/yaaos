@@ -65,7 +65,13 @@ To populate or update a cache file:
 
 ### Eval helper (`create_eval`)
 
-Thin wrapper around `braintrust.Eval(...)`. Owner modules call it from `<module>/eval/*.eval.py`. The wrapper hard-codes `data=init_dataset(project=module_name, name=dataset_name)` because every prompt-using module wants the same shape; everything else (task, scorers, prompts) stays in the owner. No Braintrust-prompt-as-parameter machinery — prompts in yaaof are file-based (`<module>/llm/prompts/*.prompt.md`), not registered in Braintrust.
+Thin wrapper around `braintrust.Eval(...)`. Owner modules call it from `<module>/eval/*.eval.py`. The wrapper:
+
+- Pulls the dataset from Braintrust via `init_dataset(project=module_name, name=dataset_name)`. Datasets live in the Braintrust UI; nothing is stored locally.
+- Wraps the caller's task with a `BraintrustCallbackHandler` rooted at each row's `hooks.span`, so the LangChain trace (prompt, response, any intermediate chain steps) attaches as a child span of the experiment row. Without that, you'd only see `(input, output, scores)` on the row and would have to correlate the gateway's flat log by timestamp + `user` tag to debug "why did this row score badly".
+- Does NOT register prompts as Braintrust parameters. yaaof prompts are file-based (`<module>/llm/prompts/*.prompt.md`); the Braintrust prompt-A/B-test UI isn't used here.
+
+Evals run locally; the experiment + traces ship to Braintrust via the standard `BRAINTRUST_API_KEY` env path. Each scorer is either an `autoevals` builtin or a hand-written `(output, expected) -> Score` function.
 
 ### State machines
 

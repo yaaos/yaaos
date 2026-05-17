@@ -128,6 +128,19 @@ wheels = [
 ]
 
 [[package]]
+name = "braintrust-langchain"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "braintrust" },
+    { name = "langchain" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/40/9f/595066dce79c672a4b28c4188f6a11c28fbcb3677dce8e60e3da6cae3515/braintrust_langchain-0.3.0.tar.gz", hash = "sha256:89d017ce71ab2570c631f69d43d3f9b47716312239658ec8ca18ad7e0d19d867", size = 3782, upload-time = "2026-04-01T19:19:44.763Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/82/8418db2207955f2d3bccb5ec8f3215f3498d2ac90454b6501bb9a0bc8c9c/braintrust_langchain-0.3.0-py3-none-any.whl", hash = "sha256:9a661c56c79bb7d07ea28db13f4ba1d2ca2997d8963c9f475ec8853699ffb5c3", size = 3747, upload-time = "2026-04-01T19:19:43.559Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.4.22"
 source = { registry = "https://pypi.org/simple" }
@@ -1756,6 +1769,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "braintrust" },
+    { name = "braintrust-langchain" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1793,6 +1807,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "braintrust", specifier = ">=0.4" },
+    { name = "braintrust-langchain", specifier = ">=0.1" },
     { name = "cryptography", specifier = ">=43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
