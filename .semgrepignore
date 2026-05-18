@@ -24,9 +24,16 @@ package-lock.json
 # `is_dev_env()` at the HTTP boundary. Test helpers legitimately use patterns
 # (DB TRUNCATE, hardcoded fake secrets) that Semgrep flags as risky in
 # production code.
+#
+# Two patterns because `.semgrepignore` paths are relative to semgrep's CWD,
+# which differs between local dev (run from repo root → `apps/backend/app/testing/`)
+# and CI (run from `apps/backend/` → `app/testing/`). The `**/` form alone
+# doesn't match top-level paths.
+app/testing/
 **/app/testing/
 
 # Test files themselves (real code is covered)
+test_*.py
 **/test/test_*.py
 
 # Plan docs (Markdown, but semgrep can pattern-match against text too)
