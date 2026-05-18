@@ -140,6 +140,7 @@ export interface ReviewTimelineRow {
   started_at: string | null;
   completed_at: string | null;
   model: string | null;
+  effort: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
   duration_s: number | null;

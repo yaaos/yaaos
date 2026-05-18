@@ -185,6 +185,7 @@ async def reviews_by_ticket(ticket_id: UUID) -> list[dict[str, Any]]:
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "completed_at": r.completed_at.isoformat() if r.completed_at else None,
             "model": r.model,
+            "effort": r.effort,
             "tokens_in": r.tokens_in,
             "tokens_out": r.tokens_out,
             "duration_s": r.duration_s,

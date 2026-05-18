@@ -32,6 +32,7 @@ export type Ticket = {
   // Enriched from the linked PR at read-time. Null for the brief moment
   // between ticket creation and PR row insertion.
   pr_number: number | null;
+  pr_html_url: string | null;
   author_login: string | null;
   is_draft: boolean | null;
   created_at: string;

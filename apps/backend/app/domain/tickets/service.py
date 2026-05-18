@@ -32,6 +32,7 @@ class Ticket(BaseModel):
     # Enriched fields (denormalized at read-time from the linked PR; nullable
     # because a ticket can briefly exist without its PR row in the create flow).
     pr_number: int | None = None
+    pr_html_url: str | None = None
     author_login: str | None = None
     is_draft: bool | None = None
     created_at: datetime
@@ -165,6 +166,7 @@ async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
             ).scalar_one_or_none()
             if pr is not None:
                 t.pr_number = pr.number
+                t.pr_html_url = pr.html_url
                 t.author_login = pr.author_login
                 t.is_draft = pr.is_draft
     return t
@@ -216,6 +218,7 @@ async def list_tickets(
             if r.pr_id and r.pr_id in prs_by_id:
                 pr = prs_by_id[r.pr_id]
                 t.pr_number = pr.number
+                t.pr_html_url = pr.html_url
                 t.author_login = pr.author_login
                 t.is_draft = pr.is_draft
             out.append(t)

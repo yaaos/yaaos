@@ -562,11 +562,32 @@ function TicketDetailHeader({
     <div className="flex items-start gap-3">
       <div className="flex flex-col gap-1.5 flex-1 min-w-0">
         <div className="flex items-center gap-2 text-[11px] text-text-3 mono">
-          {ticket.pr_number != null && <span className="text-text-4">#{ticket.pr_number}</span>}
-          <span className="text-text-4">·</span>
           <span>{ticket.repo_external_id}</span>
         </div>
-        <h1 className="text-[20px] font-semibold tracking-tight">{ticket.title}</h1>
+        <h1 className="text-[20px] font-semibold tracking-tight">
+          {ticket.title}
+          {ticket.pr_number != null && (
+            <>
+              {" "}
+              <span className="text-text-3 font-normal text-[15px]">
+                (
+                {ticket.pr_html_url ? (
+                  <a
+                    href={ticket.pr_html_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mono hover:underline text-text-3 hover:text-text"
+                  >
+                    #{ticket.pr_number}
+                  </a>
+                ) : (
+                  <span className="mono">#{ticket.pr_number}</span>
+                )}
+                )
+              </span>
+            </>
+          )}
+        </h1>
         <div className="flex items-center gap-1.5 flex-wrap">
           <StatusBadge status={ticket.status} />
           <KindChip />
@@ -787,7 +808,11 @@ function ReviewSectionBody({
           status: <span className="mono text-text">{review.status}</span>
         </div>
         <div>
-          model: <span className="mono text-text">{review.model ?? "—"}</span>
+          model:{" "}
+          <span className="mono text-text">
+            {review.model ?? "—"}
+            {review.effort && <span className="text-text-3"> ({review.effort})</span>}
+          </span>
         </div>
         <div>
           tokens:{" "}

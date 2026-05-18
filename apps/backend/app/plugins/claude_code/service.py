@@ -72,6 +72,22 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _pick_versioned_model(*candidates: str | None) -> str | None:
+    """Return the first candidate that looks like a versioned model name.
+
+    The Claude Code CLI sometimes announces the resolved versioned name
+    (`claude-opus-4-5-20250929`) in the `system.init` event but echoes only
+    the alias (`opus`) in the final `result` event. A versioned name has
+    hyphens; an alias does not. Returns the first hyphen-bearing candidate;
+    falls back to the first non-empty candidate; None if all are empty.
+    """
+    non_empty = [c for c in candidates if c]
+    if not non_empty:
+        return None
+    versioned = next((c for c in non_empty if "-" in c), None)
+    return versioned or non_empty[0]
+
+
 # ── Plugin-internal response schemas ──────────────────────────────────────────
 # These describe the JSON shape we ask Claude Code to emit. They never leak out
 # of this plugin — the public Protocol returns `ReviewResult` carrying a list
@@ -709,9 +725,18 @@ class ClaudeCodePlugin:
         usage = final_result_event.get("usage", {}) or {}
         tokens_in = usage.get("input_tokens")
         tokens_out = usage.get("output_tokens")
-        # The CLI reports the resolved model in the final result event so an
-        # alias like `opus` becomes a versioned name on the row.
-        resolved_model = final_result_event.get("model") or _MODEL
+        # The CLI announces the resolved versioned model name (e.g.
+        # `claude-opus-4-5-20250929`) in the `system.init` event. The `result`
+        # event sometimes echoes only the alias the caller passed in (`opus`).
+        # Prefer init when it carries a versioned name (anything that looks
+        # like an alias-only — no hyphens — falls through to the result-event
+        # value, then to the static `_MODEL` constant).
+        init_event = next(
+            (e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None
+        )
+        init_model = (init_event or {}).get("model")
+        result_model = final_result_event.get("model")
+        resolved_model = _pick_versioned_model(init_model, result_model) or _MODEL
 
         telemetry = telemetry.model_copy(
             update={
