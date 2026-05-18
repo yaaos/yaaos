@@ -75,6 +75,11 @@ _SEVERITY_WEIGHT: dict[Severity, int] = {
 _PER_PR_NIT_CAP = 5
 _PER_REVIEW_TOP_CAP = 10
 
+# Plan §10.1 + §10.6: `concrete_failure_scenario` must actually describe a
+# failure, not a one-word stand-in. Enforced at the boundary so any future
+# agent-output adapter still has to supply a real scenario.
+_MIN_SCENARIO_LEN = 20
+
 
 @dataclass
 class RawFinding:
@@ -82,7 +87,8 @@ class RawFinding:
 
     The aggregate decides whether to admit it (schema/threshold/cap/dedup
     checks) and how to transition state. The mapping from
-    `coding_agent.FindingDraft` happens in `service.py`.
+    `coding_agent.FindingDraft` happens in `queue._findingdrafts_to_raw`
+    (shared by both the full-review and incremental-review paths).
     """
 
     fingerprint: FindingFingerprint
@@ -286,23 +292,41 @@ class PRReviewAggregate:
     # ─── Finding admission / post-processing ────────────────────────────────
 
     def post_process_raw_findings(
-        self, review_id: uuid.UUID, raw: list[RawFinding]
+        self,
+        review_id: uuid.UUID,
+        raw: list[RawFinding],
+        *,
+        diff_files: set[str] | None = None,
     ) -> tuple[list[Finding], list[FindingObservation], list[AdmissionDrop]]:
-        """Apply schema → threshold → nit cap → cross-file dedup → top-10 cap → dedup vs prior.
+        """Apply schema → threshold → off-diff → nit cap → cross-file dedup → top-10 cap → dedup vs prior.
 
         Returns the survivors actually written (new + re-observed) plus a list
         of audit drops.
+
+        `diff_files`: when supplied, findings whose anchor file isn't in the
+        set get dropped with reason `off_diff` (plan §10.9). The legacy
+        full-review caller doesn't pass it, so the suppression is opt-in.
         """
         drops: list[AdmissionDrop] = []
 
-        # 1. Schema gate (already typed; just enforce non-empty failure scenario).
+        # 1. Schema gate + off-diff drop (plan §10.9).
         kept_a = []
         for rf in raw:
-            if not rf.concrete_failure_scenario.strip():
+            if len(rf.concrete_failure_scenario.strip()) < _MIN_SCENARIO_LEN:
                 drops.append(
                     AdmissionDrop(
                         rule_id=rf.rule_id,
                         reason="malformed",
+                        severity=rf.severity,
+                        confidence=rf.confidence,
+                    )
+                )
+                continue
+            if diff_files is not None and rf.anchor.file_path not in diff_files:
+                drops.append(
+                    AdmissionDrop(
+                        rule_id=rf.rule_id,
+                        reason="off_diff",
                         severity=rf.severity,
                         confidence=rf.confidence,
                     )
@@ -369,22 +393,36 @@ class PRReviewAggregate:
             if existing.state == FindingState.OPEN:
                 re_observed.append((rf, existing))
 
-        # 4. Cross-file dedup (plan §10.8). Merge duplicates_of_rule_ids on
-        # candidates_new — collapse same-rule findings on different files into one.
+        # 4. Cross-file dedup (plan §10.8). Merge `duplicate_of_rule_ids` on
+        # candidates_new. Survivor's body gets a "Also in: …" footer listing
+        # the duplicated file paths so the developer sees the full scope in
+        # one comment instead of N.
         merged_new: dict[str, RawFinding] = {}
+        merged_dup_files: dict[str, list[str]] = {}
         for rf in candidates_new:
             key = rf.fingerprint.hash
             if key in merged_new:
                 continue  # exact dup; skip
-            # If two findings cite each other via duplicate_of_rule_ids,
-            # the aggregate keeps the first one. Cross-file file_list tracking
-            # is left to the reporting layer; we just don't post the dup.
-            if any(
-                rf.rule_id in other.duplicate_of_rule_ids or other.rule_id in rf.duplicate_of_rule_ids
-                for other in merged_new.values()
-            ):
+            # If `rf` is a duplicate-of one already in merged_new (or vice
+            # versa), don't add — annotate the existing entry with rf's file.
+            absorbed = False
+            for existing_key, other in list(merged_new.items()):
+                if rf.rule_id in other.duplicate_of_rule_ids or other.rule_id in rf.duplicate_of_rule_ids:
+                    merged_dup_files.setdefault(existing_key, []).append(rf.anchor.file_path)
+                    absorbed = True
+                    break
+            if absorbed:
                 continue
             merged_new[key] = rf
+        # Apply the file-list footer to survivors that absorbed dups.
+        for key, dup_files in merged_dup_files.items():
+            rf = merged_new[key]
+            files = [rf.anchor.file_path, *dup_files]
+            footer = "\n\nAlso in: " + ", ".join(files)
+            # Rebuild as a new RawFinding (frozen-ish dataclass — just dataclass.replace).
+            from dataclasses import replace as _dc_replace  # noqa: PLC0415
+
+            merged_new[key] = _dc_replace(rf, body=rf.body + footer)
 
         # 5. Per-review top-10 cap (plan §10.5) — applied to candidates_new only.
         ranked = sorted(

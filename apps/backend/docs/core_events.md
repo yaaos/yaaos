@@ -50,6 +50,10 @@ No `Last-Event-ID` replay support. Events missed while disconnected are lost.
 4. Client disconnects → generator `finally` → subscriber unregistered.
 5. Browser `EventSource` auto-reconnects; a fresh subscription is created. Gap events are not replayed.
 
+### Domain-event envelope adapter
+
+Domain modules whose events are plain `@dataclass`es (not Pydantic) wrap them in a lightweight `Event` subclass to dispatch through this bus — e.g. `domain/reviewer.service._DomainEventEnvelope` sets `kind` from the dataclass class name and carries the payload as a dict. The bus stays Pydantic-only; the adapter lives in the domain module that owns the events.
+
 ### What it does not do
 
 - Does not persist events (`core/audit_log` is the durable counterpart).

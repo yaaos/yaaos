@@ -84,6 +84,9 @@ class _WorkspaceImpl:
             on_stream_line=on_stream_line,
         )
 
+    async def read_text(self, path: str) -> str | None:
+        return await self._provider.read_text(self._plugin_state, path)
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)

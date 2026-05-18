@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from app.core.primitives import PluginMeta
 from app.core.workspace import HealthStatus, Workspace
 from app.domain.memory import Lesson
-from app.domain.vcs import Diff, Finding, VCSPullRequest
+from app.domain.vcs import Diff, VCSPullRequest
 
 
 class InvocationStatus(StrEnum):
@@ -82,8 +82,15 @@ class ReviewContext(BaseModel):
 
 
 class ReviewResult(BaseModel):
+    """Plan §6.1 + §13 cutover: the parent reviewer emits `FindingDraft` per
+    plan §10.1 — `vcs.Finding` is now only used at the VCS-posting boundary.
+    Translation from FindingDraft → vcs.Finding happens inside
+    `domain/reviewer/queue.py` after admission, so rejected findings never
+    reach GitHub.
+    """
+
     status: InvocationStatus
-    findings: list[Finding] = []
+    findings: list[FindingDraft] = []
     state: Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"] | None = None
     summary_body: str | None = None
     lesson_ids_consulted: list[UUID] = []

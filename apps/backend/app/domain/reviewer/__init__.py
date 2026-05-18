@@ -37,6 +37,7 @@ from app.domain.reviewer.events import (
     ReviewStarted,
     ReviewSuperseded,
 )
+from app.domain.reviewer.incremental import handle_push
 from app.domain.reviewer.llm import (
     ClassifyReplyInput,
     ClassifyReplyOutput,
@@ -50,8 +51,7 @@ from app.domain.reviewer.models import (
     CommentThreadRow,
     FindingObservationRow,
     FindingRow,
-    PostedCommentRow,
-    ReviewJobRow,
+    ReviewRow,
 )
 from app.domain.reviewer.queue import (
     ReviewJob,
@@ -65,6 +65,7 @@ from app.domain.reviewer.queue import (
     schedule_review,
     startup_recovery,
 )
+from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
 from app.domain.reviewer.service import (
@@ -76,14 +77,23 @@ from app.domain.reviewer.service import (
     FindingView,
     ReplyAction,
     StaleCheckAction,
+    ThreadMessageView,
+    ThreadView,
     VerifyFixAction,
     all_conversations_view,
     apply_classified_reply,
     apply_stale_check_result,
     apply_verify_fix_result,
+    compute_acceptance_rate,
+    compute_resolved_without_edit_rate,
+    dispatch_events,
+    get_review,
+    get_thread,
     is_off_topic_message,
     is_yaaos_command,
+    list_findings_for_pr,
     list_findings_view,
+    list_reviews_for_pr,
     review_summary,
 )
 from app.domain.reviewer.trigger import (
@@ -153,7 +163,6 @@ __all__ = [
     "FindingStateChanged",
     "FindingView",
     "PRReviewAggregate",
-    "PostedCommentRow",
     "RawFinding",
     "ReplyAction",
     "ReplyIntent",
@@ -162,9 +171,9 @@ __all__ = [
     "ReviewFailed",
     "ReviewJob",
     "ReviewJobInput",
-    "ReviewJobRow",
     "ReviewJobStatusChanged",
     "ReviewRequested",
+    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -176,6 +185,8 @@ __all__ = [
     "SkipReason",
     "SqlAlchemyAggregateRepository",
     "StaleCheckAction",
+    "ThreadMessageView",
+    "ThreadView",
     "TriggerDecision",
     "TriggerInputs",
     "VerifyFixAction",
@@ -187,14 +198,23 @@ __all__ = [
     "cancel_pending",
     "classify_reply",
     "classify_reply_runnable",
+    "compute_acceptance_rate",
+    "compute_resolved_without_edit_rate",
     "decide_trigger",
+    "dispatch_events",
+    "get_review",
     "get_review_job",
+    "get_thread",
+    "handle_developer_reply",
+    "handle_push",
     "humanize_skip",
     "is_off_topic_message",
     "is_yaaos_command",
+    "list_findings_for_pr",
     "list_findings_view",
     "list_in_flight",
     "list_review_jobs_for_pr",
+    "list_reviews_for_pr",
     "metrics_summary",
     "review_summary",
     "schedule_review",

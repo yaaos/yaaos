@@ -7,6 +7,7 @@ without reshaping bootstrap.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -26,6 +27,22 @@ class Base(DeclarativeBase):
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+# Test override. When set (by the transactional-rollback pytest fixture in
+# `conftest.py`), every call to `session()` yields this fixture-bound session
+# instead of opening a new one. The fixture wraps the entire test in an
+# outer transaction with SAVEPOINTs so production `await s.commit()` calls
+# don't actually flush to disk — they create nested savepoints inside the
+# rolled-back outer transaction. Production code never sets this; the
+# default-None branch is the prod path.
+_test_session_override: ContextVar[AsyncSession | None] = ContextVar(
+    "yaaos_test_session_override", default=None
+)
+
+
+def set_test_session_override(s: AsyncSession | None) -> None:
+    """Install a session that `session()` will yield. Test-only."""
+    _test_session_override.set(s)
 
 
 def get_engine() -> AsyncEngine:
@@ -58,7 +75,17 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 @asynccontextmanager
 async def session() -> AsyncIterator[AsyncSession]:
-    """Yield an async session. Caller decides commit/rollback boundaries."""
+    """Yield an async session. Caller decides commit/rollback boundaries.
+
+    When the test transactional fixture is active (see `conftest.py`
+    `db_session`), all calls return the fixture-bound session so every
+    production write happens inside the test's outer transaction and gets
+    rolled back at teardown.
+    """
+    override = _test_session_override.get()
+    if override is not None:
+        yield override
+        return
     async with get_sessionmaker()() as s:
         yield s
 
@@ -104,6 +131,7 @@ _M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("005_drop_reviewer_agents", "drop_reviewer_agents"),
     ("006_review_jobs_activity_log_model_effort", "add_review_jobs_activity_log_model_effort"),
     ("007_create_durable_findings_tables", "create_durable_findings_tables"),
+    ("008_reviews_cutover", "reviews_cutover"),
 )
 
 
@@ -265,6 +293,49 @@ async def _apply_create_durable_findings_tables(conn) -> None:  # type: ignore[n
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop generation-1 review_jobs + posted_comments; create new `reviews` table.
+
+    Per plan/notes/full-pr-flow.md §4.3 + §13 step 7 — drop-and-recreate. Existing
+    POC data is throwaway. The new `reviews` table is created from the
+    `ReviewRow` model via `Base.metadata.create_all`. After this runs, FindingRow
+    + FindingObservationRow have a real FK target for review_id columns.
+    """
+    import importlib  # noqa: PLC0415
+
+    statements = [
+        # Drop generation-1 tables. CASCADE handles the posted_comments FK back
+        # to review_jobs.
+        "DROP TABLE IF EXISTS posted_comments CASCADE",
+        "DROP TABLE IF EXISTS review_jobs CASCADE",
+        # Drop the generation-2 findings tables too — they had unconstrained
+        # UUID review_id columns; create_all will rebuild them with proper FKs
+        # to reviews.id. Per drop-and-recreate, POC data is throwaway.
+        "DROP TABLE IF EXISTS acknowledgment_decisions CASCADE",
+        "DROP TABLE IF EXISTS comment_messages CASCADE",
+        "DROP TABLE IF EXISTS comment_threads CASCADE",
+        "DROP TABLE IF EXISTS finding_observations CASCADE",
+        "DROP TABLE IF EXISTS findings CASCADE",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+    # Re-register the reviewer module's models, then create the new tables.
+    importlib.import_module("app.domain.reviewer.models")
+    new_tables = [
+        Base.metadata.tables[name]
+        for name in (
+            "reviews",
+            "findings",
+            "finding_observations",
+            "comment_threads",
+            "comment_messages",
+            "acknowledgment_decisions",
+        )
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def migrate() -> None:
     """Apply any un-applied migrations. Idempotent."""
     await ensure_schema_migrations_table()
@@ -289,6 +360,8 @@ async def migrate() -> None:
                 await _apply_add_review_jobs_activity_log_model_effort(conn)
             elif kind == "create_durable_findings_tables":
                 await _apply_create_durable_findings_tables(conn)
+            elif kind == "reviews_cutover":
+                await _apply_reviews_cutover(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

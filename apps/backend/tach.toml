@@ -74,7 +74,7 @@ depends_on = ["app.core.primitives"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.settings", "app.domain.vcs"]
+depends_on = ["app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.settings"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -90,7 +90,7 @@ depends_on = ["app.core.audit_log", "app.core.config", "app.core.database", "app
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.workspace", "app.domain.coding_agent", "app.domain.vcs"]
+depends_on = ["app.core.workspace", "app.domain.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_workspace"

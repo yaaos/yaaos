@@ -151,6 +151,12 @@ async def _handle_pr_ready_for_review(event: PullRequestReadyForReview, *, org_i
 
 
 async def _handle_pr_synchronized(event: PullRequestSynchronized, *, org_id: UUID) -> None:
+    """Plan §6.2: a push to a PR triggers `handle_push`, NOT a full review.
+
+    `handle_push` runs the §7 trigger policy and either skips, debounces, or
+    spawns an incremental review. The full-review path is reserved for
+    `pr_ready` (§6.1) and manual full-review commands (§6.3).
+    """
     if event.pr_external_id is None:
         return
     pr = await pull_requests.get_by_external(event.plugin_id, event.pr_external_id, org_id=org_id)
@@ -166,10 +172,14 @@ async def _handle_pr_synchronized(event: PullRequestSynchronized, *, org_id: UUI
     ticket = await tickets.get_by_pr(fresh.id, org_id=org_id)
     if ticket is None:
         return
-    await reviewer.schedule_review(
-        ticket_id=ticket.id,
-        trigger_reason="pr_synchronized",
-        actor=Actor.system(),
+    # The webhook payload carries `before`/`after`; pass `before` through as
+    # `prev_head_sha` so handle_push can compute the incremental scope. When
+    # `before` is missing (older payloads), the trigger policy falls back to
+    # `last_reviewed_sha` from the prior posted review.
+    await reviewer.handle_push(
+        fresh.id,
+        new_head_sha=event.new_head_sha or fresh.head_sha,
+        prev_head_sha=event.prev_head_sha,
         org_id=org_id,
     )
 
@@ -211,45 +221,77 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
     if ticket is None:
         return
 
-    matched, _agent = parse_rereview(event.body)
-    if matched:
+    from app.domain import reviewer  # noqa: PLC0415
+    from app.domain.intake.parsing import parse_yaaos_command  # noqa: PLC0415
+
+    # Plan §13 step 13 canonical commands first; legacy `rereview` after.
+    cmd = parse_yaaos_command(event.body)
+    if cmd is None and parse_rereview(event.body)[0]:
+        cmd = "full review"  # legacy `@yaaos rereview` ≡ full re-review
+    if cmd is not None:
         await audit_for_ticket(
             ticket.id,
             "ticket.rereview_requested",
-            _RereviewRequestedPayload(
-                comment_external_id=event.comment_external_id,
-            ),
+            _RereviewRequestedPayload(comment_external_id=event.comment_external_id),
             actor=Actor.github_user(event.author_login),
             org_id=org_id,
         )
-        from app.domain import reviewer  # noqa: PLC0415
-
-        await reviewer.schedule_review(
-            ticket_id=ticket.id,
-            trigger_reason="rereview_command",
-            actor=Actor.github_user(event.author_login),
-            org_id=org_id,
-        )
+        if cmd == "cancel":
+            await reviewer.cancel_pending(
+                ticket.id,
+                actor=Actor.github_user(event.author_login),
+                org_id=org_id,
+                reason="user_cancel_command",
+            )
+        elif cmd == "full review":
+            await reviewer.schedule_review(
+                ticket_id=ticket.id,
+                trigger_reason="manual_full",
+                actor=Actor.github_user(event.author_login),
+                org_id=org_id,
+            )
+        elif cmd == "review":
+            await reviewer.handle_push(pr.id, new_head_sha=pr.head_sha, prev_head_sha=None, org_id=org_id)
         return
 
-    # Inline replies to yaaos comments are deferred. The future review_comments
-    # table will own that lifecycle. For now we silently drop them.
+    # Plan §6.4: anything else is a candidate developer reply on a yaaos
+    # comment thread. `handle_developer_reply` resolves the external comment
+    # back to a CommentThread; if no match (the comment isn't on a yaaos
+    # finding) it returns None and the event is silently dropped.
+    await reviewer.handle_developer_reply(
+        external_thread_id=event.external_thread_id,
+        external_comment_id=event.comment_external_id,
+        in_reply_to_external_id=event.in_reply_to_comment_external_id,
+        body=event.body,
+        author_external_id=event.author_login,
+        org_id=org_id,
+    )
 
 
 async def _handle_reaction_added(event: ReactionAdded, *, org_id: UUID) -> None:
-    from app.domain.reviewer.models import PostedCommentRow  # noqa: PLC0415
+    # Reactions on a yaaos comment land here. We resolve the comment back to
+    # its PR via the durable-findings tables: external_comment_id → CommentMessage
+    # → CommentThread → Finding → pr_id. posted_comments was retired in the
+    # §13 step 7 cut-over.
+    from app.domain.reviewer.models import (  # noqa: PLC0415
+        CommentMessageRow,
+        CommentThreadRow,
+        FindingRow,
+    )
 
     async with db_session() as s:
-        posted = (
+        row = (
             await s.execute(
-                select(PostedCommentRow).where(
-                    PostedCommentRow.external_comment_id == event.target_comment_external_id
-                )
+                select(FindingRow.pr_id)
+                .join(CommentThreadRow, CommentThreadRow.finding_id == FindingRow.id)
+                .join(CommentMessageRow, CommentMessageRow.thread_id == CommentThreadRow.id)
+                .where(CommentMessageRow.external_comment_id == event.target_comment_external_id)
             )
-        ).scalar_one_or_none()
-    if posted is None:
+        ).first()
+    if row is None:
         return
-    ticket = await tickets.get_by_pr(posted.pr_id, org_id=org_id)
+    pr_id = row[0]
+    ticket = await tickets.get_by_pr(pr_id, org_id=org_id)
     if ticket is None:
         return
     await audit_for_ticket(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Frontend CI: lint + typecheck + tests + build.
+# Frontend CI: lint + typecheck + tests + build + semgrep.
 
 set -euo pipefail
 
@@ -17,5 +17,20 @@ pnpm exec vitest run --reporter=default --reporter=json --outputFile=./tmp/vites
 
 echo "==> vite build"
 pnpm exec vite build
+
+echo "==> semgrep (static security: p/typescript + p/react + p/owasp-top-ten)"
+# Semgrep is installed as a backend dev dep (Python tool, shared by both
+# apps' CI). Invoked through the backend's uv venv so the version is pinned
+# in lockfile. `--error` fails CI on findings; `--metrics off` disables
+# semgrep.dev telemetry; `.semgrepignore` at repo root excludes vendored
+# paths (node_modules, dist, etc.).
+uv run --directory ../backend semgrep scan \
+    --config p/typescript \
+    --config p/react \
+    --config p/owasp-top-ten \
+    --error \
+    --metrics off \
+    --quiet \
+    "$(pwd)/src"
 
 echo "OK"

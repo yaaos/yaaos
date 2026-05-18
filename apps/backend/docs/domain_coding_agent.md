@@ -29,7 +29,7 @@ No HTTP routes.
 - `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies`, `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
 - `InvocationStatus` — `SUCCESS` / `PARSE_FAILURE` / `AGENT_ERROR` / `TIMEOUT`.
 - `InvocationTelemetry` — `tokens_in`, `tokens_out`, `latency_ms`, `raw_output`, `raw_stderr`, `model` (resolved name reported by the CLI on completion). Cost is not tracked — CLI pricing data is not authoritative.
-- `ReviewResult` — `status`, `findings` (already `vcs.Finding`s with `source_agent` populated by the parent's synthesis pass — consumers wrap them in a `vcs.Review` and call `vcs_plugin.post_review`), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`.
+- `ReviewResult` — `status`, `findings: list[FindingDraft]` (plan §10.1 schema with `source_agent` populated by the parent's synthesis pass), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`. The reviewer aggregate runs admission on these drafts and converts admitted survivors into `vcs.Finding`s before calling `vcs_plugin.post_review`.
 - `ValidationResult` — `valid`, `errors`.
 - `ActivityEvent` — `{ts, kind, message, detail}` — one pre-rendered user-facing event from the coding-agent stream. `message` is rendered by the plugin so consumers (and the FE) don't interpret raw CLI shapes.
 - `OnActivity` — `Callable[[ActivityEvent], Awaitable[None]]`. Optional callback on `review`; called once per parsed stream event.
@@ -38,7 +38,7 @@ No HTTP routes.
 
 Async task methods `review`, `incremental_review`, `verify_fix`, `stale_check`, plus `validate_config`, `health_check`, and `meta: PluginMeta`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback. Signatures in `app/domain/coding_agent/types.py`.
 
-- `review` — full base..head diff. Returns `vcs.Finding`s (consumer wraps them in `vcs.Review`).
+- `review` — full base..head diff. Returns `FindingDraft`s; the reviewer aggregate applies admission and converts to `vcs.Finding` for posting.
 - `incremental_review` — `prev_sha..head` only. Returns `FindingDraft`s; the reviewer aggregate applies schema/severity gating, caps, dedup, and persists.
 - `verify_fix` — given an original finding + original code + current code at the resolved anchor, decides whether the issue is still present.
 - `stale_check` — given an original finding + current code + a diff summary, decides whether the finding still applies.

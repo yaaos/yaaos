@@ -304,6 +304,27 @@ class InProcessWorkspaceProvider:
             duration_ms=duration_ms,
         )
 
+    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
+        """Read a workspace-relative text file from the cloned tempdir.
+
+        Used by the incremental-review anchor re-resolution (plan §6.2 step 4b).
+        Guards against path traversal — the resolved path must stay under
+        `working_dir`. Returns None on missing, decode error, or escape attempt.
+        """
+        working_dir = plugin_state.get("working_dir")
+        if not working_dir or not os.path.isdir(working_dir):
+            return None
+        # Strip leading slashes so `os.path.join` honors `working_dir`.
+        clean = path.lstrip("/\\")
+        target = os.path.realpath(os.path.join(working_dir, clean))
+        if not target.startswith(os.path.realpath(working_dir) + os.sep):
+            return None
+        try:
+            with open(target, encoding="utf-8") as fh:
+                return fh.read()
+        except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError):
+            return None
+
     async def destroy(self, plugin_state: dict[str, Any]) -> None:
         working_dir = plugin_state.get("working_dir")
         if not working_dir:

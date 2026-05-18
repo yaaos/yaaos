@@ -82,4 +82,4 @@ Both are derived from the live code — always accurate, never written by hand. 
 
 ## CI
 
-`apps/backend/bin/ci` runs: `ruff format --check`, `ruff check`, `bin/sync_modules --check` (tach + layering), `bin/check_table_access`, `bin/check_doc_links` (cross-app docs), `pytest -q`.
+`apps/backend/bin/ci` runs: `ruff format --check`, `ruff check`, `bin/sync_modules --check` (tach + layering), `bin/check_table_access`, `bin/check_doc_links` (cross-app docs), `pytest -q`, `semgrep scan` (rulesets `p/python` + `p/owasp-top-ten`; `.semgrepignore` at repo root excludes `app/testing/` + test files since they live outside the production wheel).

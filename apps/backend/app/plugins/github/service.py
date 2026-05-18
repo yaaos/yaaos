@@ -302,6 +302,30 @@ class GitHubPlugin:
             return False
         return resp.json().get("status") == "diverged"
 
+    async def list_commit_messages(self, repo_external_id: str, prev_sha: str, head_sha: str) -> list[str]:
+        """Commit messages between `prev_sha` and `head_sha` via compare API.
+
+        Used by reviewer.handle_push to detect base-branch merges. The
+        compare API returns up to 250 commits in `commits`; for incremental
+        review windows that's plenty.
+        """
+        if not prev_sha or not head_sha or prev_sha == head_sha:
+            return []
+        owner, repo = repo_external_id.split("/", 1)
+        org_id = await self._resolve_org_id()
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=10) as client:
+                resp = await client.get(
+                    f"/repos/{owner}/{repo}/compare/{prev_sha}...{head_sha}",
+                    headers=await self._api_headers(org_id),
+                )
+        except Exception:
+            return []
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        return [((c.get("commit") or {}).get("message", "") or "") for c in data.get("commits", [])]
+
     async def is_repo_accessible(self, repo_external_id: str) -> bool:
         owner, repo = repo_external_id.split("/", 1)
         org_id = await self._resolve_org_id()

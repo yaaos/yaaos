@@ -116,6 +116,10 @@ class PullRequestReadyForReview(VCSEventBase):
 class PullRequestSynchronized(VCSEventBase):
     kind: Literal["pr_synchronized"] = "pr_synchronized"
     new_head_sha: str
+    # `before` SHA from the GitHub webhook payload. Populated for `synchronize`
+    # events; the reviewer uses it as the `prev_sha` boundary for incremental
+    # review scoping (plan §6.2). None when the upstream event didn't carry it.
+    prev_head_sha: str | None = None
     force_push: bool = False
 
 
@@ -136,6 +140,11 @@ class CommentCreated(VCSEventBase):
     author_login: str
     author_type: Literal["user", "bot"]
     in_reply_to_comment_external_id: str | None = None
+    # GitHub review-thread id (from `pull_request_review_comment.pull_request_review_id`
+    # or the threaded `in_reply_to_id` lineage). Used by reviewer.handle_developer_reply
+    # to resolve external thread → internal CommentThread without a fallback
+    # parent-message lookup.
+    external_thread_id: str | None = None
 
 
 class ReactionAdded(VCSEventBase):
@@ -204,6 +213,10 @@ class VCSPlugin(Protocol):
     async def list_yaaos_comments(self, external_id: str) -> list[Comment]: ...
     async def list_open_prs_since(self, repo_external_id: str, since: datetime) -> list[VCSPullRequest]: ...
     async def is_repo_accessible(self, repo_external_id: str) -> bool: ...
+    async def detect_force_push(self, repo_external_id: str, before_sha: str, after_sha: str) -> bool: ...
+    async def list_commit_messages(
+        self, repo_external_id: str, prev_sha: str, head_sha: str
+    ) -> list[str]: ...
     async def post_review(self, external_id: str, review: Review) -> ReviewPostResult: ...
     async def post_comment_reply(
         self, external_id: str, parent_comment_external_id: str, body: str

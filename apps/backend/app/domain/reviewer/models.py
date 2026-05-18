@@ -1,19 +1,19 @@
 """SQLAlchemy models for the reviewer's persistent state.
 
-Two generations coexist here while plan/notes/full-pr-flow.md §13 is in flight:
+Schema after the §13 step 7 cut-over (plan/notes/full-pr-flow.md):
 
-- Generation 1 (today): `ReviewJobRow` + `PostedCommentRow` — one review-job row
-  per (PR x run), JSONB findings list, separate posted_comments table.
-- Generation 2 (in progress): `FindingRow` + `FindingObservationRow` +
-  `AcknowledgmentDecisionRow` + `CommentThreadRow` + `CommentMessageRow` —
-  findings as first-class entities with a state machine, append-only
-  observation history, persistent acknowledgments, and 1:1 comment threads.
+- `ReviewRow` (`reviews`) — one row per PR run. Carries run-level state
+  (status, heartbeat, model/effort, activity_log) PLUS the durable-findings
+  view fields (`sequence_number`, `trigger_reason`, `scope_kind`, `scope_prev_sha`,
+  `commit_sha_at_start`, `superseded_by_review_id`, `pending_replay`).
+- `FindingRow`, `FindingObservationRow`, `CommentThreadRow`, `CommentMessageRow`,
+  `AcknowledgmentDecisionRow` — durable findings + acks + threads + messages
+  as first-class entities with a state machine.
 
-Generation 1 keeps working until the §13 step 7 cut-over wires the aggregate
-through `schedule_review`. At that point `review_jobs` is renamed `reviews`,
-the JSONB findings column drops, and `posted_comments` is dropped (subsumed
-by `comment_messages`). For POC, generation-2 tables carry `review_id` as an
-unconstrained UUID column to keep the rename cheap.
+`review_jobs` and `posted_comments` are gone — posted yaaos comments now live
+in `comment_messages`, and what `review_jobs.findings` JSONB used to hold is
+split across `findings` (first-class rows) + `finding_observations` (per-run
+sightings).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlalchemy import (
     REAL,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -39,22 +40,51 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 
-class ReviewJobRow(Base):
-    __tablename__ = "review_jobs"
+class ReviewRow(Base):
+    """One review run per PR. Plan §4.2.
+
+    Identity = `id` UUID. `sequence_number` is a per-PR ordinal (1, 2, 3, …)
+    assigned at insert time inside the PG advisory lock so concurrent inserts
+    serialize cleanly; the UI uses it for "Review 1 / Review 2 / …" labels.
+    """
+
+    __tablename__ = "reviews"
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     pr_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("pull_requests.id"), nullable=False
     )
+
+    # Per-PR ordinal, 1..N. Assigned at insert time under the advisory lock.
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
-    # Why this review was scheduled. Values: `pr_ready`, `pr_synchronized`,
-    # `rereview_command`, `ui_rereview`. Future: `implementer_loop` once an
-    # implementer module exists to call `run_review`.
-    triggered_by: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_ready")
-    # Where the review result went. `vcs` (today: posted via the VCS plugin).
-    # Future: `caller` when `run_review` returns findings without posting.
+
+    # Why this review was scheduled (plan §2.3 / §4.2). POC values:
+    # `pr_ready` | `push_incremental` | `manual_full` | `pr_synchronized` |
+    # `rereview_command` | `ui_rereview`. The first three are the durable-
+    # findings vocabulary; the last three are kept so legacy intake paths
+    # don't need a flag-day rename.
+    trigger_reason: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_ready")
+
+    # Where the review result goes. `vcs` (today). Future: `caller` for
+    # `run_review` callers that consume findings without posting.
     destination: Mapped[str] = mapped_column(String, nullable=False, server_default="vcs")
+
+    # `full` (base..head) or `incremental` (prev_sha..head). `scope_prev_sha`
+    # is non-null only when scope_kind = 'incremental'.
+    scope_kind: Mapped[str] = mapped_column(String, nullable=False, server_default="full")
+    scope_prev_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    commit_sha_at_start: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Used when a manual full review cancels an in-flight incremental.
+    superseded_by_review_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+
+    # Set when a push arrives during an in-flight review; the trigger policy
+    # re-evaluates on completion and may schedule another incremental.
+    pending_replay: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -72,8 +102,12 @@ class ReviewJobRow(Base):
     duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
     review_external_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Each finding object carries a `source_agent` field naming which subagent
-    # surfaced it (e.g. "yaaos-architecture").
+    # Denormalized cache of the vcs.Finding payloads posted for this review.
+    # Durable per-finding state lives in `findings` (FindingRow); this column
+    # exists so the legacy AgentCard view (snippet + applied_lesson_ids)
+    # doesn't have to reconstruct findings from anchors at read time. Dual-
+    # written by `queue.py` on review completion. Plan §13 step 7 originally
+    # called for dropping this column; kept for §9 augment-mode UI.
     findings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     # Chronological array of pre-rendered activity events captured from the
     # CLI's stream-json output. Cap 5 MB per row (enforced in app code).
@@ -91,32 +125,15 @@ class ReviewJobRow(Base):
     )
 
     __table_args__ = (
-        Index("ix_review_jobs_pr_status_created", "pr_id", "status", "created_at"),
-        Index("ix_review_jobs_status_heartbeat", "status", "last_heartbeat_at"),
+        UniqueConstraint("pr_id", "sequence_number", name="uq_reviews_pr_sequence"),
+        Index("ix_reviews_pr_status_created", "pr_id", "status", "created_at"),
+        Index("ix_reviews_status_heartbeat", "status", "last_heartbeat_at"),
+        Index("ix_reviews_pr_sequence", "pr_id", "sequence_number"),
     )
 
 
-class PostedCommentRow(Base):
-    __tablename__ = "posted_comments"
-
-    external_comment_id: Mapped[str] = mapped_column(String, primary_key=True)
-    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
-    pr_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("pull_requests.id"), nullable=False
-    )
-    review_job_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("review_jobs.id"), nullable=False
-    )
-    posted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-
-# ── Generation 2 — durable findings + state machine ─────────────────────────
-# Plan/notes/full-pr-flow.md §4.1. These tables are populated by the aggregate
-# (§13 steps 5-7); generation-1 ReviewJobRow continues to record the run-level
-# state (status, heartbeat, model/effort) and will be renamed `reviews` when
-# the aggregate cut-over lands.
+# ── Durable findings + state machine ─────────────────────────────────────────
+# Plan/notes/full-pr-flow.md §4.1.
 
 
 class FindingRow(Base):
@@ -147,10 +164,12 @@ class FindingRow(Base):
     state: Mapped[str] = mapped_column(String, nullable=False, default="open")
     current_anchor: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     source_agent: Mapped[str] = mapped_column(String, nullable=False)
-    # Unconstrained UUID by design — generation-1 review_jobs is renamed to
-    # `reviews` in §13 step 7. Adding an FK now would just need migrating then.
-    first_seen_review_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    last_observed_review_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    first_seen_review_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("reviews.id"), nullable=False
+    )
+    last_observed_review_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("reviews.id"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -174,7 +193,9 @@ class FindingObservationRow(Base):
     finding_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("findings.id"), nullable=False
     )
-    review_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    review_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("reviews.id"), nullable=False
+    )
     anchor: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     raw_body: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

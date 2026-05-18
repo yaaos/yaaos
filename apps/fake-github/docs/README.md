@@ -24,7 +24,7 @@ Not a yaaos backend module — absent from `tach.toml`, the module map, layering
 | `POST .../pulls/{number}/comments/{parent}/replies` | Records an inline reply. |
 | `POST .../issues/{number}/comments` | Records a top-level (non-inline) PR comment. |
 | `GET /installation/repositories` | Seeded repo list. Drives the catch-up poller and the Settings repo list. |
-| `GET .../compare/{before}...{after}` | `{status: <seeded or "ahead">}`. Force-push spec seeds `"diverged"`. |
+| `GET .../compare/{before}...{after}` | `{status: <seeded or "ahead">, commits: [{commit: {message}}, ...]}`. Force-push spec seeds `"diverged"`; incremental-trigger specs seed commit messages via `seed_compare_commits`. |
 
 Bearer-protected endpoints accept any bearer — the fake validates only that one is present.
 
@@ -36,6 +36,7 @@ Bearer-protected endpoints accept any bearer — the fake validates only that on
 | `POST /__test/seed_pr` | `{owner, repo, number, pr}`. Auto-called by the e2e `dispatchWebhook` helper for `pull_request` events. |
 | `POST /__test/seed_diff` | `{owner, repo, number, diff, files}`. |
 | `POST /__test/seed_compare_status` | `{base_to_head, status}`. Force-push spec uses this to inject `"diverged"`. |
+| `POST /__test/seed_compare_commits` | `{base_to_head, commits: ["msg1", ...]}`. Seeds the commit-message list returned by the compare API for that range. Used by reviewer specs exercising the §7 base-merge heuristic. |
 | `POST /__test/dispatch_webhook` | `{event, payload, target_url, delivery_id?}`. HMAC-signs with the shared test webhook secret, POSTs to `target_url` with `X-Hub-Signature-256` + `X-GitHub-Event` + `X-GitHub-Delivery`. How specs simulate "a PR opened on GitHub." |
 | `GET /__test/posted_comments` | What yaaos has POSTed (both inline review comments and top-level PR comments). Used for outbound-call assertions. |
 
@@ -55,6 +56,7 @@ App private key is not real RSA. yaaos's `_build_app_jwt` detects the missing `B
 - `seeded_files: dict[str, list[dict]]` — same key → file summaries.
 - `installation_repositories: list[dict]`.
 - `compare_status: dict[str, str]` — `"before...after"` → status.
+- `compare_commits: dict[str, list[str]]` — `"before...after"` → commit messages returned by `/compare`.
 - `posted_comments` — what yaaos has POSTed (inline + top-level PR comments).
 - `_next_comment_id` — auto-increment counter.
 

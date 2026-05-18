@@ -25,6 +25,7 @@ from app.domain.reviewer.models import (
     CommentThreadRow,
     FindingObservationRow,
     FindingRow,
+    ReviewRow,
 )
 from app.domain.reviewer.types import (
     AcknowledgmentDecision,
@@ -35,6 +36,10 @@ from app.domain.reviewer.types import (
     FindingFingerprint,
     FindingObservation,
     FindingState,
+    Review,
+    ReviewScope,
+    ReviewScopeKind,
+    ReviewTrigger,
 )
 
 
@@ -45,16 +50,19 @@ def _anchor_to_jsonb(a: CodeAnchor) -> dict[str, Any]:
         "line_end": a.line_end,
         "surrounding_content_hash": a.surrounding_content_hash,
         "commit_sha": a.commit_sha,
+        "original_lines": list(a.original_lines),
     }
 
 
 def _anchor_from_jsonb(d: dict[str, Any]) -> CodeAnchor:
+    # `original_lines` is missing on rows that pre-date plan §6.5 — default to ().
     return CodeAnchor(
         file_path=d["file_path"],
         line_start=int(d["line_start"]),
         line_end=int(d["line_end"]),
         surrounding_content_hash=d["surrounding_content_hash"],
         commit_sha=d["commit_sha"],
+        original_lines=tuple(d.get("original_lines") or ()),
     )
 
 
@@ -140,6 +148,34 @@ def _message_from_row(row: CommentMessageRow) -> CommentMessage:
     )
 
 
+def _review_from_row(row: ReviewRow) -> Review:
+    scope = ReviewScope(
+        kind=ReviewScopeKind(row.scope_kind),
+        base_sha=row.scope_prev_sha or "",
+        head_sha=row.commit_sha_at_start or "",
+    )
+    # `trigger_reason` accepts the §13 vocabulary plus legacy values; the
+    # ReviewTrigger enum covers the canonical set, anything else maps to
+    # PR_READY for in-memory representation (the DB column keeps the real value).
+    try:
+        trigger = ReviewTrigger(row.trigger_reason)
+    except ValueError:
+        trigger = ReviewTrigger.PR_READY
+    return Review(
+        id=row.id,
+        pr_id=row.pr_id,
+        org_id=row.org_id,
+        sequence_number=row.sequence_number,
+        trigger_reason=trigger,
+        scope=scope,
+        commit_sha_at_start=row.commit_sha_at_start or "",
+        status=row.status,
+        superseded_by_review_id=row.superseded_by_review_id,
+        pending_replay=row.pending_replay,
+        created_at=row.created_at,
+    )
+
+
 def _ack_from_row(row: AcknowledgmentDecisionRow) -> AcknowledgmentDecision:
     return AcknowledgmentDecision(
         id=row.id,
@@ -159,6 +195,15 @@ class SqlAlchemyAggregateRepository:
         self._session = session
 
     async def load(self, *, pr_id: uuid.UUID, org_id: uuid.UUID) -> PRReviewAggregate:
+        review_rows = list(
+            (
+                await self._session.execute(
+                    select(ReviewRow).where(ReviewRow.pr_id == pr_id, ReviewRow.org_id == org_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         finding_rows = (
             (
                 await self._session.execute(
@@ -220,7 +265,7 @@ class SqlAlchemyAggregateRepository:
         return PRReviewAggregate(
             pr_id=pr_id,
             org_id=org_id,
-            reviews=[],  # generation-1 reviews live on review_jobs; cut-over comes in §13 step 7.
+            reviews=[_review_from_row(r) for r in review_rows],
             findings=[_finding_from_row(r) for r in finding_rows],
             observations=[_observation_from_row(r) for r in observation_rows],
             threads=[_thread_from_row(r) for r in thread_rows],
@@ -231,10 +276,31 @@ class SqlAlchemyAggregateRepository:
     async def save(self, aggregate: PRReviewAggregate) -> None:
         pending = aggregate.pop_pending()
 
-        # Reviews live on the legacy review_jobs table until §13 step 7; the
-        # in-memory aggregate tracks them for sequence-numbering but we don't
-        # persist them here yet. queue.py owns review_jobs writes for now.
+        # Reviews — update existing rows. queue.py / incremental.py own the
+        # initial INSERT (because they hold the per-PR advisory lock at
+        # schedule time and assign sequence_number); the aggregate's
+        # mutations (mark_review_running, complete_review, supersede_review,
+        # set_pending_replay) propagate through here.
+        for r in pending.new_reviews + pending.updated_reviews:
+            row = await self._session.get(ReviewRow, r.id)
+            if row is None:
+                # Aggregate-side `start_review` was called without a
+                # paired DB INSERT first. queue.py + incremental.py insert
+                # ReviewRow before kicking off the runner; tests that
+                # exercise the aggregate directly need to insert the row
+                # themselves before saving.
+                continue
+            row.status = r.status
+            row.commit_sha_at_start = r.commit_sha_at_start
+            row.superseded_by_review_id = r.superseded_by_review_id
+            row.pending_replay = r.pending_replay
+            if r.status == "running" and row.started_at is None:
+                row.started_at = r.created_at
+            if r.status in {"done", "failed", "superseded"} and row.completed_at is None:
+                row.completed_at = r.created_at
 
+        # Findings + observations need FK ordering: findings first, flush so
+        # PG sees the row, then observations + threads + messages + acks.
         for f in pending.new_findings:
             self._session.add(
                 FindingRow(
@@ -266,6 +332,11 @@ class SqlAlchemyAggregateRepository:
             row.current_anchor = _anchor_to_jsonb(f.current_anchor)
             row.last_observed_review_id = f.last_observed_review_id
 
+        # Flush so the new findings exist before dependent rows reference
+        # them via FK (observations.finding_id, threads.finding_id, etc.).
+        if pending.new_findings:
+            await self._session.flush()
+
         for o in pending.new_observations:
             self._session.add(
                 FindingObservationRow(
@@ -286,6 +357,10 @@ class SqlAlchemyAggregateRepository:
                 )
             )
 
+        # Flush threads before messages so message_thread_id FKs resolve.
+        if pending.new_threads:
+            await self._session.flush()
+
         for m in pending.new_messages:
             self._session.add(
                 CommentMessageRow(
@@ -300,6 +375,10 @@ class SqlAlchemyAggregateRepository:
                     classification_confidence=m.classification_confidence,
                 )
             )
+
+        # Flush messages so ack.made_by_message_id FKs resolve.
+        if pending.new_messages:
+            await self._session.flush()
 
         for a in pending.new_acks:
             self._session.add(

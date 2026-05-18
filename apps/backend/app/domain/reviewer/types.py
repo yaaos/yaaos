@@ -77,6 +77,11 @@ class CodeAnchor:
     `surrounding_content_hash` covers 3 lines of context above + the anchored
     range + 3 lines below, whitespace-normalized. Used to re-find the anchor
     when line numbers drift in a later commit.
+
+    `original_lines` snapshots the exact anchored lines at finding-creation
+    time. verify_fix (plan §6.5) compares this against the current code at
+    the resolved anchor to decide whether the developer's claimed fix is
+    real. Empty list is allowed for legacy rows that pre-date the field.
     """
 
     file_path: str
@@ -84,6 +89,7 @@ class CodeAnchor:
     line_end: int
     surrounding_content_hash: str
     commit_sha: str
+    original_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backend CI: lint, format check, modularity, table-access, tests.
+# Backend CI: lint, format check, modularity, table-access, tests, semgrep.
 # Runs from apps/backend/ as cwd. (DI-over-@patch is enforced by ruff TID251.)
 
 set -euo pipefail
@@ -24,5 +24,17 @@ bin/check_doc_links
 echo "==> pytest"
 mkdir -p tmp
 uv run pytest -q --report-log=tmp/pytest-reportlog.json
+
+echo "==> semgrep (static security: p/python + p/owasp-top-ten)"
+# `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
+# telemetry. Scans `app/` only — tests rarely surface real issues and burn
+# scan time. `.semgrepignore` at repo root excludes vendored/generated paths.
+uv run semgrep scan \
+    --config p/python \
+    --config p/owasp-top-ten \
+    --error \
+    --metrics off \
+    --quiet \
+    app
 
 echo "OK"

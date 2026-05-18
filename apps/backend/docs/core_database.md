@@ -8,13 +8,14 @@ DB infrastructure layer every other module sits on. Owns the async engine and se
 
 ## Public interface
 
-Exports `Base`, `get_engine`, `get_sessionmaker`, `session`, `ping`, `ensure_schema_migrations_table`, `migrate`, `dispose`. See `apps/backend/app/core/database/__init__.py`.
+Exports `Base`, `get_engine`, `get_sessionmaker`, `session`, `ping`, `ensure_schema_migrations_table`, `migrate`, `dispose`, `set_test_session_override`. See `apps/backend/app/core/database/__init__.py`.
 
 - `Base` — declarative base; module models inherit.
-- `session()` — async context manager yielding `AsyncSession`; caller decides commit/rollback.
+- `session()` — async context manager yielding `AsyncSession`; caller decides commit/rollback. When a test override is installed, returns the override (so production code's `async with session() as s:` runs inside the test's transaction).
 - `ping()` — `SELECT 1`, returns `bool`. Drives `/api/health`; swallows exceptions.
 - `migrate()` — applies un-applied migrations. Idempotent.
 - `dispose()` — shutdown hook; closes engine, clears singletons.
+- `set_test_session_override(s)` — install (or clear) a fixture-bound `AsyncSession` so every production `session()` call routes to it. Used exclusively by the `db_session` test fixture.
 
 No HTTP routes.
 
@@ -59,3 +60,5 @@ Every other table is owned by the module that defines its ORM model.
 ## How it's tested
 
 `app/core/database/test/` is a placeholder. Module is exercised end-to-end by every integration test running through `TestClient` — `/api/health` covers `ping()`, and `migrate()` runs on every test-DB setup.
+
+The `db_session` fixture in `apps/backend/conftest.py` is the standard transactional-rollback wrapper used by every integration test that hits Postgres. It opens an outer transaction, binds an `AsyncSession` to that connection, installs it via `set_test_session_override`, and uses a `restart_savepoint` listener so production-side `await s.commit()` calls become SAVEPOINT releases inside the outer transaction. Teardown rolls back the outer transaction — the test DB stays clean between cases without re-running migrations.

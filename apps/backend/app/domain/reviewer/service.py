@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from app.domain.reviewer.aggregate import PRReviewAggregate
 from app.domain.reviewer.llm import ClassifyReplyOutput
@@ -348,6 +348,326 @@ def all_conversations_view(aggregate: PRReviewAggregate) -> list[ConversationVie
 
 def _messages_for_thread(aggregate: PRReviewAggregate, thread_id: uuid.UUID) -> list[CommentMessage]:
     return [m for m in aggregate.messages if m.thread_id == thread_id]
+
+
+# ─── Plan §5.1 public Python API ───────────────────────────────────────────
+
+
+async def list_reviews_for_pr(pr_id: uuid.UUID, *, org_id: uuid.UUID) -> list[Review]:
+    """List Review entities for a PR, newest first by sequence_number."""
+    from sqlalchemy import desc, select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
+    from app.domain.reviewer.repository import _review_from_row  # noqa: PLC0415
+
+    async with db_session() as s:
+        rows = (
+            (
+                await s.execute(
+                    select(ReviewRow)
+                    .where(ReviewRow.pr_id == pr_id, ReviewRow.org_id == org_id)
+                    .order_by(desc(ReviewRow.sequence_number))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [_review_from_row(r) for r in rows]
+
+
+async def get_review(review_id: uuid.UUID, *, org_id: uuid.UUID) -> Review:
+    """Fetch one Review by id. Raises `LookupError` if missing."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
+    from app.domain.reviewer.repository import _review_from_row  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (
+            await s.execute(select(ReviewRow).where(ReviewRow.id == review_id, ReviewRow.org_id == org_id))
+        ).scalar_one_or_none()
+    if row is None:
+        raise LookupError(f"review {review_id} not found in org {org_id}")
+    return _review_from_row(row)
+
+
+async def list_findings_for_pr(
+    pr_id: uuid.UUID, *, org_id: uuid.UUID, include_terminal: bool = False
+) -> list[FindingView]:
+    """Plan §5.1: list findings for a PR. Default excludes resolved+stale."""
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.repository import SqlAlchemyAggregateRepository  # noqa: PLC0415
+
+    async with db_session() as s:
+        repo = SqlAlchemyAggregateRepository(s)
+        agg = await repo.load(pr_id=pr_id, org_id=org_id)
+    return list_findings_view(agg, include_terminal=include_terminal)
+
+
+async def get_thread(thread_id: uuid.UUID, *, org_id: uuid.UUID) -> ThreadView | None:
+    """Plan §5.1: fetch a thread view (messages + ack) by thread id.
+
+    Returns None when the thread doesn't exist or belongs to a different org
+    (the FindingRow row's org_id is the source of truth here).
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import (  # noqa: PLC0415
+        AcknowledgmentDecisionRow,
+        CommentMessageRow,
+        CommentThreadRow,
+        FindingRow,
+    )
+
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(CommentThreadRow, FindingRow)
+                .join(FindingRow, FindingRow.id == CommentThreadRow.finding_id)
+                .where(CommentThreadRow.id == thread_id, FindingRow.org_id == org_id)
+            )
+        ).first()
+        if row is None:
+            return None
+        thread_row, finding_row = row
+        messages = list(
+            (
+                await s.execute(
+                    select(CommentMessageRow)
+                    .where(CommentMessageRow.thread_id == thread_id)
+                    .order_by(CommentMessageRow.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        ack = (
+            await s.execute(
+                select(AcknowledgmentDecisionRow)
+                .where(AcknowledgmentDecisionRow.finding_id == finding_row.id)
+                .order_by(AcknowledgmentDecisionRow.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return ThreadView(
+        thread_id=thread_row.id,
+        finding_id=finding_row.id,
+        external_thread_id=thread_row.external_thread_id,
+        messages=[
+            ThreadMessageView(
+                id=m.id,
+                author_kind=m.author_kind,
+                author_external_id=m.author_external_id,
+                external_comment_id=m.external_comment_id,
+                body=m.body,
+                classified_intent=m.classified_intent,
+                classification_confidence=m.classification_confidence,
+            )
+            for m in messages
+        ],
+        ack_kind=ack.kind if ack else None,
+        ack_rationale=ack.rationale if ack else None,
+    )
+
+
+@dataclass(frozen=True)
+class ThreadMessageView:
+    id: uuid.UUID
+    author_kind: str
+    author_external_id: str
+    external_comment_id: str
+    body: str
+    classified_intent: str | None
+    classification_confidence: float | None
+
+
+@dataclass(frozen=True)
+class ThreadView:
+    thread_id: uuid.UUID
+    finding_id: uuid.UUID
+    external_thread_id: str | None
+    messages: list[ThreadMessageView]
+    ack_kind: str | None
+    ack_rationale: str | None
+
+
+# ─── Plan §10.13 eval metrics ──────────────────────────────────────────────
+
+
+async def compute_acceptance_rate(*, org_id: uuid.UUID) -> float:
+    """Plan §10.13: (findings that led to a developer code change) / (findings posted).
+
+    A finding "led to a code change" iff its current state is
+    `resolved_confirmed` (agent verified the fix) OR `resolved_unverified`
+    (anchor gone — block was deleted or rewritten). Both indicate the
+    developer touched the flagged code. `acknowledged` (wontfix/intentional)
+    and `stale` (no longer applies) do NOT count: no code change there.
+
+    Returns 0.0 when no findings exist.
+    """
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
+
+    async with db_session() as s:
+        total = (
+            await s.execute(select(func.count(FindingRow.id)).where(FindingRow.org_id == org_id))
+        ).scalar_one()
+        accepted = (
+            await s.execute(
+                select(func.count(FindingRow.id)).where(
+                    FindingRow.org_id == org_id,
+                    FindingRow.state.in_(["resolved_confirmed", "resolved_unverified"]),
+                )
+            )
+        ).scalar_one()
+    return float(accepted) / float(total) if total else 0.0
+
+
+async def compute_resolved_without_edit_rate(*, org_id: uuid.UUID) -> float:
+    """Plan §10.13: (resolved-without-edit) / (findings posted). Higher = more noise.
+
+    Proxy today: `acknowledged` (wontfix or intentional) + `resolved_unverified`
+    + `stale` count as "marked resolved without edit". Returns 0.0 when empty.
+    """
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
+
+    async with db_session() as s:
+        total = (
+            await s.execute(select(func.count(FindingRow.id)).where(FindingRow.org_id == org_id))
+        ).scalar_one()
+        without_edit = (
+            await s.execute(
+                select(func.count(FindingRow.id)).where(
+                    FindingRow.org_id == org_id,
+                    FindingRow.state.in_(["acknowledged", "resolved_unverified", "stale"]),
+                )
+            )
+        ).scalar_one()
+    return float(without_edit) / float(total) if total else 0.0
+
+
+# ─── Domain events dispatch (plan §5.2) ────────────────────────────────────
+
+
+async def dispatch_events(aggregate: PRReviewAggregate) -> list[Any]:
+    """Drain the aggregate's pending events to `core/events` subscribers.
+
+    Returns the list of events that were dispatched (mostly for tests / audit).
+    Service-layer callers invoke this after `repo.save(aggregate)` so the
+    in-process event bus sees domain transitions.
+    """
+    from app.core.events import publish  # noqa: PLC0415
+
+    events = aggregate.pop_events()
+    for event in events:
+        # Wrap the dataclass event in a Pydantic core/events `Event` shape on
+        # the fly so the in-process bus can dispatch by `kind`. The dispatch
+        # path turns the dataclass into a generic dict-carrier event.
+        await publish(_DomainEventEnvelope.wrap(event))
+    return events
+
+
+# Domain events that represent durable-finding state transitions worth an
+# audit row (plan §5.3). Reviews already audit via `audit_for_review_job`.
+_AUDIT_FINDING_EVENT_KINDS = {
+    "FindingRaised": "finding_raised",
+    "FindingReObserved": "finding_re_observed",
+    "FindingAnchorUpdated": "finding_anchor_updated",
+    "FindingStateChanged": "finding_state_changed",
+    "FindingAcknowledged": "finding_acknowledged",
+    "FindingResolutionDetected": "finding_resolution_detected",
+    "FindingStaleDetected": "finding_stale_detected",
+}
+
+
+async def dispatch_audits(
+    aggregate: PRReviewAggregate,
+    *,
+    session: Any,
+    actor: Any,
+    org_id: uuid.UUID,
+) -> int:
+    """Plan §5.3: write an `audit_entries` row per finding state transition.
+
+    Peeks at `aggregate.events` (does NOT drain — `dispatch_events` owns the
+    drain). Idempotent across multiple calls only insofar as the caller
+    invokes it once per save cycle alongside `dispatch_events`.
+    """
+    from app.core.audit_log import audit_for_finding  # noqa: PLC0415
+    from app.domain.reviewer.service import _DomainEventEnvelope as _Env  # noqa: PLC0415
+
+    written = 0
+    for event in aggregate.events:
+        cls = type(event).__name__
+        kind = _AUDIT_FINDING_EVENT_KINDS.get(cls)
+        if kind is None:
+            continue
+        finding_id = getattr(event, "finding_id", None)
+        if finding_id is None:
+            continue
+        await audit_for_finding(
+            finding_id,
+            kind,
+            _Env.wrap(event),
+            actor=actor,
+            org_id=org_id,
+            session=session,
+        )
+        written += 1
+    return written
+
+
+# ─── Generic envelope so dataclass DomainEvents fit core/events.Event ──────
+
+
+from pydantic import Field  # noqa: E402
+
+from app.core.events import Event as _BusEvent  # noqa: E402
+
+
+class _DomainEventEnvelope(_BusEvent):
+    """Adapter: wraps a dataclass DomainEvent as a `core/events.Event`.
+
+    `core/events` expects Pydantic models with a `kind` discriminator.
+    DomainEvents are plain @dataclasses; this envelope carries the payload
+    as a dict + sets `kind` from the dataclass class name.
+    """
+
+    kind: str  # type: ignore[assignment]
+    source_module: Literal["reviewer"] = "reviewer"  # type: ignore[assignment]
+    payload: dict = Field(default_factory=dict)
+
+    @classmethod
+    def wrap(cls, event: Any) -> _DomainEventEnvelope:
+        from dataclasses import asdict  # noqa: PLC0415
+
+        kind_map = {
+            "ReviewRequested": "review_requested",
+            "ReviewStarted": "review_started",
+            "ReviewCompleted": "review_completed",
+            "ReviewFailed": "review_failed",
+            "ReviewSuperseded": "review_superseded",
+            "FindingRaised": "finding_raised",
+            "FindingReObserved": "finding_re_observed",
+            "FindingAnchorUpdated": "finding_anchor_updated",
+            "FindingStateChanged": "finding_state_changed",
+            "FindingAcknowledged": "finding_acknowledged",
+            "FindingResolutionDetected": "finding_resolution_detected",
+            "FindingStaleDetected": "finding_stale_detected",
+            "CommentReplyReceived": "comment_reply_received",
+            "AgentReplyPosted": "agent_reply_posted",
+        }
+        kind = kind_map.get(type(event).__name__, type(event).__name__)
+        # asdict serializes dataclasses recursively; UUIDs / enums survive as-is.
+        return cls(kind=kind, payload=asdict(event))  # type: ignore[arg-type]
 
 
 def review_summary(aggregate: PRReviewAggregate, review: Review) -> dict[str, int]:

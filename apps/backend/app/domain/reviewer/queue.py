@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -21,6 +22,7 @@ from uuid import UUID, uuid4
 
 import structlog
 from pydantic import BaseModel
+from sqlalchemy import func as sa_func
 from sqlalchemy import select, update
 
 from app.core.audit_log import audit_for_review_job
@@ -36,8 +38,17 @@ from app.core.workspace import (
     with_workspace,
 )
 from app.domain import coding_agent, memory, pull_requests, tickets
-from app.domain.coding_agent import ActivityEvent, InvocationStatus, ReviewContext
-from app.domain.reviewer.models import PostedCommentRow, ReviewJobRow
+from app.domain.coding_agent import ActivityEvent, FindingDraft, InvocationStatus, ReviewContext
+from app.domain.reviewer.aggregate import RawFinding
+from app.domain.reviewer.anchor import make_anchor
+from app.domain.reviewer.fingerprint import compute_fingerprint
+from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.service import dispatch_audits, dispatch_events
+from app.domain.reviewer.types import (
+    Severity,
+)
 from app.domain.vcs import Diff, Review, VCSPullRequest
 from app.domain.vcs import (
     get_plugin as get_vcs_plugin,
@@ -157,6 +168,12 @@ class _SkippedPayload(BaseModel):
     skip_reason: str
 
 
+class _AdmissionDropsPayload(BaseModel):
+    """Audit payload for plan §10.5 admission drops (one row per review)."""
+
+    drops: list[dict[str, Any]]
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -185,14 +202,19 @@ async def schedule_review(
     pr = await pull_requests.get(ticket.pr_id, org_id=org_id)
     debounce = get_settings().yaaos_review_debounce_seconds
 
-    # Cancel any in-flight job for this PR.
+    new_id = uuid4()
+    # Acquire the per-PR advisory lock for the whole cancel + insert flow so
+    # the sequence_number computation can't race two concurrent schedule_review
+    # calls into the UNIQUE(pr_id, sequence_number) constraint.
     async with db_session() as s:
+        await acquire_pr_lock(s, pr.id)
+        # Cancel any in-flight review for this PR.
         inflight = (
             (
                 await s.execute(
-                    select(ReviewJobRow).where(
-                        ReviewJobRow.pr_id == pr.id,
-                        ReviewJobRow.status.in_(["queued", "running"]),
+                    select(ReviewRow).where(
+                        ReviewRow.pr_id == pr.id,
+                        ReviewRow.status.in_(["queued", "running"]),
                     )
                 )
             )
@@ -201,35 +223,50 @@ async def schedule_review(
         )
         for row in inflight:
             await s.execute(
-                update(ReviewJobRow)
-                .where(ReviewJobRow.id == row.id)
-                .values(status="cancelled", skip_reason="superseded", completed_at=_utcnow())
+                update(ReviewRow)
+                .where(ReviewRow.id == row.id)
+                .values(
+                    status="cancelled",
+                    skip_reason="superseded",
+                    completed_at=_utcnow(),
+                    # Plan §6.3 / §7: the cancelled row points at the new
+                    # review that superseded it so the UI / audit can chain
+                    # them.
+                    superseded_by_review_id=new_id,
+                )
             )
-        await s.commit()
-        for row in inflight:
-            await audit_for_review_job(
-                row.id,
-                "review_job.cancelled",
-                _CancelledPayload(reason="superseded"),
-                actor=actor,
-                org_id=org_id,
+        max_seq = (
+            await s.execute(
+                select(sa_func.coalesce(sa_func.max(ReviewRow.sequence_number), 0)).where(
+                    ReviewRow.pr_id == pr.id
+                )
             )
-
-    new_id = uuid4()
-    async with db_session() as s:
+        ).scalar_one()
         s.add(
-            ReviewJobRow(
+            ReviewRow(
                 id=new_id,
                 org_id=org_id,
                 pr_id=pr.id,
+                sequence_number=max_seq + 1,
                 status="queued",
-                triggered_by=trigger_reason,
+                trigger_reason=trigger_reason,
                 destination="vcs",
+                # Generation-2 scope: schedule_review is always a "full" run.
+                # Incremental scope is owned by handle_push (§6.2).
+                scope_kind="full",
                 model=_DEFAULT_MODEL,
                 effort=_DEFAULT_EFFORT,
             )
         )
         await s.commit()
+    for row in inflight:
+        await audit_for_review_job(
+            row.id,
+            "review_job.cancelled",
+            _CancelledPayload(reason="superseded"),
+            actor=actor,
+            org_id=org_id,
+        )
     await audit_for_review_job(
         new_id,
         "review_job.scheduled",
@@ -263,9 +300,9 @@ async def cancel_pending(
         inflight = (
             (
                 await s.execute(
-                    select(ReviewJobRow).where(
-                        ReviewJobRow.pr_id == ticket.pr_id,
-                        ReviewJobRow.status.in_(["queued", "running"]),
+                    select(ReviewRow).where(
+                        ReviewRow.pr_id == ticket.pr_id,
+                        ReviewRow.status.in_(["queued", "running"]),
                     )
                 )
             )
@@ -274,8 +311,8 @@ async def cancel_pending(
         )
         for row in inflight:
             await s.execute(
-                update(ReviewJobRow)
-                .where(ReviewJobRow.id == row.id)
+                update(ReviewRow)
+                .where(ReviewRow.id == row.id)
                 .values(status="cancelled", skip_reason=reason, completed_at=_utcnow())
             )
         await s.commit()
@@ -308,7 +345,7 @@ class ReviewJob(BaseModel):
     org_id: UUID
     pr_id: UUID
     status: str
-    triggered_by: str
+    trigger_reason: str
     destination: str
     skip_reason: str | None
     scheduled_at: datetime
@@ -329,13 +366,13 @@ class ReviewJob(BaseModel):
     effort: str | None
 
     @classmethod
-    def from_row(cls, row: ReviewJobRow) -> ReviewJob:
+    def from_row(cls, row: ReviewRow) -> ReviewJob:
         return cls(
             id=row.id,
             org_id=row.org_id,
             pr_id=row.pr_id,
             status=row.status,
-            triggered_by=row.triggered_by,
+            trigger_reason=row.trigger_reason,
             destination=row.destination,
             skip_reason=row.skip_reason,
             scheduled_at=row.scheduled_at,
@@ -361,7 +398,7 @@ async def get_review_job(review_job_id: UUID, *, org_id: UUID) -> ReviewJob:
     async with db_session() as s:
         row = (
             await s.execute(
-                select(ReviewJobRow).where(ReviewJobRow.id == review_job_id, ReviewJobRow.org_id == org_id)
+                select(ReviewRow).where(ReviewRow.id == review_job_id, ReviewRow.org_id == org_id)
             )
         ).scalar_one_or_none()
     if row is None:
@@ -374,9 +411,9 @@ async def list_review_jobs_for_pr(pr_id: UUID, *, org_id: UUID) -> list[ReviewJo
         rows = (
             (
                 await s.execute(
-                    select(ReviewJobRow)
-                    .where(ReviewJobRow.pr_id == pr_id, ReviewJobRow.org_id == org_id)
-                    .order_by(ReviewJobRow.created_at.desc())
+                    select(ReviewRow)
+                    .where(ReviewRow.pr_id == pr_id, ReviewRow.org_id == org_id)
+                    .order_by(ReviewRow.created_at.desc())
                 )
             )
             .scalars()
@@ -390,9 +427,9 @@ async def list_in_flight(*, org_id: UUID) -> list[ReviewJob]:
         rows = (
             (
                 await s.execute(
-                    select(ReviewJobRow).where(
-                        ReviewJobRow.org_id == org_id,
-                        ReviewJobRow.status.in_(["queued", "running"]),
+                    select(ReviewRow).where(
+                        ReviewRow.org_id == org_id,
+                        ReviewRow.status.in_(["queued", "running"]),
                     )
                 )
             )
@@ -405,7 +442,7 @@ async def list_in_flight(*, org_id: UUID) -> list[ReviewJob]:
 async def metrics_summary(*, org_id: UUID) -> dict[str, Any]:
     """Aggregate counters for the basic-metrics requirement."""
     async with db_session() as s:
-        rows = (await s.execute(select(ReviewJobRow).where(ReviewJobRow.org_id == org_id))).scalars().all()
+        rows = (await s.execute(select(ReviewRow).where(ReviewRow.org_id == org_id))).scalars().all()
     statuses: dict[str, int] = {}
     posted = 0
     failed = 0
@@ -459,14 +496,14 @@ async def _run_review_job(input: ReviewJobInput) -> None:
 
     # Bail if the job was cancelled during the debounce window.
     async with db_session() as s:
-        row = (await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))).scalar_one_or_none()
+        row = (await s.execute(select(ReviewRow).where(ReviewRow.id == job_id))).scalar_one_or_none()
     if row is None or row.status != "queued":
         return
 
     async with db_session() as s:
         await s.execute(
-            update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
+            update(ReviewRow)
+            .where(ReviewRow.id == job_id)
             .values(
                 status="running",
                 started_at=_utcnow(),
@@ -582,8 +619,8 @@ async def _run_review_job(input: ReviewJobInput) -> None:
 
             async with db_session() as s:
                 await s.execute(
-                    update(ReviewJobRow)
-                    .where(ReviewJobRow.id == job_id)
+                    update(ReviewRow)
+                    .where(ReviewRow.id == job_id)
                     .values(prompt_hash=prompt_hash, lessons_applied=lesson_ids)
                 )
                 await s.commit()
@@ -610,6 +647,17 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                 on_activity=_on_activity,
             )
 
+            # Plan §2.3: pre-load file contents for each draft's anchor while
+            # the workspace is still mounted; anchor + fingerprint hashes need
+            # real file content (NOT the body text).
+            draft_file_contents: dict[str, list[str] | None] = {}
+            for draft in result.findings or []:
+                fp = draft.anchor.file_path
+                if fp in draft_file_contents:
+                    continue
+                text = await ws.read_text(fp)
+                draft_file_contents[fp] = None if text is None else text.splitlines()
+
         if result.status != InvocationStatus.SUCCESS:
             await _transition_failed(
                 job_id,
@@ -621,34 +669,82 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             )
             return
 
-        # Post one Review to the VCS, then update the row + audit.
+        # Plan §6.1 + §13 cutover: admission BEFORE posting. The previous
+        # legacy flow posted everything the agent emitted and gated the
+        # durable-findings persist behind admission — rejected findings still
+        # ended up on GitHub. Now admit first via the aggregate, then post
+        # only the survivors.
         await _set_step(job_id, "posting_review", pr_id=pr.id)
-        review_obj = Review(
-            agent_tag=_REVIEWER_TAG,
-            state=result.state or "COMMENT",
-            summary_body=result.summary_body,
-            findings=result.findings,
-        )
-        post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
         async with db_session() as s:
-            for cid in post_result.finding_to_comment_external_id.values():
-                s.add(
-                    PostedCommentRow(
-                        external_comment_id=cid,
-                        org_id=org_id,
-                        pr_id=ctx.pr_id,
-                        review_job_id=job_id,
-                    )
+            await acquire_pr_lock(s, ctx.pr_id)
+            agg_repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await agg_repo.load(pr_id=ctx.pr_id, org_id=org_id)
+
+            raw = _findingdrafts_to_raw(
+                result.findings,
+                commit_sha=ctx.vcs_pr.head_sha,
+                read_file=draft_file_contents.get,
+            )
+            # Plan §10.9: drop findings whose anchor file isn't in the PR diff.
+            diff_files = {f.path for f in (ctx.diff.files or [])}
+            new_findings, _obs, drops = aggregate.post_process_raw_findings(
+                job_id, raw, diff_files=diff_files
+            )
+
+            # Translate admitted RawFindings back to vcs.Finding for posting.
+            posted_vcs_findings = _raw_to_vcs_findings(raw, new_findings)
+            review_obj = Review(
+                agent_tag=_REVIEWER_TAG,
+                state=result.state or "COMMENT",
+                summary_body=result.summary_body,
+                findings=posted_vcs_findings,
+            )
+            post_result = await vcs_plugin.post_review(ctx.pr_external_id, review_obj)
+
+            # Build threads + posted yaaos messages so the §9.3 All Conversations
+            # view + §9.4 thread rendering have content. Map back from
+            # `post_result.finding_to_comment_external_id` (keyed by vcs.Finding
+            # index) to the matching durable Finding.
+            external_ids = list(post_result.finding_to_comment_external_id.values())
+            for idx, f in enumerate(new_findings):
+                external_id = external_ids[idx] if idx < len(external_ids) else f"local-{f.id}"
+                thread = aggregate.open_thread_for_finding(f.id)
+                aggregate.append_message(
+                    thread_id=thread.id,
+                    author_kind="yaaos",
+                    author_external_id=_REVIEWER_TAG,
+                    external_comment_id=external_id,
+                    body=f.body,
                 )
-            started = (
-                await s.execute(select(ReviewJobRow).where(ReviewJobRow.id == job_id))
-            ).scalar_one_or_none()
+            aggregate.complete_review(job_id, [f.id for f in new_findings])
+            await agg_repo.save(aggregate)
+            await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            await dispatch_events(aggregate)
+            if drops:
+                drops_payload = [
+                    {
+                        "rule_id": d.rule_id,
+                        "reason": d.reason,
+                        "severity": d.severity,
+                        "confidence": d.confidence,
+                    }
+                    for d in drops
+                ]
+                log.info("review_job.admission_drops", review_job_id=str(job_id), drops=drops_payload)
+                await audit_for_review_job(
+                    job_id,
+                    "review_job.findings_dropped",
+                    _AdmissionDropsPayload(drops=drops_payload),
+                    actor=Actor.system(),
+                    org_id=org_id,
+                )
+            started = (await s.execute(select(ReviewRow).where(ReviewRow.id == job_id))).scalar_one_or_none()
             duration = None
             if started and started.started_at:
                 duration = int((_utcnow() - started.started_at).total_seconds())
             await s.execute(
-                update(ReviewJobRow)
-                .where(ReviewJobRow.id == job_id)
+                update(ReviewRow)
+                .where(ReviewRow.id == job_id)
                 .values(
                     status="posted",
                     destination="vcs",
@@ -658,7 +754,24 @@ async def _run_review_job(input: ReviewJobInput) -> None:
                     tokens_out=result.telemetry.tokens_out,
                     duration_s=duration,
                     current_step="posted",
-                    findings=[f.model_dump(mode="json") for f in result.findings],
+                    commit_sha_at_start=ctx.vcs_pr.head_sha,
+                    # Plan §13: agent emits FindingDraft (§10.1); cache the
+                    # ADMITTED subset (rejected drafts never reach GitHub).
+                    findings=[
+                        {
+                            "file_path": r.anchor.file_path,
+                            "line_start": r.anchor.line_start,
+                            "line_end": r.anchor.line_end,
+                            "severity": r.severity,
+                            "rule_id": r.rule_id,
+                            "title": r.title,
+                            "body": r.body,
+                            "rationale": r.rationale,
+                            "source_agent": r.source_agent,
+                        }
+                        for r in raw
+                        if r.fingerprint.hash in {f.fingerprint.hash for f in new_findings}
+                    ],
                     activity_log=activity_buffer,
                     # CLI may report a resolved model name (e.g. an `opus`
                     # alias becomes a versioned full name); persist that.
@@ -667,16 +780,20 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             )
             await s.commit()
 
+        # FindingDrafts don't carry `source_agent` directly — it's set during
+        # _findingdrafts_to_raw. Group admitted findings by their assigned tag.
         by_agent: dict[str, int] = {}
-        for f in result.findings:
-            key = f.source_agent or "unknown"
+        for r in raw:
+            if r.fingerprint.hash not in {f.fingerprint.hash for f in new_findings}:
+                continue
+            key = r.source_agent or "unknown"
             by_agent[key] = by_agent.get(key, 0) + 1
         await audit_for_review_job(
             job_id,
             "review_job.posted",
             _PostedPayload(
                 verdict=result.state or "COMMENT",
-                finding_count=len(result.findings),
+                finding_count=len(new_findings),
                 findings_by_agent=by_agent,
                 tokens_in=result.telemetry.tokens_in,
                 tokens_out=result.telemetry.tokens_out,
@@ -687,6 +804,26 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             org_id=org_id,
         )
         await publish(ReviewJobStatusChanged(pr_id=ctx.pr_id, review_job_id=job_id, status="posted"))
+
+        # Plan §10.13 — POC eval metrics. Log tier mix (severity distribution)
+        # so an operator can see whether the reviewer is generating Tier 1/2
+        # signal vs noise. The acceptance-rate / resolved-without-edit metrics
+        # need the durable-findings reply lifecycle to mature; logged here
+        # so the data starts accumulating now.
+        severity_mix: dict[str, int] = {}
+        for f in new_findings:
+            severity_mix[f.severity] = severity_mix.get(f.severity, 0) + 1
+        # Plan §10.13 tier 1+2 = blocker + major in §10.1 vocab.
+        tier_1_2 = severity_mix.get("blocker", 0) + severity_mix.get("major", 0)
+        total = sum(severity_mix.values())
+        log.info(
+            "review_job.eval_metrics",
+            review_job_id=str(job_id),
+            pr_id=str(ctx.pr_id),
+            posted_count=total,
+            severity_mix=severity_mix,
+            tier_1_2_ratio=(tier_1_2 / total) if total else 0.0,
+        )
 
     except asyncio.CancelledError:
         # Operator-initiated cancel: the DB row was flipped to `cancelled`
@@ -701,9 +838,7 @@ async def _run_review_job(input: ReviewJobInput) -> None:
             try:
                 async with db_session() as s:
                     await s.execute(
-                        update(ReviewJobRow)
-                        .where(ReviewJobRow.id == job_id)
-                        .values(activity_log=activity_buffer)
+                        update(ReviewRow).where(ReviewRow.id == job_id).values(activity_log=activity_buffer)
                     )
                     await s.commit()
             except Exception:
@@ -752,7 +887,7 @@ async def _transition_failed(
     if activity_log is not None:
         values["activity_log"] = activity_log
     async with db_session() as s:
-        await s.execute(update(ReviewJobRow).where(ReviewJobRow.id == job_id).values(**values))
+        await s.execute(update(ReviewRow).where(ReviewRow.id == job_id).values(**values))
         await s.commit()
     await audit_for_review_job(
         job_id,
@@ -782,7 +917,7 @@ async def _transition_skipped(
     if activity_log is not None:
         values["activity_log"] = activity_log
     async with db_session() as s:
-        await s.execute(update(ReviewJobRow).where(ReviewJobRow.id == job_id).values(**values))
+        await s.execute(update(ReviewRow).where(ReviewRow.id == job_id).values(**values))
         await s.commit()
     await audit_for_review_job(
         job_id,
@@ -831,8 +966,8 @@ def _secrets_warning_review(rule_id: str) -> Review:
 async def _set_step(job_id: UUID, step: str, *, pr_id: UUID) -> None:
     async with db_session() as s:
         await s.execute(
-            update(ReviewJobRow)
-            .where(ReviewJobRow.id == job_id)
+            update(ReviewRow)
+            .where(ReviewRow.id == job_id)
             .values(current_step=step, last_heartbeat_at=_utcnow())
         )
         await s.commit()
@@ -868,16 +1003,120 @@ def _detect_language(diff: Any) -> str | None:
     return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
+_SEVERITY_TO_VCS: dict[Severity, str] = {
+    "blocker": "must-fix",
+    "major": "must-fix",
+    "minor": "suggestion",
+    "nit": "nit",
+}
+
+
+def _findingdrafts_to_raw(
+    drafts: list[FindingDraft],
+    *,
+    commit_sha: str,
+    read_file: Callable[[str], list[str] | None],
+    source_agent: str = "coding_agent",
+) -> list[RawFinding]:
+    """Convert §10.1 `FindingDraft`s from the agent into `RawFinding`s.
+
+    Plan §2.3: anchor + fingerprint hashes use real file content at the
+    anchored line range — never the body text. Two findings at the same
+    file:line with different body phrasings must produce IDENTICAL
+    fingerprints so the aggregate deduplicates re-observations across
+    reviews. Drafts whose file we can't read are dropped — no stable
+    fingerprint without real content.
+
+    Shared between full review (queue.py) and incremental review
+    (incremental.py); both go through the same admission pipeline.
+    """
+    out: list[RawFinding] = []
+    for d in drafts:
+        file_lines = read_file(d.anchor.file_path)
+        # `None` = file missing; `[]` = file present but empty. Both fail the
+        # same way — no stable anchor / fingerprint without real content.
+        if not file_lines:
+            log.info(
+                "review.findingdraft_dropped_no_file",
+                file=d.anchor.file_path,
+                rule_id=d.rule_id,
+            )
+            continue
+        # Defensive clamp — plan §10.1 enforces a valid range on the agent
+        # but we don't want make_anchor to raise on off-by-one drafts.
+        ls = max(1, min(d.anchor.line_start, len(file_lines)))
+        le = max(ls, min(d.anchor.line_end, len(file_lines)))
+        anchor = make_anchor(
+            file_path=d.anchor.file_path,
+            file_lines=file_lines,
+            line_start=ls,
+            line_end=le,
+            commit_sha=commit_sha,
+        )
+        anchored_lines = file_lines[ls - 1 : le]
+        fingerprint = compute_fingerprint(
+            file_path=d.anchor.file_path,
+            rule_id=d.rule_id,
+            anchored_lines=anchored_lines,
+            title=d.title,
+        )
+        out.append(
+            RawFinding(
+                fingerprint=fingerprint,
+                rule_id=d.rule_id,
+                title=d.title,
+                body=d.body,
+                rationale=d.rationale,
+                concrete_failure_scenario=d.concrete_failure_scenario,
+                confidence=d.confidence,
+                severity=d.severity,
+                anchor=anchor,
+                source_agent=source_agent,
+                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
+            )
+        )
+    return out
+
+
+def _raw_to_vcs_findings(raw: list[RawFinding], new_findings: list[Any]) -> list[Any]:
+    """Map admitted RawFinding back into vcs.Finding payloads for posting.
+
+    Only admitted findings (post-aggregate-gate) translate; rejected ones
+    never reach the VCS plugin. Severity collapses plan §10.1's four tiers
+    onto the legacy VCS three-tier enum.
+    """
+    from app.domain.vcs import Finding as VcsFinding  # noqa: PLC0415
+
+    out: list[Any] = []
+    admitted_fps = {f.fingerprint.hash for f in new_findings}
+    for r in raw:
+        if r.fingerprint.hash not in admitted_fps:
+            continue
+        out.append(
+            VcsFinding(
+                file=r.anchor.file_path,
+                line_start=r.anchor.line_start,
+                line_end=r.anchor.line_end,
+                severity=_SEVERITY_TO_VCS.get(r.severity, "suggestion"),
+                title=r.title,
+                body=r.body,
+                rationale=r.rationale,
+                snippet=None,
+                applied_lesson_ids=[],
+                source_agent=r.source_agent,
+            )
+        )
+    return out
+
+
 async def startup_recovery() -> None:
     """Mark any `running` jobs from a prior process as failed; respawn `queued` jobs."""
     async with db_session() as s:
-        crashed = (
-            (await s.execute(select(ReviewJobRow.id).where(ReviewJobRow.status == "running"))).scalars().all()
-        )
+        crashed = (await s.execute(select(ReviewRow.id).where(ReviewRow.status == "running"))).scalars().all()
         if crashed:
             await s.execute(
-                update(ReviewJobRow)
-                .where(ReviewJobRow.status == "running")
+                update(ReviewRow)
+                .where(ReviewRow.status == "running")
                 .values(
                     status="failed",
                     skip_reason="crashed",
@@ -885,9 +1124,7 @@ async def startup_recovery() -> None:
                     error_message="process crashed mid-execution",
                 )
             )
-        queued = (
-            (await s.execute(select(ReviewJobRow).where(ReviewJobRow.status == "queued"))).scalars().all()
-        )
+        queued = (await s.execute(select(ReviewRow).where(ReviewRow.status == "queued"))).scalars().all()
         await s.commit()
 
     for jid in crashed:

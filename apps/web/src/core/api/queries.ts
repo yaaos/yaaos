@@ -123,6 +123,97 @@ export function useConversationsForTicket(ticket_id: string) {
   });
 }
 
+/**
+ * Per-review timeline metadata (plan §9.2). One row per Review row, newest
+ * first. Frontend renders each as a collapsible <details> section with
+ * sequence_number / trigger_reason / scope as the header.
+ */
+export interface ReviewTimelineRow {
+  id: string;
+  sequence_number: number;
+  trigger_reason: string;
+  scope_kind: "full" | "incremental";
+  scope_prev_sha: string | null;
+  commit_sha_at_start: string | null;
+  status: string;
+  scheduled_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  model: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  duration_s: number | null;
+}
+
+export function useReviewsForTicket(ticket_id: string) {
+  return useQuery<ReviewTimelineRow[]>({
+    queryKey: ["reviewer", "reviews", ticket_id],
+    queryFn: () => apiFetch<ReviewTimelineRow[]>(`/api/reviewer/reviews/by-ticket/${ticket_id}`),
+    enabled: !!ticket_id,
+    refetchInterval: 5_000,
+  });
+}
+
+/**
+ * Thread messages + ack banner for one finding (plan §9.4).
+ */
+export interface ThreadMessage {
+  id: string;
+  author_kind: "yaaos" | "human";
+  author_external_id: string;
+  external_comment_id: string;
+  body: string;
+  classified_intent: string | null;
+  classification_confidence: number | null;
+  created_at: string | null;
+}
+
+export interface FindingThread {
+  finding_id: string;
+  state: string;
+  title: string;
+  thread_id: string | null;
+  external_thread_id: string | null;
+  acknowledgment: {
+    kind: string;
+    rationale: string;
+    made_by_external_id: string;
+    created_at: string | null;
+  } | null;
+  messages: ThreadMessage[];
+}
+
+export function useThreadForFinding(finding_id: string | null) {
+  return useQuery<FindingThread>({
+    queryKey: ["reviewer", "thread", finding_id],
+    queryFn: () => apiFetch<FindingThread>(`/api/reviewer/threads/by-finding/${finding_id}`),
+    enabled: !!finding_id,
+    refetchInterval: 5_000,
+  });
+}
+
+/**
+ * `@yaaos full review` from the UI — schedules a full review.
+ * Reuses the existing /api/reviewer/rereview endpoint (trigger_reason="ui_button"
+ * which schedule_review treats as a full run today; the user-facing semantic
+ * is "full re-review").
+ */
+export function useFullRereviewMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ticket_id: string) =>
+      apiFetch<{ scheduled_count: number }>("/api/reviewer/rereview", {
+        method: "POST",
+        body: JSON.stringify({ ticket_id }),
+      }),
+    onSuccess: (_, ticket_id) => {
+      qc.invalidateQueries({ queryKey: ["reviewer", "jobs", ticket_id] });
+      qc.invalidateQueries({ queryKey: ["reviewer", "reviews", ticket_id] });
+      qc.invalidateQueries({ queryKey: ["reviewer", "findings", ticket_id] });
+    },
+  });
+}
+
 export function useRereviewMutation() {
   const qc = useQueryClient();
   return useMutation({

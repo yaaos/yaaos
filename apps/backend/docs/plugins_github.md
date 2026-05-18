@@ -60,7 +60,7 @@ Pure-data translator — no I/O, no DB:
 | `pull_request.opened` | `draft == false` | `PullRequestReadyForReview` |
 | `pull_request.opened` | `draft == true` | (nothing) |
 | `pull_request.ready_for_review` | always | `PullRequestReadyForReview` |
-| `pull_request.synchronize` | always | `PullRequestSynchronized` (placeholder `force_push=False`) |
+| `pull_request.synchronize` | always | `PullRequestSynchronized(prev_head_sha=payload.before, force_push=False)` (handler overwrites `force_push` after the compare-API enrichment) |
 | `pull_request.closed` | always | `PullRequestClosed(merged=...)` |
 | `pull_request.reopened` | always | `PullRequestReopened` |
 | `issue_comment.created` | `issue.pull_request` set | `CommentCreated(kind="top_level")` |
@@ -102,7 +102,7 @@ No shared `httpx.AsyncClient` — short-lived per-method against `github_api_bas
 | `POST .../pulls/{n}/comments` (inline) + `POST .../issues/{n}/comments` (top-level) | `post_review` |
 | `POST .../pulls/{n}/comments/{id}/replies` (`/issues/{n}/comments` fallback on 404) | `post_comment_reply` |
 | `GET .../pulls?state=open` | `list_open_prs_since` / poller |
-| `GET .../compare/{base}...{head}` | `detect_force_push` |
+| `GET .../compare/{base}...{head}` | `detect_force_push`, `list_commit_messages` (the `commits[].commit.message` array; consumed by `incremental.py` to feed `TriggerInputs.new_commit_messages` for §7's base-merge heuristic) |
 | `GET /installation/repositories` | repositories route + poller |
 | `GET /repos/{owner}/{repo}` | `is_repo_accessible` |
 

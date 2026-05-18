@@ -32,6 +32,8 @@ from app.core.primitives import PluginMeta
 from app.core.workspace import Workspace, WorkspaceExecError
 from app.domain.coding_agent import (
     ActivityEvent,
+    FindingAnchor,
+    FindingDraft,
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
@@ -47,7 +49,6 @@ from app.domain.coding_agent import (
     VerifyFixResult,
     register_coding_agent_plugin,
 )
-from app.domain.vcs import Finding, FindingSnippetLine
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")
@@ -73,67 +74,67 @@ def _utcnow() -> datetime:
 
 # ── Plugin-internal response schemas ──────────────────────────────────────────
 # These describe the JSON shape we ask Claude Code to emit. They never leak out
-# of this plugin — the public Protocol returns `vcs.Finding`/`ReviewResult`.
+# of this plugin — the public Protocol returns `ReviewResult` carrying a list
+# of `FindingDraft` (plan §10.1 schema; vcs.Finding translation lives in the
+# reviewer module, post-admission).
 
 
-class _FindingSnippetLine(BaseModel):
-    line_number: int
-    kind: Literal["context", "add", "del"]
-    text: str
+class _FindingDraftDto(BaseModel):
+    """Schema the agent emits for both full review and incremental review (plan §10.1)."""
 
-
-class _FindingDto(BaseModel):
-    file: str | None = None
-    line_start: int | None = None
-    line_end: int | None = None
-    severity: Literal["must-fix", "nit", "suggestion", "info"]
+    severity: Literal["blocker", "major", "minor", "nit"]
+    rule_id: str
     title: str
     body: str
-    rationale: str | None = None
-    snippet: list[_FindingSnippetLine] | None = None
-    applied_lesson_ids: list[UUID] = []
-    source_agent: str | None = None
+    concrete_failure_scenario: str
+    confidence: int
+    rationale: str
+    file_path: str
+    line_start: int
+    line_end: int
+    duplicate_of_rule_ids: list[str] = []
 
 
-class _FindingList(BaseModel):
-    findings: list[_FindingDto]
+class _FindingDraftList(BaseModel):
+    findings: list[_FindingDraftDto]
+
+
+class _VerifyFixDto(BaseModel):
+    still_present: bool
+    confidence: float
+    reasoning: str
+    observed_line: int | None = None
+
+
+class _StaleCheckDto(BaseModel):
+    still_applies: bool
+    confidence: float
+    reasoning: str
 
 
 # ── Prompt assembly ───────────────────────────────────────────────────────────
 
-# Parent dispatcher prompt. The reviewer that wraps it is one Claude Code
-# subprocess; its job is to (1) decide which yaaos-* subagents apply to this
-# PR, (2) dispatch them in parallel via the Task tool, (3) synthesize their
-# findings by re-reading any cited code, (4) emit one merged JSON.
-#
-# Subagent names are listed explicitly so the parent knows what's available
-# without us needing to scan the install dir at runtime.
-_PARENT_PROMPT_HEADER = """You are the **yaaos parent reviewer**. Your job is to orchestrate a code review of a pull request and produce one synthesized finding list.
+# Versioned prompt files live next to this module (plan §8.3): one .md per
+# coding-agent task mode. `_load_prompt(name)` reads + caches them at import
+# time so the prompt content is reviewable in PRs (the files), and runtime
+# code stays small (no embedded multi-page f-strings).
+_PROMPTS_DIR = __file__.rsplit("/", 1)[0] + "/prompts"
 
-You have these subagents available (installed in `~/.claude/agents/`):
-- `yaaos-architecture` — module boundaries, patterns, abstractions, CLAUDE.md adherence (always run)
-- `yaaos-security` — auth, injection, secrets, crypto misuse (always run)
-- `yaaos-line-level` — per-line correctness, idioms, code-level patterns like "no mocks in tests" (always run)
-- `yaaos-tests` — test presence and quality for new behavior (always run)
-- `yaaos-docs` — documentation sync per CLAUDE.md (always run)
-- `yaaos-skill` — Claude Code Skill file validation (run ONLY if the diff touches `**/SKILL.md` or `.claude/skills/**`)
 
-## Your workflow
+def _load_prompt(name: str) -> str:
+    """Read `prompts/{name}.md`. Caller may pass `.format(**vars)` afterward
+    if the template includes placeholders. POC: no jinja2 (jinja lives in
+    `core/llm` for the reviewer's direct-LLM prompts); these are simple
+    %-or-format templates because claude_code shells out to a CLI, not a
+    LangChain runnable.
+    """
+    with open(f"{_PROMPTS_DIR}/{name}.md", encoding="utf-8") as f:
+        return f.read()
 
-1. **Read the diff** below to understand what changed.
-2. **Decide which subagents to dispatch.** All five always-on subagents plus `yaaos-skill` if and only if the diff touches a skill file. Do not run unnecessary subagents.
-3. **DISPATCH ALL RELEVANT SUBAGENTS IN ONE TURN, IN PARALLEL.** In a single assistant response, emit one `Task` tool_use block per relevant subagent. Multiple Task tool_use blocks in the same message run concurrently; sequential Task calls across separate turns run serially and waste minutes. Do not wait for one subagent's result before dispatching the next. Each subagent gets the same brief: the PR title/body and the diff. Each will return a JSON object with `findings`.
-4. **Collect their findings.** For each finding, tag it with `source_agent` set to the subagent's name (e.g. `"yaaos-architecture"`).
-5. **Synthesize.** Drop duplicates (two subagents finding the same thing — keep the one with better evidence). For each surviving finding, re-read the cited file to confirm the finding is accurate; drop hallucinated findings whose snippet doesn't match what's actually at that location.
-6. **Rank by severity** (must-fix > suggestion > nit > info) within each `source_agent` group.
-7. **Emit the final JSON.** Schema below. No markdown fences, no preamble.
 
-## Output discipline
-
-- Findings must include `source_agent` so downstream code can attribute each comment.
-- Findings must include a verbatim `snippet` (a list of `{line_number, kind, text}` objects from the actual file at HEAD). If you can't produce a verbatim snippet, drop the finding.
-- If no findings survive synthesis, emit `{"findings": []}`.
-"""
+# Parent dispatcher prompt content lives in prompts/full_review.md.
+# Loaded once at module import for cheap reuse and reviewability.
+_PARENT_PROMPT_HEADER = _load_prompt("full_review")
 
 
 def _assemble_review_prompt(ctx: ReviewContext) -> str:
@@ -193,6 +194,76 @@ def _assemble_review_prompt(ctx: ReviewContext) -> str:
         for body in ctx.prior_yaaos_comment_bodies[:20]:
             parts.append(f"- {body[:200]}")
     return "\n".join(parts)
+
+
+# ── Incremental review / verify_fix / stale_check prompt assembly ────────────
+
+
+_INCREMENTAL_PROMPT_HEADER = _load_prompt("incremental_review")
+
+
+def _assemble_incremental_review_prompt(ctx: IncrementalReviewContext) -> str:
+    parts: list[str] = [
+        _INCREMENTAL_PROMPT_HEADER.format(prev_sha=ctx.prev_sha, head_sha=ctx.head_sha),
+        "",
+        "## Pull request",
+        f"### Title\n{ctx.pr.title}",
+        f"### Description\n{ctx.pr.body or '(no description)'}",
+        "",
+        "## Scope",
+        f"- prev_sha: `{ctx.prev_sha}`",
+        f"- head_sha: `{ctx.head_sha}`",
+        f"- base branch: `{ctx.pr.base_branch}`",
+        "",
+        "## How to inspect the changes",
+        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} --name-only`",
+        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} --stat`",
+        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} -- <path>`",
+    ]
+    if ctx.language_hint:
+        parts.extend(["", "## Repository language", f"This repository is primarily {ctx.language_hint}."])
+    if ctx.prior_open_finding_summaries:
+        parts.extend(["", "## Prior OPEN findings (do not re-raise — aggregate dedups on fingerprint)"])
+        for s in ctx.prior_open_finding_summaries[:30]:
+            parts.append(f"- {s[:200]}")
+    if ctx.prior_acknowledged_finding_summaries:
+        parts.extend(["", "## Prior ACKNOWLEDGED findings (NEVER re-raise — developer explicitly accepted)"])
+        for s in ctx.prior_acknowledged_finding_summaries[:30]:
+            parts.append(f"- {s[:200]}")
+    if ctx.lessons:
+        parts.extend(["", "## Lessons learned from past reviews"])
+        for lesson in ctx.lessons[:20]:
+            parts.append(f"### {lesson.title}\n_lesson_id: {lesson.id}_\n{lesson.body}")
+    return "\n".join(parts)
+
+
+_VERIFY_FIX_PROMPT = _load_prompt("verify_fix")
+
+
+def _assemble_verify_fix_prompt(ctx: VerifyFixContext) -> str:
+    return _VERIFY_FIX_PROMPT.format(
+        rule_id=ctx.original_rule_id,
+        title=ctx.original_finding_title,
+        body=ctx.original_finding_body,
+        original_code=ctx.original_code_snippet,
+        current_code=ctx.current_code_snippet,
+        file_path=ctx.current_anchor.file_path,
+        line_start=ctx.current_anchor.line_start,
+        line_end=ctx.current_anchor.line_end,
+    )
+
+
+_STALE_CHECK_PROMPT = _load_prompt("stale_check")
+
+
+def _assemble_stale_check_prompt(ctx: StaleCheckContext) -> str:
+    return _STALE_CHECK_PROMPT.format(
+        rule_id=ctx.original_rule_id,
+        title=ctx.original_finding_title,
+        body=ctx.original_finding_body,
+        current_code=ctx.current_code_snippet,
+        diff_summary=ctx.diff_summary,
+    )
 
 
 def _schema_appendix(response_model: type[BaseModel]) -> str:
@@ -410,32 +481,13 @@ def _summarize_tool_input(tool: str, inp: dict[str, Any]) -> str:
 # ── Verdict ───────────────────────────────────────────────────────────────────
 
 
-def _compute_state(findings: list[_FindingDto]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
+def _compute_state_v2(findings: list[FindingDraft]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
+    """Plan §10.1 severity tiers — `blocker`/`major` request changes."""
     if not findings:
         return "APPROVED"
-    if any(f.severity == "must-fix" for f in findings):
+    if any(f.severity in {"blocker", "major"} for f in findings):
         return "CHANGES_REQUESTED"
     return "COMMENT"
-
-
-def _dto_to_finding(dto: _FindingDto) -> Finding:
-    snippet: list[FindingSnippetLine] | None = None
-    if dto.snippet:
-        snippet = [
-            FindingSnippetLine(line_number=s.line_number, kind=s.kind, text=s.text) for s in dto.snippet
-        ]
-    return Finding(
-        file=dto.file,
-        line_start=dto.line_start,
-        line_end=dto.line_end,
-        severity=dto.severity,
-        title=dto.title,
-        body=dto.body,
-        rationale=dto.rationale,
-        snippet=snippet,
-        applied_lesson_ids=dto.applied_lesson_ids,
-        source_agent=dto.source_agent,
-    )
 
 
 # ── Plugin ────────────────────────────────────────────────────────────────────
@@ -477,7 +529,10 @@ class ClaudeCodePlugin:
             return prep
         argv, env, timeout = prep
 
-        full_prompt = _assemble_review_prompt(context) + _schema_appendix(_FindingList)
+        # Plan §6.1 + §13 cutover: full review emits the §10.1 schema
+        # (FindingDraft) — same shape as incremental review. The reviewer
+        # module (queue.py) handles admission + posting in one place.
+        full_prompt = _assemble_review_prompt(context) + _schema_appendix(_FindingDraftList)
 
         envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
         if isinstance(envelope, ReviewResult):
@@ -486,18 +541,32 @@ class ClaudeCodePlugin:
 
         try:
             parsed_dict = json.loads(agent_text)
-            parsed = _FindingList.model_validate(parsed_dict)
+            parsed = _FindingDraftList.model_validate(parsed_dict)
         except (json.JSONDecodeError, ValidationError) as e:
             return ReviewResult(
                 status=InvocationStatus.PARSE_FAILURE,
                 telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _FindingList: {e}",
+                error_message=f"agent response didn't match _FindingDraftList: {e}",
             )
 
+        drafts = [
+            FindingDraft(
+                severity=d.severity,
+                rule_id=d.rule_id,
+                title=d.title,
+                body=d.body,
+                concrete_failure_scenario=d.concrete_failure_scenario,
+                confidence=d.confidence,
+                rationale=d.rationale,
+                anchor=FindingAnchor(file_path=d.file_path, line_start=d.line_start, line_end=d.line_end),
+                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
+            )
+            for d in parsed.findings
+        ]
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
-            findings=[_dto_to_finding(f) for f in parsed.findings],
-            state=_compute_state(parsed.findings),
+            findings=drafts,
+            state=_compute_state_v2(drafts),
             summary_body=None,
             lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
@@ -659,10 +728,54 @@ class ClaudeCodePlugin:
         context: IncrementalReviewContext,
         on_activity: OnActivity | None = None,
     ) -> IncrementalReviewResult:
-        # Wired when domain/reviewer ships the incremental-review flow. The
-        # prompt template + structured-output schema for this mode are owned
-        # by domain/reviewer per plan §5.5.
-        raise NotImplementedError("claude_code: incremental_review not wired yet")
+        prep = await self._prepare_invocation(context.agent_config)
+        if isinstance(prep, ReviewResult):
+            return IncrementalReviewResult(
+                status=prep.status,
+                error_message=prep.error_message,
+                telemetry=prep.telemetry,
+            )
+        argv, env, timeout = prep
+
+        full_prompt = _assemble_incremental_review_prompt(context) + _schema_appendix(_FindingDraftList)
+        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
+        if isinstance(envelope, ReviewResult):
+            return IncrementalReviewResult(
+                status=envelope.status,
+                error_message=envelope.error_message,
+                telemetry=envelope.telemetry,
+            )
+        agent_text, telemetry = envelope
+
+        try:
+            parsed_dict = json.loads(agent_text)
+            parsed = _FindingDraftList.model_validate(parsed_dict)
+        except (json.JSONDecodeError, ValidationError) as e:
+            return IncrementalReviewResult(
+                status=InvocationStatus.PARSE_FAILURE,
+                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+                error_message=f"agent response didn't match _FindingDraftList: {e}",
+            )
+
+        drafts = [
+            FindingDraft(
+                severity=d.severity,
+                rule_id=d.rule_id,
+                title=d.title,
+                body=d.body,
+                concrete_failure_scenario=d.concrete_failure_scenario,
+                confidence=d.confidence,
+                rationale=d.rationale,
+                anchor=FindingAnchor(file_path=d.file_path, line_start=d.line_start, line_end=d.line_end),
+                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
+            )
+            for d in parsed.findings
+        ]
+        return IncrementalReviewResult(
+            status=InvocationStatus.SUCCESS,
+            findings=drafts,
+            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+        )
 
     async def verify_fix(
         self,
@@ -670,7 +783,35 @@ class ClaudeCodePlugin:
         context: VerifyFixContext,
         on_activity: OnActivity | None = None,
     ) -> VerifyFixResult:
-        raise NotImplementedError("claude_code: verify_fix not wired yet")
+        prep = await self._prepare_invocation(context.agent_config)
+        if isinstance(prep, ReviewResult):
+            return VerifyFixResult(
+                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
+            )
+        argv, env, timeout = prep
+        full_prompt = _assemble_verify_fix_prompt(context) + _schema_appendix(_VerifyFixDto)
+        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
+        if isinstance(envelope, ReviewResult):
+            return VerifyFixResult(
+                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
+            )
+        agent_text, telemetry = envelope
+        try:
+            parsed = _VerifyFixDto.model_validate(json.loads(agent_text))
+        except (json.JSONDecodeError, ValidationError) as e:
+            return VerifyFixResult(
+                status=InvocationStatus.PARSE_FAILURE,
+                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+                error_message=f"agent response didn't match _VerifyFixDto: {e}",
+            )
+        return VerifyFixResult(
+            status=InvocationStatus.SUCCESS,
+            still_present=parsed.still_present,
+            confidence=parsed.confidence,
+            reasoning=parsed.reasoning,
+            observed_line=parsed.observed_line,
+            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+        )
 
     async def stale_check(
         self,
@@ -678,7 +819,34 @@ class ClaudeCodePlugin:
         context: StaleCheckContext,
         on_activity: OnActivity | None = None,
     ) -> StaleCheckResult:
-        raise NotImplementedError("claude_code: stale_check not wired yet")
+        prep = await self._prepare_invocation(context.agent_config)
+        if isinstance(prep, ReviewResult):
+            return StaleCheckResult(
+                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
+            )
+        argv, env, timeout = prep
+        full_prompt = _assemble_stale_check_prompt(context) + _schema_appendix(_StaleCheckDto)
+        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
+        if isinstance(envelope, ReviewResult):
+            return StaleCheckResult(
+                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
+            )
+        agent_text, telemetry = envelope
+        try:
+            parsed = _StaleCheckDto.model_validate(json.loads(agent_text))
+        except (json.JSONDecodeError, ValidationError) as e:
+            return StaleCheckResult(
+                status=InvocationStatus.PARSE_FAILURE,
+                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+                error_message=f"agent response didn't match _StaleCheckDto: {e}",
+            )
+        return StaleCheckResult(
+            status=InvocationStatus.SUCCESS,
+            still_applies=parsed.still_applies,
+            confidence=parsed.confidence,
+            reasoning=parsed.reasoning,
+            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+        )
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         errors: list[str] = []

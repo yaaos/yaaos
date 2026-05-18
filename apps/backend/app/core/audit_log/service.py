@@ -145,6 +145,19 @@ async def audit_for_review_job(
     return await audit("review_job", review_job_id, kind, payload, actor, org_id=org_id, session=session)
 
 
+async def audit_for_finding(
+    finding_id: UUID,
+    kind: str,
+    payload: BaseModel,
+    *,
+    actor: Actor,
+    org_id: UUID,
+    session: AsyncSession | None = None,
+) -> AuditEntry:
+    """Plan §5.3: every durable-finding state transition writes an audit row."""
+    return await audit("finding", finding_id, kind, payload, actor, org_id=org_id, session=session)
+
+
 async def audit_for_webhook_event(
     webhook_event_id: UUID,
     kind: str,

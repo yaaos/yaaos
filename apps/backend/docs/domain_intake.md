@@ -34,7 +34,7 @@ No HTTP routes. Webhook surface lives in the VCS plugin (e.g., `/api/github/webh
 ### Per-event handlers
 
 - `_handle_pr_ready_for_review` — filters forks and bot authors (writing `webhook_event.filtered`), calls `refresh_pr_metadata`, then `reviewer.schedule_review(trigger_reason="pr_ready")`. No repo-allowlist gate — the GitHub App install picks the access scope.
-- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), schedules a review with `trigger_reason="pr_synchronized"`. The reviewer's debounce + per-PR queue collapses bursts.
+- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), schedules a review with `trigger_reason="pr_synchronized"`, then calls `reviewer.handle_push(pr.id, new_head_sha=..., prev_head_sha=event.prev_head_sha, org_id=...)`. `prev_head_sha` comes from the webhook payload's `before` field via `payload_parser`. The reviewer's debounce + per-PR queue collapses bursts; `handle_push` runs the §7 trigger policy.
 - `_handle_pr_closed` — updates PR state to `merged` or `closed`, transitions the ticket to `complete` if `in_review`, calls `reviewer.cancel_pending`.
 - `_handle_pr_reopened` — updates PR state to `open`. No review triggered — the next commit does so via `pr_synchronized`.
 - `_handle_comment_created` — skips yaaos bot comments (`YAAOS_BOT_LOGIN = "yaaos[bot]"`) and `author_type == "bot"`. Then:

@@ -130,6 +130,15 @@ class Workspace(Protocol):
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
 
+    async def read_text(self, path: str) -> str | None:
+        """Read a workspace-relative text file. Returns None if absent.
+
+        Used by the incremental-review anchor re-resolution (plan §6.2
+        step 4b) to find each open finding's surrounding-content block in
+        the new head.
+        """
+        ...
+
 
 class WorkspaceProvider(Protocol):
     """Plugin contract. Provision returns opaque plugin_state; `run_coding_agent_cli`
@@ -150,6 +159,7 @@ class WorkspaceProvider(Protocol):
         timeout_seconds: int | None = None,
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
+    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None: ...
     async def destroy(self, plugin_state: dict[str, Any]) -> None: ...
     async def health_check(self) -> HealthStatus: ...
 

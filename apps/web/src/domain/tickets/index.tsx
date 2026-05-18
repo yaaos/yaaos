@@ -19,14 +19,19 @@ import {
   type Finding,
   type ReviewJob,
   type ReviewJobActivityEvent,
+  type ReviewTimelineRow,
+  type ThreadMessage,
   type Ticket,
   useCancelReviewerJobs,
   useConversationsForTicket,
   useCreateLesson,
   useFindingsForTicket,
+  useFullRereviewMutation,
   useGithubRepositories,
   useRereviewMutation,
   useReviewJobsForTicket,
+  useReviewsForTicket,
+  useThreadForFinding,
   useTicket,
   useTicketAudit,
   useTickets,
@@ -620,15 +625,305 @@ function TabButton({
 }
 
 function ReviewTab({ ticket, job }: { ticket: Ticket; job: ReviewJob | undefined }) {
-  // One review run per ticket. Findings carry source_agent for per-finding attribution.
+  // Augment mode (plan §9 + "keep info available"): the new multi-review
+  // timeline + thread rendering sits ABOVE the legacy SummaryStrip + AgentCard,
+  // which keeps the live activity-log stream + Teach-yaaos modal working.
   const jobs = job ? [job] : [];
   return (
     <div className="flex flex-col gap-4">
-      <SummaryStrip jobs={jobs} ticket={ticket} />
+      <DurableFindingsSummary ticketId={ticket.id} />
+      <RereviewButtons ticketId={ticket.id} />
       <AllConversationsSection ticketId={ticket.id} />
+      <PerReviewTimeline ticketId={ticket.id} />
       <DurableFindingsSection ticketId={ticket.id} />
+      <SummaryStrip jobs={jobs} ticket={ticket} />
       <AgentCard agentName="yaaos" job={job} repoExternalId={ticket.repo_external_id} />
     </div>
+  );
+}
+
+function DurableFindingsSummary({ ticketId }: { ticketId: string }) {
+  // Plan §9.1 — counters strip: Open / Acknowledged / Resolved + latest
+  // review chip.
+  const { data: findings } = useFindingsForTicket(ticketId, true);
+  const { data: reviews } = useReviewsForTicket(ticketId);
+  if (!findings || findings.length === 0) {
+    return null;
+  }
+  const open = findings.filter((f) => f.state === "open").length;
+  const acknowledged = findings.filter((f) => f.state === "acknowledged").length;
+  const resolved = findings.filter(
+    (f) => f.state === "resolved_confirmed" || f.state === "resolved_unverified",
+  ).length;
+  const stale = findings.filter((f) => f.state === "stale").length;
+  const latest = reviews && reviews.length > 0 ? reviews[0] : null;
+  const counters: Array<{ label: string; value: number; tone?: "danger" }> = [
+    { label: "Open findings", value: open, tone: open > 0 ? "danger" : undefined },
+    { label: "Acknowledged", value: acknowledged },
+    { label: "Resolved", value: resolved },
+    { label: "Stale", value: stale },
+  ];
+  return (
+    <Card className="flex" data-testid="durable-findings-summary">
+      {counters.map((c, i) => (
+        <div
+          key={c.label}
+          className={cn("flex-1 px-4 py-3", i > 0 ? "border-l border-border-soft" : "")}
+        >
+          <div className="text-text-3 text-[10.5px] uppercase tracking-wider font-medium">
+            {c.label}
+          </div>
+          <div
+            className={cn(
+              "mt-1 mono font-semibold text-[17px]",
+              c.tone === "danger" ? "text-danger" : "text-text",
+            )}
+          >
+            {c.value}
+          </div>
+        </div>
+      ))}
+      <div className="flex-1 px-4 py-3 border-l border-border-soft">
+        <div className="text-text-3 text-[10.5px] uppercase tracking-wider font-medium">
+          Latest review
+        </div>
+        <div className="mt-1 text-[13px] truncate">
+          {latest ? (
+            <>
+              <span className="mono font-semibold">Review {latest.sequence_number}</span>
+              <span className="text-text-3"> · {latest.scope_kind}</span>
+              {latest.completed_at && (
+                <span className="text-text-4"> · {ago(latest.completed_at)}</span>
+              )}
+            </>
+          ) : (
+            <span className="text-text-4">none yet</span>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function RereviewButtons({ ticketId }: { ticketId: string }) {
+  // Plan §9.5 — two buttons: incremental Re-review + Full re-review.
+  // The legacy single Re-review button lives in the ticket header (TicketDetailHeader);
+  // here we surface a Full re-review with a confirm dialog because it's expensive.
+  const rereview = useRereviewMutation();
+  const full = useFullRereviewMutation();
+  return (
+    <div className="flex items-center gap-2" data-testid="rereview-buttons">
+      <Button
+        variant="default"
+        onClick={() => rereview.mutate(ticketId)}
+        disabled={rereview.isPending}
+        data-testid="rereview-incremental-btn"
+      >
+        {rereview.isPending ? "Scheduling…" : "Re-review (incremental)"}
+      </Button>
+      <Button
+        variant="ghost"
+        onClick={() => {
+          if (
+            window.confirm(
+              "Full re-review reruns every yaaos-* subagent on the entire PR diff. This can take 10–15 minutes and consumes more tokens than an incremental re-review. Continue?",
+            )
+          ) {
+            full.mutate(ticketId);
+          }
+        }}
+        disabled={full.isPending}
+        data-testid="rereview-full-btn"
+      >
+        {full.isPending ? "Scheduling…" : "Full re-review"}
+      </Button>
+    </div>
+  );
+}
+
+function PerReviewTimeline({ ticketId }: { ticketId: string }) {
+  // Plan §9.2 — one collapsible <details> per Review, newest at top, latest
+  // expanded by default.
+  const { data: reviews } = useReviewsForTicket(ticketId);
+  if (!reviews || reviews.length === 0) return null;
+  return (
+    <Card data-testid="per-review-timeline">
+      <div className="px-4 py-3 border-b border-border-soft font-medium">Review timeline</div>
+      <ul>
+        {reviews.map((r, idx) => (
+          <li key={r.id} className="border-b border-border-soft last:border-b-0">
+            <details open={idx === 0} className="group">
+              <summary className="cursor-pointer list-none px-4 py-2.5 flex items-center gap-3">
+                <span className="mono font-semibold text-[13px]">Review {r.sequence_number}</span>
+                <span className="text-text-3 text-[12px]">{r.scope_kind}</span>
+                <span className="text-text-4 text-[12px]">· {r.trigger_reason}</span>
+                <div className="flex-1" />
+                <span className="text-text-4 text-[11.5px] mono">
+                  {r.completed_at ? ago(r.completed_at) : r.status}
+                </span>
+              </summary>
+              <ReviewSectionBody review={r} ticketId={ticketId} />
+            </details>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function ReviewSectionBody({
+  review,
+  ticketId,
+}: {
+  review: ReviewTimelineRow;
+  ticketId: string;
+}) {
+  const { data: findings } = useFindingsForTicket(ticketId, true);
+  const inThisReview = (findings ?? []).filter((f) => f.first_seen_review_id === review.id);
+  return (
+    <div className="px-4 py-3 text-[12.5px]">
+      <div className="text-text-3 grid grid-cols-2 gap-y-1 gap-x-4 mb-3">
+        <div>
+          status: <span className="mono text-text">{review.status}</span>
+        </div>
+        <div>
+          model: <span className="mono text-text">{review.model ?? "—"}</span>
+        </div>
+        <div>
+          tokens:{" "}
+          <span className="mono text-text">
+            {fmtTokens((review.tokens_in ?? 0) + (review.tokens_out ?? 0))}
+          </span>
+        </div>
+        <div>
+          duration:{" "}
+          <span className="mono text-text">
+            {review.duration_s != null ? fmtDuration(review.duration_s) : "—"}
+          </span>
+        </div>
+        {review.scope_kind === "incremental" && review.scope_prev_sha && (
+          <div className="col-span-2">
+            scope:{" "}
+            <span className="mono text-text">
+              {review.scope_prev_sha.slice(0, 7)}..{(review.commit_sha_at_start ?? "").slice(0, 7)}
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="text-text-3 text-[10.5px] uppercase tracking-wider font-medium mb-1">
+        Findings first observed in this review ({inThisReview.length})
+      </div>
+      {inThisReview.length === 0 ? (
+        <div className="text-text-4 text-[12px]">No findings raised in this review.</div>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {inThisReview.map((f) => (
+            <FindingTimelineRow
+              key={f.id}
+              findingId={f.id}
+              title={f.title}
+              state={f.state}
+              severity={f.severity}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function FindingTimelineRow({
+  findingId,
+  title,
+  state,
+  severity,
+}: {
+  findingId: string;
+  title: string;
+  state: string;
+  severity: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <li className="border border-border-soft rounded">
+      <button
+        type="button"
+        className="w-full px-3 py-2 flex items-center gap-2 text-left"
+        onClick={() => setExpanded((x) => !x)}
+        data-testid="finding-timeline-row"
+      >
+        <SeverityPill severity={severity} />
+        <StatePill state={state} />
+        <span className="flex-1 truncate">{title}</span>
+        <span className="text-text-4 text-[11px]">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && <FindingThreadPanel findingId={findingId} />}
+    </li>
+  );
+}
+
+function FindingThreadPanel({ findingId }: { findingId: string }) {
+  const { data: thread } = useThreadForFinding(findingId);
+  if (!thread) return <div className="px-3 py-2 text-text-4 text-[12px]">Loading…</div>;
+  return (
+    <div className="px-3 py-2 border-t border-border-soft" data-testid="finding-thread-panel">
+      {thread.acknowledgment && (
+        <div className="mb-2 px-2 py-1.5 rounded bg-text-3/10 text-[12px]" data-testid="ack-banner">
+          <span className="font-medium">Acknowledged as {thread.acknowledgment.kind}</span>
+          {thread.acknowledgment.rationale && (
+            <span className="text-text-3"> — {thread.acknowledgment.rationale}</span>
+          )}
+          <span className="text-text-4">
+            {" "}
+            — by @{thread.acknowledgment.made_by_external_id}
+            {thread.acknowledgment.created_at &&
+              ` on ${formatTime(thread.acknowledgment.created_at)}`}
+          </span>
+        </div>
+      )}
+      {thread.messages.length === 0 ? (
+        <div className="text-text-4 text-[12px]">No messages yet.</div>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {thread.messages.map((m) => (
+            <ThreadMessageRow key={m.id} message={m} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ThreadMessageRow({ message }: { message: ThreadMessage }) {
+  const isYaaos = message.author_kind === "yaaos";
+  return (
+    <li
+      className={cn(
+        "px-2 py-1.5 rounded text-[12px]",
+        isYaaos ? "bg-accent-soft/40" : "bg-border-soft/40",
+      )}
+      data-testid={isYaaos ? "yaaos-message" : "human-message"}
+    >
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="font-medium mono text-[11px]">
+          {isYaaos ? "yaaos" : `@${message.author_external_id}`}
+        </span>
+        {!isYaaos && message.classified_intent && (
+          <span
+            className="rounded bg-text-3/20 px-1.5 py-0.5 text-[9.5px] uppercase font-medium"
+            data-testid="intent-tag"
+          >
+            {message.classified_intent}
+            {message.classification_confidence != null &&
+              ` ${Math.round(message.classification_confidence * 100)}%`}
+          </span>
+        )}
+        {message.created_at && (
+          <span className="text-text-4 text-[10.5px] ml-auto">{ago(message.created_at)}</span>
+        )}
+      </div>
+      <div className="whitespace-pre-wrap text-text">{message.body}</div>
+    </li>
   );
 }
 

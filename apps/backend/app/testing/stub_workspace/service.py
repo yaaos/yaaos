@@ -76,6 +76,20 @@ class StubWorkspaceProvider:
             duration_ms=0,
         )
 
+    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
+        working_dir = plugin_state.get("working_dir")
+        if not working_dir or not os.path.isdir(working_dir):
+            return None
+        clean = path.lstrip("/\\")
+        target = os.path.realpath(os.path.join(working_dir, clean))
+        if not target.startswith(os.path.realpath(working_dir) + os.sep):
+            return None
+        try:
+            with open(target, encoding="utf-8") as fh:
+                return fh.read()
+        except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError):
+            return None
+
     async def destroy(self, plugin_state: dict[str, Any]) -> None:
         working_dir = plugin_state.get("working_dir")
         if working_dir and os.path.isdir(working_dir):

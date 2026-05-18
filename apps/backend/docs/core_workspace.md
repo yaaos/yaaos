@@ -22,7 +22,7 @@ HTTP routes registered by the module under `/api/workspaces/*` (list, get, force
 
 ### `Workspace` Protocol
 
-Carries `id` plus two methods: `info()` returns `WorkspaceInfo`; `run_coding_agent_cli(argv, *, env=None, stdin=None, timeout_seconds=None, on_stream_line=None)` returns `CodingAgentCliResult`. That's the entire surface. No file or search methods, no `working_dir`. Callers hand `argv` + `env` + `stdin` to the workspace; the workspace forwards to the provider, which decides where and how (cwd, container, sandbox). Subprocess timeout + process-group kill are the provider's responsibility.
+Carries `id` plus three methods: `info()` returns `WorkspaceInfo`; `run_coding_agent_cli(argv, *, env=None, stdin=None, timeout_seconds=None, on_stream_line=None)` returns `CodingAgentCliResult`; `read_text(path)` returns the workspace-relative file content or `None`. No `working_dir` exposed. Callers hand `argv` + `env` + `stdin` to the workspace; the workspace forwards to the provider, which decides where and how (cwd, container, sandbox). `read_text` is the narrow file-read hook the incremental-review anchor re-resolver uses (plan §6.2 step 4b) — providers implement it with path-traversal protection. Subprocess timeout + process-group kill are the provider's responsibility.
 
 `on_stream_line: Callable[[bytes], Awaitable[None]] | None` is optional. When provided, the provider reads stdout line-by-line and invokes the callback per line (consumers parse JSON inline so they can react live, e.g. the Claude Code plugin rendering activity events). When `None`, the provider buffers stdout to completion — the existing behaviour. Timeout + cancel kill paths are unchanged either way.
 
@@ -30,7 +30,7 @@ Each new capability (run tests, install deps, push commits) arrives as a deliber
 
 ### `WorkspaceProvider` Protocol (plugin contract)
 
-Each provider carries `meta: PluginMeta` and four methods: `provision(spec)`, `run_coding_agent_cli(plugin_state, argv, ...)`, `destroy(plugin_state)`, `health_check()`.
+Each provider carries `meta: PluginMeta` and five methods: `provision(spec)`, `run_coding_agent_cli(plugin_state, argv, ...)`, `read_text(plugin_state, path)`, `destroy(plugin_state)`, `health_check()`.
 
 `provision()` returns an opaque `plugin_state` dict (e.g. `{"working_dir": "..."}` for in-process; `{"container_id": "..."}` for a future Docker plugin). `core/workspace` persists it; consumers never see it. `destroy()` must be idempotent and tolerate partial state.
 

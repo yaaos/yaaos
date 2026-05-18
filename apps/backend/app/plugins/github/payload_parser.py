@@ -94,7 +94,11 @@ def parse_webhook(event_type: str, source_event_id: str, payload: dict[str, Any]
                     received_at=now,
                     repo_external_id=repo_external_id,
                     pr_external_id=pr_external_id,
-                    new_head_sha=pr.get("head", {}).get("sha", ""),
+                    new_head_sha=pr.get("head", {}).get("sha", "") or payload.get("after", ""),
+                    # GitHub's `synchronize` event carries `before` + `after`
+                    # at the top level of the payload. Plumb `before` through
+                    # so the reviewer's incremental-review scope is real.
+                    prev_head_sha=payload.get("before") or None,
                     # Default false; the webhook handler enriches via the
                     # github `/compare` API before dispatching to intake.
                     force_push=False,
@@ -153,6 +157,15 @@ def parse_webhook(event_type: str, source_event_id: str, payload: dict[str, Any]
             return []
         comment = payload.get("comment") or {}
         user = comment.get("user", {}) or {}
+        # GitHub review threads: `pull_request_review_id` identifies the
+        # review batch; for replies, the canonical thread root is the
+        # earliest `in_reply_to_id` ancestor — for the typical reply
+        # case the parent comment id is sufficient since CommentMessage
+        # rows index `external_comment_id` and the reviewer's resolver
+        # walks back via `in_reply_to_external_id`.
+        external_thread_id = (
+            str(comment.get("pull_request_review_id")) if comment.get("pull_request_review_id") else None
+        )
         return [
             CommentCreated(
                 plugin_id="github",
@@ -168,6 +181,7 @@ def parse_webhook(event_type: str, source_event_id: str, payload: dict[str, Any]
                 in_reply_to_comment_external_id=(
                     str(comment.get("in_reply_to_id")) if comment.get("in_reply_to_id") else None
                 ),
+                external_thread_id=external_thread_id,
             )
         ]
 

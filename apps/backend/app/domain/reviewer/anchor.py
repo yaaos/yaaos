@@ -47,13 +47,19 @@ def make_anchor(
     line_end: int,
     commit_sha: str,
 ) -> CodeAnchor:
-    """Build a `CodeAnchor` for a fresh observation."""
+    """Build a `CodeAnchor` for a fresh observation.
+
+    Captures `original_lines` (the exact anchored range as a tuple) so the
+    verify_fix subflow (plan §6.5) can later compare against the developer's
+    edited code without re-reading historical commits.
+    """
     return CodeAnchor(
         file_path=file_path,
         line_start=line_start,
         line_end=line_end,
         surrounding_content_hash=hash_surrounding(file_lines, line_start, line_end),
         commit_sha=commit_sha,
+        original_lines=tuple(file_lines[line_start - 1 : line_end]),
     )
 
 
@@ -84,6 +90,7 @@ def resolve_anchor(
                 line_end=old_anchor.line_end,
                 surrounding_content_hash=old_anchor.surrounding_content_hash,
                 commit_sha=new_commit_sha,
+                original_lines=old_anchor.original_lines,
             )
 
     matches: list[int] = []
@@ -107,4 +114,5 @@ def resolve_anchor(
         line_end=start + span - 1,
         surrounding_content_hash=old_anchor.surrounding_content_hash,
         commit_sha=new_commit_sha,
+        original_lines=old_anchor.original_lines,
     )

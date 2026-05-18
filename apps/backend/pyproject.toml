@@ -45,6 +45,10 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.7",
     "tach>=0.16",
+    # Semgrep — static security analysis across Python + TypeScript/React.
+    # Runs in both apps/backend/bin/ci and apps/web/bin/ci against the
+    # repo-root `.semgrep.yml` ruleset.
+    "semgrep>=1.95",
 ]
 
 [project.entry-points."pytest11"]

@@ -10,13 +10,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.domain.coding_agent import ReviewContext
+from app.domain.coding_agent import FindingAnchor, FindingDraft, ReviewContext
 from app.domain.memory import Lesson
 from app.domain.vcs import Diff, VCSPullRequest
 from app.plugins.claude_code.service import (
     _assemble_review_prompt,
-    _compute_state,
-    _FindingDto,
+    _compute_state_v2,
 )
 
 
@@ -101,18 +100,33 @@ def test_prompt_truncates_prior_comments() -> None:
     assert out.count("- x") <= 20
 
 
-def test_compute_state_approved_when_no_findings() -> None:
-    assert _compute_state([]) == "APPROVED"
+def _draft(severity: str) -> FindingDraft:
+    return FindingDraft(
+        severity=severity,  # type: ignore[arg-type]
+        rule_id="r/x",
+        title="t",
+        body="b",
+        concrete_failure_scenario="caller invokes f() without arg; raises TypeError.",
+        confidence=90,
+        rationale="r",
+        anchor=FindingAnchor(file_path="src/foo.py", line_start=1, line_end=1),
+    )
 
 
-def test_compute_state_changes_requested_on_must_fix() -> None:
-    findings = [
-        _FindingDto(severity="info", title="t", body="b"),
-        _FindingDto(severity="must-fix", title="t", body="b"),
-    ]
-    assert _compute_state(findings) == "CHANGES_REQUESTED"
+def test_compute_state_v2_approved_when_no_findings() -> None:
+    assert _compute_state_v2([]) == "APPROVED"
 
 
-def test_compute_state_comment_for_non_must_fix_findings() -> None:
-    findings = [_FindingDto(severity="suggestion", title="t", body="b")]
-    assert _compute_state(findings) == "COMMENT"
+def test_compute_state_v2_changes_requested_on_blocker() -> None:
+    findings = [_draft("nit"), _draft("blocker")]
+    assert _compute_state_v2(findings) == "CHANGES_REQUESTED"
+
+
+def test_compute_state_v2_changes_requested_on_major() -> None:
+    findings = [_draft("major")]
+    assert _compute_state_v2(findings) == "CHANGES_REQUESTED"
+
+
+def test_compute_state_v2_comment_for_minor_and_nit() -> None:
+    findings = [_draft("minor"), _draft("nit")]
+    assert _compute_state_v2(findings) == "COMMENT"

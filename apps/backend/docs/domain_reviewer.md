@@ -24,6 +24,9 @@ Exported from `app/domain/reviewer/__init__.py`:
 - Generation-2 trigger policy — `decide_trigger`, `TriggerInputs`, `TriggerDecision` (`Skip` | `Debounce` | `Run`), `humanize_skip`.
 - Generation-2 reply classifier — `ClassifyReplyInput`, `ClassifyReplyOutput`, `classify_reply`, `classify_reply_runnable`.
 - Generation-2 service helpers — `apply_classified_reply`, `apply_verify_fix_result`, `apply_stale_check_result`, `is_yaaos_command`, `is_off_topic_message`, `list_findings_view`, `all_conversations_view`, `review_summary`, plus `ReplyAction` / `VerifyFixAction` / `StaleCheckAction` / `FindingView` / `ConversationView`, and the `CLASSIFY_*` / `VERIFY_*` thresholds.
+- Generation-2 plan §5.1 public Python API — `list_reviews_for_pr(pr_id, *, org_id)`, `get_review(review_id, *, org_id)`, `list_findings_for_pr(pr_id, *, org_id, include_terminal=False)`, `get_thread(thread_id, *, org_id)`. View dataclasses `ThreadView`, `ThreadMessageView`.
+- Generation-2 plan §10.13 metrics — `compute_acceptance_rate(*, org_id)` (`resolved_confirmed + resolved_unverified` / total), `compute_resolved_without_edit_rate(*, org_id)` (`acknowledged + resolved_unverified + stale` / total).
+- Generation-2 save-time hooks — `dispatch_events(aggregate)` drains the aggregate's pending events to the `core/events` bus via a `_DomainEventEnvelope` adapter; `dispatch_audits(aggregate, *, session, actor, org_id)` writes one `audit_entries` row per finding state-changing event (`FindingRaised`, `FindingReObserved`, `FindingAnchorUpdated`, `FindingStateChanged`, `FindingAcknowledged`, `FindingResolutionDetected`, `FindingStaleDetected`). Service-layer callers invoke both after every `agg_repo.save(aggregate)`.
 - Generation-2 events — `ReviewRequested`, `ReviewStarted`, `ReviewCompleted`, `ReviewFailed`, `ReviewSuperseded`, `FindingRaised`, `FindingReObserved`, `FindingStateChanged`, `FindingAcknowledged`, `FindingResolutionDetected`, `FindingStaleDetected`, `FindingAnchorUpdated`, `CommentReplyReceived`, `AgentReplyPosted`, plus `DomainEvent` union.
 
 HTTP routes (`/api/reviewer`):
@@ -54,7 +57,7 @@ HTTP routes (`/api/reviewer`):
 - `FindingFingerprint` — conceptual identity across reviews: `(file_path, rule_id, anchor_content_hash, body_gist_hash)`. Whitespace-normalized hashes so reindents don't churn fingerprints (plan §2.3).
 - `CodeAnchor` — `(file_path, line_start, line_end, surrounding_content_hash, commit_sha)`. The surrounding hash covers ±3 lines and is what lets `anchor.resolve_anchor` re-find the position after line drift.
 - `FindingState`, `Severity`, `AckKind`, `ReplyIntent`, `AuthorKind`, `ReviewTrigger`, `ReviewScope` — enums + frozen dataclasses per plan §2.3.
-- `RawFinding` — coding-agent output before admission; must include `concrete_failure_scenario` (plan §10.1) or the aggregate drops it.
+- `RawFinding` — coding-agent output before admission; must include `concrete_failure_scenario` ≥ 20 chars (plan §10.1) or the aggregate drops it. Built from `coding_agent.FindingDraft` via `_findingdrafts_to_raw` in `queue.py`; admitted survivors are translated back to `vcs.Finding` for posting via `_raw_to_vcs_findings`. These two are the only shared converters; the legacy `_vcs_findings_to_raw` is gone.
 - `AdmissionDrop` — audit-log payload for a rejected raw finding: `(rule_id, reason, severity, confidence)` where reason ∈ `malformed | below_threshold | nit_cap | top_cap | matches_ack`.
 
 ### Core user flows
@@ -63,16 +66,16 @@ HTTP routes (`/api/reviewer`):
 
 1. `intake.schedule_review` for `pr_ready` / `pr_synchronized` / `rereview_command` / UI button cancels any in-flight job for the PR, inserts a queued `ReviewJobRow`, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(queued)`, spawns `_run_review_job`.
 2. Worker debounces, flips to `running`, resolves entities + diff, runs `_ticket_skip_reason` (`fork` / `bot_author` / `trivial_diff` / `too_large`), runs secrets pre-flight, language-detects, provisions `in_process` workspace (head + base SHAs, branch names).
-3. Builds `ReviewContext` from PR + diff + lessons + prior yaaos comments. Hashes the context; writes `review_job.prompt_sent` audit; calls `coding_agent.review(plugin_id="claude_code", ws, ctx)`.
-4. Builds `vcs.Review(agent_tag="yaaos", state, summary_body, findings)`; the github plugin posts each finding as its own comment (inline vs top-level by anchor presence) with a per-agent emoji suffix.
-5. Persists `PostedCommentRow` per finding-as-comment, updates the row to `posted` with telemetry + JSONB findings, writes `review_job.posted` audit, publishes `ReviewJobStatusChanged(posted)`.
+3. Builds `ReviewContext` from PR + diff + lessons + prior yaaos comments. Hashes the context; writes `review_job.prompt_sent` audit; calls `coding_agent.review(plugin_id="claude_code", ws, ctx)`. The agent returns `list[FindingDraft]` (§10.1 schema).
+4. Acquires the per-PR advisory lock, loads the aggregate, converts drafts via `_findingdrafts_to_raw`, runs `aggregate.post_process_raw_findings(..., diff_files=...)`, then translates admitted survivors back to `vcs.Finding` via `_raw_to_vcs_findings` and posts via `vcs.post_review`. Rejected drafts never reach GitHub. The github plugin posts each survivor as its own comment (inline vs top-level by anchor presence) with a per-agent emoji suffix.
+5. Persists `PostedCommentRow` per finding-as-comment, updates the row to `posted` with telemetry + JSONB findings (admitted-only entries: `{file_path, line_start, line_end, severity (§10.1 enum), rule_id, title, body, rationale, source_agent}`), writes `review_job.posted` audit, publishes `ReviewJobStatusChanged(posted)`. Calls `dispatch_audits` + `dispatch_events` after the aggregate save.
 
 #### Generation 2 — durable findings
 
 1. **Initial review on PR ready** (plan §6.1, write path lands with §13 step 7's cut-over): service acquires the per-PR advisory lock, opens a transaction, loads the aggregate, starts a `Review` via `start_review`, invokes coding_agent in `full_review` mode, maps each `FindingDraft` → `RawFinding`, calls `aggregate.post_process_raw_findings` which applies the malformed / threshold / per-PR nit cap / cross-file dedup / per-review top-10 cap pipeline + dedup vs prior open/acknowledged findings. For each survivor: opens a thread, appends a yaaos message, posts via `vcs.post_review`. Completes the review; saves the aggregate; drains domain events.
-2. **Auto-incremental on push** (plan §6.2, write path WIP): intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run` per §7. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) for each open finding whose anchor file is in the diff, re-resolves the anchor; gone-without-verify → `mark_unverified_resolution`, anchor-moved → invoke `coding_agent.verify_fix` and route the result through `apply_verify_fix_result`. Re-observations dedup silently; new findings flow through the same admission pipeline.
-3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm`; `apply_classified_reply` decides what to do: ≥ 0.85 acknowledgment transitions and posts "Noted…", 0.60-0.84 posts the mid-band confirmation reply, ≥ 0.85 verify_fix kicks off the subflow, everything else stores the message silently.
-4. **Verify-fix subflow** (plan §6.5): coding_agent runs in `verify_fix` mode with the original anchor's code + current code at the resolved anchor; the result feeds `apply_verify_fix_result` per plan §10.4 thresholds.
+2. **Auto-incremental on push** (plan §6.2, write path WIP): intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run` per §7. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) runs the deterministic anchor pass `resolve_open_anchors(aggregate, *, touched_files, read_file, new_commit_sha)` (in `incremental.py`) BEFORE any LLM stale_check. That pure helper returns a `ResolveAnchorsResult` partitioning open findings into `moved` / `gone` / `unchanged`; `gone` transitions to `resolved_unverified`, `moved` is fed into `coding_agent.verify_fix` and routed through `apply_verify_fix_result`, `unchanged` stays put. New findings flow through the same admission pipeline. Anchor mutations happen on a snapshot aggregate loaded inside the workspace block (no long-lived DB session); the moves are replayed onto a freshly-loaded live aggregate at save time.
+3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm`; `apply_classified_reply` decides what to do: ≥ 0.85 acknowledgment transitions and posts "Noted…", 0.60-0.84 posts the mid-band confirmation reply, ≥ 0.85 verify_fix kicks off the subflow, everything else stores the message silently. When the developer responds `confirm` to the mid-band prompt, `_original_mid_band_rationale(thread_id, author_external_id)` in `replies.py` walks the thread chronologically to find the last human message from the same author posted BEFORE the yaaos confirm-request, and uses its body (not the literal "confirm") as the persisted ack rationale.
+4. **Verify-fix subflow** (plan §6.5): the `verify_fix` runner in `replies.py` provisions a workspace at HEAD, reads `current_anchor.original_lines` (captured at finding-creation by `make_anchor()` and carried forward by `resolve_anchor()`) as the original code, reads the current code at the resolved anchor via `workspace.read_text`, and hands both snippets to `coding_agent.verify_fix`. The result feeds `apply_verify_fix_result` per plan §10.4 thresholds. `original_lines` is persisted in the `current_anchor` JSONB blob — no migration needed.
 5. **Stale-check** (plan §6.2 step 4b): same shape as verify-fix but for anchor-moved-but-still-applies-maybe cases; `apply_stale_check_result` routes the outcome to `record_stale_detection` or a no-op observe.
 
 ### State machines
@@ -105,14 +108,17 @@ Pure transition functions in `state_machine.py`; the aggregate is the only legit
 
 ### Admission pipeline (plan §10)
 
-Inside `aggregate.post_process_raw_findings`, in order:
+Inside `aggregate.post_process_raw_findings(review_id, raw, *, diff_files=None)`, in order:
 
-1. **Schema gate** — drop raw findings missing `concrete_failure_scenario`. Audit reason: `malformed`.
-2. **Per-severity threshold** — `blocker`/`major` ≥ 75, `minor` ≥ 85, `nit` ≥ 90 (plan §10.2). Audit reason: `below_threshold`.
-3. **Per-PR nit cap** — at most 5 nits ever for this PR (plan §10.5). Audit reason: `nit_cap`.
-4. **Fingerprint match** — vs prior findings on this PR: matches against `acknowledged` drop silently (`matches_ack`); matches against `open` re-observe with sticky severity + `max(stored, new)` confidence.
-5. **Cross-file dedup** — collapse same-rule findings on multiple files into one comment with a file list (plan §10.8).
-6. **Per-review top-10 cap** — rank by `severity_weight × confidence` (blocker=4, major=3, minor=2, nit=1); admit top 10. Re-observations don't count. Audit reason: `top_cap`.
+1. **Schema gate** — drop raw findings whose `concrete_failure_scenario` is missing or under `_MIN_SCENARIO_LEN` (20 chars stripped). Closes the legacy synthesis loophole where a one-word body would otherwise pass. Audit reason: `malformed`.
+2. **Off-diff drop** — when `diff_files` is supplied (queue.py for full review, incremental.py for incremental), findings whose anchor file isn't in the PR diff are dropped (plan §10.9). Audit reason: `off_diff`.
+3. **Per-severity threshold** — `blocker`/`major` ≥ 75, `minor` ≥ 85, `nit` ≥ 90 (plan §10.2). Audit reason: `below_threshold`.
+4. **Per-PR nit cap** — at most 5 nits ever for this PR (plan §10.5). Audit reason: `nit_cap`.
+5. **Fingerprint match** — vs prior findings on this PR: matches against `acknowledged` drop silently (`matches_ack`); matches against `open` re-observe with sticky severity + `max(stored, new)` confidence.
+6. **Cross-file dedup** — same-rule findings on multiple files collapse into one survivor whose body gains an "Also in: file2, file3, …" footer enumerating the duplicated paths (plan §10.8).
+7. **Per-review top-10 cap** — rank by `severity_weight × confidence` (blocker=4, major=3, minor=2, nit=1); admit top 10. Re-observations don't count. Audit reason: `top_cap`.
+
+Admission runs BEFORE `vcs.post_review` in `queue.py`'s full-review flow — rejected drafts never reach GitHub.
 
 ### Cancellation — DB flip + task cancel (generation 1)
 
@@ -148,6 +154,8 @@ Generation 2 (plan §4.1):
 - `comment_threads` — 1:1 with `findings`. `external_thread_id` indexed for webhook resolution.
 - `comment_messages` — every yaaos- and human-authored message. `external_comment_id` indexed. `classified_intent` + `classification_confidence` populated for human messages by `classify_reply`.
 - `acknowledgment_decisions` — persistent dev decisions. Survive future reviews — re-observed fingerprints with an ack drop silently in the admission pipeline.
+
+`SqlAlchemyAggregateRepository.save` flushes in FK order: findings → flush → observations + threads → flush → messages → flush → acks. It also persists `Review` row updates (status, `commit_sha_at_start`, `superseded_by_review_id`, `pending_replay`, `started_at` / `completed_at` timestamps) via `_review_from_row` — initial `ReviewRow` INSERT still lives in `queue.py` / `incremental.py` because those callers hold the per-PR advisory lock and assign `sequence_number`.
 
 `review_id` columns on generation-2 tables are unconstrained UUIDs by design; the `review_jobs → reviews` rename in §13 step 7 turns them into a real FK. Canonical schema in [core_database.md](core_database.md).
 

@@ -18,6 +18,11 @@ class FakeGitHubState:
         # `/compare` status field. Default "ahead" (normal push); specs that
         # want to assert force-push handling can seed "diverged".
         self.compare_status: dict[str, str] = {}
+        # `compare_commits`: per "<before>...<after>" pair → list of commit
+        # message strings to return in the compare API's `commits` field.
+        # Used by reviewer.handle_push to detect base-branch merges (plan
+        # §7 rule 3). Default empty list = no commits in the compare window.
+        self.compare_commits: dict[str, list[str]] = {}
         self.posted_comments: list[dict[str, Any]] = []
         self._next_comment_id = 5000
 
@@ -27,6 +32,7 @@ class FakeGitHubState:
         self.seeded_files.clear()
         self.installation_repositories.clear()
         self.compare_status.clear()
+        self.compare_commits.clear()
         self.posted_comments.clear()
         self._next_comment_id = 5000
 

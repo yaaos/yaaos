@@ -39,7 +39,7 @@ Under `apps/web/src/`: `core/` (api, sse, routing, layout, observability), `doma
 
 ## CI
 
-`apps/web/bin/ci` runs Biome format-check + lint, `tsc --noEmit`, Vitest, and the Vite production build.
+`apps/web/bin/ci` runs Biome format-check + lint, `tsc --noEmit`, Vitest, the Vite production build, and `semgrep scan` (rulesets `p/typescript` + `p/react` + `p/owasp-top-ten`). Semgrep is invoked through the backend's uv venv (`uv run --directory ../backend semgrep`) so the version is pinned alongside other backend dev deps. `.semgrepignore` at repo root excludes `node_modules`, `dist`, and other vendored/generated paths.
 
 ## Stack
 

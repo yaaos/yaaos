@@ -212,7 +212,13 @@ async def compare(
     _check_bearer(authorization)
     # `base_to_head` arrives as `<before>...<after>`. Specs that want to
     # exercise the force-push branch seed `state.compare_status[base_to_head]`.
-    return {"status": state.compare_status.get(base_to_head, "ahead")}
+    # Specs that want to exercise base-merge detection seed
+    # `state.compare_commits[base_to_head]` with commit messages.
+    commit_messages = state.compare_commits.get(base_to_head, [])
+    return {
+        "status": state.compare_status.get(base_to_head, "ahead"),
+        "commits": [{"commit": {"message": msg}} for msg in commit_messages],
+    }
 
 
 @app.post("/__test/seed_compare_status")
@@ -221,6 +227,18 @@ async def test_seed_compare_status(body: dict[str, Any]) -> dict[str, str]:
     Used by the force-push spec.
     """
     state.compare_status[body["base_to_head"]] = body.get("status", "diverged")
+    return {"status": "seeded"}
+
+
+@app.post("/__test/seed_compare_commits")
+async def test_seed_compare_commits(body: dict[str, Any]) -> dict[str, str]:
+    """Body: `{ "base_to_head": "<before>...<after>", "commits": ["msg1", "msg2"] }`.
+
+    Used by specs that want the compare API to return commits between two
+    SHAs — drives the incremental reviewer's base-merge detection
+    (plan §7 rule 3).
+    """
+    state.compare_commits[body["base_to_head"]] = list(body.get("commits", []))
     return {"status": "seeded"}
 
 

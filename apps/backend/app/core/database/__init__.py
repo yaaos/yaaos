@@ -9,6 +9,7 @@ from app.core.database.service import (
     migrate,
     ping,
     session,
+    set_test_session_override,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "migrate",
     "ping",
     "session",
+    "set_test_session_override",
 ]

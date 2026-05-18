@@ -37,7 +37,6 @@ from app.domain.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
 )
-from app.domain.vcs import Finding
 
 log = structlog.get_logger("testing.stub_coding_agent")
 
@@ -106,19 +105,19 @@ class StubCodingAgentPlugin:
                     await on_activity(event)
                 except Exception:
                     log.exception("stub_coding_agent.on_activity_failed")
-        # Emit one synthetic finding tagged with a subagent so e2e flows that
-        # depend on findings have something to act against.
-        finding = Finding(
-            file="src/example.ts",
-            line_start=1,
-            line_end=1,
-            severity="suggestion",
+        # Emit one synthetic FindingDraft (plan §10.1 schema) so e2e flows
+        # that depend on findings have something to act against.
+        finding = FindingDraft(
+            severity="minor",
+            rule_id="stub/sample-suggestion",
             title="[stub] sample suggestion",
             body="Stub finding. Used by e2e specs that exercise the finding-expansion + Teach-yaaos flow.",
-            rationale=None,
-            snippet=None,
-            applied_lesson_ids=[],
-            source_agent="yaaos-architecture",
+            concrete_failure_scenario=(
+                "Stub plugin always emits this finding so e2e specs can exercise the durable-findings flow."
+            ),
+            confidence=90,
+            rationale="Stub plugin: emitted for e2e coverage.",
+            anchor=FindingAnchor(file_path="src/example.ts", line_start=1, line_end=1),
         )
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
