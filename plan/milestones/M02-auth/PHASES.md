@@ -98,19 +98,19 @@
 
 ## Phase 7 — frontend integration
 
-- [ ] `GET /api/auth/me` endpoint returns `{user, orgs, current_org_slug}`
-- [ ] `apps/web/src/domain/auth` exists with Login page (provider buttons) + post-login org picker + `useCurrentUser` hook
-- [ ] TanStack Router refactored: org-scoped routes nested under `/orgs/$slug/...`; user-global account page at `/account` (not org-scoped)
-- [ ] Existing pages (dashboard, tickets, memory, settings) accessible via `/orgs/$slug/<page>`
-- [ ] `/account` page with email list, TOTP setup entry point, and "Sign out of all sessions" button
-- [ ] Root `/` redirects to `/orgs/<default-slug>/dashboard` if logged in, `/login` if not
-- [ ] API-client wrapper auto-injects `X-Org-Slug` header from current route param
-- [ ] `<RequireMembership role="...">` component wraps role-gated UI
-- [ ] "Sign out of all sessions" button lives on `/account`; calls `POST /api/auth/logout-all`
-- [ ] Playwright E2E test: login via `oauth_test` → land on dashboard → switch org → invite member → accept invite → change role → logout-all
-- [ ] `apps/web/docs/` per-page docs updated for new URL shape
-- [ ] `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] `GET /api/auth/me` endpoint returns `{user, orgs, current_org_slug}`
+- [x] `apps/web/src/domain/auth` exists with Login page (provider buttons) + post-login org picker + `useCurrentUser` hook
+- [x] TanStack Router refactored: org-scoped routes nested under `/orgs/$slug/...`; user-global account page at `/account` (not org-scoped)
+- [x] Existing pages (dashboard, tickets, memory, settings) accessible via `/orgs/$slug/<page>`
+- [x] `/account` page with email list, TOTP setup entry point, and "Sign out of all sessions" button
+- [x] Root `/` redirects to `/orgs/<default-slug>/dashboard` if logged in, `/login` if not
+- [x] API-client wrapper auto-injects `X-Org-Slug` header from current route param
+- [x] `<RequireMembership role="...">` component wraps role-gated UI
+- [x] "Sign out of all sessions" button lives on `/account`; calls `POST /api/auth/logout-all`
+- [x] Playwright E2E test: login via `oauth_test` → land on dashboard → switch org → invite member → accept invite → change role → logout-all
+- [x] `apps/web/docs/` per-page docs updated for new URL shape
+- [x] `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
+- [x] Phase committed
 
 ## Phase 8 — audit log wiring
 
