@@ -10,7 +10,7 @@ depends_on = ["app.core.database", "app.core.primitives"]
 
 [[modules]]
 path = "app.core.auth"
-depends_on = ["app.core.primitives"]
+depends_on = ["app.core.config", "app.core.primitives"]
 
 [[modules]]
 path = "app.core.config"
@@ -54,7 +54,7 @@ depends_on = ["app.core.primitives", "app.core.workspace", "app.domain.memory", 
 
 [[modules]]
 path = "app.domain.identity"
-depends_on = ["app.core.database"]
+depends_on = ["app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.intake"

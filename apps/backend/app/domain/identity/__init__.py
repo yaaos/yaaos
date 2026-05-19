@@ -1,5 +1,6 @@
 """domain/identity — users, emails, OAuth identities, sessions, TOTP."""
 
+from app.domain.identity import sessions, web
 from app.domain.identity.models import (
     GithubInstallationRow,
     OAuthIdentityRow,
@@ -38,4 +39,6 @@ __all__ = [
     "UserNotFoundError",
     "UserRow",
     "UserTotpSecretRow",
+    "sessions",
+    "web",
 ]

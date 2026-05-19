@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     yaaos_heartbeat_interval_seconds: int = 10
     yaaos_catchup_delay_seconds: int = 10
 
+    # M02 — session lifetime + cleanup cadence.
+    yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
+    yaaos_auth_cleanup_interval_seconds: int = 60 * 60  # 1 hour
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.yaaos_env == "dev":

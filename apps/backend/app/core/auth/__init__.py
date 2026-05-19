@@ -17,6 +17,14 @@ from app.core.auth.context import (
     route_security_resolved,
     user_id_var,
 )
+from app.core.auth.cookies import (
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
+    SESSION_COOKIE_NAME,
+    clear_cookie_attrs,
+    csrf_cookie_attrs,
+    session_cookie_attrs,
+)
 from app.core.auth.middleware import AuthMiddleware
 from app.core.auth.types import (
     M02_PROTECTED_PREFIXES,
@@ -28,13 +36,18 @@ from app.core.auth.types import (
 )
 
 __all__ = [
+    "CSRF_COOKIE_NAME",
+    "CSRF_HEADER_NAME",
     "M02_PROTECTED_PREFIXES",
     "PUBLIC_PATH_EXACT",
     "PUBLIC_PATH_PREFIXES",
+    "SESSION_COOKIE_NAME",
     "Action",
     "AuthMiddleware",
     "actor_id_var",
     "actor_kind_var",
+    "clear_cookie_attrs",
+    "csrf_cookie_attrs",
     "current_actor_kind",
     "current_org_id",
     "current_user_id",
@@ -43,5 +56,6 @@ __all__ = [
     "org_context",
     "org_id_var",
     "route_security_resolved",
+    "session_cookie_attrs",
     "user_id_var",
 ]

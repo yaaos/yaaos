@@ -41,6 +41,23 @@ from app.core.auth.types import is_m02_protected_path, is_public_path
 log = structlog.get_logger("auth.middleware")
 
 
+def _csrf_ok(request: Request) -> bool:
+    """Double-submit check. Both the cookie and the header must be present
+    and equal. Empty values are not acceptable."""
+    cookie = request.cookies.get("yaaos_csrf")
+    header = request.headers.get("X-CSRF-Token")
+    if not cookie or not header:
+        return False
+    return secrets_compare(cookie, header)
+
+
+def secrets_compare(a: str, b: str) -> bool:
+    """Constant-time string equality."""
+    import hmac  # noqa: PLC0415
+
+    return hmac.compare_digest(a, b)
+
+
 def _json_response(status: int, body: dict[str, object]) -> tuple[Message, Message]:
     payload = json.dumps(body).encode()
     return (
@@ -89,6 +106,17 @@ class AuthMiddleware:
         protected = is_m02_protected_path(path)
         if protected and not request.headers.get("X-Org-Slug"):
             start, body = _json_response(400, {"error": "missing_org_slug"})
+            await send(start)
+            await send(body)
+            return
+
+        # Double-submit CSRF on mutating requests. The session cookie carries
+        # the opaque token; the SPA echoes the per-session csrf token in
+        # `X-CSRF-Token`. If the session row's csrf_token doesn't match the
+        # header, reject. Skipped for safe methods + non-protected paths +
+        # the public allowlist (handled above).
+        if protected and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _csrf_ok(request):
+            start, body = _json_response(403, {"error": "csrf_mismatch"})
             await send(start)
             await send(body)
             return

@@ -39,6 +39,13 @@ def _make_app() -> FastAPI:
     async def admin_only() -> dict[str, str]:
         return {"ok": "admin"}
 
+    @app.post(
+        "/api/memberships/mutate",
+        dependencies=[Depends(require(Action.MEMBERS_INVITE))],
+    )
+    async def mutate() -> dict[str, str]:
+        return {"ok": "mutated"}
+
     @app.get("/api/memberships/no-dep")
     async def no_dep() -> dict[str, str]:
         return {"oops": "missing security declaration"}
@@ -144,8 +151,8 @@ async def test_wrong_role_returns_403(seeded) -> None:
     async with _client(_make_app()) as c:
         resp = await c.delete(
             "/api/memberships/admin-only",
-            cookies={"yaaos_session": seeded["member_token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            cookies={"yaaos_session": seeded["member_token"], "yaaos_csrf": "t"},
+            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": "t"},
         )
     assert resp.status_code == 403
     assert resp.json()["detail"]["error"] == "insufficient_role"
@@ -198,6 +205,53 @@ def test_required_role_for_covers_every_action() -> None:
 
     missing = [a for a in Action if a not in _REQUIRED_ROLE]
     assert missing == [], f"Actions missing from _REQUIRED_ROLE: {missing}"
+
+
+@pytest.mark.asyncio
+async def test_csrf_mismatch_on_mutating_request_returns_403(seeded) -> None:
+    async with _client(_make_app()) as c:
+        resp = await c.post(
+            "/api/memberships/mutate",
+            cookies={
+                "yaaos_session": seeded["owner_token"],
+                "yaaos_csrf": "value-a",
+            },
+            headers={
+                "X-Org-Slug": seeded["org"].slug,
+                "X-CSRF-Token": "value-b",
+            },
+        )
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "csrf_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_csrf_match_on_mutating_request_passes(seeded) -> None:
+    async with _client(_make_app()) as c:
+        resp = await c.post(
+            "/api/memberships/mutate",
+            cookies={
+                "yaaos_session": seeded["owner_token"],
+                "yaaos_csrf": "same-token",
+            },
+            headers={
+                "X-Org-Slug": seeded["org"].slug,
+                "X-CSRF-Token": "same-token",
+            },
+        )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_csrf_skipped_on_safe_method(seeded) -> None:
+    """GET requests never participate in CSRF — no body, no state mutation."""
+    async with _client(_make_app()) as c:
+        resp = await c.get(
+            "/api/memberships/ok",
+            cookies={"yaaos_session": seeded["owner_token"]},
+            headers={"X-Org-Slug": seeded["org"].slug},
+        )
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
