@@ -269,8 +269,14 @@ async def test_seed_diff(body: dict[str, Any]) -> dict[str, str]:
     owner = body["owner"]
     repo = body["repo"]
     number = body["number"]
-    state.seeded_diffs[f"{owner}/{repo}#{number}"] = body.get("diff", "")
-    state.seeded_files[f"{owner}/{repo}#{number}"] = body.get("files", [])
+    key = f"{owner}/{repo}#{number}"
+    # `if_unset=True` only seeds when no diff already exists. Used by the
+    # e2e `dispatchWebhook` auto-default so a prior explicit `seedPRDiff`
+    # call from the spec wins.
+    if body.get("if_unset") and key in state.seeded_diffs:
+        return {"status": "noop"}
+    state.seeded_diffs[key] = body.get("diff", "")
+    state.seeded_files[key] = body.get("files", [])
     return {"status": "seeded"}
 
 

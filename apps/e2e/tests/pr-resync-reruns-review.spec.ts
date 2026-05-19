@@ -14,7 +14,6 @@ import {
   postedComments,
   prPayload,
   resetStack,
-  seedCompareDiverged,
   seedCredentialsAndInstall,
 } from "./_helpers";
 
@@ -41,10 +40,13 @@ test("synchronize event re-runs reviewers and grows the audit log", async ({ pag
 
   const commentsBefore = (await postedComments()).length;
 
-  // Second push — declare it diverged, simulating a force-push.
+  // Second push — a regular synchronize (no force-push). The trigger
+  // policy's incremental path runs the reviewer and posts a fresh batch.
+  // (Force-push pushes that diverge from the last-reviewed history take
+  // the `history_changed → skipped` path by design and require a manual
+  // re-review — see `domain/reviewer/incremental.handle_push`.)
   const beforeSha = "head-acme-api-7";
   const afterSha = "head-acme-api-7-v2";
-  await seedCompareDiverged(beforeSha, afterSha);
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({

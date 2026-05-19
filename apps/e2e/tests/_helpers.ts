@@ -126,6 +126,31 @@ export async function dispatchWebhook(opts: {
         number: pr.number,
         pr,
       });
+      // Seed a default diff + file list so yaaos's reviewer admission
+      // pipeline sees `src/example.ts` in the PR's diff (the stub coding
+      // agent emits findings anchored there). Specs that need a custom
+      // diff call `seedPRDiff` explicitly after `dispatchWebhook` to
+      // overwrite this.
+      await jsonPost(`${FAKE_GITHUB_URL}/__test/seed_diff`, {
+        owner,
+        repo: repoName,
+        number: pr.number,
+        // `if_unset` lets specs that pre-seed via `seedPRDiff` win.
+        if_unset: true,
+        diff: [
+          "diff --git a/src/example.ts b/src/example.ts",
+          "index 0000000..1111111 100644",
+          "--- a/src/example.ts",
+          "+++ b/src/example.ts",
+          "@@ -1,1 +1,2 @@",
+          " export {};",
+          "+// stub coding-agent finding lands on this line",
+          "",
+        ].join("\n"),
+        files: [
+          { filename: "src/example.ts", status: "modified", additions: 1, deletions: 0 },
+        ],
+      });
     }
   }
   await jsonPost(`${FAKE_GITHUB_URL}/__test/dispatch_webhook`, {

@@ -47,7 +47,9 @@ async def detail(ticket_id: UUID) -> Ticket:
 
 @router.get("/{ticket_id}/audit")
 async def audit(ticket_id: UUID, limit: int = 200) -> list[dict[str, Any]]:
-    """Aggregated timeline: ticket + its PR + every review_job for that PR."""
+    """Aggregated timeline: ticket + its PR + every review_job for that PR
+    + every finding raised against that PR (so reply-flow events like
+    `finding_acknowledged` surface in the ticket-level audit feed)."""
     from app.domain import reviewer as reviewer_mod  # noqa: PLC0415
 
     try:
@@ -60,6 +62,11 @@ async def audit(ticket_id: UUID, limit: int = 200) -> list[dict[str, Any]]:
         jobs = await reviewer_mod.list_review_jobs_for_pr(ticket.pr_id, org_id=M01_ORG_ID)
         for j in jobs:
             entries.extend(await list_for_entity("review_job", j.id, org_id=M01_ORG_ID, limit=limit))
+        findings = await reviewer_mod.list_findings_for_pr(
+            ticket.pr_id, org_id=M01_ORG_ID, include_terminal=True
+        )
+        for f in findings:
+            entries.extend(await list_for_entity("finding", f.id, org_id=M01_ORG_ID, limit=limit))
     entries.sort(key=lambda e: e.created_at, reverse=True)
     return [e.model_dump(mode="json") for e in entries[:limit]]
 
