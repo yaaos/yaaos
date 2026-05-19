@@ -41,14 +41,42 @@ async def truncate_all_tables() -> None:
     """Wipe every table known to `Base.metadata` in FK-safe order.
 
     `RESTART IDENTITY CASCADE` resets any sequence-backed primary keys and
-    cascades through FK chains; the explicit reverse-order list is belt-and-
-    braces for non-CASCADE engines.
+    cascades through FK chains; the explicit reverse-order list is belt-
+    and-braces for non-CASCADE engines.
     """
     table_names = ", ".join(t.name for t in reversed(Base.metadata.sorted_tables))
     if not table_names:
         return
     async with db_session() as s:
-        await s.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
+        # ── nosemgrep justification ──────────────────────────────────────
+        # Suppressing
+        #   python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        # because the f-string is provably injection-free here:
+        #
+        # 1. Every value interpolated into the SQL is a `Table.name` from
+        #    SQLAlchemy model declarations in our own codebase
+        #    (`__tablename__ = "comment_messages"` and friends, resolved
+        #    at module-import time before any request ever runs).
+        # 2. No request data, query string, header, env var, or DB
+        #    lookup feeds this string. The set of possible names is the
+        #    fixed set of yaaos's model files at compile time.
+        # 3. The rule's suggested fix (`or_()` / `and_()` / Core
+        #    constructs) doesn't apply: TRUNCATE is DDL, not a SELECT/
+        #    UPDATE/DELETE expression, so there is no Core-level builder
+        #    for it. Looping `text("TRUNCATE TABLE x")` per table would
+        #    sidestep the f-string but break the FK-cascading guarantee
+        #    that the all-tables-in-one-statement form provides on
+        #    non-CASCADE engines.
+        # 4. This file lives under `app/testing/`, which is excluded from
+        #    production wheels (see `pyproject.toml`
+        #    `[tool.hatch.build.targets.wheel]`) — it can never run in a
+        #    deployed yaaos.
+        # ─────────────────────────────────────────────────────────────────
+        await s.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"
+            )
+        )
         await s.commit()
 
 
