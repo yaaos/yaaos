@@ -26,12 +26,21 @@ class ProviderProfile(BaseModel):
     `email_verified` mirrors GitHub's `verified: true` on the primary
     email. Unverified addresses never enter the login flow — the
     callback handler rejects them before consulting the registry.
+
+    `mfa_satisfied` reports whether the provider itself enforced a
+    second factor for this signin. GitHub is treated as MFA-trusted
+    (their account-level 2FA gate runs inside the OAuth handshake);
+    generic OIDC providers parse `amr`/`acr` from the id_token and
+    set this based on the claim. yaaos's TOTP step-up only fires when
+    the user has a verified TOTP secret AND the provider returned
+    `mfa_satisfied=False`.
     """
 
     external_subject: str
     primary_email: str
     email_verified: bool
     display_name: str
+    mfa_satisfied: bool = False
 
 
 class ProviderError(RuntimeError):

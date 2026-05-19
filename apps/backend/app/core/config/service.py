@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     yaaos_oauth_github_emails_url: str = "https://api.github.com/user/emails"
     yaaos_oauth_state_secret: str = "dev-only-oauth-state-secret"
 
+    # M02 — TOTP master key (Fernet, 32 bytes URL-safe base64). Defaults to
+    # empty; `domain/identity.totp` falls back to `yaaos_encryption_key` when
+    # unset so dev/test only need one key. Production must set this.
+    yaaos_totp_master_key: str = ""
+
     # M02 — invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: str = "dev-only-invitation-secret"
     yaaos_invitation_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days

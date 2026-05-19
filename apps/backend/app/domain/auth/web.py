@@ -61,8 +61,10 @@ from app.domain.identity.types import LinkChallengeRequiredError as _LCRE  # noq
 log = structlog.get_logger("auth.web")
 
 LINK_PENDING_COOKIE = "yaaos_link_pending"
+TOTP_CHALLENGE_COOKIE = "yaaos_totp_challenge"
 STATE_MAX_AGE_SECONDS = 600
 LINK_PENDING_MAX_AGE_SECONDS = 600
+TOTP_CHALLENGE_MAX_AGE_SECONDS = 600
 
 router = APIRouter()
 
@@ -73,6 +75,10 @@ def _state_serializer() -> URLSafeTimedSerializer:
 
 def _link_pending_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(get_settings().yaaos_oauth_state_secret, salt="yaaos-link-pending")
+
+
+def _totp_challenge_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(get_settings().yaaos_oauth_state_secret, salt="yaaos-totp-challenge")
 
 
 def _redirect_uri_for(request: Request, provider_id: str) -> str:
@@ -165,6 +171,32 @@ async def callback(
     try:
         async with db_session() as s:
             login_result = await login_via_oauth(s, provider_id=provider, profile=profile)
+
+            # Step-up: if the user has a verified TOTP secret and the
+            # provider didn't satisfy MFA, defer session creation and
+            # send the user through `/totp-challenge`.
+            from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+
+            needs_step_up = not profile.mfa_satisfied and await totp_lifecycle.has_verified_totp(
+                s, login_result.user.id
+            )
+            if needs_step_up:
+                await s.commit()
+                signed = _totp_challenge_serializer().dumps(
+                    {"user_id": str(login_result.user.id), "next": next_path}
+                )
+                resp = JSONResponse(content={"step_up": "totp_required"})
+                resp.set_cookie(
+                    key=TOTP_CHALLENGE_COOKIE,
+                    value=signed,
+                    max_age=TOTP_CHALLENGE_MAX_AGE_SECONDS,
+                    httponly=True,
+                    samesite="lax",
+                    secure=not get_settings().is_non_prod,
+                    path="/",
+                )
+                return resp
+
             created = await session_lifecycle.create(
                 s,
                 user_id=login_result.user.id,
@@ -313,6 +345,108 @@ async def providers() -> dict[str, list[str]]:
     """List registered provider ids. The SPA renders one button per id on
     the login page; the test stub appears only when YAAOS_ENV=test."""
     return {"providers": list_providers()}
+
+
+# ── M02 Phase 11 — TOTP enroll + verify ──────────────────────────────────
+
+
+class _TotpVerifyRequest(BaseModel):
+    code: str
+
+
+@router.post("/totp/enroll", dependencies=[Depends(public_route)])
+async def totp_enroll(
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Mint a fresh (unverified) TOTP secret for the cookie-bearer. Returns
+    `{seed, otpauth_uri}`. The SPA renders the URI as a QR code; users on
+    devices without a camera type the seed. Verify must be called with a
+    current code before `verified_at` flips."""
+    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+
+    if not yaaos_session:
+        return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+    async with db_session() as s:
+        session = await session_lifecycle.lookup(s, yaaos_session)
+        if session is None or session.user_id is None:
+            return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+        seed, uri = await totp_lifecycle.enroll(
+            s, user_id=session.user_id, account_label=str(session.user_id)
+        )
+        await s.commit()
+    return JSONResponse(content={"seed": seed, "otpauth_uri": uri})
+
+
+@router.post("/totp/challenge", dependencies=[Depends(public_route)])
+async def totp_challenge(
+    body: _TotpVerifyRequest,
+    request: Request,
+    yaaos_totp_challenge: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Step-up endpoint: read the signed `yaaos_totp_challenge` cookie set
+    by the OAuth callback when the user needs MFA, verify the supplied
+    TOTP code, then mint the real session and redirect to the original
+    `next` path."""
+    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+
+    if not yaaos_totp_challenge:
+        return JSONResponse(status_code=400, content={"error": "no_challenge_cookie"})
+    try:
+        payload = _totp_challenge_serializer().loads(
+            yaaos_totp_challenge, max_age=TOTP_CHALLENGE_MAX_AGE_SECONDS
+        )
+    except (BadSignature, SignatureExpired):
+        return JSONResponse(status_code=400, content={"error": "challenge_invalid"})
+
+    from uuid import UUID as _UUID  # noqa: PLC0415
+
+    try:
+        user_id = _UUID(payload["user_id"])
+    except (KeyError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "challenge_invalid"})
+    next_path = _safe_next(payload.get("next"))
+
+    async with db_session() as s:
+        ok = await totp_lifecycle.verify(s, user_id=user_id, code=body.code)
+        if not ok:
+            return JSONResponse(status_code=400, content={"error": "totp_invalid"})
+        created = await session_lifecycle.create(
+            s,
+            user_id=user_id,
+            workspace_id=None,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        await _emit_login_audit(s, user_id=user_id, provider="totp_step_up", newly_created=False)
+        await s.commit()
+
+    resp = RedirectResponse(next_path, status_code=303)
+    _set_session_cookies(resp, created)
+    resp.set_cookie(**clear_cookie_attrs(TOTP_CHALLENGE_COOKIE))
+    return resp
+
+
+@router.post("/totp/verify", dependencies=[Depends(public_route)])
+async def totp_verify(
+    body: _TotpVerifyRequest,
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Verify a TOTP code against the user's enrolled secret. On success the
+    row's `verified_at` stamp flips and step-up login starts demanding a
+    code on every signin that wasn't satisfied by the IdP."""
+    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+
+    if not yaaos_session:
+        return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+    async with db_session() as s:
+        session = await session_lifecycle.lookup(s, yaaos_session)
+        if session is None or session.user_id is None:
+            return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+        ok = await totp_lifecycle.verify(s, user_id=session.user_id, code=body.code)
+        await s.commit()
+    if not ok:
+        return JSONResponse(status_code=400, content={"error": "totp_invalid"})
+    return JSONResponse(content={"ok": True})
 
 
 def _set_session_cookies(resp: Response, created: session_lifecycle.CreatedSession) -> None:

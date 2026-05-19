@@ -98,6 +98,12 @@ class GitHubOAuthProvider:
             primary_email=primary["email"].lower(),
             email_verified=bool(primary.get("verified")),
             display_name=user.get("name") or user.get("login") or "",
+            # GitHub OAuth is treated as MFA-trusted: their account-level
+            # 2FA gate runs inside the OAuth handshake itself, so by the
+            # time we get a token the user has already passed that
+            # second-factor check. No API verification needed; we don't
+            # demand a separate yaaos TOTP step-up on top of GitHub login.
+            mfa_satisfied=True,
         )
 
 

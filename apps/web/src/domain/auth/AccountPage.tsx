@@ -1,4 +1,7 @@
+import { apiFetch } from "@core/api";
 import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
+import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import { useCurrentUser, useLogoutAll } from "./queries";
 
 /**
@@ -56,19 +59,7 @@ export function AccountPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Two-factor authentication</h2>
-        </CardHeader>
-        <CardContent>
-          <p className="text-text-3 text-xs">
-            TOTP setup ships with Phase 11. Once landed, generate a QR code here.
-          </p>
-          <Button disabled data-testid="totp-setup">
-            Set up 2FA (Phase 11)
-          </Button>
-        </CardContent>
-      </Card>
+      <TotpSetupCard />
 
       <Card>
         <CardHeader>
@@ -94,5 +85,76 @@ export function AccountPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function TotpSetupCard() {
+  const [enrolled, setEnrolled] = useState<{ seed: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [verified, setVerified] = useState(false);
+
+  const enroll = useMutation({
+    mutationFn: () =>
+      apiFetch<{ seed: string; otpauth_uri: string }>("/api/auth/totp/enroll", { method: "POST" }),
+    onSuccess: (data) => setEnrolled(data),
+  });
+
+  const verify = useMutation({
+    mutationFn: (c: string) =>
+      apiFetch("/api/auth/totp/verify", {
+        method: "POST",
+        body: JSON.stringify({ code: c }),
+      }),
+    onSuccess: () => setVerified(true),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="font-semibold text-[13.5px]">Two-factor authentication</h2>
+      </CardHeader>
+      <CardContent>
+        {!enrolled && (
+          <Button
+            onClick={() => enroll.mutate()}
+            disabled={enroll.isPending}
+            data-testid="totp-setup"
+          >
+            {enroll.isPending ? "Generating…" : "Set up 2FA"}
+          </Button>
+        )}
+        {enrolled && !verified && (
+          <div className="flex flex-col gap-2 text-sm">
+            <p className="text-text-3 text-xs">
+              Scan the QR or type the seed into your authenticator app, then enter a code.
+            </p>
+            <code className="mono text-xs break-all">{enrolled.otpauth_uri}</code>
+            <code className="mono text-xs">{enrolled.seed}</code>
+            <div className="flex gap-2">
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="6-digit code"
+                className="border rounded px-2 py-1 text-sm"
+                data-testid="totp-code"
+              />
+              <Button
+                onClick={() => verify.mutate(code)}
+                disabled={!code || verify.isPending}
+                data-testid="totp-verify"
+              >
+                {verify.isPending ? "Verifying…" : "Verify"}
+              </Button>
+            </div>
+            {verify.isError && (
+              <p className="text-red-500 text-xs">
+                {(verify.error as Error)?.message ?? "Verify failed"}
+              </p>
+            )}
+          </div>
+        )}
+        {verified && <Badge variant="success">2FA enabled</Badge>}
+      </CardContent>
+    </Card>
   );
 }
