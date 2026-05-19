@@ -18,6 +18,12 @@ Every shipped module has one `apps/web/docs/<layer>_<module>.md` following this 
 
 Discipline still applies: terse, bullets, no code snippets, no `Decisions` section, link don't repeat. Modules with no state machines just omit that sub-section.
 
+## Auth + tenancy (M02)
+
+- **API client auto-injects `X-Org-Slug`** — `apps/web/src/core/api/org-context.ts` holds the current slug. The `/orgs/$slug` router scope writes to it in `beforeLoad`; `/login` and `/account` clear it. `apiFetch` reads the slug and adds the header unless the caller already supplied one. Domain hooks stay org-agnostic at the call site.
+- **Use `RequireMembership` for role gates** — `<RequireMembership orgSlug="..." role="admin">` renders children only when the current user has at least `role` in that org. UI hint only; the backend's `require(action)` is the source of truth.
+- **Route → org slug** — `/orgs/$slug/...` is the canonical shape for every domain page. `/`, `/login`, `/account` stay user-scoped. The `/` route probes `/api/auth/me` and redirects to `/orgs/<first-slug>/dashboard` or `/login`.
+
 ## Dumb frontend
 
 The SPA renders data and dispatches actions. It owns no rules yaaos's backend doesn't also enforce.

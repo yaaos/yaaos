@@ -76,7 +76,35 @@ Every domain function takes `org_id` kwarg; every query filters by it. Multi-org
 
 ### Identity & access
 
-Users, orgs, memberships, sessions, OAuth + SAML SSO live in `domain/identity` + `domain/orgs`. `core/auth` owns the security middleware: every `/api/*` route declares its security via `Depends(require(action))` or `Depends(public_route)`; the middleware enforces `X-Org-Slug` resolution, sets contextvars (`org_id`, `user_id`, `actor_kind`, `actor_id`), and 500s the response if no route declared security. Sessions are opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure`-flagged cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with an 8-hour TTL. Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets. Per-module deep dives land under `apps/backend/docs/` as each module ships.
+Users, orgs, memberships, sessions, OAuth + SAML SSO live in `domain/identity` + `domain/orgs`. `core/auth` owns the security middleware: every `/api/*` route declares its security via `Depends(require(action))` or `Depends(public_route)`; the middleware enforces `X-Org-Slug` resolution, sets contextvars (`org_id`, `user_id`, `actor_kind`, `actor_id`), and 500s the response if no route declared security. Sessions are opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure`-flagged cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with an 8-hour TTL. Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets.
+
+**Login flow:**
+
+```
+SPA   GET /api/auth/login?provider=github
+   ─────────────────────────────────────► backend
+                                          ├─ signs `state` (10m TTL)
+                                          └─ 302 → GitHub authorize URL
+GitHub  GET /api/auth/callback/github
+   ─────────────────────────────────────► backend
+                                          ├─ verify state signature
+                                          ├─ exchange code → ProviderProfile
+                                          ├─ orchestrator: existing → return user
+                                          │   email-match no-link → 409 link
+                                          │   pending invite     → JIT user+membership
+                                          │   none of the above  → 403 ask_for_invite
+                                          ├─ TOTP step-up if user has verified secret
+                                          │   AND provider mfa_satisfied=False
+                                          ├─ sessions.create() (HttpOnly + CSRF cookies)
+                                          ├─ audit_log emits `logged_in` per org
+                                          └─ 303 → next path
+```
+
+**Session lifecycle:** rotate on role change + invite accept + SSO satisfaction. `sessions.revoke_all_for_user` on member removal + logout-all. Periodic cleanup (`domain/identity/scheduler`) purges expired sessions, expired invitations, unverified-TOTP secrets >24h, and audit rows older than `AUDIT_LOG_RETENTION` (30d).
+
+**Contextvar propagation:** HTTP middleware sets `org_id_var` / `user_id_var` / `actor_kind_var` / `actor_id_var` per request; background jobs open `with org_context(...)`. `require_org_context()` raises in functions that read org-scoped tables without context. OTel spans + structlog log lines carry `yaaos.org_id` + `yaaos.actor_kind` everywhere.
+
+Per-module deep dives: [`core_auth`](../apps/backend/docs/core_auth.md), [`domain_identity`](../apps/backend/docs/domain_identity.md), [`domain_orgs`](../apps/backend/docs/domain_orgs.md), [`plugins_oauth_github`](../apps/backend/docs/plugins_oauth_github.md), [`plugins_saml`](../apps/backend/docs/plugins_saml.md).
 
 ### Secrets at rest
 Plugin credentials encrypted in their plugin's settings table via `cryptography.Fernet` keyed by `YAAOS_ENCRYPTION_KEY`. Decrypt only at the call site. Never logged, echoed in errors, or placed in audit payloads.
