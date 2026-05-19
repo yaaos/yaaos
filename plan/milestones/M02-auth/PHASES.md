@@ -114,16 +114,16 @@
 
 ## Phase 8 — audit log wiring
 
-- [ ] All identity service calls (login, logout, link, unlink) emit audit entries via `core/audit_log.write`
-- [ ] All orgs service calls (invite/accept/remove/change-role/sso-config-change) emit audit entries
-- [ ] `AUDIT_LOG_RETENTION = timedelta(days=30)` defined in a single constants module (create `apps/backend/app/core/constants.py` if absent)
-- [ ] Cleanup task purges `audit_entries` older than `AUDIT_LOG_RETENTION`; runs daily in the existing scheduler
-- [ ] Read-only `GET /api/audit` endpoint with org-scoped filtering by `actor_kind`, `action`, date range
-- [ ] Frontend Audit page in `apps/web/src/domain/orgs` for Owners/Admins
-- [ ] Tests: each emitter writes the expected row; cleanup purges old rows; endpoint paginates and filters
-- [ ] `apps/backend/docs/core_audit_log.md` updated with new actions list
-- [ ] `apps/backend/bin/ci` + `apps/web/bin/ci` exit 0
-- [ ] Phase committed
+- [x] All identity service calls (login, logout, link, unlink) emit audit entries via `core/audit_log.write`
+- [x] All orgs service calls (invite/accept/remove/change-role/sso-config-change) emit audit entries
+- [x] `AUDIT_LOG_RETENTION = timedelta(days=30)` defined in a single constants module (create `apps/backend/app/core/constants.py` if absent)
+- [x] Cleanup task purges `audit_entries` older than `AUDIT_LOG_RETENTION`; runs daily in the existing scheduler
+- [x] Read-only `GET /api/audit` endpoint with org-scoped filtering by `actor_kind`, `action`, date range
+- [x] Frontend Audit page in `apps/web/src/domain/orgs` for Owners/Admins
+- [x] Tests: each emitter writes the expected row; cleanup purges old rows; endpoint paginates and filters
+- [x] `apps/backend/docs/core_audit_log.md` updated with new actions list
+- [x] `apps/backend/bin/ci` + `apps/web/bin/ci` exit 0
+- [x] Phase committed
 
 ## Phase 9 — background-job context
 
