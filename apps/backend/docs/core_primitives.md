@@ -21,13 +21,16 @@ No HTTP routes. No tables.
 
 ### `Actor`
 
-Single who-did-what value object. Three kinds:
+Single who-did-what value object. Six kinds:
 
-- `github_user` — requires `login`; `agent_id` must be `None`.
-- `agent` — requires `agent_id` (UUID); `login` must be `None`.
-- `system` — both `None`.
+- `github_user` — requires `login`; all id fields `None`.
+- `agent` — requires `agent_id` (UUID); `login`/`user_id`/`workspace_id` `None`.
+- `system` — every id field `None`.
+- `user` — requires `user_id`; `login` optional (display login). M02-onward yaaos users.
+- `workspace` — requires `workspace_id`; everything else `None`. Background work running on behalf of an org.
+- `sso` — no domain ids (only the IdP knew); `login` optional (asserted email). Audit-only — used when an SSO assertion succeeded but no membership was yet provisioned.
 
-Invariants enforced via a Pydantic `model_validator(mode="after")` — wrong shapes raise at construction. Three convenience classmethods (`Actor.system()`, `Actor.github_user(login)`, `Actor.agent(agent_id)`). Consumed by `core/audit_log`, `domain/reviewer`, `domain/intake`, and any code recording who initiated something.
+Invariants enforced via a Pydantic `model_validator(mode="after")` — wrong shapes raise at construction. Convenience classmethods (`Actor.system()`, `Actor.github_user(login)`, `Actor.agent(agent_id)`, `Actor.user(user_id, login=None)`, `Actor.workspace(workspace_id)`, `Actor.sso(login=None)`). Consumed by `core/audit_log`, `core/auth`, `domain/identity`, `domain/orgs`, `domain/reviewer`, `domain/intake`, and any code recording who initiated something.
 
 ### `PluginMeta`
 

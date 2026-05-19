@@ -16,7 +16,7 @@ No HTTP routes — the audit-log tab reads via a domain endpoint that delegates 
 
 ### `AuditEntry` shape
 
-Carries `id`, `org_id`, `entity_kind`, `entity_id`, `kind`, `payload` (already-serialized via `model_dump(mode="json")`), `actor` (reconstructed from three DB columns), `created_at`. `Actor` is imported from `core/primitives`. The columns `actor_kind`, `actor_login`, `actor_agent_id` are recombined into one `Actor` at read time via `AuditEntry.from_row`.
+Carries `id`, `org_id`, `entity_kind`, `entity_id`, `kind`, `payload` (already-serialized via `model_dump(mode="json")`), `actor` (reconstructed from five DB columns), `created_at`. `Actor` is imported from `core/primitives`. The columns `actor_kind`, `actor_login`, `actor_agent_id`, `actor_user_id`, `actor_workspace_id` are recombined into one `Actor` at read time via `AuditEntry.from_row`. M02 added the two `actor_*_id` columns to round-trip the additive `user` / `workspace` actor kinds; `sso` populates only `actor_login` (the IdP-asserted email).
 
 ### Write API
 
@@ -27,7 +27,7 @@ Per-entity helpers each hard-code their `entity_kind`. Signatures: `(entity_id, 
 Each write:
 1. Generates UUID for `id`.
 2. Validates `entity_kind` and `kind` non-empty.
-3. Decomposes `actor` into three columns (`actor_kind` always; `actor_login` for `github_user`; `actor_agent_id` for `agent`; both `None` for `system`).
+3. Decomposes `actor` into five columns (`actor_kind` always; `actor_login` for `github_user` / `sso`; `actor_agent_id` for `agent`; `actor_user_id` for `user`; `actor_workspace_id` for `workspace`; all id fields `None` for `system`).
 4. Inserts the row.
 
 Optional `session` joins the caller's transaction (helper adds + flushes; caller commits). Without it, the helper opens its own session, commits, refreshes. Callers writing audit alongside domain writes pass `session` to keep both in one transaction.
@@ -54,7 +54,7 @@ No global `list_recent()` feed — per-ticket timeline is the only consumer.
 
 ## Data owned
 
-- `audit_entries` — `(id, org_id, entity_kind, entity_id, kind, payload jsonb, actor_kind, actor_login, actor_agent_id, created_at)`. Indexes: `(entity_kind, entity_id, created_at)` for `list_for_entity`; `(org_id, created_at)` for global queries; `org_id` indexed independently.
+- `audit_entries` — `(id, org_id, entity_kind, entity_id, kind, payload jsonb, actor_kind, actor_login, actor_agent_id, actor_user_id, actor_workspace_id, created_at)`. Indexes: `(entity_kind, entity_id, created_at)` for `list_for_entity`; `(org_id, created_at)` for global queries; `org_id` indexed independently.
 
 ## How it's tested
 

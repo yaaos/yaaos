@@ -38,6 +38,8 @@ class AuditEntry(BaseModel):
                 kind=ActorKind(row.actor_kind),
                 login=row.actor_login,
                 agent_id=row.actor_agent_id,
+                user_id=row.actor_user_id,
+                workspace_id=row.actor_workspace_id,
             ),
             created_at=row.created_at,
         )
@@ -81,6 +83,8 @@ async def audit(
         actor_kind=actor.kind.value,
         actor_login=actor.login,
         actor_agent_id=actor.agent_id,
+        actor_user_id=actor.user_id,
+        actor_workspace_id=actor.workspace_id,
     )
 
     if session is not None:

@@ -26,6 +26,11 @@ class AuditEntryRow(Base):
     actor_kind: Mapped[str] = mapped_column(String, nullable=False)
     actor_login: Mapped[str | None] = mapped_column(String, nullable=True)
     actor_agent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # M02 — additional actor-kind discriminators. `user` populates actor_user_id;
+    # `workspace` populates actor_workspace_id; `sso` populates only actor_login
+    # (the IdP-asserted email) since no domain id exists.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    actor_workspace_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

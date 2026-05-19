@@ -119,11 +119,11 @@ async def ensure_schema_migrations_table() -> None:
         )
 
 
-# M01 ships a single named migration ("001_create_all_m01"). Subsequent schema
-# changes add new versions and the runner skips already-applied ones. The
-# create_all approach is idempotent (CREATE TABLE IF NOT EXISTS underneath) so
-# re-running is safe.
-_M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
+# Migrations apply in declared order; the runner skips already-applied versions.
+# The `create_all` kinds are idempotent (CREATE TABLE IF NOT EXISTS underneath)
+# so re-running is safe. M02's `010_create_all_m02` adds identity + orgs +
+# sessions tables and extends `audit_entries` with M02 actor-kind columns.
+_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("001_create_all_m01", "create_all"),
     ("002_github_settings_slug", "add_github_settings_slug"),
     ("003_drop_repos_table", "drop_repos_table"),
@@ -133,6 +133,7 @@ _M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("007_create_durable_findings_tables", "create_durable_findings_tables"),
     ("008_reviews_cutover", "reviews_cutover"),
     ("009_drop_classification_confidence", "drop_classification_confidence"),
+    ("010_create_all_m02", "create_all_m02"),
 )
 
 
@@ -366,6 +367,60 @@ async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_create_all_m02(conn) -> None:  # type: ignore[no-untyped-def]
+    """M02 — identity + orgs + sessions.
+
+    Adds: users, user_emails, oauth_identities, user_totp_secrets, orgs,
+    memberships, invitations, sso_configs, sessions, github_installations.
+    Also extends `audit_entries` with `actor_user_id` + `actor_workspace_id`
+    columns so the additive ActorKind values round-trip through the audit row.
+
+    `create_all` is idempotent. The ALTERs on `audit_entries` use IF NOT
+    EXISTS so re-runs against partially-migrated DBs are safe.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.domain.identity.models")
+    importlib.import_module("app.domain.orgs.models")
+    new_tables = [
+        Base.metadata.tables[name]
+        for name in (
+            "users",
+            "user_emails",
+            "oauth_identities",
+            "user_totp_secrets",
+            "orgs",
+            "memberships",
+            "invitations",
+            "sso_configs",
+            "sessions",
+            "github_installations",
+        )
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+    audit_alters = [
+        "ALTER TABLE audit_entries ADD COLUMN IF NOT EXISTS actor_user_id UUID",
+        "ALTER TABLE audit_entries ADD COLUMN IF NOT EXISTS actor_workspace_id UUID",
+    ]
+    for stmt in audit_alters:
+        await conn.execute(text(stmt))
+
+    # Partial unique indexes — Postgres-specific, declared here rather than
+    # on the model since SQLAlchemy renders partial indexes differently across
+    # dialects.
+    partial_indexes = [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_emails_email_active"
+        " ON user_emails (lower(email))"
+        " WHERE verified_at IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_invitations_pending_org_email"
+        " ON invitations (org_id, lower(email))"
+        " WHERE accepted_at IS NULL",
+    ]
+    for stmt in partial_indexes:
+        await conn.execute(text(stmt))
+
+
 async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[no-untyped-def]
     """Drop `comment_messages.classification_confidence` and renormalize the
     legacy `acknowledgment` intent to `acknowledgment_clear`.
@@ -392,7 +447,7 @@ async def migrate() -> None:
     async with get_engine().begin() as conn:
         result = await conn.execute(text("SELECT version FROM schema_migrations"))
         applied = {row[0] for row in result}
-    for version, kind in _M01_MIGRATIONS:
+    for version, kind in _MIGRATIONS:
         if version in applied:
             continue
         async with get_engine().begin() as conn:
@@ -414,6 +469,8 @@ async def migrate() -> None:
                 await _apply_reviews_cutover(conn)
             elif kind == "drop_classification_confidence":
                 await _apply_drop_classification_confidence(conn)
+            elif kind == "create_all_m02":
+                await _apply_create_all_m02(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},
