@@ -6,6 +6,7 @@
  */
 
 import createClient from "openapi-fetch";
+import { getCurrentOrgSlug } from "./org-context";
 
 export type HealthResponse = {
   status: "ok" | "degraded";
@@ -136,9 +137,20 @@ export const apiClient = createClient<Paths>({ baseUrl });
 // Lightweight typed fetch for our hand-written endpoints (the openapi-fetch client
 // only carries types for the small set above).
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // Inject X-Org-Slug from the current route unless the caller already set one.
+  const slug = getCurrentOrgSlug();
+  const callerHeaders = (init?.headers as Record<string, string>) ?? {};
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...callerHeaders,
+  };
+  if (slug && !("X-Org-Slug" in callerHeaders) && !("x-org-slug" in callerHeaders)) {
+    headers["X-Org-Slug"] = slug;
+  }
   const r = await fetch(`${baseUrl}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    credentials: "include",
     ...init,
+    headers,
   });
   if (!r.ok) {
     const body = await r.text();

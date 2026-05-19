@@ -34,7 +34,7 @@ type Step = {
   title: string;
   sub: string;
   cta: string;
-  to: "/settings";
+  to: "/orgs/$slug/settings";
   done: boolean;
 };
 
@@ -45,7 +45,7 @@ function DashboardOnboarding({ onboarding }: { onboarding: OnboardingStatus }) {
       title: "Install the GitHub App",
       sub: "Grant yaaos access to the repos you want reviewed. (Pick repos on GitHub.)",
       cta: "Install",
-      to: "/settings",
+      to: "/orgs/$slug/settings",
       done: onboarding.github_app_installed,
     },
     {
@@ -53,7 +53,7 @@ function DashboardOnboarding({ onboarding }: { onboarding: OnboardingStatus }) {
       title: "Add your model API key",
       sub: "Anthropic key — yaaos uses Claude Code internally.",
       cta: "Add key",
-      to: "/settings",
+      to: "/orgs/$slug/settings",
       done: onboarding.anthropic_key_set,
     },
   ];
@@ -125,7 +125,7 @@ function StepRow({ step, isLast }: { step: Step; isLast: boolean }) {
           Done
         </Badge>
       ) : (
-        <Link to={step.to}>
+        <Link to={step.to} params={(prev) => ({ slug: prev.slug as string })}>
           <Button variant="primary">{step.cta}</Button>
         </Link>
       )}
@@ -205,8 +205,8 @@ function LiveTicketRow({ ticket }: { ticket: Ticket }) {
   return (
     <li className="border-t border-border-soft first:border-t-0">
       <Link
-        to="/tickets/$ticketId"
-        params={{ ticketId: ticket.id }}
+        to="/orgs/$slug/tickets/$ticketId"
+        params={(prev) => ({ slug: prev.slug as string, ticketId: ticket.id })}
         className="flex flex-col gap-2 px-4 py-3 hover:bg-hover"
       >
         <div className="flex items-center gap-3 min-w-0">

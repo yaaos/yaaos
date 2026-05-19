@@ -336,8 +336,8 @@ function TicketRow({ t, grouped }: { t: Ticket; grouped: boolean }) {
   const cols = grouped ? TIX_COLS_GROUPED : TIX_COLS;
   return (
     <Link
-      to="/tickets/$ticketId"
-      params={{ ticketId: t.id }}
+      to="/orgs/$slug/tickets/$ticketId"
+      params={(prev) => ({ slug: prev.slug as string, ticketId: t.id })}
       className="grid items-center gap-3 px-3 h-[44px] border-b border-border-soft last:border-0 hover:bg-hover"
       style={{ gridTemplateColumns: cols }}
       data-testid={`ticket-row-${t.id}`}
@@ -492,7 +492,7 @@ function fmtTokens(n: number): string {
 type TabKey = "review" | "audit";
 
 export function TicketDetailPage() {
-  const { ticketId } = useParams({ from: "/tickets/$ticketId" });
+  const { ticketId } = useParams({ from: "/orgs/$slug/tickets/$ticketId" });
   const { data: ticket } = useTicket(ticketId);
   const { data: jobs } = useReviewJobsForTicket(ticketId);
   const { data: findings } = useFindingsForTicket(ticketId, true);
@@ -1618,7 +1618,11 @@ function LessonChips({ ids }: { ids: string[] }) {
       <span className="text-text-4 text-[10.5px] uppercase tracking-wider font-medium">
         applied
       </span>
-      <Link to="/memory" className="hover:underline">
+      <Link
+        to="/orgs/$slug/memory"
+        params={(prev) => ({ slug: prev.slug as string })}
+        className="hover:underline"
+      >
         <Badge variant="soft">
           {ids.length} lesson{ids.length === 1 ? "" : "s"}
         </Badge>

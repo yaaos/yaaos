@@ -4,45 +4,54 @@
 
 ## Purpose
 
-All of yaaos's pages route through here. A flat list of `createRoute` calls under a single root route that renders `AppShell` (from `core/layout`). 6 paths, no nesting, no per-feature route trees.
+All of yaaos's pages route through here. M02 reshapes the tree around org-scoped paths: every domain page sits under `/orgs/$slug/...`. The login + account pages are user-scoped (no org context); `/` is a probe that redirects to the dashboard for the user's first org, or to `/login` when unauthenticated.
 
 ## Public interface
 
 - `router` — TanStack `Router` instance, consumed by `main.tsx`'s `<RouterProvider>`.
 
-The module also declares the TanStack module augmentation so the `Register` interface picks up the router type, giving `<Link to="/...">` typed autocomplete.
+The module also declares the TanStack module augmentation so the `Register` interface picks up the router type, giving `<Link to="/orgs/$slug/...">` typed autocomplete.
 
 ## Module architecture
 
 ### Route tree
 
-| Path | Component | Module |
+| Path | Component | Notes |
 |---|---|---|
-| `/` | redirect → `/dashboard` | — |
-| `/dashboard` | `DashboardPage` | `@domain/dashboard` |
-| `/tickets` | `TicketsPage` | `@domain/tickets` |
-| `/tickets/$ticketId` | `TicketDetailPage` | `@domain/tickets` |
-| `/memory` | `MemoryPage` | `@domain/memory` |
-| `/settings` | `SettingsPage` | `@domain/settings` |
+| `/` | beforeLoad probe | Hits `/api/auth/me`; on 401 → `/login`, on 200 → `/orgs/<first-slug>/dashboard`. |
+| `/login` | `LoginPage` (`@domain/auth`) | User-scoped; clears `org_id` contextvar. |
+| `/account` | `AccountPage` (`@domain/auth`) | User-scoped; emails + TOTP setup entry + "Sign out everywhere". |
+| `/orgs/$slug` | scope-only route | `beforeLoad` calls `setCurrentOrgSlug(slug)` so `apiFetch` injects `X-Org-Slug`. |
+| `/orgs/$slug/dashboard` | `DashboardPage` | |
+| `/orgs/$slug/tickets` | `TicketsPage` | |
+| `/orgs/$slug/tickets/$ticketId` | `TicketDetailPage` | |
+| `/orgs/$slug/memory` | `MemoryPage` | |
+| `/orgs/$slug/settings` | `SettingsPage` | |
+| `/orgs/$slug/members` | `MembersPage` (`@domain/orgs`) | |
+| `/dashboard` (legacy) | redirects to `/` | Deleted in Phase 14 once links are migrated. |
 
-Every route is a direct child of root. Root's `component` is `AppShell`; each child renders inside the shell's `<Outlet />`. The `/` route uses `beforeLoad` to redirect to `/dashboard`.
+### `setCurrentOrgSlug` + auto-injection
 
-### Per-module route registration
+`apps/web/src/core/api/org-context.ts` holds a module-global current slug. The `/orgs/$slug` parent route writes to it in `beforeLoad` whenever a navigation enters an org-scoped subtree; `/login` and `/account` clear it. `apiFetch` reads the slug and adds `X-Org-Slug` unless the caller already set one.
 
-Not used — central declaration is easier to read at 5 paths. Refactor to per-feature route exports when the surface grows beyond ~20 paths or starts requiring nested layouts.
+This pattern lets every domain hook (`useTickets`, `useMemory`, etc.) stay org-agnostic at the call site — the SPA layer adds the header, the backend's `require(action)` dep validates it.
 
-### Code-splitting
+### Login flow
 
-Not configured. All domain pages are eagerly imported; production bundle is ~400KB gzipped. Add `lazy()` boundaries when the bundle warrants.
+- Anonymous user hits any URL → `/` probe → `/login`.
+- `LoginPage` enumerates `/api/auth/providers`; clicking a button hits `/api/auth/login?provider=<id>&next=<path>`.
+- OAuth callback completes server-side and 303-redirects to `next`. The session cookie is now set.
+- `/` probe re-runs (or the SPA refetches `/api/auth/me`) → `/orgs/<first-slug>/dashboard`.
 
 ### Type augmentation
 
-`router.tsx` declares `module "@tanstack/react-router"` augmenting `Register` so `<Link to="/tickets/$ticketId">` type-checks everywhere.
+`router.tsx` declares `module "@tanstack/react-router"` augmenting `Register` so `<Link to="/orgs/$slug/tickets/$ticketId">` type-checks everywhere. Callers passing `params={(prev) => ({ slug: prev.slug as string, ticketId: ... })}` cast slug because TanStack's params type inference treats parent params as optional inside a child route; the cast is intentional and Phase 14 may revisit.
 
 ## Data owned
 
-None.
+None. The current slug lives in `@core/api`'s `org-context` module.
 
 ## How it's tested
 
-Every e2e spec in `apps/e2e/tests/*` exercises routing via `page.goto(...)`. No dedicated Vitest — the route tree is declarative.
+- Phase 7 Playwright spec (`apps/e2e/tests/login-and-membership.spec.ts`) drives the full login → org-scoped routes → membership flow via the `oauth_test` provider.
+- Per-page e2e specs in `apps/e2e/tests/*.spec.ts` exercise routing via `page.goto(...)`.

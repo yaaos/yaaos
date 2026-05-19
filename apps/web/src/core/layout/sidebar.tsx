@@ -1,20 +1,25 @@
+import { getCurrentOrgSlug } from "@core/api";
 import { cn } from "@shared/utils/cn";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Brain, LayoutDashboard, Pin, PinOff, Settings, Ticket } from "lucide-react";
+import { Brain, LayoutDashboard, Pin, PinOff, Settings, Ticket, Users } from "lucide-react";
 import { useState } from "react";
 import { getSidebarPinned, setSidebarPinned } from "./theme";
 
 const NAV = [
-  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/tickets", label: "Tickets", icon: Ticket },
-  { path: "/memory", label: "Memory", icon: Brain },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { suffix: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { suffix: "/tickets", label: "Tickets", icon: Ticket },
+  { suffix: "/memory", label: "Memory", icon: Brain },
+  { suffix: "/members", label: "Members", icon: Users },
+  { suffix: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function Sidebar() {
   const [pinned, setPinned] = useState<boolean>(() => getSidebarPinned());
   const { location } = useRouterState();
   const active = location.pathname;
+  const slug = getCurrentOrgSlug();
+  // Org-scoped pages require a slug; without one the sidebar collapses.
+  const nav = slug ? NAV.map((n) => ({ ...n, path: `/orgs/${slug}${n.suffix}` })) : [];
 
   const togglePin = () => {
     const next = !pinned;
@@ -50,7 +55,7 @@ export function Sidebar() {
             Workspace
           </div>
         )}
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const Icon = item.icon;
           const isActive = active.startsWith(item.path);
           return (

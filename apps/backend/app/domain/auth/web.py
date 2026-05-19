@@ -219,6 +219,83 @@ async def logout(
     return resp
 
 
+@router.post("/logout-all", dependencies=[Depends(public_route)])
+async def logout_all(
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Revoke every session for the user behind the current cookie. The
+    /account page's 'Sign out everywhere' button hits this."""
+    if not yaaos_session:
+        resp = JSONResponse(content={"ok": True})
+        resp.set_cookie(**clear_cookie_attrs(SESSION_COOKIE_NAME))
+        resp.set_cookie(**clear_cookie_attrs(CSRF_COOKIE_NAME))
+        return resp
+    async with db_session() as s:
+        session = await session_lifecycle.lookup(s, yaaos_session)
+        if session and session.user_id is not None:
+            await session_lifecycle.revoke_all_for_user(s, session.user_id)
+        else:
+            await session_lifecycle.revoke(s, yaaos_session)
+        await s.commit()
+    resp = JSONResponse(content={"ok": True})
+    resp.set_cookie(**clear_cookie_attrs(SESSION_COOKIE_NAME))
+    resp.set_cookie(**clear_cookie_attrs(CSRF_COOKIE_NAME))
+    return resp
+
+
+@router.get("/me", dependencies=[Depends(public_route)])
+async def me(
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Return `{user, orgs, current_org_slug}` for the cookie-bearer.
+
+    Lives on the public allowlist because the SPA hits it before the org
+    is known; on success the SPA picks an org and sets `X-Org-Slug` on
+    subsequent calls. 401 when there's no session.
+    """
+    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+
+    if not yaaos_session:
+        return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+    async with db_session() as s:
+        session = await session_lifecycle.lookup(s, yaaos_session)
+        if session is None or session.user_id is None:
+            return JSONResponse(status_code=401, content={"error": "unauthenticated"})
+        user_row = await identity_repo.get_user(s, session.user_id)
+        emails = await identity_repo.list_emails_for_user(s, session.user_id)
+        memberships = await orgs_repo.list_memberships_for_user(s, session.user_id)
+        orgs_view = []
+        for m in memberships:
+            org = await orgs_repo.get_org(s, m.org_id)
+            if org is None:
+                continue
+            orgs_view.append(
+                {
+                    "slug": org.slug,
+                    "display_name": org.display_name,
+                    "role": m.role,
+                    "handle": m.handle,
+                }
+            )
+    primary_email = next((e.email for e in emails if e.is_primary), emails[0].email if emails else None)
+    return JSONResponse(
+        content={
+            "user": {
+                "id": str(session.user_id),
+                "display_name": user_row.display_name if user_row else "",
+                "primary_email": primary_email,
+                "emails": [
+                    {"email": e.email, "is_primary": e.is_primary, "verified": e.verified_at is not None}
+                    for e in emails
+                ],
+            },
+            "orgs": orgs_view,
+            "current_org_slug": orgs_view[0]["slug"] if orgs_view else None,
+        }
+    )
+
+
 @router.get("/providers", dependencies=[Depends(public_route)])
 async def providers() -> dict[str, list[str]]:
     """List registered provider ids. The SPA renders one button per id on
