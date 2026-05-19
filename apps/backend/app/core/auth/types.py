@@ -1,0 +1,55 @@
+"""Action enum + low-level types for `core/auth`."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class Action(StrEnum):
+    """The single grep-able action catalogue. Each entry maps to a minimum
+    `Role` at the call site of `require(action)`. Adding an action is a
+    code change, not config.
+    """
+
+    # M02 read endpoints — every member can hit these.
+    IDENTITY_READ_SELF = "identity.read_self"
+    ORG_READ = "org.read"
+    MEMBERS_READ = "members.read"
+    AUDIT_READ = "audit.read"
+
+    # M02 mutating endpoints.
+    ACCOUNT_UPDATE_SELF = "account.update_self"
+    MEMBERS_INVITE = "members.invite"
+    MEMBERS_REMOVE = "members.remove"
+    MEMBERS_CHANGE_ROLE = "members.change_role"
+    SSO_CONFIGURE = "sso.configure"
+    GITHUB_APP_LINK = "github.app_link"
+    REVIEW_TRIGGER = "review.trigger"
+
+
+# Public-allowlist prefixes: any path matching one of these bypasses the
+# X-Org-Slug requirement AND the post-response security guard.
+PUBLIC_PATH_PREFIXES: tuple[str, ...] = ("/api/auth/",)
+PUBLIC_PATH_EXACT: frozenset[str] = frozenset({"/api/health"})
+
+
+# Paths the auth middleware enforces on. M02 routes opt in by adding their
+# prefix here; legacy /api/* routes are not yet covered so existing endpoints
+# keep working through the transition. Phase 14 expands this set as the
+# backfill completes.
+M02_PROTECTED_PREFIXES: tuple[str, ...] = (
+    "/api/account/",
+    "/api/memberships/",
+    "/api/sso/",
+    "/api/audit",  # exact + prefix both — endpoint is /api/audit and /api/audit/...
+)
+
+
+def is_public_path(path: str) -> bool:
+    if path in PUBLIC_PATH_EXACT:
+        return True
+    return any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
+
+
+def is_m02_protected_path(path: str) -> bool:
+    return any(path == p.rstrip("/") or path.startswith(p) for p in M02_PROTECTED_PREFIXES)

@@ -107,6 +107,11 @@ def _install_middleware(app: FastAPI) -> None:
         allow_headers=["*"],
     )
 
+    # M02 default-deny auth middleware (see core/auth/middleware.py).
+    from app.core.auth import AuthMiddleware  # noqa: PLC0415
+
+    app.add_middleware(AuthMiddleware)
+
     # Unhandled-exception handler — log + return JSON 500.
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

@@ -21,6 +21,12 @@ from app.core import webserver  # noqa: E402
 # 5. Core modules whose plugins are domain-facing.
 from app.core import audit_log, workspace  # noqa: F401, E402
 
+# 5b. Identity + tenancy + auth middleware (M02). Must be imported before
+# any domain module that declares `Depends(require(...))` or
+# `Depends(public_route)` so the contextvars + middleware classes exist.
+from app.domain import identity, orgs  # noqa: F401, E402
+from app.core import auth  # noqa: F401, E402
+
 # 6. Domain modules — order: types first (vcs, memory), then coding_agent
 #    (which references vcs + memory types), then leaf domain modules,
 #    then domain modules that depend on others.
