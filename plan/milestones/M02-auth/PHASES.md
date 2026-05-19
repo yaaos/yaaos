@@ -192,28 +192,28 @@
 
 ## Phase 14 — docs + cleanup + final verification
 
-- [ ] Per-module docs filled and reviewed: `core_auth.md`, `domain_identity.md`, `domain_orgs.md`, plugin docs (`plugins_oauth_github.md`, `plugins_oauth_test.md`, `plugins_saml.md`, `plugins_saml_test.md`)
-- [ ] `apps/backend/docs/core_audit_log.md` + `core_primitives.md` reflect ActorKind extension
-- [ ] `docs/system-architecture.md` "Identity & access" section complete: login flow ASCII, session lifecycle, contextvar propagation
-- [ ] `apps/backend/docs/patterns.md` includes "every route declares security" + "every background job opens org_context"
-- [ ] `apps/web/docs/patterns.md` includes "API client auto-injects X-Org-Slug" + "use RequireMembership for role gates"
-- [ ] `docs/glossary.md` adds: user, org, membership, role, session, invitation, provider, SSO, break-glass Owner
-- [ ] `grep -rn "TBD\|TODO\|coming soon" plan/milestones/M02-auth apps/*/docs` returns no hits introduced by M02
-- [ ] `grep -rn "<old-renamed-thing>" apps/*/docs docs` clean for any symbols renamed during M02
-- [ ] `apps/backend/bin/sync_modules` produces no diff (tach is up to date)
-- [ ] Full CI: `apps/backend/bin/ci` + `apps/web/bin/ci` + `apps/e2e/bin/ci` all exit 0
-- [ ] Security scan run (semgrep via backend CI covers it)
-- [ ] `plan/notes/users_orgs_auth.md` deleted (promoted into this milestone)
-- [ ] `plan/ROADMAP.md` updated: M02 status moved from `[planned]` to `[done]`
-- [ ] `grep -n '\[ \]' plan/milestones/M02-auth/PHASES.md` returns zero matches
-- [ ] Final assistant message summarizes work done + appends `DECISIONS.md` contents
-- [ ] Phase committed
+- [x] Per-module docs filled and reviewed: `core_auth.md`, `domain_identity.md`, `domain_orgs.md`, plugin docs (`plugins_oauth_github.md`, `plugins_oauth_test.md`, `plugins_saml.md`, `plugins_saml_test.md`)
+- [x] `apps/backend/docs/core_audit_log.md` + `core_primitives.md` reflect ActorKind extension
+- [x] `docs/system-architecture.md` "Identity & access" section complete: login flow ASCII, session lifecycle, contextvar propagation
+- [x] `apps/backend/docs/patterns.md` includes "every route declares security" + "every background job opens org_context"
+- [x] `apps/web/docs/patterns.md` includes "API client auto-injects X-Org-Slug" + "use RequireMembership for role gates"
+- [x] `docs/glossary.md` adds: user, org, membership, role, session, invitation, provider, SSO, break-glass Owner
+- [x] `grep -rn "TBD\|TODO\|coming soon" plan/milestones/M02-auth apps/*/docs` returns no hits introduced by M02
+- [x] `grep -rn "<old-renamed-thing>" apps/*/docs docs` clean for any symbols renamed during M02
+- [x] `apps/backend/bin/sync_modules` produces no diff (tach is up to date)
+- [x] Full CI: `apps/backend/bin/ci` + `apps/web/bin/ci` + `apps/e2e/bin/ci` all exit 0
+- [x] Security scan run (semgrep via backend CI covers it)
+- [x] `plan/notes/users_orgs_auth.md` deleted (promoted into this milestone)
+- [x] `plan/ROADMAP.md` updated: M02 status moved from `[planned]` to `[done]`
+- [x] `grep -n '\[ \]' plan/milestones/M02-auth/PHASES.md` returns zero matches
+- [x] Final assistant message summarizes work done + appends `DECISIONS.md` contents
+- [x] Phase committed
 
 ## Completion check (run before declaring milestone done)
 
-- [ ] `grep -n '\[ \]' plan/milestones/M02-auth/PHASES.md` → no output
-- [ ] `apps/backend/bin/ci` → exit 0
-- [ ] `apps/web/bin/ci` → exit 0
-- [ ] `apps/e2e/bin/ci` → exit 0
-- [ ] `git status` on branch `m02-auth` → clean
-- [ ] `git log main..m02-auth --oneline` shows commits for every phase
+- [x] `grep -n '\[ \]' plan/milestones/M02-auth/PHASES.md` → no output
+- [x] `apps/backend/bin/ci` → exit 0
+- [x] `apps/web/bin/ci` → exit 0
+- [x] `apps/e2e/bin/ci` → exit 0
+- [x] `git status` on branch `m02-auth` → clean
+- [x] `git log main..m02-auth --oneline` shows commits for every phase
