@@ -58,18 +58,18 @@
 
 ## Phase 4 — GitHub OAuth
 
-- [ ] `Provider` Protocol defined in `domain/identity/providers.py`
-- [ ] `plugins/oauth_github` implements Provider via Authlib; reads creds from settings
-- [ ] `plugins/oauth_test` implements Provider as a test-only stub; `assert settings.yaaos_env == "test"` at module import
-- [ ] `GET /api/auth/login?provider=<id>` redirects to provider's authorization URL
-- [ ] `GET /api/auth/callback/<provider>` exchanges code, verifies `email_verified`, applies account-linking + hard-reject rules
-- [ ] Hard-reject path: un-invited login → 403 with "ask for invite" message
-- [ ] Account-linking challenge: same-browser inline flow (sign in via existing provider to confirm link)
-- [ ] Backend integration tests for `oauth_github` use `pytest-httpx` to mock GitHub's token + `/user` endpoints
-- [ ] Backend integration tests via `oauth_test` cover: existing-identity, link-confirm, hard-reject
-- [ ] `apps/backend/docs/plugins_oauth_github.md` + `plugins_oauth_test.md` written
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `Provider` Protocol defined in `domain/identity/providers.py`
+- [x] `plugins/oauth_github` implements Provider via Authlib; reads creds from settings
+- [x] `plugins/oauth_test` implements Provider as a test-only stub; `assert settings.yaaos_env == "test"` at module import
+- [x] `GET /api/auth/login?provider=<id>` redirects to provider's authorization URL
+- [x] `GET /api/auth/callback/<provider>` exchanges code, verifies `email_verified`, applies account-linking + hard-reject rules
+- [x] Hard-reject path: un-invited login → 403 with "ask for invite" message
+- [x] Account-linking challenge: same-browser inline flow (sign in via existing provider to confirm link)
+- [x] Backend integration tests for `oauth_github` use `pytest-httpx` to mock GitHub's token + `/user` endpoints
+- [x] Backend integration tests via `oauth_test` cover: existing-identity, link-confirm, hard-reject
+- [x] `apps/backend/docs/plugins_oauth_github.md` + `plugins_oauth_test.md` written
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 5 — bootstrap script
 
