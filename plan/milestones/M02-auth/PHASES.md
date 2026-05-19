@@ -4,14 +4,14 @@
 
 ## Phase 0 — scaffolding
 
-- [ ] `authlib`, `python3-saml`, `itsdangerous`, `pyotp`, `slowapi` added to `apps/backend/pyproject.toml`
-- [ ] `docker-compose.dev.yml` installs `libxmlsec1-dev` + `xmlsec1` in the backend image (or its base Dockerfile does)
-- [ ] `docker-compose.dev.yml` adds `mailpit` service (`axllent/mailpit`, ports `1025:1025` SMTP and `8025:8025` UI)
-- [ ] `apps/web/vite.config.ts` proxy table includes `/webhooks` alongside `/api` and `/openapi.json`
-- [ ] `docs/setup.md` mentions Mailpit UI at `http://localhost:8025` + GitHub OAuth note (creds in `.env`)
-- [ ] `docs/system-architecture.md` has a stub "Identity & access" section (filled later)
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed on branch `m02-auth`
+- [x] `authlib`, `python3-saml`, `itsdangerous`, `pyotp`, `slowapi` added to `apps/backend/pyproject.toml`
+- [x] `docker-compose.dev.yml` installs `libxmlsec1-dev` + `xmlsec1` in the backend image (or its base Dockerfile does)
+- [x] `docker-compose.dev.yml` adds `mailpit` service (`axllent/mailpit`, ports `1025:1025` SMTP and `8025:8025` UI)
+- [x] `apps/web/vite.config.ts` proxy table includes `/webhooks` alongside `/api` and `/openapi.json`
+- [x] `docs/setup.md` mentions Mailpit UI at `http://localhost:8025` + GitHub OAuth note (creds in `.env`)
+- [x] `docs/system-architecture.md` has a stub "Identity & access" section (filled later)
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed on branch `m02-auth`
 
 ## Phase 1 — data model
 
