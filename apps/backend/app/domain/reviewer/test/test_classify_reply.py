@@ -1,37 +1,39 @@
-"""Unit tests for `classify_reply` — substitutes the chat model via DI.
+"""Unit tests for `classify_reply`.
 
-No network. `PromptRunnable._build_model` returns a `RunnableLambda` that
-emits canned `ClassifyReplyOutput` instances; `with_structured_output` would
-do the same wrapping in prod.
+No mocks, no DI. Each test calls `classify_reply(input)` directly; the
+session-scoped `LLMTestCache` (wired by `core.llm.pytest_plugin`)
+replays a deterministic response from the colocated
+`.langchain_cache.json` checked into git.
+
+The classifier emits one of five categorical intents that map 1:1 onto
+the dispatch in `apply_classified_reply`:
+- `acknowledgment_clear` — clear wontfix / intentional
+- `acknowledgment_unclear` — hedged ack ("yeah I think this is fine")
+- `verify_fix` — claims a fix landed
+- `question` — asking yaaos to investigate / explain
+- `other` — none of the above
+
+To (re)populate the cache after touching the prompt or model config:
+
+    cd apps/backend
+    ANTHROPIC_API_KEY=… uv run pytest \
+        app/domain/reviewer/test/test_classify_reply.py \
+        --allow-llm-calls
+
+then commit the updated `.langchain_cache.json` next to this file.
+Default `pytest` runs are offline and fail loudly on a cache miss.
 """
 
 from __future__ import annotations
 
-from langchain_core.runnables import RunnableLambda
-
-from app.core.llm import PromptRunnable
 from app.domain.reviewer.llm import (
     ClassifyReplyInput,
-    ClassifyReplyOutput,
     classify_reply,
-    classify_reply_runnable,
 )
 from app.domain.reviewer.llm.classifier import PriorMessage
 
 
-class _CannedClassifier(PromptRunnable[ClassifyReplyOutput]):
-    def __init__(self, output: ClassifyReplyOutput) -> None:
-        super().__init__(classify_reply_runnable()._prompt, ClassifyReplyOutput)
-        self._output = output
-
-    def _build_model(self):  # type: ignore[no-untyped-def]
-        async def _produce(_messages):  # type: ignore[no-untyped-def]
-            return self._output
-
-        return RunnableLambda(_produce)
-
-
-def _input(reply: str) -> ClassifyReplyInput:
+def _input(reply: str, prior_messages: list[PriorMessage] | None = None) -> ClassifyReplyInput:
     return ClassifyReplyInput(
         finding_title="x could be None",
         finding_body="caller may pass None",
@@ -40,71 +42,59 @@ def _input(reply: str) -> ClassifyReplyInput:
         anchor_lines="12",
         code_snippet="def foo(x):\n    return x.bar()",
         reply=reply,
-        prior_messages=[],
+        prior_messages=prior_messages or [],
     )
 
 
-async def test_classify_reply_returns_acknowledgment() -> None:
-    canned = ClassifyReplyOutput(
-        intent="acknowledgment",
-        confidence=0.92,
-        suggested_ack_kind="intentional",
-        parsed_claims=None,
-    )
+async def test_classify_reply_returns_acknowledgment_clear_intentional() -> None:
+    """Clear wontfix/intentional phrasing → acknowledgment_clear + intentional."""
+    out = await classify_reply(_input("By design — None means anonymous."))
 
-    out = await classify_reply(
-        _input("By design — None means anonymous."), runnable=_CannedClassifier(canned)
-    )
-
-    assert out.intent == "acknowledgment"
+    assert out.intent == "acknowledgment_clear"
     assert out.suggested_ack_kind == "intentional"
-    assert out.confidence >= 0.85
+
+
+async def test_classify_reply_returns_acknowledgment_unclear_for_hedged_reply() -> None:
+    """Hedged reply → acknowledgment_unclear (system will ask for confirm)."""
+    out = await classify_reply(_input("yeah I think this is fine"))
+
+    assert out.intent == "acknowledgment_unclear"
 
 
 async def test_classify_reply_returns_verify_fix() -> None:
-    canned = ClassifyReplyOutput(intent="verify_fix", confidence=0.95)
-
-    out = await classify_reply(_input("Fixed in abc123."), runnable=_CannedClassifier(canned))
+    """'Fixed in <sha>' → verify_fix with the sha parsed out."""
+    out = await classify_reply(_input("Fixed in abc123."))
 
     assert out.intent == "verify_fix"
+    assert out.parsed_claims is not None
+    assert out.parsed_claims.fixed_in_commit_sha == "abc123"
 
 
-async def test_classify_reply_returns_other_for_question() -> None:
-    canned = ClassifyReplyOutput(intent="other", confidence=0.7)
+async def test_classify_reply_returns_question_for_genuine_question() -> None:
+    """A genuine investigation question → `question` (subflow answers it)."""
+    out = await classify_reply(_input("How big a problem is this?"))
 
-    out = await classify_reply(
-        _input("How do you suggest I refactor this?"), runnable=_CannedClassifier(canned)
-    )
+    assert out.intent == "question"
+
+
+async def test_classify_reply_returns_other_for_off_topic_disagreement() -> None:
+    """Off-topic / disagreement that's neither ack nor a real question → other."""
+    out = await classify_reply(_input("I disagree, this isn't a bug."))
 
     assert out.intent == "other"
 
 
-async def test_classify_reply_with_prior_thread() -> None:
-    canned = ClassifyReplyOutput(intent="acknowledgment", confidence=0.88, suggested_ack_kind="wontfix")
-
-    inp = ClassifyReplyInput(
-        finding_title="t",
-        finding_body="b",
-        rule_id="r",
-        anchor_file="f.py",
-        anchor_lines="1",
-        code_snippet="x",
-        reply="agreed but we won't change it for v1",
-        prior_messages=[
-            PriorMessage(author_kind="yaaos", body="Original finding"),
-            PriorMessage(author_kind="human", body="why?"),
-        ],
+async def test_classify_reply_uses_prior_thread_context() -> None:
+    """Multi-turn ack: thread context + 'won't change for v1' → acknowledgment_clear/wontfix."""
+    out = await classify_reply(
+        _input(
+            "agreed but we won't change it for v1",
+            prior_messages=[
+                PriorMessage(author_kind="yaaos", body="Original finding"),
+                PriorMessage(author_kind="human", body="why?"),
+            ],
+        )
     )
 
-    out = await classify_reply(inp, runnable=_CannedClassifier(canned))
-
-    assert out.intent == "acknowledgment"
+    assert out.intent == "acknowledgment_clear"
     assert out.suggested_ack_kind == "wontfix"
-
-
-def test_classify_reply_prompt_loads_without_error() -> None:
-    """The prompt file is well-formed and load_prompt succeeds."""
-    r = classify_reply_runnable()
-    assert r._prompt.name == "classify_reply"
-    assert r._prompt.version == 1
-    assert r._prompt.tag == "classify_reply.v1"

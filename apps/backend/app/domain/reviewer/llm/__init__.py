@@ -8,12 +8,10 @@ from app.domain.reviewer.llm.classifier import (
     ClassifyReplyInput,
     ClassifyReplyOutput,
     classify_reply,
-    classify_reply_runnable,
 )
 
 __all__ = [
     "ClassifyReplyInput",
     "ClassifyReplyOutput",
     "classify_reply",
-    "classify_reply_runnable",
 ]

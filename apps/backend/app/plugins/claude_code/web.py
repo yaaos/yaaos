@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.webserver import RouteSpec, register_routes
-from app.plugins.claude_code.service import _set_anthropic_key, get_plugin
+from app.plugins.claude_code.service import _set_anthropic_key, bootstrap_anthropic_env, get_plugin
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -38,4 +38,10 @@ async def health() -> dict[str, object]:
     return {"healthy": h.healthy, "message": h.message, "checked_at": h.checked_at}
 
 
-register_routes(RouteSpec(module_name="claude_code", router=router))
+register_routes(
+    RouteSpec(
+        module_name="claude_code",
+        router=router,
+        on_startup=[bootstrap_anthropic_env],
+    )
+)

@@ -2,13 +2,18 @@
 
 Text-only reasoning over the finding body, thread history, the developer's
 new message, and a small code snippet at the anchor. Code-touching work goes
-through `coding_agent` (verify_fix / stale_check), not here.
+through `coding_agent` (verify_fix / stale_check / answer_question), not here.
 
-The aggregate decides what to do with the classifier output based on the
-plan §10.3 confidence rubric:
-- ≥ 0.85 → act (transition state, route to handler).
-- 0.60-0.84 → treat as a question / post a confirmation reply.
-- < 0.60 → store, do nothing.
+The intent label itself encodes the action — no separate confidence axis.
+LLMs are poorly calibrated on probability outputs but reliable on
+categorical labels, so we make the classifier pick one of five intents
+that map 1:1 onto a `ReplyAction` (see `apply_classified_reply`):
+
+- `acknowledgment_clear`   → post "Noted — skipping in future"
+- `acknowledgment_unclear` → post mid-band confirm request
+- `verify_fix`             → spawn coding agent → verify in workspace
+- `question`               → spawn coding agent → answer in workspace
+- `other`                  → store + stay silent
 """
 
 from __future__ import annotations
@@ -17,13 +22,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.llm import PromptRunnable, load_prompt
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "classify_reply.prompt.md"
 
-ReplyIntentLiteral = Literal["acknowledgment", "verify_fix", "other"]
+ReplyIntentLiteral = Literal[
+    "acknowledgment_clear",
+    "acknowledgment_unclear",
+    "verify_fix",
+    "question",
+    "other",
+]
 AckKindLiteral = Literal["intentional", "wontfix"]
 
 
@@ -52,26 +63,25 @@ class ParsedClaims(BaseModel):
 
 
 class ClassifyReplyOutput(BaseModel):
-    """Strict structured output from `classify_reply`."""
+    """Strict structured output from `classify_reply`.
+
+    The `intent` label is the only routing signal — no confidence field.
+    `suggested_ack_kind` is required for `acknowledgment_clear` /
+    `acknowledgment_unclear` (drives the ack metadata), otherwise null.
+    `parsed_claims` is populated when intent is `verify_fix`.
+    """
 
     intent: ReplyIntentLiteral
-    confidence: float = Field(ge=0.0, le=1.0)
     suggested_ack_kind: AckKindLiteral | None = None
     parsed_claims: ParsedClaims | None = None
 
 
-def classify_reply_runnable() -> PromptRunnable[ClassifyReplyOutput]:
-    """Lazy-built runnable. Tests can substitute by subclassing `PromptRunnable`."""
-    return PromptRunnable(load_prompt(_PROMPT_PATH), ClassifyReplyOutput)
-
-
-async def classify_reply(
-    input: ClassifyReplyInput,
-    *,
-    runnable: PromptRunnable[ClassifyReplyOutput] | None = None,
-) -> ClassifyReplyOutput:
-    """Run the classifier. Caller may inject a substitute runnable for tests."""
-    r = runnable or classify_reply_runnable()
+async def classify_reply(input: ClassifyReplyInput) -> ClassifyReplyOutput:
+    """Run the reply classifier. No DI — tests rely on the file-colocated
+    LLM cache (`LLMTestCache`, session-scoped via `core.llm.pytest_plugin`)
+    to replay deterministic responses from disk.
+    """
+    r = PromptRunnable(load_prompt(_PROMPT_PATH), ClassifyReplyOutput)
     return await r.ainvoke(
         {
             "finding_title": input.finding_title,

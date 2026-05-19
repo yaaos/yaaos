@@ -165,7 +165,6 @@ export interface ThreadMessage {
   external_comment_id: string;
   body: string;
   classified_intent: string | null;
-  classification_confidence: number | null;
   created_at: string | null;
 }
 

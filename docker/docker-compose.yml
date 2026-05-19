@@ -29,6 +29,13 @@ services:
       OTEL_SERVICE_NAME: yaaos
       # OTEL_EXPORTER_OTLP_ENDPOINT is intentionally unset — OTel disabled silently
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Optional Braintrust gateway routing for direct LLM calls (core/llm).
+      # When BRAINTRUST_API_KEY is set, PromptRunnable injects base_url +
+      # api_key + `x-bt-parent` per call; unset = direct provider key via
+      # Anthropic SDK with no gateway logging.
+      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
+      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
+      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
     depends_on:
       postgres:
         condition: service_healthy

@@ -32,6 +32,8 @@ from app.core.primitives import PluginMeta
 from app.core.workspace import Workspace, WorkspaceExecError
 from app.domain.coding_agent import (
     ActivityEvent,
+    AnswerQuestionContext,
+    AnswerQuestionResult,
     FindingAnchor,
     FindingDraft,
     HealthStatus,
@@ -128,6 +130,12 @@ class _StaleCheckDto(BaseModel):
     reasoning: str
 
 
+class _AnswerQuestionDto(BaseModel):
+    """Single text reply the parent agent commits to posting back to the developer."""
+
+    answer: str
+
+
 # ── Prompt assembly ───────────────────────────────────────────────────────────
 
 # Versioned prompt files live next to this module (plan §8.3): one .md per
@@ -198,17 +206,12 @@ def _assemble_review_prompt(ctx: ReviewContext) -> str:
         )
         for lesson in ctx.lessons:
             parts.append(f"### {lesson.title}\n_lesson_id: {lesson.id}_\n{lesson.body}")
-    if ctx.prior_yaaos_comment_bodies:
-        parts.extend(
-            [
-                "",
-                "## Prior yaaos comments on this PR",
-                "Don't duplicate them in your final synthesis; build on or disagree.",
-                "",
-            ]
-        )
-        for body in ctx.prior_yaaos_comment_bodies[:20]:
-            parts.append(f"- {body[:200]}")
+    # NOTE: `ctx.prior_yaaos_comment_bodies` is intentionally NOT surfaced to
+    # the agent on full review. The aggregate's fingerprint dedup (plan
+    # §10.10) handles re-emission: the same finding from a prior review
+    # silently re-observes (bumping `last_observed_review_id` + appending a
+    # `FindingObservation`). Telling the agent to "not duplicate" was
+    # fighting the persistence layer and starved the re-observation signal.
     return "\n".join(parts)
 
 
@@ -279,6 +282,30 @@ def _assemble_stale_check_prompt(ctx: StaleCheckContext) -> str:
         body=ctx.original_finding_body,
         current_code=ctx.current_code_snippet,
         diff_summary=ctx.diff_summary,
+    )
+
+
+_ANSWER_QUESTION_PROMPT = _load_prompt("answer_question")
+
+
+def _assemble_answer_question_prompt(ctx: AnswerQuestionContext) -> str:
+    if ctx.prior_messages:
+        prior_thread = "\n".join(f"- [{m.author_kind}] {m.body}" for m in ctx.prior_messages)
+    else:
+        prior_thread = "_(no prior messages — this is the first reply on the finding)_"
+    return _ANSWER_QUESTION_PROMPT.format(
+        rule_id=ctx.original_rule_id,
+        title=ctx.original_finding_title,
+        body=ctx.original_finding_body,
+        file_path=ctx.current_anchor.file_path,
+        line_start=ctx.current_anchor.line_start,
+        line_end=ctx.current_anchor.line_end,
+        code_snippet=ctx.code_snippet,
+        prior_thread=prior_thread,
+        question=ctx.question,
+        base_sha=ctx.base_sha or "(unknown)",
+        head_sha=ctx.head_sha or "(unknown)",
+        language_hint=ctx.language_hint or "(unspecified)",
     )
 
 
@@ -589,10 +616,16 @@ class ClaudeCodePlugin:
         )
 
     async def _prepare_invocation(
-        self, agent_config: dict[str, Any]
+        self,
+        agent_config: dict[str, Any],
+        *,
+        allowed_tools_override: str | None = None,
     ) -> tuple[list[str], dict[str, str], int] | ReviewResult:
         """Load settings, build argv + env. Returns ReviewResult on early failure.
 
+        `allowed_tools_override` swaps the `--allowed-tools` value used by the
+        full review (which includes `Task` for subagent dispatch) for a leaner
+        set — `answer_question` uses a read-only repo + git list with no Task.
         (Reply path coerces the result; same error shape applies.)
         """
         api_key, cli_path_setting = await self._load_settings_for_invocation()
@@ -633,9 +666,15 @@ class ClaudeCodePlugin:
             # the entire diff into the prompt (saves tens of thousands of
             # tokens on big PRs and avoids duplicating the diff across N
             # subagent task briefs).
-            "--allowed-tools=Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
-            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
-            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
+            "--allowed-tools="
+            + (
+                allowed_tools_override
+                or (
+                    "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
+                    "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+                    "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)"
+                )
+            ),
         ]
         return argv, env, timeout
 
@@ -873,6 +912,49 @@ class ClaudeCodePlugin:
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
 
+    async def answer_question(
+        self,
+        workspace: Workspace,
+        context: AnswerQuestionContext,
+        on_activity: OnActivity | None = None,
+    ) -> AnswerQuestionResult:
+        # Read-only repo + git tools only — no `Task` subagent dispatch (the
+        # question runner answers itself) and no `Write`/`Edit`/`Bash` beyond
+        # whitelisted git commands. Same authentication path as `verify_fix`.
+        prep = await self._prepare_invocation(
+            context.agent_config,
+            allowed_tools_override=(
+                "Read,Glob,Grep,LS,"
+                "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+                "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)"
+            ),
+        )
+        if isinstance(prep, ReviewResult):
+            return AnswerQuestionResult(
+                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
+            )
+        argv, env, timeout = prep
+        full_prompt = _assemble_answer_question_prompt(context) + _schema_appendix(_AnswerQuestionDto)
+        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
+        if isinstance(envelope, ReviewResult):
+            return AnswerQuestionResult(
+                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
+            )
+        agent_text, telemetry = envelope
+        try:
+            parsed = _AnswerQuestionDto.model_validate(json.loads(agent_text))
+        except (json.JSONDecodeError, ValidationError) as e:
+            return AnswerQuestionResult(
+                status=InvocationStatus.PARSE_FAILURE,
+                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+                error_message=f"agent response didn't match _AnswerQuestionDto: {e}",
+            )
+        return AnswerQuestionResult(
+            status=InvocationStatus.SUCCESS,
+            answer=parsed.answer,
+            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
+        )
+
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         errors: list[str] = []
         if "timeout_seconds" in agent_config:
@@ -1001,6 +1083,36 @@ async def _set_anthropic_key(org_id: UUID, raw_key: str) -> None:
         await s.commit()
     # Rotation should never serve a stale "healthy" verdict from the previous key.
     _invalidate_auth_cache()
+    # Make the key visible to `core/llm` (LangChain `init_chat_model` resolves
+    # auth via `ANTHROPIC_API_KEY`) immediately — fresh onboarding shouldn't
+    # require a backend restart before the classifier can authenticate.
+    os.environ["ANTHROPIC_API_KEY"] = raw_key
+
+
+async def bootstrap_anthropic_env() -> None:
+    """Populate `ANTHROPIC_API_KEY` from the encrypted DB row at app startup.
+
+    `core/llm` (LangChain `init_chat_model`) authenticates from the process env;
+    yaaos stores the key encrypted in `claude_code_settings`. Without this hook,
+    a freshly-booted container can't make direct LLM calls (e.g., classifier)
+    until the next time `_set_anthropic_key` runs. Pre-onboarding (no row yet)
+    is a normal state — the hook silently no-ops and the classifier surfaces
+    its own "key not set" error if it ever runs.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return  # Already populated (e.g., Braintrust gateway, test env).
+    async with db_session() as s:
+        row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
+    if row is None or row.encrypted_anthropic_api_key is None:
+        log.info("claude_code.bootstrap_env.no_key", reason="pre_onboarding")
+        return
+    try:
+        fernet = Fernet(get_settings().yaaos_encryption_key.encode())
+        os.environ["ANTHROPIC_API_KEY"] = fernet.decrypt(row.encrypted_anthropic_api_key).decode()
+    except InvalidToken:
+        log.warning("claude_code.bootstrap_env.decrypt_failed")
+        return
+    log.info("claude_code.bootstrap_env.loaded")
 
 
 def bootstrap() -> None:

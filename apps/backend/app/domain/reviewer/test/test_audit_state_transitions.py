@@ -80,7 +80,6 @@ def _seeded_aggregate(*, finding_id: uuid.UUID) -> PRReviewAggregate:
         in_reply_to_external_id=None,
         body="wontfix; intentional",
         classified_intent=None,
-        classification_confidence=None,
         created_at=datetime(2026, 5, 17, tzinfo=UTC),
     )
     return PRReviewAggregate(

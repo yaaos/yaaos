@@ -18,7 +18,13 @@ from typing import Literal
 
 Severity = Literal["blocker", "major", "minor", "nit"]
 AckKind = Literal["intentional", "wontfix"]
-ReplyIntent = Literal["acknowledgment", "verify_fix", "other"]
+ReplyIntent = Literal[
+    "acknowledgment_clear",
+    "acknowledgment_unclear",
+    "verify_fix",
+    "question",
+    "other",
+]
 AuthorKind = Literal["yaaos", "human"]
 
 
@@ -189,7 +195,6 @@ class CommentMessage:
     in_reply_to_external_id: str | None
     body: str
     classified_intent: ReplyIntent | None
-    classification_confidence: float | None
     created_at: datetime
 
 

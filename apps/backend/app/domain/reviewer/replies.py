@@ -1,14 +1,18 @@
-"""Developer reply handling (plan §6.4) + verify-fix subflow (plan §6.5).
+"""Developer reply handling (plan §6.4) + verify-fix / answer-question subflows.
 
 Webhook payload → resolve external comment to a CommentThread →
 deterministic checks (yaaos command? off-topic? mid-band `confirm`?) →
 classifier (`classify_reply` via core/llm) → `apply_classified_reply` on
 the aggregate → post yaaos reply via VCS.
 
-verify_fix subflow runs only when `apply_classified_reply` returns
-`verify_fix_triggered`: provisions a workspace at HEAD, asks
-`coding_agent.verify_fix`, routes the result through
-`apply_verify_fix_result`, posts the reply.
+Two coding-agent subflows hang off the dispatch:
+
+- `verify_fix_triggered` → `_run_verify_fix`: provisions a workspace at
+  HEAD, asks `coding_agent.verify_fix`, routes the result through
+  `apply_verify_fix_result`, posts the reply.
+- `answer_question_triggered` → `_run_answer_question`: provisions a
+  workspace at HEAD with read-only repo + git tool access, asks
+  `coding_agent.answer_question`, posts the agent's answer as a reply.
 """
 
 from __future__ import annotations
@@ -29,16 +33,17 @@ from app.core.workspace import (
 )
 from app.domain import coding_agent, pull_requests
 from app.domain.coding_agent import (
-    FindingAnchor as AgentFindingAnchor,
+    AnswerQuestionContext,
+    InvocationStatus,
+    PriorThreadMessage,
+    VerifyFixContext,
 )
 from app.domain.coding_agent import (
-    InvocationStatus,
-    VerifyFixContext,
+    FindingAnchor as AgentFindingAnchor,
 )
 from app.domain.reviewer.llm import (
     ClassifyReplyInput,
     classify_reply,
-    classify_reply_runnable,
 )
 from app.domain.reviewer.llm.classifier import PriorMessage
 from app.domain.reviewer.lock import acquire_pr_lock
@@ -126,8 +131,7 @@ async def handle_developer_reply(
             code_snippet="(omitted — POC)",
             reply=body,
             prior_messages=await _prior_messages_for_classifier(thread_row.id),
-        ),
-        runnable=classify_reply_runnable(),
+        )
     )
 
     # 4. Aggregate mutation + persistence + reply posting.
@@ -143,7 +147,6 @@ async def handle_developer_reply(
             in_reply_to_external_id=in_reply_to_external_id,
             body=body,
             classified_intent=classification.intent,
-            classification_confidence=classification.confidence,
         )
         action = apply_classified_reply(
             aggregate,
@@ -171,6 +174,7 @@ async def handle_developer_reply(
             )
         await agg_repo.save(aggregate)
         await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+        await s.commit()
         await dispatch_events(aggregate)
 
     if action.kind == "verify_fix_triggered":
@@ -185,6 +189,20 @@ async def handle_developer_reply(
             ),
         )
         return "verify_fix:triggered"
+
+    if action.kind == "answer_question_triggered":
+        spawn(
+            f"answer_question:{reply_message.id}",
+            _run_answer_question(
+                pr_id=pr_id,
+                org_id=org_id,
+                finding_id=finding_row.id,
+                thread_id=thread_row.id,
+                reply_parent_external_id=external_comment_id,
+                question=body,
+            ),
+        )
+        return "answer_question:triggered"
 
     return f"applied:{action.kind}"
 
@@ -348,6 +366,7 @@ async def _finalize_mid_band_ack(
         )
         await agg_repo.save(aggregate)
         await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+        await s.commit()
         await dispatch_events(aggregate)
 
 
@@ -485,10 +504,144 @@ async def _run_verify_fix(
                 )
             await agg_repo.save(aggregate)
             await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            await s.commit()
             await dispatch_events(aggregate)
 
     except Exception:
         log.exception("verify_fix.crashed", finding_id=str(finding_id))
+
+
+# ── answer_question subflow ──────────────────────────────────────────────────
+
+
+async def _prior_messages_for_answer(thread_id: UUID) -> list[PriorThreadMessage]:
+    """Load the full thread in chronological order for the answer-question prompt.
+
+    The classifier's prior-messages helper trims for token budget; here we
+    pass the entire conversation so the agent can read context across N
+    back-and-forth turns. POC scale → no truncation needed.
+    """
+    async with db_session() as s:
+        rows = (
+            (
+                await s.execute(
+                    select(CommentMessageRow)
+                    .where(CommentMessageRow.thread_id == thread_id)
+                    .order_by(CommentMessageRow.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [PriorThreadMessage(author_kind=r.author_kind, body=r.body) for r in rows]
+
+
+async def _run_answer_question(
+    *,
+    pr_id: UUID,
+    org_id: UUID,
+    finding_id: UUID,
+    thread_id: UUID,
+    reply_parent_external_id: str,
+    question: str,
+) -> None:
+    """Provision workspace at HEAD → coding_agent.answer_question → post reply.
+
+    Mirrors `_run_verify_fix` but emits a free-text answer rather than a
+    verdict — no aggregate state transition, just append the yaaos reply to
+    the thread and commit.
+    """
+    try:
+        pr = await pull_requests.get(pr_id, org_id=org_id)
+        vcs_plugin = get_vcs_plugin(pr.plugin_id)
+        vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
+        async with db_session() as s:
+            finding = (
+                await s.execute(select(FindingRow).where(FindingRow.id == finding_id))
+            ).scalar_one_or_none()
+        if finding is None:
+            return
+
+        prior_thread = await _prior_messages_for_answer(thread_id)
+
+        async with with_workspace(
+            "in_process",
+            WorkspaceSpec(
+                repo=RepoRefForSpec(plugin_id=pr.plugin_id, external_id=pr.repo_external_id),
+                sha=vcs_pr.head_sha,
+                branch_name=vcs_pr.head_branch,
+                base_sha=vcs_pr.base_sha,
+                base_branch=vcs_pr.base_branch,
+                resource_caps=ResourceCaps(),
+                network_policy=NetworkPolicy.GITHUB_ONLY,
+                org_id=org_id,
+            ),
+            org_id=org_id,
+        ) as ws:
+            anchor_file = finding.current_anchor.get("file_path", "")
+            anchor_line_start = int(finding.current_anchor.get("line_start", 1))
+            anchor_line_end = int(finding.current_anchor.get("line_end", 1))
+            current_text = await ws.read_text(anchor_file)
+            if current_text is not None:
+                current_lines = current_text.splitlines()
+                ls = max(1, min(anchor_line_start, len(current_lines)))
+                le = max(ls, min(anchor_line_end, len(current_lines)))
+                code_snippet = "\n".join(current_lines[ls - 1 : le])
+            else:
+                code_snippet = "(file missing at HEAD)"
+            ctx = AnswerQuestionContext(
+                original_finding_title=finding.title,
+                original_finding_body=finding.body,
+                original_rule_id=finding.rule_id,
+                code_snippet=code_snippet,
+                current_anchor=AgentFindingAnchor(
+                    file_path=anchor_file,
+                    line_start=anchor_line_start,
+                    line_end=anchor_line_end,
+                ),
+                question=question,
+                prior_messages=prior_thread,
+                base_sha=vcs_pr.base_sha,
+                head_sha=vcs_pr.head_sha,
+                agent_config={},
+            )
+            result = await coding_agent.answer_question(plugin_id="claude_code", workspace=ws, context=ctx)
+
+        if result.status != InvocationStatus.SUCCESS or not result.answer.strip():
+            log.warning(
+                "answer_question.agent_failed",
+                finding_id=str(finding_id),
+                status=str(result.status),
+                error=result.error_message,
+            )
+            return
+
+        async with db_session() as s:
+            await acquire_pr_lock(s, pr_id)
+            agg_repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await agg_repo.load(pr_id=pr_id, org_id=org_id)
+            try:
+                yaaos_comment_id = await vcs_plugin.post_comment_reply(
+                    pr.external_id, reply_parent_external_id, result.answer
+                )
+            except Exception:
+                log.exception("answer_question.post_reply_failed", finding_id=str(finding_id))
+                yaaos_comment_id = f"local-answer-{finding_id}"
+            aggregate.append_message(
+                thread_id=thread_id,
+                author_kind="yaaos",
+                author_external_id=_REVIEWER_TAG,
+                external_comment_id=yaaos_comment_id,
+                body=result.answer,
+                in_reply_to_external_id=reply_parent_external_id,
+            )
+            await agg_repo.save(aggregate)
+            await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            await s.commit()
+            await dispatch_events(aggregate)
+
+    except Exception:
+        log.exception("answer_question.crashed", finding_id=str(finding_id))
 
 
 __all__ = ["handle_developer_reply"]

@@ -104,7 +104,6 @@ class CommentReplyReceived:
     thread_id: uuid.UUID
     message_id: uuid.UUID
     classified_intent: ReplyIntent
-    confidence: float
 
 
 @dataclass(frozen=True)

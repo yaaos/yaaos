@@ -132,6 +132,7 @@ _M01_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("006_review_jobs_activity_log_model_effort", "add_review_jobs_activity_log_model_effort"),
     ("007_create_durable_findings_tables", "create_durable_findings_tables"),
     ("008_reviews_cutover", "reviews_cutover"),
+    ("009_drop_classification_confidence", "drop_classification_confidence"),
 )
 
 
@@ -365,6 +366,26 @@ async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `comment_messages.classification_confidence` and renormalize the
+    legacy `acknowledgment` intent to `acknowledgment_clear`.
+
+    Reasoning lives in `domain/reviewer/llm/classifier.py`: the LLM picks one
+    of five categorical intents that encode the action directly, no separate
+    probability axis. The old `acknowledgment` label always collapses to
+    `acknowledgment_clear` (the act-immediately branch) — sub-threshold
+    `acknowledgment` rows from the float-confidence era are vanishingly
+    few at POC scale and don't justify a CASE WHEN reconstruction.
+    """
+    statements = [
+        "ALTER TABLE comment_messages DROP COLUMN IF EXISTS classification_confidence",
+        "UPDATE comment_messages SET classified_intent = 'acknowledgment_clear'"
+        " WHERE classified_intent = 'acknowledgment'",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 async def migrate() -> None:
     """Apply any un-applied migrations. Idempotent."""
     await ensure_schema_migrations_table()
@@ -391,6 +412,8 @@ async def migrate() -> None:
                 await _apply_create_durable_findings_tables(conn)
             elif kind == "reviews_cutover":
                 await _apply_reviews_cutover(conn)
+            elif kind == "drop_classification_confidence":
+                await _apply_drop_classification_confidence(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

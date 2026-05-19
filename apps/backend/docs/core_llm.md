@@ -13,7 +13,7 @@ Exported from `app/core/llm/__init__.py`:
 - Types — `FilePrompt`, `ParsedMessage`.
 - Loading — `load_prompt(path)`.
 - Invocation — `PromptRunnable[OutputT]` (constructed with a `FilePrompt` + Pydantic schema; exposes `async ainvoke(input_vars)`).
-- Setup — `configure_gateway()` (call once from app startup).
+- Gateway routing — automatic inside `PromptRunnable._build_model`; no explicit setup call.
 - Test cache — `LLMTestCache` (file-colocated JSON, committed to git). Auto-installed by the pytest plugin; no caller wiring needed.
 - Eval helper — `create_eval(experiment_name, module_name, task, scores, dataset_name, max_concurrency=None)` — thin `braintrust.Eval(...)` wrapper. Owner modules supply task + scorers + dataset; eval files live under `<module>/eval/*.eval.py`.
 - Exceptions — `LLMError`, `MalformedOutput`, `PromptParseError`.
@@ -36,8 +36,7 @@ None. The module is stateless mechanics — no persisted entities of its own.
 
 ### Core user flows
 
-1. **App startup** — `configure_gateway()` reads `BRAINTRUST_API_KEY` + `BRAINTRUST_API_URL` from settings and points provider `*_API_BASE`/`*_API_KEY` env vars at the gateway. If either is missing, no-op (direct provider keys take over).
-2. **One-shot classification** — caller does `prompt = load_prompt(path)` once, builds `PromptRunnable(prompt, Schema)`, then `await runnable.ainvoke({...})` per call. Returns the parsed Pydantic instance.
+1. **One-shot classification** — caller does `prompt = load_prompt(path)` once, builds `PromptRunnable(prompt, Schema)`, then `await runnable.ainvoke({...})` per call. Returns the parsed Pydantic instance. Gateway routing happens transparently inside `_build_model`.
 3. **On malformed output** — `PromptRunnable` retries the same input once; raises `MalformedOutput` if the second attempt also fails validation. The audit-log line is the caller's responsibility.
 
 ### Prompt file format
@@ -46,7 +45,9 @@ One file per prompt. Extension `.prompt.md`. YAML frontmatter required: `name`, 
 
 ### Gateway routing
 
-`configure_gateway()` sets `ANTHROPIC_API_BASE` / `OPENAI_API_BASE` and the matching keys to the Braintrust gateway when configured. Per-call `user` tag = `f"{prompt.name}.v{prompt.version}"`; Braintrust groups rows by it without span wrapping. Called explicitly from `app/main.py` — never as an import side effect.
+`PromptRunnable._build_model` reads `BRAINTRUST_API_KEY` (+ optional `BRAINTRUST_API_URL`, defaulting to `https://gateway.braintrust.dev`) from settings and injects them as `base_url` + `api_key` kwargs to `init_chat_model`. The default URL has NO `/v1` suffix because both the Anthropic and OpenAI SDKs append their own canonical paths (`/v1/messages`, `/v1/chat/completions`). Provider routing happens server-side via the configured AI provider secrets in Braintrust's organization settings — yaaos sends the model name as-is. The older `api.braintrust.dev/v1/proxy` endpoint is deprecated in favor of the gateway.
+
+The gateway is a pure pass-through by default — to actually log every call into Braintrust's Logs tab, `_build_model` also sets `default_headers={"x-bt-parent": f"project_name:{project}"}`. The project name is derived per-prompt from the owning domain module via `_project_for_prompt(prompt)`: prompts live at `apps/backend/app/domain/<module>/llm/prompts/<name>.prompt.md` and the `<module>` segment becomes the project name (`reviewer`, future `memory`, etc.). Projects are auto-created by Braintrust on the first request, so adding a new direct-LLM caller in a new module requires zero Braintrust-side setup. Falls back to the `BRAINTRUST_PROJECT` setting (default `yaaos`) when a prompt has no `source_path` (e.g., programmatically-constructed test prompts). For full distributed tracing (named spans, scores attached after the fact) callers would wrap each call with `braintrust.init_logger(...).start_span(...).export()` and pass the export value instead — deferred; the project-name form is enough for "see my prompts and responses in the dashboard". Braintrust's gateway speaks both the Anthropic and OpenAI SDK protocols, so the same call path covers any provider yaaos uses. When `BRAINTRUST_API_KEY` is unset, LangChain falls back to its normal env-var resolution (direct provider keys). Both `base_url` and `api_key` are explicitly excluded from `LLMTestCache`'s key derivation, so flipping the gateway on or off does not invalidate cached responses.
 
 ### LLM test cache (`LLMTestCache`)
 
@@ -79,7 +80,7 @@ None.
 
 ## Data owned
 
-None. No DB tables. Process env vars set by `configure_gateway()` are the only mutable state.
+None. No DB tables, no mutable process env (gateway routing flows through per-call `init_chat_model` kwargs).
 
 ## How it's tested
 

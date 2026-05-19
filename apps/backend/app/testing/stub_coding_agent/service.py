@@ -21,6 +21,8 @@ import structlog
 from app.core.workspace import Workspace
 from app.domain.coding_agent import (
     ActivityEvent,
+    AnswerQuestionContext,
+    AnswerQuestionResult,
     FindingAnchor,
     FindingDraft,
     HealthStatus,
@@ -181,6 +183,21 @@ class StubCodingAgentPlugin:
             still_applies=True,
             confidence=0.95,
             reasoning="Stub plugin: always reports the finding as still applying.",
+            telemetry=_STUB_TELEMETRY,
+        )
+
+    async def answer_question(
+        self,
+        workspace: Workspace,
+        context: AnswerQuestionContext,
+        on_activity: OnActivity | None = None,
+    ) -> AnswerQuestionResult:
+        del workspace, on_activity
+        # Echo the question into a deterministic canned answer so e2e flows
+        # exercising the question intent can assert on the body shape.
+        return AnswerQuestionResult(
+            status=InvocationStatus.SUCCESS,
+            answer=f"[stub] answering: {context.question[:120]}",
             telemetry=_STUB_TELEMETRY,
         )
 

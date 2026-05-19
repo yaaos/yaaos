@@ -135,7 +135,6 @@ async def test_repository_round_trips_thread_and_messages(db_session) -> None:  
         body="thanks",
         in_reply_to_external_id="gh-comment-1",
         classified_intent="other",
-        classification_confidence=0.9,
     )
     await repo.save(agg)
     await db_session.commit()
@@ -149,7 +148,6 @@ async def test_repository_round_trips_thread_and_messages(db_session) -> None:  
         "gh-comment-2",
     ]
     assert messages[1].classified_intent == "other"
-    assert messages[1].classification_confidence == pytest.approx(0.9)
     # Suppress the unused-var warning — msg_yaaos / msg_human aren't asserted
     # against directly because we re-fetch via reload above.
     del msg_yaaos, msg_human

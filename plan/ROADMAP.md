@@ -8,6 +8,9 @@
 ### M01 — Code Review Loop  `[planned]`
 Three specialist review agents (architecture, security, style) review every PR on configured repos, accept human feedback, and remember per-repo lessons. → [details](milestones/M01-code-review/README.md)
 
+### M02 — Users, orgs, auth  `[planned]`
+Real users, multi-org tenancy, GitHub OAuth + SAML SSO, opaque sessions, three-role permissions, polymorphic audit log. Depends on M01. → [details](milestones/M02-auth/README.md)
+
 ## Backlog
 
 - **Long-running invocation supervisor (M02+)** — when implementer agents arrive (dozens of minutes to hours per invocation), yaaos needs a real supervisor for that work: separate worker process (FastAPI restarts don't kill in-flight work), heartbeat watchdog (kill silent jobs + clean up workspaces), concurrency limits (cap N simultaneous implementers), durable queue beyond the cap, checkpoint/resume after crash, cross-process cancellation. Likely lives in a new module (`core/invocations` or `core/agent_supervisor`) — invocation-shaped, not generic-task-shaped. M01 deliberately skips this: review work is minutes-long and crash-recovery via re-review on next push is acceptable.

@@ -216,6 +216,42 @@ class StaleCheckResult(BaseModel):
     error_message: str | None = None
 
 
+class PriorThreadMessage(BaseModel):
+    """One earlier message in the thread the question lives under."""
+
+    author_kind: Literal["yaaos", "human"]
+    body: str
+
+
+class AnswerQuestionContext(BaseModel):
+    """A developer asked a question on a yaaos finding (`question` intent).
+
+    The agent investigates the finding in the workspace with read-only repo
+    + git tool access and emits one concise reply. The reviewer posts that
+    reply back into the GitHub thread. Distinct from `verify_fix` — no
+    "still present?" verdict, just an answer.
+    """
+
+    original_finding_title: str
+    original_finding_body: str
+    original_rule_id: str
+    code_snippet: str
+    current_anchor: FindingAnchor
+    question: str
+    prior_messages: list[PriorThreadMessage] = []
+    base_sha: str = ""
+    head_sha: str = ""
+    language_hint: str | None = None
+    agent_config: dict[str, Any] = {}
+
+
+class AnswerQuestionResult(BaseModel):
+    status: InvocationStatus
+    answer: str = ""
+    telemetry: InvocationTelemetry = InvocationTelemetry()
+    error_message: str | None = None
+
+
 class CodingAgentPlugin(Protocol):
     meta: PluginMeta
 
@@ -246,6 +282,13 @@ class CodingAgentPlugin(Protocol):
         context: StaleCheckContext,
         on_activity: OnActivity | None = None,
     ) -> StaleCheckResult: ...
+
+    async def answer_question(
+        self,
+        workspace: Workspace,
+        context: AnswerQuestionContext,
+        on_activity: OnActivity | None = None,
+    ) -> AnswerQuestionResult: ...
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult: ...
 

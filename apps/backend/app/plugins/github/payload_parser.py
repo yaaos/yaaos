@@ -37,7 +37,15 @@ def _parse_pr(payload: dict[str, Any]) -> VCSPullRequest:
         base_sha=base.get("sha", ""),
         head_sha=head.get("sha", ""),
         is_draft=pr.get("draft", False),
-        is_fork=(head.get("repo", {}) or {}).get("fork", False),
+        # "Is this a cross-fork PR?" — i.e., contributed from a fork that the
+        # install doesn't own. The check is head_repo != base_repo, NOT
+        # `head.repo.fork`: the latter is true whenever the head repo is
+        # itself a fork of some upstream (including the user's own fork
+        # of an OSS project they're testing yaaos against), which has
+        # nothing to do with PR provenance. The intake fork-filter in
+        # `_handle_pr_ready_for_review` uses this signal to skip
+        # external-contributor PRs, so the semantics must be correct.
+        is_fork=((head.get("repo") or {}).get("full_name") != (base.get("repo") or {}).get("full_name")),
         state="merged" if pr.get("merged") else pr.get("state", "open"),
         html_url=pr.get("html_url", ""),
         created_at=_parse_iso(pr.get("created_at")),

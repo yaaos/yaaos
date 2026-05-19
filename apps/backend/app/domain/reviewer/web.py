@@ -261,7 +261,6 @@ async def thread_by_finding(finding_id: UUID) -> dict[str, Any]:
                 "external_comment_id": m.external_comment_id,
                 "body": m.body,
                 "classified_intent": m.classified_intent,
-                "classification_confidence": m.classification_confidence,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in messages

@@ -48,12 +48,39 @@ The key is encrypted at rest with the Fernet key from your `.env`. It's never wr
 - yaaos receives the `pull_request.opened` webhook, creates a ticket, schedules one review run, provisions a workspace, and invokes the Claude Code CLI. The parent reviewer dispatches yaaos-* subagents (architecture, security, line-level, tests, docs, conditional skill) via the Task tool, synthesizes their findings, and posts one Review back to GitHub.
 - The Tickets page in the UI shows the ticket with live SSE updates as the job transitions `queued → running → posted`.
 
-## Local dev (without Docker)
+## Local dev — Docker overlay (recommended)
 
-For iterating on the FE / BE without the full container build:
+Bind-mount the source into the running containers so edits take effect on the next restart — no image rebuild needed. Auto-reload is intentionally NOT used: mid-edit saves on a multi-file change would otherwise crash uvicorn on each broken import. Manual restart is ~2-3s and the logs stay quiet.
+
+Bring up with the overlay:
+
+```bash
+pnpm --filter ./apps/web build         # one-time, populates apps/web/dist
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.dev.yml \
+  --env-file .env up -d --build app
+```
+
+Inner loop:
+
+| Edit              | Action                                          | Time   |
+| ----------------- | ----------------------------------------------- | ------ |
+| Backend `.py`     | `docker compose --env-file .env restart app`    | ~2s    |
+| Web `.tsx`        | `pnpm --filter ./apps/web build` + refresh browser | ~5-10s |
+| Web `.tsx` (auto) | `pnpm exec vite build --watch` in a separate terminal | ~1-2s per save |
+| Deps change       | `docker compose … up -d --build app`            | 30-60s |
+
+`apps/web/dist/` is bind-mounted into the container and served by FastAPI's `StaticFiles` per-request — FE rebuilds refresh in the browser without restarting the backend. The overlay also sets `YAAOS_ENV=dev`, which switches the engine to `NullPool` and enables the `/api/testing/*` reset+seed routes for local iteration.
+
+Rollback to prod shape: `docker compose -f docker/docker-compose.yml --env-file .env up -d --build app` (no overlay).
+
+## Local dev — fully native (no Docker for app/web)
+
+For iterating on the FE / BE without any container:
 
 - **Postgres** — either run `docker compose -f docker/docker-compose.yml --env-file .env up -d postgres` (just the DB), or use a native install. Match `DATABASE_URL` in `.env`.
-- **Backend** — from `apps/backend/`: `uv sync` then `uv run uvicorn app.main:app --reload --port 8080`. The reloader picks up Python changes.
+- **Backend** — from `apps/backend/`: `uv sync` then `uv run uvicorn app.main:app --reload --port 8080`. The reloader picks up Python changes. Logs go to stdout in the terminal you ran it from.
 - **Frontend** — from `apps/web/`: `pnpm install` then `pnpm dev`. Vite serves the SPA on `:5173` and proxies `/api/*` to `:8080`.
 - **Claude Code CLI** — install on the host (`npm install -g @anthropic-ai/claude-code`) or skip by setting `YAAOS_CODING_AGENT_STUB=1`, which swaps in deterministic stub responses (no real LLM calls).
 

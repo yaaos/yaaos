@@ -23,7 +23,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    REAL,
     Boolean,
     DateTime,
     ForeignKey,
@@ -228,8 +227,10 @@ class CommentThreadRow(Base):
 class CommentMessageRow(Base):
     """Every message in every thread — yaaos and human alike. Append-only.
 
-    `classified_intent` + `classification_confidence` populated only for human
-    messages, by the §6.4 reply-classifier path.
+    `classified_intent` populated only for human messages, by the §6.4
+    reply-classifier path. The intent label itself encodes the routing
+    decision (see `domain/reviewer/llm/classifier.py`) — no separate
+    confidence column.
     """
 
     __tablename__ = "comment_messages"
@@ -244,7 +245,6 @@ class CommentMessageRow(Base):
     in_reply_to_external_id: Mapped[str | None] = mapped_column(String, nullable=True)
     body: Mapped[str] = mapped_column(String, nullable=False)
     classified_intent: Mapped[str | None] = mapped_column(String, nullable=True)
-    classification_confidence: Mapped[float | None] = mapped_column(REAL, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

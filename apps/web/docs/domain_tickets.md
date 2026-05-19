@@ -36,7 +36,7 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 
 ### Review tab — `SummaryStrip`
 
-Four-cell card: Findings (red if any must-fix), Tokens (in + out), Latency (live-ticking `LiveLatency` while running; otherwise `duration_s`), Lessons applied. Cost cell removed — backend no longer tracks cost.
+Four-cell card: Findings (red if any blocker/major), Tokens (in + out), Latency (live-ticking `LiveLatency` while running; otherwise `duration_s`), Lessons applied. Findings counter sources from the durable findings table (`useFindingsForTicket`, `include_terminal=true`) so it counts unique findings across every review run; per-review JSONB caches would undercount on multi-review tickets. Tokens / Latency / Lessons aggregate across every `ReviewJob` for the ticket. Cost cell removed — backend no longer tracks cost.
 
 ### Review tab — `AgentCard`
 

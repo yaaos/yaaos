@@ -135,8 +135,7 @@ async def test_high_confidence_wontfix_reply_acks_finding_with_audit(db_session)
 
     # Stub classifier output as if the real classifier had run.
     classification = ClassifyReplyOutput(
-        intent="acknowledgment",  # type: ignore[arg-type]
-        confidence=0.92,
+        intent="acknowledgment_clear",
         suggested_ack_kind="wontfix",
         parsed_claims=None,
     )
@@ -191,8 +190,8 @@ async def test_high_confidence_wontfix_reply_acks_finding_with_audit(db_session)
 
 
 @pytest.mark.asyncio
-async def test_mid_band_confirm_request_no_state_change_no_ack_audit(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Plan §6.4 step 4: a mid-band (0.60 - 0.84) wontfix gets a confirm-request,
+async def test_acknowledgment_unclear_confirm_request_no_state_change_no_ack_audit(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Plan §6.4 step 4: an `acknowledgment_unclear` reply gets a confirm-request,
     NOT a state change. No `finding_acknowledged` audit until the developer
     replies `confirm`.
     """
@@ -222,10 +221,8 @@ async def test_mid_band_confirm_request_no_state_change_no_ack_audit(db_session)
         body="not sure this matters",
     )
 
-    # 0.70 sits between CLASSIFY_CONFIRM_THRESHOLD (0.60) and CLASSIFY_ACT_THRESHOLD (0.85).
     classification = ClassifyReplyOutput(
-        intent="acknowledgment",  # type: ignore[arg-type]
-        confidence=0.70,
+        intent="acknowledgment_unclear",
         suggested_ack_kind="wontfix",
         parsed_claims=None,
     )

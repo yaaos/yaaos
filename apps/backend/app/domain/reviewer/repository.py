@@ -143,7 +143,6 @@ def _message_from_row(row: CommentMessageRow) -> CommentMessage:
         in_reply_to_external_id=row.in_reply_to_external_id,
         body=row.body,
         classified_intent=row.classified_intent,  # type: ignore[arg-type]
-        classification_confidence=row.classification_confidence,
         created_at=row.created_at,
     )
 
@@ -372,7 +371,6 @@ class SqlAlchemyAggregateRepository:
                     in_reply_to_external_id=m.in_reply_to_external_id,
                     body=m.body,
                     classified_intent=m.classified_intent,
-                    classification_confidence=m.classification_confidence,
                 )
             )
 

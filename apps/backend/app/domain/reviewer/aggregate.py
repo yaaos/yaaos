@@ -546,7 +546,6 @@ class PRReviewAggregate:
         body: str,
         in_reply_to_external_id: str | None = None,
         classified_intent: ReplyIntent | None = None,
-        classification_confidence: float | None = None,
     ) -> CommentMessage:
         msg = CommentMessage(
             id=uuid.uuid4(),
@@ -557,7 +556,6 @@ class PRReviewAggregate:
             in_reply_to_external_id=in_reply_to_external_id,
             body=body,
             classified_intent=classified_intent,
-            classification_confidence=classification_confidence,
             created_at=self._now,
         )
         self._state.messages.append(msg)
@@ -570,7 +568,6 @@ class PRReviewAggregate:
                     thread_id=thread_id,
                     message_id=msg.id,
                     classified_intent=classified_intent,
-                    confidence=classification_confidence or 0.0,
                 )
             )
         return msg

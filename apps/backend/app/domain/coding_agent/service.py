@@ -9,6 +9,8 @@ import structlog
 
 from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
+    AnswerQuestionContext,
+    AnswerQuestionResult,
     CodingAgentPlugin,
     HealthStatus,
     IncrementalReviewContext,
@@ -121,6 +123,24 @@ async def stale_check(
         still_applies=result.still_applies,
         confidence=result.confidence,
         rule_id=context.original_rule_id,
+    )
+    return result
+
+
+async def answer_question(
+    plugin_id: str,
+    workspace: Workspace,
+    context: AnswerQuestionContext,
+    on_activity: OnActivity | None = None,
+) -> AnswerQuestionResult:
+    plugin = get_plugin(plugin_id)
+    result = await plugin.answer_question(workspace, context, on_activity=on_activity)
+    log.info(
+        "agent.answered_question",
+        plugin_id=plugin_id,
+        status=result.status,
+        rule_id=context.original_rule_id,
+        latency_ms=result.telemetry.latency_ms,
     )
     return result
 

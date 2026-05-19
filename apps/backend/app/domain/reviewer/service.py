@@ -39,10 +39,6 @@ from app.domain.reviewer.types import (
     Review,
 )
 
-# Plan §10.3 — classification confidence bands.
-CLASSIFY_ACT_THRESHOLD = 0.85
-CLASSIFY_CONFIRM_THRESHOLD = 0.60
-
 # Plan §10.4 — verify_fix / stale_check.
 VERIFY_ACT_THRESHOLD = 0.80
 VERIFY_OBSERVE_THRESHOLD = 0.50
@@ -61,6 +57,8 @@ class ReplyAction:
         the developer to type `confirm`.
       - `verify_fix_triggered` — kick off the verify-fix subflow; `reply_body`
         is None (subflow posts its own reply when it completes).
+      - `answer_question_triggered` — kick off the answer-question subflow;
+        `reply_body` is None (subflow posts its own reply when it completes).
       - `noop` — store the developer message, no transition, no reply.
     """
 
@@ -68,6 +66,7 @@ class ReplyAction:
         "acknowledge_posted",
         "confirm_requested",
         "verify_fix_triggered",
+        "answer_question_triggered",
         "noop",
     ]
     reply_body: str | None = None
@@ -119,38 +118,41 @@ def apply_classified_reply(
     `reply_message` is the developer's just-stored message (already appended
     to the thread by the caller). The aggregate mutates state; the returned
     `ReplyAction` tells the caller what reply (if any) to post via VCS.
+
+    The classifier emits one of five categorical intents (see
+    `domain/reviewer/llm/classifier.py`) that each map 1:1 onto a
+    `ReplyAction.kind`. No probability thresholds — the label IS the action.
     """
     intent = classification.intent
-    confidence = classification.confidence
 
-    if intent == "acknowledgment":
-        if confidence >= CLASSIFY_ACT_THRESHOLD:
-            kind: AckKind = classification.suggested_ack_kind or "intentional"
-            aggregate.acknowledge(
-                finding_id=finding_id,
-                kind=kind,
-                rationale=reply_message.body,
-                made_by_external_id=reply_message.author_external_id,
-                made_by_message_id=reply_message.id,
-            )
-            return ReplyAction(
-                kind="acknowledge_posted",
-                reply_body="Noted — I'll skip this in future reviews.",
-            )
-        if confidence >= CLASSIFY_CONFIRM_THRESHOLD:
-            return ReplyAction(
-                kind="confirm_requested",
-                reply_body=(
-                    "Reading this as 'intentional / wontfix' — reply `confirm` to acknowledge, "
-                    "otherwise I'll treat it as a question."
-                ),
-            )
-        return ReplyAction(kind="noop")
+    if intent == "acknowledgment_clear":
+        kind: AckKind = classification.suggested_ack_kind or "intentional"
+        aggregate.acknowledge(
+            finding_id=finding_id,
+            kind=kind,
+            rationale=reply_message.body,
+            made_by_external_id=reply_message.author_external_id,
+            made_by_message_id=reply_message.id,
+        )
+        return ReplyAction(
+            kind="acknowledge_posted",
+            reply_body="Noted — I'll skip this in future reviews.",
+        )
+
+    if intent == "acknowledgment_unclear":
+        return ReplyAction(
+            kind="confirm_requested",
+            reply_body=(
+                "Reading this as 'intentional / wontfix' — reply `confirm` to acknowledge, "
+                "otherwise I'll treat it as a question."
+            ),
+        )
 
     if intent == "verify_fix":
-        if confidence >= CLASSIFY_ACT_THRESHOLD:
-            return ReplyAction(kind="verify_fix_triggered")
-        return ReplyAction(kind="noop")
+        return ReplyAction(kind="verify_fix_triggered")
+
+    if intent == "question":
+        return ReplyAction(kind="answer_question_triggered")
 
     # `other` — store message, no transition.
     return ReplyAction(kind="noop")
@@ -301,12 +303,16 @@ def _finding_view(f: Finding) -> FindingView:
 
 
 def all_conversations_view(aggregate: PRReviewAggregate) -> list[ConversationView]:
-    """Plan §9.3 — findings with ≥1 dev reply OR open + first-raised before the latest review.
+    """Plan §9.3 — findings with at least one developer reply.
 
-    Excludes resolved_confirmed / resolved_unverified / stale (POC, plan §15).
+    A "conversation" in this view means an actual back-and-forth: the
+    finding's thread has ≥1 `author_kind='human'` message. Findings yaaos
+    raised but the developer never responded to don't count — the per-
+    review timeline already surfaces them.
+
+    Terminal-state findings (resolved_confirmed / resolved_unverified /
+    stale) are excluded.
     """
-    latest = aggregate.latest_review()
-    latest_seq = latest.sequence_number if latest else None
     out: list[ConversationView] = []
     for thread in aggregate.threads:
         finding = next((f for f in aggregate.findings if f.id == thread.finding_id), None)
@@ -318,19 +324,10 @@ def all_conversations_view(aggregate: PRReviewAggregate) -> list[ConversationVie
             FindingState.STALE,
         }:
             continue
-        msgs = [m for m in _messages_for_thread(aggregate, thread.id)]
+        msgs = list(_messages_for_thread(aggregate, thread.id))
         human_replies = [m for m in msgs if m.author_kind == "human"]
         if not human_replies:
-            if finding.state != FindingState.OPEN:
-                continue
-            if latest_seq is None:
-                continue
-            # First-raised before the latest review — surface as a buried conversation.
-            first_seen_review = next(
-                (r for r in aggregate.reviews if r.id == finding.first_seen_review_id), None
-            )
-            if first_seen_review is None or first_seen_review.sequence_number >= latest_seq:
-                continue
+            continue
         last_message_preview = (msgs[-1].body if msgs else finding.title)[:120]
         out.append(
             ConversationView(
@@ -464,7 +461,6 @@ async def get_thread(thread_id: uuid.UUID, *, org_id: uuid.UUID) -> ThreadView |
                 external_comment_id=m.external_comment_id,
                 body=m.body,
                 classified_intent=m.classified_intent,
-                classification_confidence=m.classification_confidence,
             )
             for m in messages
         ],
@@ -481,7 +477,6 @@ class ThreadMessageView:
     external_comment_id: str
     body: str
     classified_intent: str | None
-    classification_confidence: float | None
 
 
 @dataclass(frozen=True)

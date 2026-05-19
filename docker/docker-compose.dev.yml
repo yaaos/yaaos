@@ -1,0 +1,38 @@
+# Dev overlay — bind-mounts source so edits + restart picks them up
+# without an image rebuild. No auto-reload: avoids the mid-edit
+# crash-loop pattern where saving a half-broken multi-file change
+# triggers uvicorn --reload to attempt an import and dump a traceback.
+#
+# Usage:
+#   docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/docker-compose.dev.yml \
+#     --env-file .env up -d --build app
+#
+# Inner loop:
+#   Backend change:  docker compose restart app                  (~2-3s)
+#   Web change:      pnpm --filter ./apps/web build              (~5-10s, refresh browser)
+#   Web auto:        pnpm exec vite build --watch                (separate terminal, ~1-2s per save)
+#   Deps change:     docker compose up -d --build app            (~30-60s)
+#
+# Production compose (without this override) is unchanged: source is
+# COPYd at image build, no bind mount, lean `backend` stage.
+name: yaaos
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: backend-ci
+    environment:
+      YAAOS_ENV: dev
+    volumes:
+      # Backend source — host edits visible inside the container as
+      # soon as the file is saved. `/app/.venv/` is outside this mount
+      # so the container's installed deps stay intact.
+      - ../apps/backend:/app/apps/backend
+      # Built web dist — `StaticFiles` reads from disk per request, so
+      # a fresh `pnpm --filter ./apps/web build` on the host shows up
+      # immediately on browser refresh. No backend restart needed.
+      - ../apps/web/dist:/app/apps/web/dist

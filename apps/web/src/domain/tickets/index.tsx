@@ -17,6 +17,7 @@
  */
 import {
   type Finding,
+  type FindingRow,
   type ReviewJob,
   type ReviewJobActivityEvent,
   type ReviewTimelineRow,
@@ -494,6 +495,7 @@ export function TicketDetailPage() {
   const { ticketId } = useParams({ from: "/tickets/$ticketId" });
   const { data: ticket } = useTicket(ticketId);
   const { data: jobs } = useReviewJobsForTicket(ticketId);
+  const { data: findings } = useFindingsForTicket(ticketId, true);
   const { data: audit } = useTicketAudit(ticketId);
   const rereview = useRereviewMutation();
   const cancel = useCancelReviewerJobs();
@@ -503,9 +505,14 @@ export function TicketDetailPage() {
     return <div className="mx-auto max-w-[1100px] text-text-3 text-[12.5px]">Loading…</div>;
   }
 
-  // One review job per (ticket, run). Show the most recent.
-  const latest = (jobs ?? [])[0];
-  const findingsCount = (latest?.findings ?? []).length;
+  // All review jobs for this ticket (newest first). The latest one drives
+  // the AgentCard's live activity stream; SummaryStrip aggregates across
+  // every run. Durable findings (`useFindingsForTicket`) are the source of
+  // truth for the count — JSONB `job.findings` caches are per-review and
+  // would undercount on multi-review tickets.
+  const allJobs = jobs ?? [];
+  const latest = allJobs[0];
+  const findingsCount = (findings ?? []).length;
 
   return (
     <div className="mx-auto max-w-[1100px] flex flex-col gap-4" data-testid="ticket-detail">
@@ -537,7 +544,7 @@ export function TicketDetailPage() {
       </div>
 
       {tab === "review" ? (
-        <ReviewTab ticket={ticket} job={latest} />
+        <ReviewTab ticket={ticket} jobs={allJobs} latest={latest} findings={findings ?? []} />
       ) : (
         <AuditTab audit={audit ?? []} />
       )}
@@ -645,11 +652,23 @@ function TabButton({
   );
 }
 
-function ReviewTab({ ticket, job }: { ticket: Ticket; job: ReviewJob | undefined }) {
+function ReviewTab({
+  ticket,
+  jobs,
+  latest,
+  findings,
+}: {
+  ticket: Ticket;
+  jobs: ReviewJob[];
+  latest: ReviewJob | undefined;
+  findings: FindingRow[];
+}) {
   // Augment mode (plan §9 + "keep info available"): the new multi-review
-  // timeline + thread rendering sits ABOVE the legacy SummaryStrip + AgentCard,
-  // which keeps the live activity-log stream + Teach-yaaos modal working.
-  const jobs = job ? [job] : [];
+  // timeline + thread rendering sits ABOVE the legacy SummaryStrip + AgentCard.
+  // SummaryStrip aggregates tokens/latency/lessons across ALL review runs;
+  // its Findings counter sources from the durable findings table (count
+  // across reviews, not per-review JSONB cache). AgentCard stays bound to
+  // the latest run for the live activity-log stream + Teach-yaaos modal.
   return (
     <div className="flex flex-col gap-4">
       <DurableFindingsSummary ticketId={ticket.id} />
@@ -657,8 +676,8 @@ function ReviewTab({ ticket, job }: { ticket: Ticket; job: ReviewJob | undefined
       <AllConversationsSection ticketId={ticket.id} />
       <PerReviewTimeline ticketId={ticket.id} />
       <DurableFindingsSection ticketId={ticket.id} />
-      <SummaryStrip jobs={jobs} ticket={ticket} />
-      <AgentCard agentName="yaaos" job={job} repoExternalId={ticket.repo_external_id} />
+      <SummaryStrip jobs={jobs} findings={findings} ticket={ticket} />
+      <AgentCard agentName="yaaos" job={latest} repoExternalId={ticket.repo_external_id} />
     </div>
   );
 }
@@ -919,6 +938,18 @@ function FindingThreadPanel({ findingId }: { findingId: string }) {
   );
 }
 
+// The classifier emits five categorical intents (see
+// `domain/reviewer/llm/classifier.py`); the UI collapses the
+// `acknowledgment_clear` / `acknowledgment_unclear` pair into the single
+// "acknowledgment" badge because the act-vs-confirm split is an internal
+// routing concept, not a user-facing distinction.
+function displayIntent(intent: string): string {
+  if (intent === "acknowledgment_clear" || intent === "acknowledgment_unclear") {
+    return "acknowledgment";
+  }
+  return intent;
+}
+
 function ThreadMessageRow({ message }: { message: ThreadMessage }) {
   const isYaaos = message.author_kind === "yaaos";
   return (
@@ -938,9 +969,7 @@ function ThreadMessageRow({ message }: { message: ThreadMessage }) {
             className="rounded bg-text-3/20 px-1.5 py-0.5 text-[9.5px] uppercase font-medium"
             data-testid="intent-tag"
           >
-            {message.classified_intent}
-            {message.classification_confidence != null &&
-              ` ${Math.round(message.classification_confidence * 100)}%`}
+            {displayIntent(message.classified_intent)}
           </span>
         )}
         {message.created_at && (
@@ -964,23 +993,69 @@ function AllConversationsSection({ ticketId }: { ticketId: string }) {
         </summary>
         <ul>
           {conversations.map((c) => (
-            <li
-              key={c.finding_id}
-              className="px-4 py-2 border-b border-border-soft last:border-b-0 flex items-center gap-3"
-              data-testid="conversation-row"
-            >
-              <SeverityPill severity={c.severity} />
-              <StatePill state={c.state} />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">{c.title}</div>
-                <div className="text-text-3 text-[12px] truncate">{c.last_message_preview}</div>
-              </div>
-              <div className="text-text-4 text-[12px] mono">{c.reply_count} replies</div>
-            </li>
+            <ConversationAccordionRow key={c.finding_id} conversation={c} />
           ))}
         </ul>
       </details>
     </Card>
+  );
+}
+
+// Per conversation: collapsed shows the one-line summary (severity, state,
+// title, last preview, reply count). Clicking the row toggles open and lazy-
+// loads the full thread via `useThreadForFinding` — the query stays disabled
+// until the user opens the accordion, so we don't fan out one request per
+// conversation on page load. Messages reuse `ThreadMessageRow` for consistent
+// yaaos-vs-developer styling.
+function ConversationAccordionRow({
+  conversation,
+}: {
+  conversation: ReturnType<typeof useConversationsForTicket>["data"] extends (infer T)[] | undefined
+    ? T
+    : never;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data: thread } = useThreadForFinding(open ? conversation.finding_id : null);
+  return (
+    <li className="border-b border-border-soft last:border-b-0" data-testid="conversation-row">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full px-4 py-2 flex items-center gap-3 text-left hover:bg-border-soft/30"
+      >
+        <span
+          aria-hidden
+          className={cn("text-text-4 text-[11px] transition-transform", open && "rotate-90")}
+        >
+          ▶
+        </span>
+        <SeverityPill severity={conversation.severity} />
+        <StatePill state={conversation.state} />
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate">{conversation.title}</div>
+          <div className="text-text-3 text-[12px] truncate">
+            {conversation.last_message_preview}
+          </div>
+        </div>
+        <div className="text-text-4 text-[12px] mono">{conversation.reply_count} replies</div>
+      </button>
+      {open && (
+        <div className="px-4 pb-3" data-testid="conversation-thread">
+          {!thread ? (
+            <div className="text-text-4 text-[12px] py-2">Loading thread…</div>
+          ) : thread.messages.length === 0 ? (
+            <div className="text-text-4 text-[12px] py-2">No messages yet.</div>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {thread.messages.map((m) => (
+                <ThreadMessageRow key={m.id} message={m} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -1068,10 +1143,25 @@ function StatePill({ state }: { state: string }) {
   );
 }
 
-function SummaryStrip({ jobs, ticket }: { jobs: ReviewJob[]; ticket: Ticket }) {
+function SummaryStrip({
+  jobs,
+  findings,
+  ticket,
+}: {
+  jobs: ReviewJob[];
+  findings: FindingRow[];
+  ticket: Ticket;
+}) {
+  // Findings count + must-fix tally come from the DURABLE findings table —
+  // unique findings across every review run (plan §10.10 fingerprint dedup
+  // means the same finding seen on two reviews is one row, not two). Per-
+  // review JSONB caches would undercount. `tokens` / `latency` / `lessons`
+  // remain per-job aggregates: sum of every run's spend + longest run +
+  // union of lesson IDs ever applied.
   const totalTokens = jobs.reduce((s, j) => s + (j.tokens_in ?? 0) + (j.tokens_out ?? 0), 0);
-  const findings = jobs.flatMap((j) => (j.findings ?? []) as Finding[]);
-  const mustFix = findings.filter((f) => f.severity === "must-fix").length;
+  // Plan §10.1 severity tiers — blocker + major correspond to the legacy
+  // `must-fix` tier the summary card calls out.
+  const mustFix = findings.filter((f) => f.severity === "blocker" || f.severity === "major").length;
   const longest = jobs.reduce((m, j) => Math.max(m, j.duration_s ?? 0), 0);
   const anyRunning = jobs.some((j) => j.status === "running");
   const lessonsApplied = new Set(
@@ -1265,7 +1355,7 @@ function AgentBody({
             const key = `${f.file ?? ""}:${f.line_start ?? 0}:${f.title}`;
             return (
               <li key={key} className="border-t border-border-soft first:border-t-0">
-                <FindingRow
+                <FindingListItem
                   finding={f}
                   open={expanded === i}
                   onToggle={() => setExpanded(expanded === i ? null : i)}
@@ -1427,7 +1517,7 @@ function mergeActivity(
   return out;
 }
 
-function FindingRow({
+function FindingListItem({
   finding,
   open,
   onToggle,

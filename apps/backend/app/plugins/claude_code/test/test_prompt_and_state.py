@@ -93,11 +93,17 @@ def test_prompt_includes_lessons_when_given() -> None:
     assert "watch out" in out
 
 
-def test_prompt_truncates_prior_comments() -> None:
+def test_prompt_omits_prior_yaaos_comments() -> None:
+    """Full review intentionally doesn't surface prior yaaos comments to the
+    agent — the aggregate's fingerprint dedup handles re-emission silently
+    (plan §10.10). Telling the agent to "not duplicate" was fighting the
+    persistence layer and starved re-observation signal.
+    """
     long_bodies = ["x" * 500 for _ in range(30)]
     out = _assemble_review_prompt(_ctx(prior_yaaos_comment_bodies=long_bodies))
-    # cap at 20 bodies, 200 chars each
-    assert out.count("- x") <= 20
+
+    assert "Prior yaaos comments on this PR" not in out
+    assert "- x" not in out
 
 
 def _draft(severity: str) -> FindingDraft:

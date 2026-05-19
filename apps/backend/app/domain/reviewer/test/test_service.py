@@ -113,7 +113,7 @@ def test_off_topic_false_on_long_message() -> None:
 # ─── apply_classified_reply ────────────────────────────────────────────────
 
 
-def test_acknowledge_high_confidence_transitions_and_posts() -> None:
+def test_acknowledgment_clear_transitions_and_posts() -> None:
     agg = _agg()
     _, finding = _seed_finding(agg)
     thread = agg.open_thread_for_finding(finding.id)
@@ -122,9 +122,7 @@ def test_acknowledge_high_confidence_transitions_and_posts() -> None:
     action = apply_classified_reply(
         agg,
         finding_id=finding.id,
-        classification=ClassifyReplyOutput(
-            intent="acknowledgment", confidence=0.92, suggested_ack_kind="intentional"
-        ),
+        classification=ClassifyReplyOutput(intent="acknowledgment_clear", suggested_ack_kind="intentional"),
         reply_message=msg,
     )
 
@@ -133,7 +131,7 @@ def test_acknowledge_high_confidence_transitions_and_posts() -> None:
     assert agg.findings[0].state == FindingState.ACKNOWLEDGED
 
 
-def test_acknowledge_mid_confidence_requests_confirmation() -> None:
+def test_acknowledgment_unclear_requests_confirmation() -> None:
     agg = _agg()
     _, finding = _seed_finding(agg)
     thread = agg.open_thread_for_finding(finding.id)
@@ -142,9 +140,7 @@ def test_acknowledge_mid_confidence_requests_confirmation() -> None:
     action = apply_classified_reply(
         agg,
         finding_id=finding.id,
-        classification=ClassifyReplyOutput(
-            intent="acknowledgment", confidence=0.70, suggested_ack_kind="wontfix"
-        ),
+        classification=ClassifyReplyOutput(intent="acknowledgment_unclear", suggested_ack_kind="wontfix"),
         reply_message=msg,
     )
 
@@ -152,24 +148,7 @@ def test_acknowledge_mid_confidence_requests_confirmation() -> None:
     assert agg.findings[0].state == FindingState.OPEN  # no transition
 
 
-def test_acknowledge_low_confidence_no_op() -> None:
-    agg = _agg()
-    _, finding = _seed_finding(agg)
-    thread = agg.open_thread_for_finding(finding.id)
-    msg = _msg(agg, thread.id, "hm")
-
-    action = apply_classified_reply(
-        agg,
-        finding_id=finding.id,
-        classification=ClassifyReplyOutput(intent="acknowledgment", confidence=0.4),
-        reply_message=msg,
-    )
-
-    assert action.kind == "noop"
-    assert agg.findings[0].state == FindingState.OPEN
-
-
-def test_verify_fix_high_confidence_triggers_subflow() -> None:
+def test_verify_fix_intent_triggers_subflow() -> None:
     agg = _agg()
     _, finding = _seed_finding(agg)
     thread = agg.open_thread_for_finding(finding.id)
@@ -178,23 +157,40 @@ def test_verify_fix_high_confidence_triggers_subflow() -> None:
     action = apply_classified_reply(
         agg,
         finding_id=finding.id,
-        classification=ClassifyReplyOutput(intent="verify_fix", confidence=0.95),
+        classification=ClassifyReplyOutput(intent="verify_fix"),
         reply_message=msg,
     )
 
     assert action.kind == "verify_fix_triggered"
 
 
-def test_other_intent_no_op() -> None:
+def test_question_intent_triggers_answer_subflow() -> None:
     agg = _agg()
     _, finding = _seed_finding(agg)
     thread = agg.open_thread_for_finding(finding.id)
-    msg = _msg(agg, thread.id, "how about renaming this?")
+    msg = _msg(agg, thread.id, "how big a problem is this?")
 
     action = apply_classified_reply(
         agg,
         finding_id=finding.id,
-        classification=ClassifyReplyOutput(intent="other", confidence=0.95),
+        classification=ClassifyReplyOutput(intent="question"),
+        reply_message=msg,
+    )
+
+    assert action.kind == "answer_question_triggered"
+    assert action.reply_body is None  # subflow posts its own reply
+
+
+def test_other_intent_no_op() -> None:
+    agg = _agg()
+    _, finding = _seed_finding(agg)
+    thread = agg.open_thread_for_finding(finding.id)
+    msg = _msg(agg, thread.id, "thanks!")
+
+    action = apply_classified_reply(
+        agg,
+        finding_id=finding.id,
+        classification=ClassifyReplyOutput(intent="other"),
         reply_message=msg,
     )
 

@@ -53,7 +53,11 @@ class Settings(BaseSettings):
 
     # core/llm gateway. Both unset = direct provider calls via ANTHROPIC_API_KEY.
     braintrust_api_key: str | None = None
-    braintrust_api_url: str | None = None  # e.g. https://api.braintrust.dev/v1/proxy
+    braintrust_api_url: str | None = None  # e.g. https://gateway.braintrust.dev
+    # Name of the Braintrust project that gateway calls log into. Without this
+    # the gateway is a pure pass-through and nothing appears in the Logs tab.
+    # The project is auto-created on first request if it doesn't exist.
+    braintrust_project: str = "yaaos"
 
     # Time controls. Production defaults are reasonable; tests set short.
     # See plan/milestones/M01-code-review/patterns.md § Time controls.

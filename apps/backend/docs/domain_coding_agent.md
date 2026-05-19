@@ -4,7 +4,7 @@
 
 ## Purpose
 
-The contract between yaaos and external agent CLIs. Owns the `CodingAgentPlugin` Protocol with four targeted task methods (`review`, `incremental_review`, `verify_fix`, `stale_check`) — not a generic `invoke`. Owns structured input contexts and vendor-neutral output types per mode, telemetry/status enums, the plugin registry, and the typed exception hierarchy. Owns **zero prompt assembly** and **zero output-format choice** — plugin concerns.
+The contract between yaaos and external agent CLIs. Owns the `CodingAgentPlugin` Protocol with five targeted task methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) — not a generic `invoke`. Owns structured input contexts and vendor-neutral output types per mode, telemetry/status enums, the plugin registry, and the typed exception hierarchy. Owns **zero prompt assembly** and **zero output-format choice** — plugin concerns.
 
 Also owns the **shipped reviewer subagent prompt content** under `reviewers/*.md`. The markdown is plugin-agnostic ("what to check"); each plugin's installer wraps it in its own native format (Claude Code frontmatter, etc.) and writes it to the right place.
 
@@ -15,9 +15,9 @@ Lives in `domain/` (not `core/`) because return types reference `vcs.Finding` an
 Exported from `app/domain/coding_agent/__init__.py`:
 
 - Shared types — `InvocationStatus`, `InvocationTelemetry`, `ValidationResult`, `HealthStatus`, `ActivityEvent`, `OnActivity`, `Severity`, `FindingAnchor`, `FindingDraft`.
-- Per-mode contexts/results — `ReviewContext`/`ReviewResult`, `IncrementalReviewContext`/`IncrementalReviewResult`, `VerifyFixContext`/`VerifyFixResult`, `StaleCheckContext`/`StaleCheckResult`.
+- Per-mode contexts/results — `ReviewContext`/`ReviewResult`, `IncrementalReviewContext`/`IncrementalReviewResult`, `VerifyFixContext`/`VerifyFixResult`, `StaleCheckContext`/`StaleCheckResult`, `AnswerQuestionContext`/`AnswerQuestionResult`. The answer-question context also exports `PriorThreadMessage` for the conversation-history field.
 - Protocol — `CodingAgentPlugin`.
-- Registry/dispatch — `register_coding_agent_plugin`, `get_plugin`, `registered_plugin_ids`, `review`, `incremental_review`, `verify_fix`, `stale_check`, `validate_config`, `health_check_all`, `_reset_plugins_for_tests`, `_PLUGINS`.
+- Registry/dispatch — `register_coding_agent_plugin`, `get_plugin`, `registered_plugin_ids`, `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check_all`, `_reset_plugins_for_tests`, `_PLUGINS`.
 - Exceptions — `CodingAgentError`, `PluginNotFoundError`, `CodingAgentCacheMiss`.
 
 No HTTP routes.
@@ -26,7 +26,7 @@ No HTTP routes.
 
 ### Types (`types.py`)
 
-- `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies`, `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
+- `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies` (reserved; not surfaced to the agent — fingerprint dedup in the reviewer aggregate handles re-emission silently per plan §10.10), `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
 - `InvocationStatus` — `SUCCESS` / `PARSE_FAILURE` / `AGENT_ERROR` / `TIMEOUT`.
 - `InvocationTelemetry` — `tokens_in`, `tokens_out`, `latency_ms`, `raw_output`, `raw_stderr`, `model` (resolved name reported by the CLI on completion). Cost is not tracked — CLI pricing data is not authoritative.
 - `ReviewResult` — `status`, `findings: list[FindingDraft]` (plan §10.1 schema with `source_agent` populated by the parent's synthesis pass), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`. The reviewer aggregate runs admission on these drafts and converts admitted survivors into `vcs.Finding`s before calling `vcs_plugin.post_review`.
@@ -36,12 +36,13 @@ No HTTP routes.
 
 ### `CodingAgentPlugin` Protocol
 
-Async task methods `review`, `incremental_review`, `verify_fix`, `stale_check`, plus `validate_config`, `health_check`, and `meta: PluginMeta`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback. Signatures in `app/domain/coding_agent/types.py`.
+Async task methods `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, plus `validate_config`, `health_check`, and `meta: PluginMeta`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback. Signatures in `app/domain/coding_agent/types.py`.
 
 - `review` — full base..head diff. Returns `FindingDraft`s; the reviewer aggregate applies admission and converts to `vcs.Finding` for posting.
 - `incremental_review` — `prev_sha..head` only. Returns `FindingDraft`s; the reviewer aggregate applies schema/severity gating, caps, dedup, and persists.
 - `verify_fix` — given an original finding + original code + current code at the resolved anchor, decides whether the issue is still present.
 - `stale_check` — given an original finding + current code + a diff summary, decides whether the finding still applies.
+- `answer_question` — given an original finding + code at the anchor + the thread's prior messages + the developer's question + base/head SHAs, produces a single `answer: str` to be posted as a yaaos reply. No verdict, no state transition — the reviewer just posts the text.
 
 All task methods MUST NOT raise on agent-level failures (timeout, non-zero exit, malformed JSON) — those become `status` + `error_message` so consumers branch on the same surface. Only infrastructure failures (e.g., `WorkspaceExecError`) are raised.
 

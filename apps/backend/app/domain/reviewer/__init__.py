@@ -42,7 +42,6 @@ from app.domain.reviewer.llm import (
     ClassifyReplyInput,
     ClassifyReplyOutput,
     classify_reply,
-    classify_reply_runnable,
 )
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import (
@@ -69,8 +68,6 @@ from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
 from app.domain.reviewer.service import (
-    CLASSIFY_ACT_THRESHOLD,
-    CLASSIFY_CONFIRM_THRESHOLD,
     VERIFY_ACT_THRESHOLD,
     VERIFY_OBSERVE_THRESHOLD,
     ConversationView,
@@ -126,8 +123,6 @@ from app.domain.reviewer.types import (
 )
 
 __all__ = [
-    "CLASSIFY_ACT_THRESHOLD",
-    "CLASSIFY_CONFIRM_THRESHOLD",
     "VERIFY_ACT_THRESHOLD",
     "VERIFY_OBSERVE_THRESHOLD",
     "AckKind",
@@ -197,7 +192,6 @@ __all__ = [
     "apply_verify_fix_result",
     "cancel_pending",
     "classify_reply",
-    "classify_reply_runnable",
     "compute_acceptance_rate",
     "compute_resolved_without_edit_rate",
     "decide_trigger",

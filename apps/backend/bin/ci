@@ -27,11 +27,18 @@ uv run pytest -q --report-log=tmp/pytest-reportlog.json
 
 echo "==> semgrep (static security: p/python + p/owasp-top-ten)"
 # `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
-# telemetry. Scans `app/` only — tests rarely surface real issues and burn
-# scan time. `.semgrepignore` at repo root excludes vendored/generated paths.
+# telemetry. `--exclude` paths bypass the test-scaffolding layer (`app/testing/`
+# is excluded from production wheels — see pyproject.toml — and its
+# DB-truncate helpers legitimately use raw `text()` that the OWASP rules
+# flag) and all unit-test files (they execute against test fixtures, not
+# user input). Inline CLI excludes rather than `.semgrepignore` because
+# the latter's path resolution proved unreliable across local vs Docker
+# environments.
 uv run semgrep scan \
     --config p/python \
     --config p/owasp-top-ten \
+    --exclude app/testing \
+    --exclude 'test_*.py' \
     --error \
     --metrics off \
     --quiet \

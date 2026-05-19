@@ -22,8 +22,8 @@ Exported from `app/domain/reviewer/__init__.py`:
 - Generation-2 storage — `FindingRow`, `FindingObservationRow`, `CommentThreadRow`, `CommentMessageRow`, `AcknowledgmentDecisionRow`, `AggregateRepository` Protocol, `SqlAlchemyAggregateRepository`.
 - Generation-2 concurrency — `acquire_pr_lock(session, pr_id)`.
 - Generation-2 trigger policy — `decide_trigger`, `TriggerInputs`, `TriggerDecision` (`Skip` | `Debounce` | `Run`), `humanize_skip`.
-- Generation-2 reply classifier — `ClassifyReplyInput`, `ClassifyReplyOutput`, `classify_reply`, `classify_reply_runnable`.
-- Generation-2 service helpers — `apply_classified_reply`, `apply_verify_fix_result`, `apply_stale_check_result`, `is_yaaos_command`, `is_off_topic_message`, `list_findings_view`, `all_conversations_view`, `review_summary`, plus `ReplyAction` / `VerifyFixAction` / `StaleCheckAction` / `FindingView` / `ConversationView`, and the `CLASSIFY_*` / `VERIFY_*` thresholds.
+- Generation-2 reply classifier — `ClassifyReplyInput`, `ClassifyReplyOutput`, `classify_reply`. Single-shot call into `core/llm`'s `PromptRunnable`; no DI hook on the function — tests rely on the file-colocated `LLMTestCache` for deterministic replay.
+- Generation-2 service helpers — `apply_classified_reply`, `apply_verify_fix_result`, `apply_stale_check_result`, `is_yaaos_command`, `is_off_topic_message`, `list_findings_view`, `all_conversations_view`, `review_summary`, plus `ReplyAction` / `VerifyFixAction` / `StaleCheckAction` / `FindingView` / `ConversationView`, and the `VERIFY_*` thresholds. Reply classification is purely categorical — no confidence thresholds.
 - Generation-2 plan §5.1 public Python API — `list_reviews_for_pr(pr_id, *, org_id)`, `get_review(review_id, *, org_id)`, `list_findings_for_pr(pr_id, *, org_id, include_terminal=False)`, `get_thread(thread_id, *, org_id)`. View dataclasses `ThreadView`, `ThreadMessageView`.
 - Generation-2 plan §10.13 metrics — `compute_acceptance_rate(*, org_id)` (`resolved_confirmed + resolved_unverified` / total), `compute_resolved_without_edit_rate(*, org_id)` (`acknowledged + resolved_unverified + stale` / total).
 - Generation-2 save-time hooks — `dispatch_events(aggregate)` drains the aggregate's pending events to the `core/events` bus via a `_DomainEventEnvelope` adapter; `dispatch_audits(aggregate, *, session, actor, org_id)` writes one `audit_entries` row per finding state-changing event (`FindingRaised`, `FindingReObserved`, `FindingAnchorUpdated`, `FindingStateChanged`, `FindingAcknowledged`, `FindingResolutionDetected`, `FindingStaleDetected`). Service-layer callers invoke both after every `agg_repo.save(aggregate)`.
@@ -35,7 +35,7 @@ HTTP routes (`/api/reviewer`):
 - `POST /cancel?ticket_id=…` — cancel queued/running job.
 - `GET /jobs/by-ticket/{ticket_id}` — every review_job for the ticket's PR (generation 1).
 - `GET /findings/by-ticket/{ticket_id}?include_terminal=…` — list open + acknowledged findings (generation 2). Set the query param to `true` to also return resolved + stale.
-- `GET /conversations/by-ticket/{ticket_id}` — All-Conversations cross-cut (generation 2).
+- `GET /conversations/by-ticket/{ticket_id}` — All-Conversations cross-cut: findings whose thread has ≥1 developer (`author_kind='human'`) message. Terminal-state findings (resolved_*, stale) are excluded. Findings yaaos raised but the developer never replied to don't appear here — the per-review timeline already surfaces those.
 - `GET /metrics` — aggregate counters.
 
 `RouteSpec` registers one `on_startup` hook: `startup_recovery`.
@@ -49,7 +49,7 @@ HTTP routes (`/api/reviewer`):
 - `Finding` — durable per-PR finding identified across reviews via `FindingFingerprint`. Sticky severity, max-over-observations confidence, anchor that drifts under code changes. State machine: `open → acknowledged | resolved_confirmed | resolved_unverified | stale`.
 - `FindingObservation` — append-only `(finding × review)` sighting; carries the anchor at the time + the agent's raw body.
 - `CommentThread` — 1:1 with `Finding`. Carries the GitHub-side `external_thread_id` indexed for webhook resolution.
-- `CommentMessage` — every yaaos- and human-authored message; carries `external_comment_id` indexed plus optional `classified_intent` + `classification_confidence` on humans.
+- `CommentMessage` — every yaaos- and human-authored message; carries `external_comment_id` indexed plus optional `classified_intent` on humans. The intent label encodes the routing decision — no separate confidence field.
 - `AcknowledgmentDecision` — persistent dev intent to skip a finding (`intentional` | `wontfix`); survives every future review.
 
 ### Key value objects
@@ -66,7 +66,7 @@ HTTP routes (`/api/reviewer`):
 
 1. `intake.schedule_review` for `pr_ready` / `pr_synchronized` / `rereview_command` / UI button cancels any in-flight job for the PR, inserts a queued `ReviewJobRow`, writes `review_job.scheduled` audit, publishes `ReviewJobStatusChanged(queued)`, spawns `_run_review_job`.
 2. Worker debounces, flips to `running`, resolves entities + diff, runs `_ticket_skip_reason` (`fork` / `bot_author` / `trivial_diff` / `too_large`), runs secrets pre-flight, language-detects, provisions `in_process` workspace (head + base SHAs, branch names).
-3. Builds `ReviewContext` from PR + diff + lessons + prior yaaos comments. Hashes the context; writes `review_job.prompt_sent` audit; calls `coding_agent.review(plugin_id="claude_code", ws, ctx)`. The agent returns `list[FindingDraft]` (§10.1 schema).
+3. Builds `ReviewContext` from PR + diff + lessons. `prior_yaaos_comment_bodies` is populated on the context but NOT surfaced into the prompt — the aggregate's fingerprint dedup (§10.10) handles re-observation silently; instructing the agent to avoid duplicates would starve the re-observation signal. Hashes the context; writes `review_job.prompt_sent` audit; calls `coding_agent.review(plugin_id="claude_code", ws, ctx)`. The agent returns `list[FindingDraft]` (§10.1 schema).
 4. Acquires the per-PR advisory lock, loads the aggregate, converts drafts via `_findingdrafts_to_raw`, runs `aggregate.post_process_raw_findings(..., diff_files=...)`, then translates admitted survivors back to `vcs.Finding` via `_raw_to_vcs_findings` and posts via `vcs.post_review`. Rejected drafts never reach GitHub. The github plugin posts each survivor as its own comment (inline vs top-level by anchor presence) with a per-agent emoji suffix.
 5. Persists `PostedCommentRow` per finding-as-comment, updates the row to `posted` with telemetry + JSONB findings (admitted-only entries: `{file_path, line_start, line_end, severity (§10.1 enum), rule_id, title, body, rationale, source_agent}`), writes `review_job.posted` audit, publishes `ReviewJobStatusChanged(posted)`. Calls `dispatch_audits` + `dispatch_events` after the aggregate save.
 
@@ -74,9 +74,20 @@ HTTP routes (`/api/reviewer`):
 
 1. **Initial review on PR ready** (plan §6.1, write path lands with §13 step 7's cut-over): service acquires the per-PR advisory lock, opens a transaction, loads the aggregate, starts a `Review` via `start_review`, invokes coding_agent in `full_review` mode, maps each `FindingDraft` → `RawFinding`, calls `aggregate.post_process_raw_findings` which applies the malformed / threshold / per-PR nit cap / cross-file dedup / per-review top-10 cap pipeline + dedup vs prior open/acknowledged findings. For each survivor: opens a thread, appends a yaaos message, posts via `vcs.post_review`. Completes the review; saves the aggregate; drains domain events.
 2. **Auto-incremental on push** (plan §6.2, write path WIP): intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run` per §7. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) runs the deterministic anchor pass `resolve_open_anchors(aggregate, *, touched_files, read_file, new_commit_sha)` (in `incremental.py`) BEFORE any LLM stale_check. That pure helper returns a `ResolveAnchorsResult` partitioning open findings into `moved` / `gone` / `unchanged`; `gone` transitions to `resolved_unverified`, `moved` is fed into `coding_agent.verify_fix` and routed through `apply_verify_fix_result`, `unchanged` stays put. New findings flow through the same admission pipeline. Anchor mutations happen on a snapshot aggregate loaded inside the workspace block (no long-lived DB session); the moves are replayed onto a freshly-loaded live aggregate at save time.
-3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm`; `apply_classified_reply` decides what to do: ≥ 0.85 acknowledgment transitions and posts "Noted…", 0.60-0.84 posts the mid-band confirmation reply, ≥ 0.85 verify_fix kicks off the subflow, everything else stores the message silently. When the developer responds `confirm` to the mid-band prompt, `_original_mid_band_rationale(thread_id, author_external_id)` in `replies.py` walks the thread chronologically to find the last human message from the same author posted BEFORE the yaaos confirm-request, and uses its body (not the literal "confirm") as the persisted ack rationale.
+3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm` and emits exactly one of five categorical intents; `apply_classified_reply` maps that label 1:1 onto a `ReplyAction`:
+
+   | intent                    | action                                              |
+   | ------------------------- | --------------------------------------------------- |
+   | `acknowledgment_clear`    | `acknowledge_posted` — state → acknowledged + reply |
+   | `acknowledgment_unclear`  | `confirm_requested` — post mid-band confirm prompt  |
+   | `verify_fix`              | `verify_fix_triggered` — spawn workspace subflow    |
+   | `question`                | `answer_question_triggered` — spawn workspace subflow |
+   | `other`                   | `noop` — store message, stay silent                 |
+
+   No confidence axis — the LLM picks one label and the label encodes the action. Best-practice for LLM classification: categorical labels with examples per label outperform a float-probability output that the model can't actually calibrate. When the developer responds `confirm` to a mid-band prompt, `_original_mid_band_rationale(thread_id, author_external_id)` in `replies.py` walks the thread chronologically to find the last human message from the same author posted BEFORE the yaaos confirm-request, and uses its body (not the literal "confirm") as the persisted ack rationale.
 4. **Verify-fix subflow** (plan §6.5): the `verify_fix` runner in `replies.py` provisions a workspace at HEAD, reads `current_anchor.original_lines` (captured at finding-creation by `make_anchor()` and carried forward by `resolve_anchor()`) as the original code, reads the current code at the resolved anchor via `workspace.read_text`, and hands both snippets to `coding_agent.verify_fix`. The result feeds `apply_verify_fix_result` per plan §10.4 thresholds. `original_lines` is persisted in the `current_anchor` JSONB blob — no migration needed.
-5. **Stale-check** (plan §6.2 step 4b): same shape as verify-fix but for anchor-moved-but-still-applies-maybe cases; `apply_stale_check_result` routes the outcome to `record_stale_detection` or a no-op observe.
+5. **Answer-question subflow**: `_run_answer_question` in `replies.py` provisions a workspace at HEAD with read-only repo + git tool access (no `Task` subagent dispatch), passes the finding context + the full thread history + the developer's question to `coding_agent.answer_question`, and posts the agent's single-text answer as a yaaos reply on the thread. No state transition — questions don't acknowledge or resolve the finding, they just produce an inline explanation.
+6. **Stale-check** (plan §6.2 step 4b): same shape as verify-fix but for anchor-moved-but-still-applies-maybe cases; `apply_stale_check_result` routes the outcome to `record_stale_detection` or a no-op observe.
 
 ### State machines
 
@@ -91,7 +102,7 @@ HTTP routes (`/api/reviewer`):
 Transitions:
 
 - `(new) → open` — new fingerprint observed in a review.
-- `open → acknowledged` — developer reply classified as `acknowledgment` with confidence ≥ `CLASSIFY_ACT_THRESHOLD` (0.85); carries an `AckKind`.
+- `open → acknowledged` — developer reply classified as `acknowledgment_clear`; carries an `AckKind`. (`acknowledgment_unclear` does NOT transition — it posts a confirm request and waits for the literal `confirm` reply.)
 - `open → resolved_confirmed` — `verify_fix` returns "not present" with confidence ≥ `VERIFY_ACT_THRESHOLD` (0.80).
 - `open → resolved_unverified` — anchor gone in the new commit and no verify-fix possible.
 - `open → stale` — `stale_check` returns "no longer applies" with confidence ≥ `VERIFY_ACT_THRESHOLD`.
@@ -152,7 +163,7 @@ Generation 2 (plan §4.1):
 - `findings` — first-class finding. UNIQUE `(pr_id, fingerprint_hash)`. Indexed on `(pr_id, state)` and `fingerprint_hash`. Carries: state, sticky severity, max-confidence, anchor JSONB, `concrete_failure_scenario`, `source_agent`, `first_seen_review_id` + `last_observed_review_id` (unconstrained UUID until §13 step 7 renames `review_jobs` → `reviews`).
 - `finding_observations` — append-only `(finding, review)` sightings. Indexed on `(finding_id, review_id)`. Each row carries the anchor at the time and the agent's raw body.
 - `comment_threads` — 1:1 with `findings`. `external_thread_id` indexed for webhook resolution.
-- `comment_messages` — every yaaos- and human-authored message. `external_comment_id` indexed. `classified_intent` + `classification_confidence` populated for human messages by `classify_reply`.
+- `comment_messages` — every yaaos- and human-authored message. `external_comment_id` indexed. `classified_intent` populated for human messages by `classify_reply`.
 - `acknowledgment_decisions` — persistent dev decisions. Survive future reviews — re-observed fingerprints with an ack drop silently in the admission pipeline.
 
 `SqlAlchemyAggregateRepository.save` flushes in FK order: findings → flush → observations + threads → flush → messages → flush → acks. It also persists `Review` row updates (status, `commit_sha_at_start`, `superseded_by_review_id`, `pending_replay`, `started_at` / `completed_at` timestamps) via `_review_from_row` — initial `ReviewRow` INSERT still lives in `queue.py` / `incremental.py` because those callers hold the per-PR advisory lock and assign `sequence_number`.

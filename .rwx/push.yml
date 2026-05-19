@@ -55,7 +55,6 @@ tasks:
         -v "$(pwd)/docker:/app/docker:ro" \
         -v "$(pwd)/plan:/app/plan:ro" \
         -v "$(pwd)/CLAUDE.md:/app/CLAUDE.md:ro" \
-        -v "$(pwd)/.semgrepignore:/app/apps/backend/.semgrepignore:ro" \
         -v "$(pwd)/apps/web/docs:/app/apps/web/docs:ro" \
         -v "$(pwd)/apps/e2e/docs:/app/apps/e2e/docs:ro" \
         -v "$(pwd)/apps/fake-github/docs:/app/apps/fake-github/docs:ro" \

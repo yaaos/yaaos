@@ -4,14 +4,15 @@
 
 ## Purpose
 
-Adapter for [Claude Code](https://docs.claude.com/en/docs/claude-code), the only coding-agent CLI today. Implements `review`, `incremental_review`, `verify_fix`, `stale_check`, `validate_config`, `health_check`. Spawns ONE parent reviewer per review run; the parent dispatches `yaaos-*` subagents (installed locally) via the Task tool and synthesizes their findings. Owns prompt assembly, the plugin-internal output schema (`_FindingDraftDto`, `_FindingDraftList`), the subagent installer, and Anthropic credentials. Returns `FindingDraft`s (`source_agent` populated by the parent's synthesis pass) — the reviewer aggregate handles admission and the conversion back to `vcs.Finding` for posting. Knows nothing about yaaos tickets, review jobs, audit log, or the workspace's working directory.
+Adapter for [Claude Code](https://docs.claude.com/en/docs/claude-code), the only coding-agent CLI today. Implements `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check`. Spawns ONE parent reviewer per review run; the parent dispatches `yaaos-*` subagents (installed locally) via the Task tool and synthesizes their findings. Owns prompt assembly, the plugin-internal output schema (`_FindingDraftDto`, `_FindingDraftList`), the subagent installer, and Anthropic credentials. Returns `FindingDraft`s (`source_agent` populated by the parent's synthesis pass) — the reviewer aggregate handles admission and the conversion back to `vcs.Finding` for posting. Knows nothing about yaaos tickets, review jobs, audit log, or the workspace's working directory.
 
 ## Public interface
 
 - Singleton `ClaudeCodePlugin` registered into `domain/coding_agent` at `bootstrap()`; also registers `anthropic_key_set` onboarding contributor and installs subagent definitions.
-- Side-effect import of `web.py` wires HTTP routes (prefix `/api/claude_code`):
-  - `POST /api_key` — set/rotate the Anthropic key (`{api_key: str}`). Empty rejected with 400. Fernet-encrypts, upserts on `claude_code_settings`, invalidates the auth-probe cache.
+- Side-effect import of `web.py` wires HTTP routes (prefix `/api/claude_code`) and an `on_startup` hook:
+  - `POST /api_key` — set/rotate the Anthropic key (`{api_key: str}`). Empty rejected with 400. Fernet-encrypts, upserts on `claude_code_settings`, invalidates the auth-probe cache, and pushes the raw key into `os.environ["ANTHROPIC_API_KEY"]` so `core/llm` picks it up without a restart.
   - `GET /health` — wraps `health_check()`.
+  - `bootstrap_anthropic_env` (startup hook) — decrypts the stored key into `os.environ["ANTHROPIC_API_KEY"]` at app boot so direct LLM calls (e.g., `domain/reviewer/llm/classifier.classify_reply`) authenticate via LangChain's default env resolution. No-op if the env var is already set (Braintrust gateway, test env) or no row exists yet (pre-onboarding).
 - Plugin credentials live under the plugin's own URL space, not a generic `/api/settings/*`.
 - Domain code never imports this module; uses `domain/coding_agent`'s registry.
 
@@ -29,7 +30,7 @@ Per-workspace install at provision time would be the M02+ Docker-workspace shape
 
 ### Prompt files
 
-Per-mode prompt content lives next to the plugin under `prompts/`: `full_review.md`, `incremental_review.md`, `verify_fix.md`, `stale_check.md`. Loaded once at import via `_load_prompt(name)` (reads `prompts/{name}.md`, returns the string). The .md files are the versioned, reviewable source of truth; the runtime code only does string-formatting + appendix logic.
+Per-mode prompt content lives next to the plugin under `prompts/`: `full_review.md`, `incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`. Loaded once at import via `_load_prompt(name)` (reads `prompts/{name}.md`, returns the string). The .md files are the versioned, reviewable source of truth; the runtime code only does string-formatting + appendix logic.
 
 ### `review`
 
@@ -45,7 +46,7 @@ Env: copy of `os.environ` with `ANTHROPIC_API_KEY` injected. Key never on argv.
 
 **Step 2 — assemble prompt + schema appendix:**
 
-`_assemble_review_prompt(ctx)` builds the parent-dispatcher prompt: explains the available `yaaos-*` subagents and their triggers (always-on vs conditional), instructs the parent to dispatch all relevant subagents in a single turn via parallel Task calls, collect findings tagged with `source_agent`, verify each finding by re-reading the cited code, drop hallucinated findings whose snippet doesn't match, rank, and emit one merged JSON. The diff itself is **not** inlined — instead the prompt names the base sha + head sha and instructs the agent to run `git diff base_sha..HEAD` (or per-file slices) itself using the restricted Bash access. PR title/body, optional repo-language block, optional lessons, optional prior yaaos comments are appended.
+`_assemble_review_prompt(ctx)` builds the parent-dispatcher prompt: explains the available `yaaos-*` subagents and their triggers (always-on vs conditional), instructs the parent to dispatch all relevant subagents in a single turn via parallel Task calls, collect findings tagged with `source_agent`, verify each finding by re-reading the cited code, drop hallucinated findings whose snippet doesn't match, rank, and emit one merged JSON. The diff itself is **not** inlined — instead the prompt names the base sha + head sha and instructs the agent to run `git diff base_sha..HEAD` (or per-file slices) itself using the restricted Bash access. PR title/body, optional repo-language block, and optional lessons are appended. `ctx.prior_yaaos_comment_bodies` is intentionally NOT surfaced — telling the agent to avoid duplicates fights the aggregate's fingerprint dedup (plan §10.10); the agent does a fresh analysis each run and the aggregate handles re-observation silently.
 
 `_schema_appendix(_FindingDraftList)` appends a STRICT instruction with `_FindingDraftList.model_json_schema()` — plan §10.1 schema (severity: `blocker` / `major` / `minor` / `nit`; `rule_id`; `concrete_failure_scenario`; `confidence`; `file_path` / `line_start` / `line_end`). This is the only mechanism constraining output shape — Claude Code's `--output-format=json` controls the wrapper envelope, not content.
 
@@ -70,6 +71,14 @@ Strict JSON parse → validate against `_FindingDraftList`. No markdown-fence fa
 **Step 6 — convert to vendor-neutral types:**
 
 Each DTO maps to a `coding_agent.FindingDraft` (carrying `source_agent` set by the parent's synthesis). `_compute_state_v2(findings)`: empty → `APPROVED`, any `blocker`/`major` → `CHANGES_REQUESTED`, else `COMMENT`. The reviewer aggregate (in `domain/reviewer/queue.py`) applies the §10.1 admission pipeline and converts admitted survivors to `vcs.Finding` for posting — that mapping lives in `_findingdrafts_to_raw` + `_raw_to_vcs_findings`, not here.
+
+### `answer_question`
+
+Triggered when the reply classifier picks the `question` intent (see `domain_reviewer.md` § Core user flows). Same `_prepare_invocation` → `_run_and_parse_envelope` pipeline as `verify_fix`, with three differences:
+
+- **Tool surface is leaner.** `_prepare_invocation(allowed_tools_override=...)` swaps the `Task`-bearing toolset for `Read,Glob,Grep,LS,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)` — read-only repo + git, no subagent dispatch. The parent answers the developer's question itself.
+- **Prompt is `prompts/answer_question.md`.** Receives the finding context, code at the anchor, the full conversation history, the question, and base+head SHAs (so the agent can `git diff` the PR itself if needed). Same reviewer-voice rules as findings.
+- **Output schema is `_AnswerQuestionDto = {answer: str}`.** Single text field. No list, no severity, no anchor — the reviewer module posts the answer back as a yaaos reply on the existing thread.
 
 ### `validate_config`
 
