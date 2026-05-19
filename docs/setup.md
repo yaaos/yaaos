@@ -27,6 +27,18 @@ Dev login uses a real GitHub OAuth App — credentials provisioned out-of-band a
 
 The dev overlay (`docker-compose.dev.yml`) starts [Mailpit](https://mailpit.axllent.org/) — a local SMTP sink that catches invitation emails and any other outbound mail. Web UI at <http://localhost:8025>. SMTP on `:1025`; backend points `SMTP_HOST`/`SMTP_PORT` there in dev. No real mail is ever sent in dev.
 
+## 1b. Bootstrap the first user + org
+
+A fresh database is anonymous. Run the bootstrap script once to mint the first user, link them to a GitHub identity, create the first org, and grant them the Owner role:
+
+```bash
+apps/backend/bin/bootstrap
+```
+
+Five prompts: your email, your GitHub username, your display name, the org name, the org slug (URL-safe). The script resolves the username to GitHub's stable numeric id via `GET https://api.github.com/users/<login>` and writes everything in one transaction. Idempotent — re-running with the same inputs prints `<row>=exists` instead of erroring.
+
+After bootstrap, sign in via the GitHub OAuth provider button on the login page. Without bootstrap, the first sign-in attempt hard-rejects with `ask_for_invite` because no user / no invitation exists.
+
 ## 2. Bring up the stack
 
 From the repo root:
