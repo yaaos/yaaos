@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Rebuild SPA + dev docker image, then start the stack.
+# Use after any source code change (backend Python, frontend SPA,
+# pyproject.toml, package.json, Dockerfile). Use bin/dev-restart
+# for env-only changes (no rebuild).
+#
+# The SPA build is critical: apps/web/dist/ is bind-mounted from the
+# host, so the running container always reads the on-disk bundle. A
+# fresh React change requires `pnpm build` here or the browser will
+# keep serving the previous build.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> Building SPA (apps/web/dist/)"
+pnpm --filter ./apps/web build
+
+echo "==> Rebuilding backend image + starting stack"
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.dev.yml \
+  --env-file .env \
+  up -d --build app

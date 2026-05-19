@@ -1,4 +1,6 @@
-import { Moon, Sun } from "lucide-react";
+import { useCurrentUser, useLogout } from "@domain/auth";
+import { Link } from "@tanstack/react-router";
+import { LogOut, Moon, Sun, User } from "lucide-react";
 import { useState } from "react";
 import { toggleTheme } from "./theme";
 
@@ -6,10 +8,21 @@ export function Topbar({ crumb }: { crumb: string }) {
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
   );
+  const { data: user } = useCurrentUser();
+  const logout = useLogout();
 
   const onToggle = () => {
     const next = toggleTheme();
     setTheme(next);
+  };
+
+  const onLogout = () => {
+    logout.mutate(undefined, {
+      // Hard navigation so the SPA tears down all in-memory query caches.
+      onSettled: () => {
+        window.location.href = "/login";
+      },
+    });
   };
 
   return (
@@ -28,6 +41,32 @@ export function Topbar({ crumb }: { crumb: string }) {
         <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
         live
       </span>
+      {user && (
+        <>
+          <Link
+            to="/account"
+            className="flex items-center gap-1.5 rounded px-2 py-1 text-text-3 hover:bg-hover hover:text-text text-[12px]"
+            title="Account"
+            data-testid="account-link"
+          >
+            <User className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">
+              {user.user.display_name || user.user.primary_email}
+            </span>
+          </Link>
+          <button
+            type="button"
+            onClick={onLogout}
+            disabled={logout.isPending}
+            className="flex items-center gap-1.5 rounded px-2 py-1 text-text-3 hover:bg-hover hover:text-text text-[12px] disabled:opacity-50"
+            title="Sign out"
+            data-testid="logout"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Sign out</span>
+          </button>
+        </>
+      )}
     </header>
   );
 }

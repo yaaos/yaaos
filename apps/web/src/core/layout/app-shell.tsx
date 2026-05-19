@@ -9,10 +9,24 @@ const CRUMB_BY_PATH: Record<string, string> = {
   "/settings": "Settings",
 };
 
+// User-scoped pages render outside the app shell — no sidebar, no topbar,
+// no org nav. The login page in particular must not surface dashboard
+// links to anonymous visitors.
+const STANDALONE_PATHS = new Set(["/login", "/account"]);
+
 export function AppShell() {
   const { location } = useRouterState();
-  const crumb = CRUMB_BY_PATH[location.pathname] ?? "yaaos";
+  const pathname = location.pathname;
 
+  if (STANDALONE_PATHS.has(pathname)) {
+    return (
+      <div className="h-screen w-screen overflow-y-auto">
+        <Outlet />
+      </div>
+    );
+  }
+
+  const crumb = CRUMB_BY_PATH[pathname] ?? "yaaos";
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />

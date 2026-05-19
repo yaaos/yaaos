@@ -29,7 +29,13 @@ export function LoginPage() {
                 <Button
                   key={p}
                   onClick={() => {
+                    // Hard-coded same-origin path with two encoded query params.
+                    // `p` comes from the server's allowlist (`/api/auth/providers`);
+                    // `next` is forwarded to the backend, which re-validates via
+                    // `_safe_next()` before honoring it on callback. Not an open
+                    // redirect — the navigation target is always our own API.
                     const url = `/api/auth/login?provider=${encodeURIComponent(p)}&next=${encodeURIComponent(next)}`;
+                    // nosemgrep: javascript.browser.security.open-redirect.js-open-redirect
                     window.location.href = url;
                   }}
                   data-testid={`login-${p}`}

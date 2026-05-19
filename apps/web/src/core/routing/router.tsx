@@ -53,6 +53,12 @@ const orgScopeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/orgs/$slug",
   beforeLoad: ({ params }) => {
+    // Stale URLs from earlier failed-login flows can leave the literal
+    // string "undefined" in the slug. Bounce through / so indexRoute
+    // re-probes /me and picks the right org.
+    if (!params.slug || params.slug === "undefined" || params.slug === "null") {
+      throw redirect({ to: "/" });
+    }
     setCurrentOrgSlug(params.slug);
   },
 });

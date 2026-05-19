@@ -94,11 +94,10 @@ Bring up with the overlay:
 
 ```bash
 pnpm --filter ./apps/web build         # one-time, populates apps/web/dist
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.dev.yml \
-  --env-file .env up -d --build app
+bin/dev-rebuild                        # builds the image + starts the stack
 ```
+
+`bin/dev-restart` is the env-only variant (no rebuild) — use it after `.env` edits. Both wrap the same `docker compose … --env-file .env up -d [--build] app` invocation against the dev overlay.
 
 Inner loop:
 
@@ -125,6 +124,10 @@ For iterating on the FE / BE without any container:
 ## Test stack
 
 The e2e suite has its own self-contained stack — Postgres + `apps/fake-github` + yaaos backend with stubbed coding agent. Run `apps/e2e/bin/ci` for the one-shot up → run → down cycle. See [`apps/e2e/docs/README.md`](../apps/e2e/docs/README.md).
+
+## Claude Code Stop hook
+
+`.claude/settings.json` registers a Stop hook (`.claude/hooks/stop-ci.sh`) that runs the relevant `apps/<app>/bin/ci` before letting a Claude turn end. It diffs the working tree vs HEAD and only fires for non-`.md` changes under `apps/backend/` or `apps/web/`; pure-doc and infra-only turns skip CI for free. e2e is intentionally not in the hook — it's expensive and Docker-dependent. The hook is a safety net for the rule in [`CLAUDE.md`](../CLAUDE.md) § Implementation discipline: run `bin/ci` yourself, don't lean on the hook.
 
 ## Live API reference
 

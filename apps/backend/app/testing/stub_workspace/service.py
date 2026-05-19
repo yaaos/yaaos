@@ -57,9 +57,7 @@ class StubWorkspaceProvider:
             # the reviewer's anchor + fingerprint hashes succeed and the
             # finding isn't dropped via `findingdraft_dropped_no_file`.
             os.makedirs(os.path.join(working_dir, "src"), exist_ok=True)
-            with open(
-                os.path.join(working_dir, "src", "example.ts"), "w", encoding="utf-8"
-            ) as f:
+            with open(os.path.join(working_dir, "src", "example.ts"), "w", encoding="utf-8") as f:
                 f.write("// stub workspace placeholder for finding anchors\nexport {};\n")
         except OSError:
             pass

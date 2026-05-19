@@ -9,7 +9,7 @@ Bridges GitHub's OAuth 2.0 authorization-code flow to the `domain/identity.Provi
 ## Public interface
 
 - `GitHubOAuthProvider` — concrete `Provider` implementation. `provider_id = "github"`.
-- `bootstrap()` — registers the singleton in the in-process registry. Runs at import time from `__init__.py`.
+- `bootstrap()` — registers the singleton in the in-process registry. Runs at import time from `__init__.py`. Skips registration when `yaaos_oauth_github_client_id` or `_client_secret` is unset — the LoginPage then surfaces "no providers configured" instead of redirecting to a GitHub 404 with `client_id=`.
 
 The plugin exposes no HTTP routes of its own. `/api/auth/login?provider=github` and `/api/auth/callback/github` live in [`domain/auth`](domain_auth.md) and dispatch to whichever Provider matches the `provider` parameter.
 

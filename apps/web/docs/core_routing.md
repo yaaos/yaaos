@@ -21,7 +21,7 @@ The module also declares the TanStack module augmentation so the `Register` inte
 | `/` | beforeLoad probe | Hits `/api/auth/me`; on 401 → `/login`, on 200 → `/orgs/<first-slug>/dashboard`. |
 | `/login` | `LoginPage` (`@domain/auth`) | User-scoped; clears `org_id` contextvar. |
 | `/account` | `AccountPage` (`@domain/auth`) | User-scoped; emails + TOTP setup entry + "Sign out everywhere". |
-| `/orgs/$slug` | scope-only route | `beforeLoad` calls `setCurrentOrgSlug(slug)` so `apiFetch` injects `X-Org-Slug`. |
+| `/orgs/$slug` | scope-only route | `beforeLoad` calls `setCurrentOrgSlug(slug)`. Slug values of `undefined` / `null` / empty (from earlier failed-login redirects) bounce through `/` to re-probe `/me`. |
 | `/orgs/$slug/dashboard` | `DashboardPage` | |
 | `/orgs/$slug/tickets` | `TicketsPage` | |
 | `/orgs/$slug/tickets/$ticketId` | `TicketDetailPage` | |

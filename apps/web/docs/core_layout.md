@@ -20,13 +20,15 @@ Under `src/core/layout/`: `app-shell.tsx`, `sidebar.tsx`, `topbar.tsx`, `theme.t
 
 Two-column flex: fixed-width sidebar on the left, flexible-width content on the right. Only `<main>` scrolls; sidebar and topbar stay pinned. Topbar shows a static crumb derived from `useRouterState().location.pathname` through `CRUMB_BY_PATH`; routes wanting a custom title add an entry there.
 
+`STANDALONE_PATHS` (`/login`, `/account`) render the `Outlet` without sidebar or topbar — user-scoped pages don't surface org nav. Visiting a standalone path while authenticated still works; visiting one of the others while unauthenticated bounces through `indexRoute → /login`.
+
 ### `Sidebar`
 
 TanStack `<Link>`s to the 5 top-level pages — active state is computed automatically. Text labels, no per-route icons.
 
 ### `Topbar`
 
-Single-line header showing the current page's crumb. No global search, user menu, or quick-actions. The slot is thin so affordances can be added later.
+Single-line header showing the current page's crumb, theme toggle, live-indicator pill, and (when signed in) an Account link + Sign-out button. Sign-out calls `/api/auth/logout` then hard-navigates to `/login` so the in-memory query cache is torn down (otherwise stale `/me` data persists into the next session).
 
 ### Theme tokens
 

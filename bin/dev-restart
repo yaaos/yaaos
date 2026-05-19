@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Restart the dev docker stack without rebuilding.
+# Use for:
+#   - .env changes (compose re-reads env at recreate time)
+#   - backend Python edits (source is bind-mounted; restart re-imports)
+#   - re-running boot-time migrations after editing core/database
+# Use bin/dev-rebuild instead when the Docker image itself needs to change
+# (Dockerfile, pyproject.toml deps, SPA bundle).
+#
+# We use `restart` (not `up -d`) because `up -d` is a no-op when nothing in
+# the compose file changed — it won't pick up new source or new env values.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Recreate so .env is re-read; otherwise restart would keep the old environment.
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.dev.yml \
+  --env-file .env \
+  up -d --force-recreate app

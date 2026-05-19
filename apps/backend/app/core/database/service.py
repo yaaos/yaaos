@@ -134,6 +134,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("008_reviews_cutover", "reviews_cutover"),
     ("009_drop_classification_confidence", "drop_classification_confidence"),
     ("010_create_all_m02", "create_all_m02"),
+    ("011_drop_claude_code_default_timeout_seconds", "drop_claude_code_default_timeout_seconds"),
 )
 
 
@@ -441,6 +442,18 @@ async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[n
         await conn.execute(text(stmt))
 
 
+async def _apply_drop_claude_code_default_timeout_seconds(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the orphaned `claude_code_settings.default_timeout_seconds` column.
+
+    The column was removed from `ClaudeCodeSettingsRow` in commit bfb929e
+    (timeout default moved to code, fixed at 20s) but no migration shipped to
+    drop the DB column. Fresh DBs created via `create_all` after that commit
+    never had the column; older volumes still do, and it's `NOT NULL`, so any
+    INSERT crashes with a NotNullViolationError. Idempotent.
+    """
+    await conn.execute(text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS default_timeout_seconds"))
+
+
 async def migrate() -> None:
     """Apply any un-applied migrations. Idempotent."""
     await ensure_schema_migrations_table()
@@ -471,6 +484,8 @@ async def migrate() -> None:
                 await _apply_drop_classification_confidence(conn)
             elif kind == "create_all_m02":
                 await _apply_create_all_m02(conn)
+            elif kind == "drop_claude_code_default_timeout_seconds":
+                await _apply_drop_claude_code_default_timeout_seconds(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

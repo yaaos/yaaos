@@ -36,6 +36,18 @@ services:
       BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
       BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
       BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
+      # M02 — user-login OAuth + token-signing + TOTP. All optional at boot;
+      # an unset GitHub client_id silently de-registers the provider so the
+      # LoginPage shows "no providers configured" instead of 404ing on GitHub.
+      YAAOS_OAUTH_GITHUB_CLIENT_ID: ${YAAOS_OAUTH_GITHUB_CLIENT_ID:-}
+      YAAOS_OAUTH_GITHUB_CLIENT_SECRET: ${YAAOS_OAUTH_GITHUB_CLIENT_SECRET:-}
+      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
+      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
+      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
+      # M02 — dev SMTP sink (Mailpit). Override SMTP_HOST/PORT for prod relays.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
     depends_on:
       postgres:
         condition: service_healthy

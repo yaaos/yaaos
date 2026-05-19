@@ -54,7 +54,7 @@ No CSRF, no rate limiting, no auth — the security baseline is encryption-at-re
 ### SPA serving
 
 - `apps/web/dist/assets/*` mounted at `/assets/`.
-- Non-`/api` paths fall through to `index.html` (client router takes over).
+- Non-`/api` paths: serve the matching real file from `dist/` when one exists (favicon.svg, og-image.png, robots.txt — anything Vite copies from `public/`); otherwise fall through to `index.html` (client router takes over). Path-traversal guarded by `relative_to(dist)`.
 - `/api/*` 404s from the catch-all when no route matches.
 
 In dev (no `apps/web/dist`), the catch-all isn't installed; non-`/api/` paths 404. Developer runs `pnpm dev` separately.

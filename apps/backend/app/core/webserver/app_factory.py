@@ -82,6 +82,21 @@ def _install_spa_serving(app: FastAPI) -> None:
     async def _spa_catchall(full_path: str) -> FileResponse:
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404)
+        # Vite copies `apps/web/public/` (favicon.svg, og-image.png, etc.)
+        # to `dist/` root at build time. Serve those real files when they
+        # exist instead of returning index.html — otherwise the browser
+        # would parse HTML as an image and silently drop the favicon.
+        # Restrict to a file inside dist (no traversal) and ignore paths
+        # that resolve to a directory.
+        if full_path:
+            candidate = (spa_dist / full_path).resolve()
+            try:
+                candidate.relative_to(spa_dist.resolve())
+            except ValueError:
+                pass  # outside dist — fall through to index.html
+            else:
+                if candidate.is_file():
+                    return FileResponse(candidate)
         return FileResponse(spa_dist / "index.html")
 
 

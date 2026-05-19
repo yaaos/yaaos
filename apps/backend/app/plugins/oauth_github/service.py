@@ -117,7 +117,17 @@ def _pick_primary_email(emails: list[dict]) -> dict | None:
 
 
 def bootstrap() -> None:
-    """Register the singleton Provider in the in-process registry."""
+    """Register the singleton Provider in the in-process registry.
+
+    Skipped when client_id / client_secret are unset: registering anyway would
+    advertise GitHub login on /api/auth/providers and then 404 at GitHub with
+    `client_id=`. The LoginPage renders an empty list as "no providers
+    configured", which is the correct surface for a misconfigured server.
+    """
+    s = get_settings()
+    if not s.yaaos_oauth_github_client_id or not s.yaaos_oauth_github_client_secret:
+        log.info("oauth_github.skipped_unconfigured")
+        return
     register_provider(GitHubOAuthProvider())
 
 

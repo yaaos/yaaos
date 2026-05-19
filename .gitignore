@@ -244,3 +244,8 @@ apps/web/src/core/api/generated/
 # Test report outputs (pytest-reportlog, vitest JSON reporter) consumed by RWX
 apps/backend/tmp/
 apps/web/tmp/
+
+# Claude Code runtime artifacts. The lockfile coordinates CronCreate
+# ownership across sessions in the same project; everything else under
+# `.claude/` (skills, agents, etc.) is intentionally tracked.
+.claude/scheduled_tasks.lock

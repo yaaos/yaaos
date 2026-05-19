@@ -42,6 +42,10 @@ Migration list (in order):
 5. `005_drop_reviewer_agents` — drops the per-agent `reviewer_agents` table; one row per (PR × review run) is now sufficient.
 6. `006_review_jobs_activity_log_model_effort` — adds `activity_log JSONB DEFAULT '[]'`, `model TEXT`, `effort TEXT`; drops `cost_usd`. Activity log captures pre-rendered Claude Code stream events; cost is not tracked because CLI pricing data is not authoritative.
 7. `007_create_durable_findings_tables` — creates `findings`, `finding_observations`, `comment_threads`, `comment_messages`, `acknowledgment_decisions` (plan/notes/full-pr-flow.md §4.1). Idempotent CREATE TABLE IF NOT EXISTS via `Base.metadata.create_all` on just these tables. Tables are reviewer-owned; FKs from generation-2 tables land in §13 step 7 when `review_jobs` is renamed `reviews`.
+8. `008_reviews_cutover` — drops generation-1 `review_jobs` + `posted_comments` (CASCADE) and generation-2 findings tables; recreates `reviews` plus the findings tables with proper FKs to `reviews.id`. POC data is throwaway.
+9. `009_drop_classification_confidence` — drops `comment_messages.classification_confidence` and renormalizes the legacy `acknowledgment` intent to `acknowledgment_clear`. Classifier moved to five categorical intents; no separate probability axis.
+10. `010_create_all_m02` — creates the M02 identity + orgs + sessions tables (`users`, `user_emails`, `oauth_identities`, `user_totp_secrets`, `orgs`, `memberships`, `invitations`, `sso_configs`, `sessions`, `github_installations`), extends `audit_entries` with `actor_user_id` / `actor_workspace_id`, and adds the partial unique indexes on `user_emails` + `invitations`.
+11. `011_drop_claude_code_default_timeout_seconds` — drops the orphaned `claude_code_settings.default_timeout_seconds` column. Removed from the model when the timeout default moved to code, but no migration shipped at the time; older volumes still had the NOT NULL column and crashed on every INSERT.
 
 Each migration runs in its own transaction; on success the version inserts into `schema_migrations`. Re-running `migrate()` is a no-op for applied versions.
 
