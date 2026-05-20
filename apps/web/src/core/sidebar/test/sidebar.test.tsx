@@ -57,13 +57,19 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("nav-audit")).toBeInTheDocument();
   });
 
-  it("hides admin-gated group items for members", () => {
+  it("members see the Org Settings group but only the Members sub-item", () => {
     currentUserMock.mockReturnValue(userResp("member"));
     render(<Sidebar />);
     expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
     expect(screen.getByTestId("nav-tickets")).toBeInTheDocument();
-    expect(screen.queryByTestId("nav-group-org-settings")).toBeNull();
+    // Group is visible (Members is in it) but only the Members link survives.
+    expect(screen.getByTestId("nav-group-org-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-members")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-auth")).toBeNull();
+    expect(screen.queryByTestId("nav-vcs")).toBeNull();
+    expect(screen.queryByTestId("nav-coding-agents")).toBeNull();
+    expect(screen.queryByTestId("nav-byok")).toBeNull();
+    expect(screen.queryByTestId("nav-audit")).toBeNull();
   });
 
   it("shows admin-gated group items for owners", () => {

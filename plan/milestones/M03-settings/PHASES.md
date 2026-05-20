@@ -86,15 +86,15 @@
 
 ## Phase 7 — Org Settings shell + Auth + Members + Audit
 
-- [ ] `/orgs/{slug}/settings` redirects to `/orgs/{slug}/settings/auth`
-- [ ] Org Settings shell at `/orgs/{slug}/settings/{section}` with sub-route layout. Section ∈ `auth | members | vcs | coding-agents | byok | audit`
-- [ ] Auth sub-page: re-home M02 SSO config + add session-timeout override editor
-- [ ] Members sub-page: re-home M02 members page unchanged
-- [ ] Audit sub-page: re-home M02 audit page unchanged
-- [ ] M02 doc pages for SSO / members / audit updated to reflect new URLs
+- [x] `/orgs/{slug}/settings` redirects to `/orgs/{slug}/settings/auth`
+- [x] Org Settings shell at `/orgs/{slug}/settings/{section}` with sub-route layout. Section ∈ `auth | members | vcs | coding-agents | byok | audit`
+- [x] Auth sub-page: re-home M02 SSO config + add session-timeout override editor
+- [x] Members sub-page: re-home M02 members page unchanged
+- [x] Audit sub-page: re-home M02 audit page unchanged
+- [x] M02 doc pages for SSO / members / audit updated to reflect new URLs
 - [ ] E2E: navigate through all sub-pages; verify role-gating (Member sees only Members listing, Owner/Admin sees all)
 - [ ] `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] Phase committed
 
 ## Phase 8 — Org Settings > VCS
 

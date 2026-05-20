@@ -38,20 +38,50 @@ const NAV: NavConfig = {
       id: "org-settings",
       label: "Org Settings",
       icon: Settings,
-      role: "admin",
+      // Group itself has no role gate — Members must see the Members sub-item
+      // even when every other sub-item is hidden. Per-child gates do the work.
       children: [
-        { kind: "link", id: "auth", label: "Auth", icon: ShieldCheck, path: "/settings/auth" },
+        {
+          kind: "link",
+          id: "auth",
+          label: "Auth",
+          icon: ShieldCheck,
+          path: "/settings/auth",
+          role: "admin",
+        },
         { kind: "link", id: "members", label: "Members", icon: Users, path: "/settings/members" },
-        { kind: "link", id: "vcs", label: "VCS", icon: Workflow, path: "/settings/vcs" },
+        {
+          kind: "link",
+          id: "vcs",
+          label: "VCS",
+          icon: Workflow,
+          path: "/settings/vcs",
+          role: "admin",
+        },
         {
           kind: "link",
           id: "coding-agents",
           label: "Coding Agents",
           icon: ListChecks,
           path: "/settings/coding-agents",
+          role: "admin",
         },
-        { kind: "link", id: "byok", label: "BYOK", icon: KeyRound, path: "/settings/byok" },
-        { kind: "link", id: "audit", label: "Audit", icon: ListChecks, path: "/settings/audit" },
+        {
+          kind: "link",
+          id: "byok",
+          label: "BYOK",
+          icon: KeyRound,
+          path: "/settings/byok",
+          role: "admin",
+        },
+        {
+          kind: "link",
+          id: "audit",
+          label: "Audit",
+          icon: ListChecks,
+          path: "/settings/audit",
+          role: "admin",
+        },
       ],
     },
   ],
@@ -113,17 +143,23 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-1.5 py-2 flex-1 overflow-y-auto">
-        {NAV.org.filter(isItemVisible).map((item) =>
-          item.kind === "link"
-            ? renderLink(item, { active, pinned, absolutePath })
-            : renderGroup(item, {
-                active,
-                pinned,
-                absolutePath,
-                collapsed: isCollapsed(item.id),
-                onToggle: () => toggle(item.id),
-              }),
-        )}
+        {NAV.org.filter(isItemVisible).map((item) => {
+          if (item.kind === "link") return renderLink(item, { active, pinned, absolutePath });
+          // Apply role gating per child too. Hide the group entirely when no
+          // child survives the filter.
+          const visibleChildren = item.children.filter(isItemVisible);
+          if (visibleChildren.length === 0) return null;
+          return renderGroup(
+            { ...item, children: visibleChildren },
+            {
+              active,
+              pinned,
+              absolutePath,
+              collapsed: isCollapsed(item.id),
+              onToggle: () => toggle(item.id),
+            },
+          );
+        })}
       </nav>
 
       <UserCard expanded={pinned} />

@@ -4,7 +4,12 @@ import { DetailsPage, SecurityPage } from "@domain/account";
 import { LoginPage } from "@domain/auth";
 import { DashboardPage } from "@domain/dashboard";
 import { MemoryPage } from "@domain/memory";
-import { AuditPage, MembersPage, SsoConfigPage } from "@domain/orgs";
+import {
+  AuditSettingsPage,
+  AuthSettingsPage,
+  MembersSettingsPage,
+  PlaceholderSettingsPage,
+} from "@domain/org_settings";
 import { SettingsPage } from "@domain/settings";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
@@ -109,28 +114,56 @@ const orgMemoryRoute = createRoute({
   component: MemoryPage,
 });
 
-const orgSettingsRoute = createRoute({
+// M03: /orgs/$slug/settings → /orgs/$slug/settings/auth. The shell + per-tab
+// pages live under /settings/{section}; the bare /settings path redirects so
+// older bookmarks don't 404 silently.
+const orgSettingsIndexRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/settings",
-  component: SettingsPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/orgs/$slug/settings/auth",
+      params: { slug: params.slug },
+    });
+  },
 });
 
-const orgMembersRoute = createRoute({
+const orgSettingsAuthRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/members",
-  component: MembersPage,
+  path: "/settings/auth",
+  component: AuthSettingsPage,
 });
 
-const orgAuditRoute = createRoute({
+const orgSettingsMembersRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/audit",
-  component: AuditPage,
+  path: "/settings/members",
+  component: MembersSettingsPage,
 });
 
-const orgSsoRoute = createRoute({
+const orgSettingsAuditRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/sso",
-  component: SsoConfigPage,
+  path: "/settings/audit",
+  component: AuditSettingsPage,
+});
+
+const orgSettingsVcsRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/vcs",
+  component: () => <PlaceholderSettingsPage active="vcs" title="VCS" phase="Phase 8" />,
+});
+
+const orgSettingsCodingAgentsRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/coding-agents",
+  component: () => (
+    <PlaceholderSettingsPage active="coding-agents" title="Coding Agents" phase="Phase 9" />
+  ),
+});
+
+const orgSettingsByokRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/byok",
+  component: () => <PlaceholderSettingsPage active="byok" title="BYOK" phase="Phase 11" />,
 });
 
 // Legacy aliases — M01-era links + e2e specs target `/dashboard`,
@@ -184,10 +217,13 @@ const routeTree = rootRoute.addChildren([
     orgTicketsRoute,
     orgTicketDetailRoute,
     orgMemoryRoute,
-    orgSettingsRoute,
-    orgMembersRoute,
-    orgAuditRoute,
-    orgSsoRoute,
+    orgSettingsIndexRoute,
+    orgSettingsAuthRoute,
+    orgSettingsMembersRoute,
+    orgSettingsAuditRoute,
+    orgSettingsVcsRoute,
+    orgSettingsCodingAgentsRoute,
+    orgSettingsByokRoute,
   ]),
 ]);
 

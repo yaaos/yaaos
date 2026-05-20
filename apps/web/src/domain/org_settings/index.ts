@@ -1,3 +1,5 @@
-// domain/org_settings — Phase 7+ home of /orgs/{slug}/settings/* sub-pages.
-// Skeleton at Phase 0; populated in Phases 7–11.
-export {};
+export { AuditSettingsPage } from "./AuditSettingsPage";
+export { AuthSettingsPage } from "./AuthSettingsPage";
+export { MembersSettingsPage } from "./MembersSettingsPage";
+export { OrgSettingsLayout } from "./OrgSettingsLayout";
+export { PlaceholderSettingsPage } from "./PlaceholderSettingsPage";

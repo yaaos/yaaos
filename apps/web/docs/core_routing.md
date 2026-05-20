@@ -20,15 +20,22 @@ The module also declares the TanStack module augmentation so the `Register` inte
 |---|---|---|
 | `/` | beforeLoad probe | Hits `/api/auth/me`; on 401 → `/login`, on 200 → `/orgs/<first-slug>/dashboard`. |
 | `/login` | `LoginPage` (`@domain/auth`) | User-scoped; clears `org_id` contextvar. |
-| `/account` | `AccountPage` (`@domain/auth`) | User-scoped; emails + TOTP setup entry + "Sign out everywhere". |
+| `/account` | redirect | M03: 303 → `/account/details`. |
+| `/account/details` | `DetailsPage` (`@domain/account`) | display_name, per-org handles, emails, GitHub association. |
+| `/account/security` | `SecurityPage` (`@domain/account`) | TOTP + "Sign out everywhere". |
 | `/orgs/$slug` | scope-only route | `beforeLoad` calls `setCurrentOrgSlug(slug)`. Slug values of `undefined` / `null` / empty (from earlier failed-login redirects) bounce through `/` to re-probe `/me`. |
 | `/orgs/$slug/dashboard` | `DashboardPage` | |
 | `/orgs/$slug/tickets` | `TicketsPage` | |
 | `/orgs/$slug/tickets/$ticketId` | `TicketDetailPage` | |
 | `/orgs/$slug/memory` | `MemoryPage` | |
-| `/orgs/$slug/settings` | `SettingsPage` | |
-| `/orgs/$slug/members` | `MembersPage` (`@domain/orgs`) | |
-| `/dashboard` (legacy) | redirects to `/` | Deleted in Phase 14 once links are migrated. |
+| `/orgs/$slug/settings` | redirect | M03: 303 → `/orgs/$slug/settings/auth`. |
+| `/orgs/$slug/settings/auth` | `AuthSettingsPage` (`@domain/org_settings`) | SSO config + session-timeout override. Owner/Admin only. |
+| `/orgs/$slug/settings/members` | `MembersSettingsPage` (`@domain/org_settings`) | re-homed `MembersPage`. All members read; Admin+ edit. |
+| `/orgs/$slug/settings/audit` | `AuditSettingsPage` (`@domain/org_settings`) | re-homed `AuditPage`. Owner/Admin only. |
+| `/orgs/$slug/settings/vcs` | `PlaceholderSettingsPage` | Real VCS picker lands in Phase 8. |
+| `/orgs/$slug/settings/coding-agents` | `PlaceholderSettingsPage` | Real list + bespoke per-plugin UI lands in Phases 9–10. |
+| `/orgs/$slug/settings/byok` | `PlaceholderSettingsPage` | Real BYOK UI lands in Phase 11. |
+| `/dashboard` (legacy) | M01 alias | Deleted in Phase 14 once links are migrated. |
 
 ### `setCurrentOrgSlug` + auto-injection
 
