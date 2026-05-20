@@ -250,6 +250,43 @@ async def test_dispatch_success_audits_and_calls_upstream(db_session, stub_provi
 
 
 @pytest.mark.asyncio
+async def test_ten_dispatches_write_ten_audit_rows(db_session, stub_provider, stub_upstream) -> None:
+    """Phase 8 audit invariant: one row per JSON-RPC method, no batching."""
+    del stub_provider, stub_upstream
+    review, token = await _seed_review(db_session)
+    await _seed_credential(db_session, org_id=review.org_id)
+
+    async with _client() as c:
+        for i in range(10):
+            body = {
+                "jsonrpc": "2.0",
+                "id": i,
+                "method": "tools/call",
+                "params": {"name": "get_issue", "arguments": {"id": f"LIN-{i}"}},
+            }
+            r = await c.post(
+                f"/api/mcp/{review.id}/stub_disp",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+            assert r.status_code == 200
+
+    audits = (
+        (
+            await db_session.execute(
+                select(AuditEntryRow).where(
+                    AuditEntryRow.org_id == review.org_id,
+                    AuditEntryRow.kind == "mcp.stub_disp.dispatched",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 10
+
+
+@pytest.mark.asyncio
 async def test_dispatch_not_connected_records_broken(db_session, stub_provider) -> None:
     del stub_provider
     review, token = await _seed_review(db_session)

@@ -18,7 +18,8 @@ import structlog
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.audit_log import Actor, audit
+from app.core.audit_log import Actor, ActorKind, audit
+from app.core.auth import org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.secrets import SecretsDecryptError, decrypt
@@ -97,63 +98,66 @@ async def run_health_check_once() -> dict[str, int]:
             .all()
         )
     for row in rows:
-        counts["checked"] += 1
-        prov = get_provider(row.provider)
-        if prov is None:
-            continue
-        try:
-            access = decrypt(row.encrypted_access_token.encode()).decode()
-        except SecretsDecryptError:
-            log.exception("integrations.health_check.decrypt_failed", provider=row.provider)
-            ok = False
-        else:
+        # Per-row org_context so structlog + OTel + audit emissions carry the
+        # right org_id + actor_kind=system tags for this iteration.
+        async with org_context(row.org_id, ActorKind.SYSTEM):
+            counts["checked"] += 1
+            prov = get_provider(row.provider)
+            if prov is None:
+                continue
             try:
-                ok = await prov.validate(access)
-            except Exception:
-                log.exception("integrations.health_check.validate_crashed", provider=row.provider)
+                access = decrypt(row.encrypted_access_token.encode()).decode()
+            except SecretsDecryptError:
+                log.exception("integrations.health_check.decrypt_failed", provider=row.provider)
                 ok = False
-        async with db_session() as s:
-            refreshed = (
-                await s.execute(
-                    select(McpCredentialRow).where(
-                        McpCredentialRow.org_id == row.org_id,
-                        McpCredentialRow.provider == row.provider,
+            else:
+                try:
+                    ok = await prov.validate(access)
+                except Exception:
+                    log.exception("integrations.health_check.validate_crashed", provider=row.provider)
+                    ok = False
+            async with db_session() as s:
+                refreshed = (
+                    await s.execute(
+                        select(McpCredentialRow).where(
+                            McpCredentialRow.org_id == row.org_id,
+                            McpCredentialRow.provider == row.provider,
+                        )
                     )
+                ).scalar_one_or_none()
+                if refreshed is None:
+                    continue
+                if ok:
+                    refreshed.last_validated_at = now
+                    refreshed.last_refresh_status = "ok"
+                    refreshed.last_refresh_failed_at = None
+                    counts["ok"] += 1
+                    await s.commit()
+                    continue
+                refreshed.last_refresh_status = "failed"
+                refreshed.last_refresh_failed_at = now
+                await audit(
+                    "org",
+                    refreshed.org_id,
+                    f"mcp.{refreshed.provider}.token_refresh_failed",
+                    _HealthCheckFailedPayload(provider=refreshed.provider),
+                    Actor.system(),
+                    org_id=refreshed.org_id,
+                    session=s,
                 )
-            ).scalar_one_or_none()
-            if refreshed is None:
-                continue
-            if ok:
-                refreshed.last_validated_at = now
-                refreshed.last_refresh_status = "ok"
-                refreshed.last_refresh_failed_at = None
-                counts["ok"] += 1
+                counts["failed"] += 1
+                # Dedup: only notify if first failure (null) or stale (>24h).
+                should_notify = (
+                    refreshed.last_failure_notified_at is None
+                    or refreshed.last_failure_notified_at < now - _FAILURE_NOTIFICATION_DEDUP
+                )
+                if should_notify:
+                    refreshed.last_failure_notified_at = now
                 await s.commit()
-                continue
-            refreshed.last_refresh_status = "failed"
-            refreshed.last_refresh_failed_at = now
-            await audit(
-                "org",
-                refreshed.org_id,
-                f"mcp.{refreshed.provider}.token_refresh_failed",
-                _HealthCheckFailedPayload(provider=refreshed.provider),
-                Actor.system(),
-                org_id=refreshed.org_id,
-                session=s,
-            )
-            counts["failed"] += 1
-            # Dedup: only notify if first failure (null) or stale (>24h).
-            should_notify = (
-                refreshed.last_failure_notified_at is None
-                or refreshed.last_failure_notified_at < now - _FAILURE_NOTIFICATION_DEDUP
-            )
             if should_notify:
-                refreshed.last_failure_notified_at = now
-            await s.commit()
-        if should_notify:
-            sent = await _notify_owners(refreshed)
-            if sent:
-                counts["notified"] += sent
+                sent = await _notify_owners(refreshed)
+                if sent:
+                    counts["notified"] += sent
     return counts
 
 
