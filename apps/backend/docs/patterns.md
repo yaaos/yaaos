@@ -151,6 +151,16 @@ Handlers triggered by external events MUST be idempotent under retry.
 - Never logged, echoed in errors, or placed in audit payloads. Redact before logging if an exception message could contain a secret.
 - Per-(org, provider) API keys go through [`core/byok`](core_byok.md); provider plugins register their `validate(key) -> bool` callable via `byok.register_validator(provider, callable)` at bootstrap so `core/byok` stays free of plugin imports.
 
+## Bearer token discipline
+
+Every yaaos-issued bearer follows the same shape — adopted in M02 for sessions, in M02 again for signed invitations, and extended in M04 for MCP review tokens:
+
+- **Mint** with `secrets.token_urlsafe(32)` (32 random bytes, URL-safe base64). Return the raw token to the caller exactly once.
+- **Store** `sha256(raw_token)` as the primary key. Raw tokens never persist.
+- **Lookup** by hashing the inbound bearer + selecting by hash + checking `expires_at > now()`. Constant-time-safe because the hash is the PK.
+- **Own one table per consumer.** `sessions`, `mcp_review_tokens`, and (via sha256-on-write) `invitations.token_hash` are separate; one bearer can't be substituted for another.
+- **Expire by absolute time.** Each consumer owns its TTL — sessions 14d, MCP review tokens 2h, invitations 7d. The periodic cleanup task in `domain/identity/scheduler` (or a domain-local equivalent) deletes expired rows; production code also checks `expires_at` on every read.
+
 ## Route security declarations
 
 Every `/api/*` route declares its security via `Depends(require(action))` (org-scoped, role-gated) or `Depends(public_route)` (no org context required). The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset — the gate is at the route, not the docs. Action → minimum-role map lives in `app/domain/auth/dependencies.py:_REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new protected URL prefix requires extending `app/core/auth/types.py:M02_PROTECTED_PREFIXES` so the middleware forces `X-Org-Slug` resolution before any route logic runs.

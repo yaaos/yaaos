@@ -41,6 +41,24 @@ Required in prod; defaults shipped for dev/test:
 
 The backend refuses to start in `prod` with any *required* secret unset; dev/test boot with stub defaults.
 
+### Linear + Notion OAuth (M04 — optional)
+
+M04 adds hosted-MCP integrations for Linear and Notion. The autonomous test suite runs against the in-tree `apps/fake-linear` and `apps/fake-notion` fakes — no real OAuth apps are required to ship M04 end-to-end. You only need to register real apps when you want to use yaaos against production Linear / Notion data.
+
+**Linear OAuth App** — register at <https://linear.app/settings/api> → OAuth applications. Scopes: `read`. Production callback at `https://<your-domain>/api/integrations/linear/callback`. Drop `client_id` + `client_secret` into `.env` as `YAAOS_OAUTH_LINEAR_CLIENT_ID` / `YAAOS_OAUTH_LINEAR_CLIENT_SECRET`.
+
+**Notion OAuth App** — register at <https://notion.so/my-integrations> as a **Public integration**. Capabilities: read content + read comments + read user info. Production callback at `https://<your-domain>/api/integrations/notion/callback`. Drop credentials into `.env` as `YAAOS_OAUTH_NOTION_CLIENT_ID` / `YAAOS_OAUTH_NOTION_CLIENT_SECRET`.
+
+M04 also adds these provider URL env vars (defaults point at the real upstreams; test compose overrides to the fakes):
+
+| Var | Default |
+|---|---|
+| `LINEAR_OAUTH_AUTHORIZE_URL` | `https://linear.app/oauth/authorize` |
+| `LINEAR_OAUTH_TOKEN_URL` | `https://api.linear.app/oauth/token` |
+| `LINEAR_OAUTH_REFRESH_URL` | `https://api.linear.app/oauth/token` |
+| `LINEAR_MCP_URL` | (Linear-published hosted MCP endpoint) |
+| `NOTION_OAUTH_AUTHORIZE_URL` / `NOTION_OAUTH_TOKEN_URL` / `NOTION_OAUTH_REFRESH_URL` / `NOTION_MCP_URL` | Notion equivalents |
+
 ### Dev mail (Mailpit)
 
 The dev overlay (`docker-compose.dev.yml`) starts [Mailpit](https://mailpit.axllent.org/) — a local SMTP sink that catches invitation emails and any other outbound mail. Web UI at <http://localhost:8025>. SMTP on `:1025`; backend points `SMTP_HOST`/`SMTP_PORT` there in dev. No real mail is ever sent in dev.

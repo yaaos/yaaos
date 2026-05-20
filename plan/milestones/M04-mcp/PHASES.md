@@ -4,17 +4,17 @@
 
 ## Phase 0 — scaffolding
 
-- [ ] Single named migration `0XX_create_all_m04` registered in `core/database/service.py:_MIGRATIONS` (next available number)
-- [ ] New tables: `mcp_credentials` (PK `(org_id, provider)`, columns per [architecture.md § Data model](architecture.md#data-model)), `mcp_review_tokens` (PK `token_hash`, columns per arch doc)
-- [ ] New modules created (skeletons): `core/oauth/`, `core/saml/`, `domain/integrations/`, `domain/mcp_proxy/`
-- [ ] Per-module doc skeletons: `apps/backend/docs/core_oauth.md`, `core_saml.md`, `domain_integrations.md`, `domain_mcp_proxy.md`
-- [ ] Frontend skeleton: `apps/web/src/domain/org_settings/integrations/`
-- [ ] `IntegrationProvider` Protocol declared in `domain/integrations/types.py`. Linear and Notion provider configs stubbed.
-- [ ] `docs/setup.md` updated for Linear + Notion OAuth client registration
-- [ ] `apps/backend/docs/patterns.md` adds "bearer token discipline" section (32 URL-safe bytes + sha256 stored; each consumer owns its own table)
-- [ ] `apps/backend/bin/sync_modules` produces no diff
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] Single named migration `0XX_create_all_m04` registered in `core/database/service.py:_MIGRATIONS` (next available number)
+- [x] New tables: `mcp_credentials` (PK `(org_id, provider)`, columns per [architecture.md § Data model](architecture.md#data-model)), `mcp_review_tokens` (PK `token_hash`, columns per arch doc)
+- [x] New modules created (skeletons): `core/oauth/`, `core/saml/`, `domain/integrations/`, `domain/mcp_proxy/`
+- [x] Per-module doc skeletons: `apps/backend/docs/core_oauth.md`, `core_saml.md`, `domain_integrations.md`, `domain_mcp_proxy.md`
+- [x] Frontend skeleton: `apps/web/src/domain/org_settings/integrations/`
+- [x] `IntegrationProvider` Protocol declared in `domain/integrations/types.py`. Linear and Notion provider configs stubbed.
+- [x] `docs/setup.md` updated for Linear + Notion OAuth client registration
+- [x] `apps/backend/docs/patterns.md` adds "bearer token discipline" section (32 URL-safe bytes + sha256 stored; each consumer owns its own table)
+- [x] `apps/backend/bin/sync_modules` produces no diff
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 0b — fake upstream provider apps
 

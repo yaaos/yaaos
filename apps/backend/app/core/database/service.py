@@ -136,6 +136,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("010_create_all_m02", "create_all_m02"),
     ("011_drop_claude_code_default_timeout_seconds", "drop_claude_code_default_timeout_seconds"),
     ("012_create_all_m03", "create_all_m03"),
+    ("013_create_all_m04", "create_all_m04"),
 )
 
 
@@ -443,6 +444,27 @@ async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[n
         await conn.execute(text(stmt))
 
 
+async def _apply_create_all_m04(conn) -> None:  # type: ignore[no-untyped-def]
+    """M04 — MCP context for coding agents.
+
+    Adds `mcp_credentials` (per-(org, provider) OAuth tokens + allowlist) and
+    `mcp_review_tokens` (per-review yaaos bearer for the proxy). `create_all`
+    is idempotent. Safe to re-run.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.domain.integrations.models")
+    importlib.import_module("app.domain.mcp_proxy.models")
+    new_tables = [
+        Base.metadata.tables[name]
+        for name in (
+            "mcp_credentials",
+            "mcp_review_tokens",
+        )
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_create_all_m03(conn) -> None:  # type: ignore[no-untyped-def]
     """M03 — settings + sidebar restructure.
 
@@ -521,6 +543,8 @@ async def migrate() -> None:
                 await _apply_drop_claude_code_default_timeout_seconds(conn)
             elif kind == "create_all_m03":
                 await _apply_create_all_m03(conn)
+            elif kind == "create_all_m04":
+                await _apply_create_all_m04(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},
