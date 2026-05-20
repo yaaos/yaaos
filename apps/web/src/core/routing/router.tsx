@@ -7,10 +7,10 @@ import { MemoryPage } from "@domain/memory";
 import {
   AuditSettingsPage,
   AuthSettingsPage,
+  BYOKSettingsPage,
   CodingAgentSettingsPage,
   CodingAgentsSettingsPage,
   MembersSettingsPage,
-  PlaceholderSettingsPage,
   VcsSettingsPage,
 } from "@domain/org_settings";
 import { SettingsPage } from "@domain/settings";
@@ -173,7 +173,7 @@ const orgSettingsCodingAgentDetailRoute = createRoute({
 const orgSettingsByokRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/settings/byok",
-  component: () => <PlaceholderSettingsPage active="byok" title="BYOK" phase="Phase 11" />,
+  component: BYOKSettingsPage,
 });
 
 // Legacy aliases — M01-era links + e2e specs target `/dashboard`,

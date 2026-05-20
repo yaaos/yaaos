@@ -136,14 +136,14 @@
 
 ## Phase 11 — Org Settings > BYOK UI
 
-- [ ] `core/byok` already exists from Phase 2; Phase 11 wires the UI
-- [ ] Anthropic validate callable lives in `plugins/claude_code` (or a dedicated Anthropic plugin module): minimal `messages.create` request with 1 output token. Passed to `core/byok.validate` as the validator.
-- [ ] Frontend `apps/web/src/domain/org_settings/byok/` page: provider list (Anthropic only) with status badge ("Configured" / "Not set" / "Invalid"), per-provider editor with reveal/hide, "Test key", Save, Remove. Last-validated and last-used timestamps displayed read-only.
-- [ ] Same record surfaced in Claude Code settings page; writes from either UI update the same `byok_keys` row
-- [ ] Endpoints per [architecture.md § API](architecture.md#api)
+- [x] `core/byok` already exists from Phase 2; Phase 11 wires the UI
+- [x] Anthropic validate callable lives in `plugins/claude_code` (or a dedicated Anthropic plugin module): minimal `messages.create` request with 1 output token. Passed to `core/byok.validate` as the validator.
+- [x] Frontend `apps/web/src/domain/org_settings/byok/` page: provider list (Anthropic only) with status badge ("Configured" / "Not set" / "Invalid"), per-provider editor with reveal/hide, "Test key", Save, Remove. Last-validated and last-used timestamps displayed read-only.
+- [x] Same record surfaced in Claude Code settings page; writes from either UI update the same `byok_keys` row
+- [x] Endpoints per [architecture.md § API](architecture.md#api)
 - [ ] E2E: set key → test → save → confirm Claude Code page reflects the change → clear from BYOK → confirm Claude Code page shows empty state
 - [ ] `apps/backend/bin/ci` + `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] Phase committed
 
 ## Phase 12 — docs + glossary
 
