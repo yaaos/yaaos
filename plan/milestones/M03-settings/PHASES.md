@@ -209,16 +209,16 @@ A thorough sweep over the whole milestone. **Fix gaps inline; do not just record
 
 ## Phase 15 — handoff to M04
 
-- [ ] Confirm every box in this file above is `[x]` (run `grep -n '\[ \]' plan/milestones/M03-settings/PHASES.md` — must return zero matches before this phase ticks)
-- [ ] Tick the M03 box in `plan/AUTONOMOUS_RUN.md`
-- [ ] Commit: `M03: milestone complete`
-- [ ] If context budget allows in the current iteration, immediately switch to `plan/milestones/M04-mcp/START_HERE.md` and continue per the top-level ritual. Otherwise exit cleanly; next loop iteration picks up M04.
+- [x] Confirm every box in this file above is `[x]` (run `grep -n '\[ \]' plan/milestones/M03-settings/PHASES.md` — must return zero matches before this phase ticks)
+- [x] Tick the M03 box in `plan/AUTONOMOUS_RUN.md`
+- [x] Commit: `M03: milestone complete`
+- [x] If context budget allows in the current iteration, immediately switch to `plan/milestones/M04-mcp/START_HERE.md` and continue per the top-level ritual. Otherwise exit cleanly; next loop iteration picks up M04.
 
 ## Completion check (run before declaring milestone done)
 
-- [ ] `grep -n '\[ \]' plan/milestones/M03-settings/PHASES.md` → no output
-- [ ] `apps/backend/bin/ci` → exit 0
-- [ ] `apps/web/bin/ci` → exit 0
-- [ ] `apps/e2e/bin/ci` → exit 0
-- [ ] `git status` on branch `m03-settings` → clean
-- [ ] M03 ticked in `plan/AUTONOMOUS_RUN.md`
+- [x] `grep -n '\[ \]' plan/milestones/M03-settings/PHASES.md` → no output
+- [x] `apps/backend/bin/ci` → exit 0
+- [x] `apps/web/bin/ci` → exit 0
+- [x] `apps/e2e/bin/ci` → exit 0
+- [x] `git status` on branch `m03-settings` → clean
+- [x] M03 ticked in `plan/AUTONOMOUS_RUN.md`

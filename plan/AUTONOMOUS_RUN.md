@@ -33,7 +33,7 @@ Drop `client_id` + `client_secret` for each into `.env` when ready.
 
 The runner ticks these as each milestone completes. The top-level stop condition checks this list.
 
-- [ ] **M03 — Settings + sidebar restructure** → [START_HERE.md](milestones/M03-settings/START_HERE.md)
+- [x] **M03 — Settings + sidebar restructure** → [START_HERE.md](milestones/M03-settings/START_HERE.md)
 - [ ] **M04 — MCP context for reviewer agents** → [START_HERE.md](milestones/M04-mcp/START_HERE.md)
 
 ## Per-iteration ritual
