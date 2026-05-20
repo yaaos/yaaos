@@ -16,6 +16,26 @@
 - [ ] `apps/backend/bin/ci` exits 0
 - [ ] Phase committed
 
+## Phase 0b — fake upstream provider apps
+
+- [ ] `apps/fake-linear/` created: FastAPI app with Dockerfile + pyproject.toml mirroring `apps/fake-github` structure
+- [ ] fake-linear implements OAuth authorize endpoint (auto-grants), token exchange, refresh with refresh-token rotation matching Linear semantics
+- [ ] fake-linear implements MCP endpoint at `/sse` (Streamable HTTP) with read tools (`get_issue`, `search_issues`, `list_projects`, `list_cycles`) returning seeded data and write tools (`update_issue`, `create_comment`) mutating in-memory state
+- [ ] fake-linear has hardcoded test secrets in `apps/fake-linear/app/test_secrets.py`
+- [ ] `apps/fake-linear/docs/README.md` describing what's emulated
+- [ ] `apps/fake-notion/` created: same structure as fake-linear
+- [ ] fake-notion implements OAuth endpoints with Notion-specific scope vocabulary + refresh semantics
+- [ ] fake-notion implements MCP endpoint at `/mcp` with read tools (`search`, `query_database`, `retrieve_page`, `retrieve_block`) and write tools (`update_page`, `create_comment`)
+- [ ] fake-notion has hardcoded test secrets in `apps/fake-notion/app/test_secrets.py`
+- [ ] `apps/fake-notion/docs/README.md` describing what's emulated
+- [ ] Both fakes added to `docker/docker-compose.test.yml` with hostname routing
+- [ ] Env-var hooks added to backend Linear + Notion `IntegrationProvider` configs: `LINEAR_OAUTH_AUTHORIZE_URL`, `LINEAR_OAUTH_TOKEN_URL`, `LINEAR_OAUTH_REFRESH_URL`, `LINEAR_MCP_URL` (and Notion equivalents). Production defaults are the real upstream URLs.
+- [ ] Test compose overrides these env vars to point at the fakes
+- [ ] Tests for fake-linear: OAuth round-trip, MCP `tools/list` returns expected catalogue, `tools/call` for read tool returns seeded data, write tool mutates state
+- [ ] Tests for fake-notion: same coverage
+- [ ] `apps/backend/bin/ci` exits 0 (fakes build via docker-compose, backend tests passing without real OAuth apps)
+- [ ] Phase committed
+
 ## Phase 1 — `core/oauth` extraction + GitHub plugin consolidation + outbound OAuth foundation (Linear)
 
 - [ ] `core/oauth` implemented: `build_authorize_url(provider_config, state, scopes) -> url`, `exchange_code(provider_config, code) -> Tokens`, `refresh_access_token(provider_config, refresh_token) -> Tokens`. `ProviderConfig` dataclass passed in (authorize_url, token_url, refresh_url, client_id, client_secret, scope_separator). No I/O outside the OAuth dance.
@@ -28,7 +48,7 @@
 - [ ] Tokens encrypted at rest via `core/secrets` (M03)
 - [ ] Endpoints: `GET /api/orgs/{slug}/integrations/{provider}/connect`, `GET /api/integrations/{provider}/callback`, `DELETE /api/orgs/{slug}/integrations/{provider}`, `POST /api/orgs/{slug}/integrations/{provider}/validate`
 - [ ] Signed `state` (via `itsdangerous`, reusing `yaaos_invitation_token_secret`) carries `(org_id, user_initiating)`; verified on callback
-- [ ] Tests: `core/oauth` round-trip with mocked provider endpoints; inbound GitHub OAuth still green post-refactor; connect-callback persists tokens; clear removes them; refresh under contention serializes (two concurrent calls, only one upstream POST); failed refresh sets `last_refresh_status = "failed"` and audits correctly; state-signature tampering rejected
+- [ ] Tests: `core/oauth` round-trip against `apps/fake-linear` (real HTTP via the fake); inbound GitHub OAuth still green post-refactor; connect-callback persists tokens; clear removes them; refresh under contention serializes (two concurrent calls, only one upstream POST); failed refresh sets `last_refresh_status = "failed"` and audits correctly; state-signature tampering rejected
 - [ ] `apps/backend/bin/ci` exits 0
 - [ ] Phase committed
 
@@ -117,7 +137,7 @@
   3. Webhook-triggered review on a PR from an outside contributor → audit shows `actor_kind = system`, same `upstream_account`
   4. Owner disables Notion → review still runs → Notion calls return `not_connected`; Linear calls succeed
   5. After review ends, `mcp_review_tokens` row is gone
-- [ ] Backend tests mock upstream Linear + Notion MCP endpoints (hand-written stubs in test files)
+- [ ] Backend + E2E tests drive the full path against `apps/fake-linear` + `apps/fake-notion` containers from docker-compose (no hand-written HTTP stubs needed; the fakes are the stubs)
 - [ ] `apps/backend/bin/ci` + `apps/e2e/bin/ci` exit 0
 - [ ] Phase committed
 

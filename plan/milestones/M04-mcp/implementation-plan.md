@@ -12,6 +12,25 @@
 - `docs/setup.md` updated for Linear + Notion OAuth client registration (dev + prod each need their own for each provider; localhost callbacks OK).
 - `apps/backend/docs/patterns.md` updated with a "bearer token discipline" section (32 URL-safe bytes + sha256 stored; each table owns its own join columns). Used as the reference point by `sessions` (M02) and `mcp_review_tokens` (this milestone) — no shared module needed.
 
+## Phase 0b — fake upstream provider apps
+
+Mirrors the existing `apps/fake-github` pattern. Unlocks all downstream OAuth + MCP testing without real Linear/Notion accounts.
+
+- New app `apps/fake-linear/`: FastAPI service with its own Dockerfile + pyproject.toml. Implements:
+  - OAuth authorize endpoint (auto-grants; redirects back with code).
+  - OAuth token-exchange endpoint.
+  - OAuth refresh endpoint with refresh-token rotation semantics matching Linear.
+  - Hosted MCP endpoint at `/sse` accepting JSON-RPC over Streamable HTTP.
+  - Read tools (`get_issue`, `search_issues`, `list_projects`, `list_cycles`) returning seeded fake data.
+  - Write tools (`update_issue`, `create_comment`) that store into in-memory state and return success.
+  - Hardcoded test secrets in `apps/fake-linear/app/test_secrets.py`.
+- New app `apps/fake-notion/`: same shape. MCP at `/mcp`. Read tools (`search`, `query_database`, `retrieve_page`, `retrieve_block`) + write tools (`update_page`, `create_comment`). Provider-specific OAuth scope vocabulary + refresh semantics.
+- Both fakes added to `docker/docker-compose.test.yml` with hostname routing for the backend container.
+- `IntegrationProvider` Linear + Notion configs (added in Phase 1 / 1b) read OAuth + MCP URLs from env vars with production defaults; test compose overrides these to point at the fakes.
+- Tests for each fake server: OAuth round-trip (authorize → token → refresh); MCP `tools/list` returns the expected catalogue; `tools/call` for read tools returns seeded data; write tools mutate state.
+- Docs: `apps/fake-linear/docs/README.md` + `apps/fake-notion/docs/README.md` describe what each fake emulates.
+- `apps/backend/bin/ci` exits 0; fakes build via docker-compose.
+
 ## Phase 1 — `core/oauth` extraction + GitHub plugin consolidation + outbound OAuth foundation (Linear)
 
 - **`core/oauth` implemented**: pure protocol mechanics. `build_authorize_url(provider_config, state, scopes)`, `exchange_code(provider_config, code) -> Tokens`, `refresh_access_token(provider_config, refresh_token) -> Tokens`. Provider config is a dataclass passed in (authorize_url, token_url, refresh_url, client_id, client_secret). No I/O outside the OAuth dance; no awareness of orgs/users/storage.
@@ -152,8 +171,10 @@
 ## Dependency order
 
 ```
-0 → 1 → 1b → 1c → 2 → 3 → 3b → 4 → 5 → 5b → 6 → 6a → 6b → 7
+0 → 0b → 1 → 1b → 1c → 2 → 3 → 3b → 4 → 5 → 5b → 6 → 6a → 6b → 7
 ```
+
+Phase 0b (fake upstream apps) lands before Phase 1 so the Linear + Notion OAuth providers can be developed and tested against fakes from day one. Real Linear/Notion OAuth apps are not required for the autonomous build to complete.
 
 Phase 1 (Linear OAuth + GitHub plugin consolidation) lands the abstraction. Phase 1b (Notion) stress-tests it. Phase 1c (core/saml extraction) is independent of MCP but lands here for the cleanup spree. Phase 2 (proxy) depends on `get` and `refresh` from Phase 1. Phase 3 (reviewer wiring) sequences after the proxy. Phase 3b (broken-creds surfacing) needs Phase 1's refresh wiring + Phase 3's review output. Phase 4 (UI) can be built in parallel with phases 2–3b once data shape is locked but must land before Phase 5 (E2E). Phases 5b (test-plugin relocation), 6 (audit retention + constants relocation), 6a (primitives dissolution), 6b (settings dissolution) are mechanical refactors with no behavior change — land them near the end so they don't interleave with feature work. Phase 7 wraps everything in docs + final CI green.
 

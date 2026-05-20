@@ -9,6 +9,20 @@
 - `domain/integrations` — yaaos's concept of "the org has integrations." Owns the `mcp_credentials` table. Consumes `core/oauth` for protocol mechanics + `core/secrets` for at-rest encryption. Domain-shaped (the *concept* of an integration is yaaos-specific) while staying free of OAuth wire details. Service exposes: `connect_start(org_id, provider, user_initiating) -> redirect_url`, `connect_callback(provider, code, state) -> credential_row`, `get(org_id, provider)`, `refresh(org_id, provider)` (advisory-lock-guarded), `clear(...)`, `validate(...)`, `update_allowlist(...)`. Lifecycle decisions (broken-creds detection, refresh failure → status flip → notification) live here.
 - `domain/mcp_proxy` — owns `mcp_review_tokens` + the FastAPI router that speaks MCP Streamable HTTP. Service exposes: `mint_token(review_id) -> token`, `revoke_token(review_id)`, `dispatch(token, server, json_rpc)`. Stays in domain — every concern (review-bound tokens, allowlist enforcement, audit-per-method, broken-creds surfacing) is yaaos-specific even though the MCP protocol it speaks is generic.
 
+### Fake upstream provider apps
+
+Mirror the existing `apps/fake-github` pattern. Each is its own FastAPI service with its own Dockerfile + pyproject.toml, runs as a container in `docker/docker-compose.test.yml`, and backend + E2E tests point at it via env vars. Used by ALL automated testing — the runner can build M04 end-to-end without real Linear/Notion OAuth apps registered.
+
+- `apps/fake-linear` — implements Linear's OAuth endpoints (authorize / token / refresh with refresh-token rotation semantics matching real Linear) + Linear's hosted MCP endpoint at `/sse`. Streamable HTTP transport. Exposes a small set of read tools (`get_issue`, `search_issues`, `list_projects`, `list_cycles`) and write tools (`update_issue`, `create_comment`) that return seeded fake data.
+- `apps/fake-notion` — same shape for Notion. OAuth endpoints + MCP at `/mcp`. Read tools (`search`, `query_database`, `retrieve_page`, `retrieve_block`) and write tools (`update_page`, `create_comment`). Provider quirks honored (different scope vocabulary, different refresh semantics where they differ from Linear).
+
+Env-var override hooks read by backend tests + the Linear/Notion `IntegrationProvider` configs:
+
+- `LINEAR_OAUTH_AUTHORIZE_URL`, `LINEAR_OAUTH_TOKEN_URL`, `LINEAR_OAUTH_REFRESH_URL`, `LINEAR_MCP_URL`
+- `NOTION_OAUTH_AUTHORIZE_URL`, `NOTION_OAUTH_TOKEN_URL`, `NOTION_OAUTH_REFRESH_URL`, `NOTION_MCP_URL`
+
+Default (production) URLs are the real upstream URLs. Test compose sets the env vars to point at the fakes. Hardcoded test secrets in each fake (e.g. `apps/fake-linear/app/test_secrets.py`) match what backend tests use, mirroring `apps/fake-github`'s pattern.
+
 ### Touched
 
 - `core/audit_log` — adds new `kind` values (`mcp.<server>.<method>`, `mcp.<provider>.token_refreshed`, `mcp.<provider>.token_refresh_failed`). Already extensible; just expand the allowed value set. Also absorbs:

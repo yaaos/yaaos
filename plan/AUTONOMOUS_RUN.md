@@ -17,10 +17,17 @@ Before kicking off the loop, confirm:
 - [ ] `git status` is clean on `main` (or whatever base branch you want milestones to branch from).
 - [ ] M03/M04 spec docs are committed (`plan/milestones/M03-settings/`, `plan/milestones/M04-mcp/`, and this file).
 - [ ] **GitHub OAuth App**: verify-only callback URL added at `http://localhost:8080/api/account/github/verify/callback`. (Required by M03's User > Details GitHub-handle verification flow.)
-- [ ] **Linear OAuth App** registered at linear.app/settings/api → OAuth applications. Scope `read`. Dev callback `http://localhost:8080/api/integrations/linear/callback`. `client_id` + `client_secret` in `.env`.
-- [ ] **Notion OAuth App** registered at notion.so/my-integrations as a **Public** integration (not Internal). Capabilities: read content + read comments + read user info. Dev callback `http://localhost:8080/api/integrations/notion/callback`. `client_id` + `client_secret` in `.env`.
 
-If any of these aren't done, the runner will hit blockers and record them in the appropriate `DECISIONS.md`. Better to handle them before starting.
+### Optional / future (does not block the autonomous run)
+
+M04 builds `apps/fake-linear` and `apps/fake-notion` fake servers (Phase 0b), matching the existing `apps/fake-github` pattern. All backend tests + E2E Playwright tests point at the fakes via env vars. The runner can complete M04 end-to-end **without** real Linear/Notion OAuth apps.
+
+You'll need the real apps eventually to use yaaos against your actual Linear/Notion data. Register at your leisure:
+
+- **Linear OAuth App** at linear.app/settings/api → OAuth applications. Scope `read`. Production callback at your prod domain.
+- **Notion OAuth App** at notion.so/my-integrations as a **Public** integration. Capabilities: read content + read comments + read user info. Production callback at your prod domain.
+
+Drop `client_id` + `client_secret` for each into `.env` when ready.
 
 ## Milestone progress
 
