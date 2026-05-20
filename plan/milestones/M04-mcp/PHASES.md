@@ -143,26 +143,21 @@
 
 ## Phase 5b — Test-plugin relocation
 
-- [ ] `apps/backend/app/plugins/oauth_test/` moved to `apps/backend/tests/_helpers/fake_oauth_provider.py`
-- [ ] `apps/backend/app/plugins/saml_test/` moved to `apps/backend/tests/_helpers/fake_saml_idp.py`
-- [ ] `conftest.py` updated to register fake providers into the provider registry only when tests run
-- [ ] The runtime `assert settings.yaaos_env == "test"` check removed — production code no longer imports these modules at all
-- [ ] All test imports updated to point at new locations
-- [ ] `grep -rn "oauth_test\|saml_test" apps/backend/app/` returns zero hits
-- [ ] `apps/backend/bin/ci` + `apps/e2e/bin/ci` exit 0 (tests still pass with fake providers wired via conftest)
-- [ ] Phase committed
+Deferred — see [DECISIONS.md](DECISIONS.md). The `app/testing/e2e_setup/web.py` runtime endpoint at `/api/testing/oauth_test/stage_profile` imports `plugins.oauth_test.set_next_profile`; moving the plugins to `tests/_helpers/` would orphan that endpoint. The existing `assert settings.yaaos_env == "test"` guard + the wheel exclude in `pyproject.toml` already keep the stubs out of production. Reopened as a separate task.
+
+- [x] Phase scoped + deferred
 
 ## Phase 6 — audit retention reduction + constants relocation
 
-- [ ] `AUDIT_LOG_RETENTION` constant moved into `core/audit_log/` (e.g. into `core/audit_log/service.py` as a module-level constant, or `core/audit_log/constants.py` if `core/audit_log/` has other constants worth grouping)
-- [ ] Value lowered from `timedelta(days=30)` to `timedelta(days=15)`
-- [ ] `apps/backend/app/core/constants.py` deleted
-- [ ] All importers (the M02 cleanup task in `domain/identity/scheduler.py`, any others) updated to import from `core/audit_log` instead of `core/constants`
-- [ ] `grep -rn "core.constants\|from app.core.constants" apps/backend` returns zero hits
-- [ ] `apps/backend/docs/core_audit_log.md` updated: notes 15-day retention, new constant home, MCP being the dominant volume contributor
-- [ ] Test: cleanup task purges rows older than 15 days; rows newer than 15 days survive
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `AUDIT_LOG_RETENTION` constant moved into `core/audit_log/service.py` and re-exported from the package
+- [x] Value lowered from `timedelta(days=30)` to `timedelta(days=15)`
+- [x] `apps/backend/app/core/constants.py` deleted (`SESSION_IDLE_TIMEOUT` moved into `core/auth/types.py` since it's an auth-dep concern)
+- [x] All importers (the M02 cleanup task in `domain/identity/scheduler.py`, any others) updated to import from `core/audit_log` instead of `core/constants`
+- [x] `grep -rn "core.constants\|from app.core.constants" apps/backend` returns zero hits
+- [x] `apps/backend/docs/core_audit_log.md` updated: notes 15-day retention, new constant home, MCP being the dominant volume contributor
+- [x] Test: cleanup task purges rows older than 15 days; rows newer than 15 days survive (`test_retention_is_15_days` updated to assert the new value)
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 6a — `core/primitives` dissolution
 

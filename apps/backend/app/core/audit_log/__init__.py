@@ -2,6 +2,7 @@
 
 from app.core.audit_log.models import AuditEntryRow
 from app.core.audit_log.service import (
+    AUDIT_LOG_RETENTION,
     AuditEntry,
     AuditEntryNotFoundError,
     audit,
@@ -19,6 +20,7 @@ from app.core.audit_log.service import (
 )
 
 __all__ = [
+    "AUDIT_LOG_RETENTION",
     "AuditEntry",
     "AuditEntryNotFoundError",
     "AuditEntryRow",

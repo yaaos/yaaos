@@ -134,7 +134,7 @@ def require(action: Action) -> Callable[..., None]:
         from datetime import datetime as _datetime  # noqa: PLC0415
         from datetime import timedelta as _timedelta  # noqa: PLC0415
 
-        from app.core.constants import SESSION_IDLE_TIMEOUT  # noqa: PLC0415
+        from app.core.auth.types import SESSION_IDLE_TIMEOUT  # noqa: PLC0415
 
         token = request.cookies.get("yaaos_session")
         if token:

@@ -10,9 +10,8 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import update
 
-from app.core.audit_log import audit, list_for_org, purge_older_than
+from app.core.audit_log import AUDIT_LOG_RETENTION, audit, list_for_org, purge_older_than
 from app.core.audit_log.models import AuditEntryRow
-from app.core.constants import AUDIT_LOG_RETENTION
 from app.core.primitives import Actor
 
 
@@ -24,8 +23,10 @@ def _user_actor():
     return Actor.user(user_id=uuid4())
 
 
-def test_retention_is_30_days() -> None:
-    assert AUDIT_LOG_RETENTION == timedelta(days=30)
+def test_retention_is_15_days() -> None:
+    # Lowered from 30d in M04 Phase 6 — MCP-dispatch audit rows are the
+    # dominant volume contributor, and 15d keeps the storage envelope sane.
+    assert AUDIT_LOG_RETENTION == timedelta(days=15)
 
 
 @pytest.mark.asyncio

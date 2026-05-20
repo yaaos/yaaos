@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log.models import AuditEntryRow
 from app.core.database import session as get_session
 from app.core.primitives import Actor, ActorKind
+
+# How long audit rows live before the periodic cleanup task purges them.
+# MCP-dispatch entries are by far the dominant volume contributor in M04+
+# (one row per JSON-RPC method), so retention is sized to keep storage bounded —
+# 15 days strikes the right balance for the POC.
+AUDIT_LOG_RETENTION = timedelta(days=15)
 
 
 class AuditEntry(BaseModel):

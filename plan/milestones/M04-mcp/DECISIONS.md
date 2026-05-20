@@ -51,6 +51,13 @@ Keep entries terse. The user reads this at the end of the run; volume = friction
 - **Why this one**: matches every M03+ mutation endpoint (vcs, coding-agents, byok); the SPA's `apiFetch` carries `X-Org-Slug` automatically. The OAuth callback URL is the exception — the upstream provider doesn't know our header — so the signed `state` embeds the `org_id`.
 - **Reversal cost**: low.
 
+### Phase 5b — test-plugin relocation deferred
+
+- **Certainty**: 2/5
+- **Decision**: Leave `app/plugins/oauth_test/` and `app/plugins/saml_test/` where they are. Phase 5b's move target (`apps/backend/tests/_helpers/`) is incompatible with `app/testing/e2e_setup/web.py`'s `/api/testing/oauth_test/stage_profile` runtime endpoint that imports `plugins.oauth_test.set_next_profile` from production-deployable code. A clean move would require either (a) moving the e2e_setup endpoints out of `app/testing/` too, or (b) inlining the stub-profile state into `app/testing/e2e_setup/service.py`. Both rewrites touch ~37 import sites and need their own focused PR.
+- **Why this one**: the existing `assert settings.yaaos_env == "test"` guard already prevents the stub from loading in prod, and the wheel exclude in `pyproject.toml` strips the testing layer from the production artifact. The move is structural hygiene with zero behavior change — better to defer to a milestone that owns a Phase 5b-shaped refactor in isolation.
+- **Reversal cost**: low — re-open Phase 5b as a separate task.
+
 ### Phase 5 — Playwright e2e shipped as backend dispatch integration; UI e2e deferred to operator
 
 - **Certainty**: 2/5

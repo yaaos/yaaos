@@ -14,9 +14,9 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy import delete as sql_delete
 
+from app.core.audit_log import AUDIT_LOG_RETENTION
 from app.core.audit_log import purge_older_than as purge_audit_older_than
 from app.core.config import get_settings
-from app.core.constants import AUDIT_LOG_RETENTION
 from app.core.database import session as db_session
 from app.domain.identity import sessions
 from app.domain.identity.models import UserTotpSecretRow

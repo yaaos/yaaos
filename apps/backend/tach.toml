@@ -62,7 +62,7 @@ depends_on = ["app.core.database", "app.core.primitives"]
 
 [[modules]]
 path = "app.domain.auth"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.constants", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.identity", "app.domain.integrations", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.identity", "app.domain.integrations", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.byok"
@@ -74,7 +74,7 @@ depends_on = ["app.core.primitives", "app.core.workspace", "app.domain.memory", 
 
 [[modules]]
 path = "app.domain.identity"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.constants", "app.core.database", "app.core.primitives", "app.core.secrets", "app.core.webserver", "app.domain.auth", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.secrets", "app.core.webserver", "app.domain.auth", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.intake"
