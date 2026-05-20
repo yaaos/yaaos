@@ -55,12 +55,12 @@
 
 ## Phase 4 — org settings additions (session-timeout override)
 
-- [ ] `orgs.session_timeout_override` exposed via `PATCH /api/orgs/{slug}` (Owner/Admin only)
-- [ ] Session lookup path honors the override: when computing idle expiry for a session whose request includes a given `X-Org-Slug`, use the org's override if set, else the global `SESSION_IDLE_TIMEOUT` constant
-- [ ] Tests: override applies; falls back when null; can be cleared by setting to null; non-owner/non-admin gets 403
-- [ ] `apps/backend/docs/domain_orgs.md` updated
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `orgs.session_timeout_override` exposed via `PATCH /api/orgs/{slug}` (Owner/Admin only)
+- [x] Session lookup path honors the override: when computing idle expiry for a session whose request includes a given `X-Org-Slug`, use the org's override if set, else the global `SESSION_IDLE_TIMEOUT` constant
+- [x] Tests: override applies; falls back when null; can be cleared by setting to null; non-owner/non-admin gets 403
+- [x] `apps/backend/docs/domain_orgs.md` updated
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 5 — sidebar component
 

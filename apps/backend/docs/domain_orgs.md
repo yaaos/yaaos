@@ -33,8 +33,13 @@ HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to brea
 | POST   | `/api/coding-agents`            | `CODING_AGENT_WRITE` — install a plugin. |
 | PATCH  | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — replace settings. |
 | DELETE | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — uninstall. |
+| PATCH  | `/api/orgs`                     | `ORG_SETTINGS_WRITE` — update top-level org settings (today: `session_timeout_override`). |
 
 SSO endpoints land in Phase 12.
+
+### Session-timeout override
+
+`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`domain/auth`](domain_auth.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
 
 ### VCS
 

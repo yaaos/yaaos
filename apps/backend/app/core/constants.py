@@ -13,5 +13,11 @@ from datetime import timedelta
 # `domain/identity/scheduler.py` purges `audit_entries` rows older than this.
 AUDIT_LOG_RETENTION = timedelta(days=30)
 
+# M03 — global default idle-session timeout. A session that hasn't been touched
+# in this long is treated as expired by the auth dep, regardless of its
+# absolute `expires_at`. Orgs can override per-org via `orgs.session_timeout_override`
+# (nullable integer minutes) — see `domain/orgs.session_timeout`.
+SESSION_IDLE_TIMEOUT = timedelta(hours=12)
 
-__all__ = ["AUDIT_LOG_RETENTION"]
+
+__all__ = ["AUDIT_LOG_RETENTION", "SESSION_IDLE_TIMEOUT"]
