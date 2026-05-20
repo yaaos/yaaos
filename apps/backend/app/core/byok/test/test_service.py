@@ -6,9 +6,9 @@ import pytest
 from sqlalchemy import select
 
 from app.core import byok
+from app.core.audit_log import Actor
 from app.core.audit_log.models import AuditEntryRow
 from app.core.byok.models import ByokKeyRow
-from app.core.primitives import Actor
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role

@@ -1,27 +1,16 @@
-"""Foundational value objects + the spawn() helper.
+"""Actor value object — who-did-what for audit rows.
 
-`Actor` is the who-did-what value object used across audit_log, intake, reviewer, etc.
-`PluginMeta` is the self-description every plugin (VCS, coding-agent, workspace
-provider) exposes via its Protocol — id + type + display_name + optional
-description/docs_url. Used by the Settings UI plugin-discovery endpoint and by
-audit / log lines that reference plugins by something more legible than a code id.
-`spawn()` is the fire-and-forget wrapper around asyncio.create_task — every background
-coroutine in M01 goes through it.
+Lives alongside the audit_log module since it is the row's `actor` column type.
+Previously in `core/primitives`; moved here in M04 Phase 6a so the type's
+ownership matches its usage.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from collections.abc import Coroutine
 from enum import StrEnum
-from typing import Any, Literal
 from uuid import UUID
 
-import structlog
 from pydantic import BaseModel, model_validator
-
-log = structlog.get_logger("primitives")
 
 
 class ActorKind(StrEnum):
@@ -108,54 +97,3 @@ class Actor(BaseModel):
     @classmethod
     def sso(cls, login: str | None = None) -> Actor:
         return cls(kind=ActorKind.SSO, login=login)
-
-
-PluginType = Literal["vcs", "coding_agent", "workspace"]
-
-
-class PluginMeta(BaseModel):
-    """Self-description every plugin exposes via `plugin.meta`.
-
-    The `id` is the stable code identifier used everywhere a plugin is referenced
-    by string (registry keys, URL paths under `/api/<id>/...`, agent rows'
-    `coding_agent_plugin_id`, `Repo.plugin_id`, …). `display_name` is the human
-    label; the UI shows that, not the id. `type` lets the UI group/format plugins
-    by what they do.
-    """
-
-    id: str
-    type: PluginType
-    display_name: str
-    description: str | None = None
-    docs_url: str | None = None
-
-
-# Module-level set keeps spawned tasks alive (asyncio's standard pitfall — without
-# a strong reference, the GC may collect them mid-flight).
-_tasks: set[asyncio.Task[Any]] = set()
-
-
-def spawn(name: str, coro: Coroutine[Any, Any, None]) -> asyncio.Task[Any]:
-    """Fire-and-forget background work.
-
-    Wraps `coro` in a try/except that logs `spawn.crashed` with a stack trace
-    if the coroutine raises. The coroutine itself is expected to mark its own
-    domain row failed before raising; spawn() catches as a last-resort safety net.
-    """
-
-    async def _wrapper() -> None:
-        try:
-            await coro
-        except Exception:
-            logging.getLogger("yaaos").exception("spawn.crashed", extra={"spawn_name": name})
-
-    task = asyncio.create_task(_wrapper(), name=f"spawn:{name}")
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-    log.debug("spawn.started", spawn_name=name)
-    return task
-
-
-def active_task_count() -> int:
-    """Test helper — number of pending spawned tasks."""
-    return sum(1 for t in _tasks if not t.done())

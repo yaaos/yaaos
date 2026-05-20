@@ -23,7 +23,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.core.primitives import Actor
+from app.core.audit_log import Actor
 from app.domain.reviewer.llm import ClassifyReplyOutput
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import (

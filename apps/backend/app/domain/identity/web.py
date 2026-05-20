@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.core.primitives import spawn
+from app.core.observability import spawn
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.identity.scheduler import run_cleanup_loop
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 import structlog
 
+from app.core.audit_log import ActorKind
 from app.core.auth import (
     actor_kind_var,
     org_context,
@@ -17,7 +18,6 @@ from app.core.auth import (
     require_org_context,
     route_security_resolved,
 )
-from app.core.primitives import ActorKind
 
 
 @pytest.mark.asyncio

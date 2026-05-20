@@ -18,10 +18,9 @@ import structlog
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.audit_log import audit
+from app.core.audit_log import Actor, audit
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.domain.identity import repository as identity_repo
 from app.domain.integrations.models import McpCredentialRow

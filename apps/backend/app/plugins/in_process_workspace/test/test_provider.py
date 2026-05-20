@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace import RepoRefForSpec, WorkspaceProvisionError, WorkspaceSpec
 from app.domain import vcs
 from app.plugins.in_process_workspace import get_provider

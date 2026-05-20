@@ -147,8 +147,7 @@ async def _emit_bootstrap_audit(
     """Emit a `bootstrap_owner_seeded` audit row capturing what the script
     created. Idempotent re-runs that found everything already existing
     don't emit (caller checks)."""
-    from app.core.audit_log import audit  # noqa: E402
-    from app.core.primitives import Actor  # noqa: E402
+    from app.core.audit_log import Actor, audit  # noqa: E402
     from pydantic import BaseModel  # noqa: E402
 
     class _BootstrapPayload(BaseModel):

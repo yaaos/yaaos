@@ -38,10 +38,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.audit_log import audit
+from app.core.audit_log import Actor, audit
 from app.core.auth import public_route
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.integrations import service as integ

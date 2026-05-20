@@ -12,7 +12,7 @@ import structlog
 from sqlalchemy import select, update
 
 from app.core.database import session as get_session
-from app.core.primitives import spawn
+from app.core.observability import spawn
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import (
     CodingAgentCliResult,

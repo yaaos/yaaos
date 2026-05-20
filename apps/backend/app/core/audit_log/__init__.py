@@ -1,5 +1,6 @@
 """core/audit_log — append-only timeline primitive."""
 
+from app.core.audit_log.actor import Actor, ActorKind
 from app.core.audit_log.models import AuditEntryRow
 from app.core.audit_log.service import (
     AUDIT_LOG_RETENTION,
@@ -21,6 +22,8 @@ from app.core.audit_log.service import (
 
 __all__ = [
     "AUDIT_LOG_RETENTION",
+    "Actor",
+    "ActorKind",
     "AuditEntry",
     "AuditEntryNotFoundError",
     "AuditEntryRow",

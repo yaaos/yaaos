@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.core.primitives import active_task_count, spawn
+from app.core.observability import active_task_count, spawn
 
 
 @pytest.mark.asyncio

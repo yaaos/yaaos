@@ -27,7 +27,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.core.primitives import Actor
+from app.core.audit_log import Actor
 from app.domain.coding_agent import FindingAnchor, FindingDraft
 from app.domain.reviewer.queue import _findingdrafts_to_raw, _raw_to_vcs_findings
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository

@@ -20,13 +20,13 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
+from app.core.audit_log import Actor
 from app.core.audit_log import audit as audit_write
 from app.core.auth.context import org_id_var
 from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.auth.types import Action
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("orgs.sso.web")
@@ -228,8 +228,8 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     `exempt_owner_no_totp`. Phase 11 helper enforces. Writes a
     `sso_config_changed` audit row + an `exempt_owner_set` row when
     the exempt-Owner pointer changed."""
+    from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.auth.context import user_id_var  # noqa: PLC0415
-    from app.core.primitives import Actor  # noqa: PLC0415
     from app.domain.auth.dependencies import current_actor  # noqa: PLC0415
     from app.domain.identity.totp import can_be_sso_exempt_owner  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415

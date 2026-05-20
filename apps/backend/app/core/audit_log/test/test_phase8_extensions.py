@@ -10,9 +10,8 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import update
 
-from app.core.audit_log import AUDIT_LOG_RETENTION, audit, list_for_org, purge_older_than
+from app.core.audit_log import AUDIT_LOG_RETENTION, Actor, audit, list_for_org, purge_older_than
 from app.core.audit_log.models import AuditEntryRow
-from app.core.primitives import Actor
 
 
 class _Payload(BaseModel):

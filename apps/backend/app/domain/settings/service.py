@@ -21,7 +21,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace.service import _PROVIDERS as _WORKSPACE_PROVIDERS
 from app.domain.coding_agent.service import _PLUGINS as _CODING_AGENT_PLUGINS
 from app.domain.vcs.registry import _PLUGINS as _VCS_PLUGINS

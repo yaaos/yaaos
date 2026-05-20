@@ -10,8 +10,8 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware
-from app.core.primitives import Actor
 from app.domain.auth import web as _auth_web  # noqa: F401 — triggers auth.dep load
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle

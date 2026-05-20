@@ -10,6 +10,8 @@ Logging and tracing bootstrap. Configures structlog once at process start, picks
 
 - `configure()` — initialize structlog and (when endpoint set) the OTel SDK. Idempotent. Called once from `main.py` at boot.
 - `get_logger(name=None)` — returns a bound structlog logger. Used in place of `logging.getLogger`.
+- `spawn(name, coro)` — fire-and-forget background work. Wraps `asyncio.create_task` with a try/except that logs `spawn.crashed`. Every long-running background coroutine goes through this; the wrapped task is also retained in a module-level set so the GC doesn't collect it mid-flight. Relocated from `core/primitives` in M04 Phase 6a — its job is exception logging in background tasks, an observability concern.
+- `active_task_count()` — test helper; number of pending spawned tasks.
 
 No HTTP routes. No tables. See `app/core/observability/__init__.py`.
 

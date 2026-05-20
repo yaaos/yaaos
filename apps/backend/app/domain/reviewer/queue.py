@@ -25,11 +25,11 @@ from pydantic import BaseModel
 from sqlalchemy import func as sa_func
 from sqlalchemy import select, update
 
-from app.core.audit_log import audit_for_review_job
+from app.core.audit_log import Actor, audit_for_review_job
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.events import Event, publish
-from app.core.primitives import Actor, spawn
+from app.core.observability import spawn
 from app.core.workspace import (
     NetworkPolicy,
     RepoRefForSpec,
@@ -554,8 +554,8 @@ async def _run_review_job_with_context(input: ReviewJobInput) -> None:
     """Phase 9: wrap `_run_review_job_inner` in `org_context(...)` so
     background audit rows + structlog lines carry the correct org +
     workspace actor."""
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.primitives import ActorKind  # noqa: PLC0415
 
     async with org_context(input.org_id, ActorKind.WORKSPACE):
         await _run_review_job_inner(input)

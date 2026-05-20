@@ -9,9 +9,8 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel
 from sqlalchemy import select, update
 
-from app.core.audit_log import audit_for_pr
+from app.core.audit_log import Actor, audit_for_pr
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.domain.pull_requests.models import PullRequestRow
 from app.domain.vcs import VCSPullRequest
 

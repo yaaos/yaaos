@@ -135,7 +135,7 @@ async def accept_invitation(
         if session is None:
             raise _err(401, "unauthenticated")
         user_id = session
-        from app.core.primitives import Actor  # noqa: PLC0415
+        from app.core.audit_log import Actor  # noqa: PLC0415
 
         actor = Actor.user(user_id=user_id)
         try:

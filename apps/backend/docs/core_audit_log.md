@@ -16,7 +16,7 @@ No HTTP routes — the audit-log tab reads via a domain endpoint that delegates 
 
 ### `AuditEntry` shape
 
-Carries `id`, `org_id`, `entity_kind`, `entity_id`, `kind`, `payload` (already-serialized via `model_dump(mode="json")`), `actor` (reconstructed from five DB columns), `created_at`. `Actor` is imported from `core/primitives`. The columns `actor_kind`, `actor_login`, `actor_agent_id`, `actor_user_id`, `actor_workspace_id` are recombined into one `Actor` at read time via `AuditEntry.from_row`. M02 added the two `actor_*_id` columns to round-trip the additive `user` / `workspace` actor kinds; `sso` populates only `actor_login` (the IdP-asserted email).
+Carries `id`, `org_id`, `entity_kind`, `entity_id`, `kind`, `payload` (already-serialized via `model_dump(mode="json")`), `actor` (reconstructed from five DB columns), `created_at`. `Actor` is owned by this module (`core/audit_log/actor.py`) and re-exported from the package — the row's `actor` column is what defines its shape, so the type lives where it's used. The columns `actor_kind`, `actor_login`, `actor_agent_id`, `actor_user_id`, `actor_workspace_id` are recombined into one `Actor` at read time via `AuditEntry.from_row`. M02 added the two `actor_*_id` columns to round-trip the additive `user` / `workspace` actor kinds; `sso` populates only `actor_login` (the IdP-asserted email).
 
 ### Write API
 

@@ -15,7 +15,7 @@ from uuid import UUID
 
 import structlog
 
-from app.core.primitives import ActorKind
+from app.core.audit_log import ActorKind
 
 log = structlog.get_logger("auth.context")
 

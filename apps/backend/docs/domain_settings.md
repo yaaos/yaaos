@@ -45,7 +45,7 @@ Keys are hardcoded in `OnboardingStatus` because the model is the canonical shap
 - `app.domain.coding_agent.service._PLUGINS` — coding-agent plugins (`claude_code`).
 - `app.core.workspace.service._PROVIDERS` — workspace providers (`in_process`).
 
-For each entry it appends `meta` — a `PluginMeta` from `core/primitives` (`id`, `type`, `display_name`, `description`, `docs_url`). Return order VCS → coding-agent → workspace, stable across reloads. The Settings UI pairs each row with the plugin's own `/api/<id>/health` endpoint for live status.
+For each entry it appends `meta` — a `PluginMeta` from `core/plugin_meta` (`id`, `type`, `display_name`, `description`, `docs_url`). Return order VCS → coding-agent → workspace, stable across reloads. The Settings UI pairs each row with the plugin's own `/api/<id>/health` endpoint for live status.
 
 Reading registries directly works because plugins are populated by bootstrap time — `core/webserver`'s lifespan runs `on_startup` after every module's import-time `register_routes` calls.
 

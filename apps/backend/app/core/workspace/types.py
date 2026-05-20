@@ -16,7 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 
 # Per-line callback used by `run_coding_agent_cli` to stream stdout in real
 # time. When provided, the provider invokes it for each newline-terminated

@@ -24,7 +24,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace import HealthStatus, Workspace
 from app.domain.memory import Lesson
 from app.domain.vcs import Diff, VCSPullRequest

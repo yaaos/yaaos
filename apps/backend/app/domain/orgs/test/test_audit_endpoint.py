@@ -8,9 +8,8 @@ import pytest_asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from app.core.audit_log import audit
+from app.core.audit_log import Actor, audit
 from app.core.auth import AuthMiddleware
-from app.core.primitives import Actor
 from app.domain.auth import web as _auth_web  # noqa: F401
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle

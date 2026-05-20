@@ -8,7 +8,7 @@
 from app.core import config  # noqa: F401
 
 # 2. Configure core infrastructure.
-from app.core import database, observability, primitives  # noqa: F401
+from app.core import database, observability  # noqa: F401
 
 observability.configure()
 

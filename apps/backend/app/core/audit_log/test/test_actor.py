@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.primitives import Actor, ActorKind
+from app.core.audit_log import Actor, ActorKind
 
 
 def test_system_actor() -> None:

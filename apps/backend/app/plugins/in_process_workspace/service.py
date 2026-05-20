@@ -24,7 +24,7 @@ from uuid import UUID
 
 import structlog
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace import (
     CodingAgentCliResult,
     HealthStatus,

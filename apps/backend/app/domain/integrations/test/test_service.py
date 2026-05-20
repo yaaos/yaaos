@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 import pytest
 from sqlalchemy import select
 
+from app.core.audit_log import Actor
 from app.core.audit_log.models import AuditEntryRow
 from app.core.oauth import ProviderConfig, Tokens
-from app.core.primitives import Actor
 from app.core.secrets import decrypt
 from app.domain import integrations as integ
 from app.domain.identity import repository as identity_repo

@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.domain.vcs import (
     Comment,
     Diff,
@@ -630,8 +630,8 @@ async def run_catchup_loop() -> None:
             .scalars()
             .all()
         )
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.primitives import ActorKind  # noqa: PLC0415
 
     seen_orgs: set[UUID] = set()
     for row in installs:

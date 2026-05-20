@@ -48,7 +48,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 Don't catch where raised. Let them propagate. Catch only at top-level boundaries:
 - HTTP middleware (converts to 500 JSON).
-- `core/primitives.spawn()` wrapper (logs the failure; the coro is responsible for marking its row failed before raising).
+- `core/observability.spawn()` wrapper (logs the failure; the coro is responsible for marking its row failed before raising).
 - Thin retry wrapper around vendor SDK calls.
 - Tests.
 
@@ -68,7 +68,7 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
 
 ## Background work
 
-### `core/primitives.spawn()`
+### `core/observability.spawn()`
 
 Every fire-and-forget background coroutine goes through this single helper. Behaviour:
 - Wraps the coro in an OTel span `spawn:{name}`.
@@ -227,7 +227,7 @@ Don't wrap every domain function — noise hurts more than detail helps.
 `app/main.py` is load-bearing. If steps 3–4 swap with 6 you'll mount a router before its module has registered or subscribe to an event before the bus exists. Don't reorder.
 
 1. Load environment — `app.core.config`.
-2. Configure core infra — `app.core.database`, `app.core.observability`, `app.core.primitives`.
+2. Configure core infra — `app.core.database`, `app.core.observability`.
 3. Initialize events bus — `app.core.events` *before any domain subscribes*.
 4. Import webserver registry — `app.core.webserver` *before any module registers routes*.
 5. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.workspace`.

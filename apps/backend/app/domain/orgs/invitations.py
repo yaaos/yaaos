@@ -21,9 +21,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import audit
+from app.core.audit_log import Actor, audit
 from app.core.config import get_settings
-from app.core.primitives import Actor
 from app.domain.identity import sessions as session_lifecycle
 from app.domain.orgs import email as org_email
 from app.domain.orgs import repository as orgs_repo

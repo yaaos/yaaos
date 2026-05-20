@@ -149,8 +149,7 @@ async def _emit_link_audit(db: AsyncSession, *, user_id: UUID, provider_id: str,
     """Write one `provider_linked` (or `_unlinked`) audit row per membership
     org. Identity events are user-global; the audit table requires `org_id`
     so we fan out by membership. Users with no memberships emit nothing."""
-    from app.core.audit_log import audit  # noqa: PLC0415
-    from app.core.primitives import Actor  # noqa: PLC0415
+    from app.core.audit_log import Actor, audit  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     memberships = await orgs_repo.list_memberships_for_user(db, user_id)

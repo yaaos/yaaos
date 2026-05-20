@@ -12,6 +12,7 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request
 
+from app.core.audit_log import Actor, ActorKind
 from app.core.auth.context import (
     actor_id_var,
     actor_kind_var,
@@ -21,7 +22,6 @@ from app.core.auth.context import (
 )
 from app.core.auth.types import Action
 from app.core.database import session as db_session
-from app.core.primitives import Actor, ActorKind
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.service import Membership
@@ -174,8 +174,7 @@ def require(action: Action) -> Callable[..., None]:
                         # distinct audit row so abuse is visible.
                         from pydantic import BaseModel  # noqa: PLC0415
 
-                        from app.core.audit_log import audit  # noqa: PLC0415
-                        from app.core.primitives import Actor  # noqa: PLC0415
+                        from app.core.audit_log import Actor, audit  # noqa: PLC0415
 
                         class _BreakGlassPayload(BaseModel):
                             break_glass: bool = True

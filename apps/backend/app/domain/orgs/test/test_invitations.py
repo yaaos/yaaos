@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.primitives import Actor
+from app.core.audit_log import Actor
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
 from app.domain.orgs import (

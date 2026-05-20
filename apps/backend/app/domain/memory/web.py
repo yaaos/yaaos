@@ -7,8 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.audit_log import Actor
 from app.core.auth import public_route
-from app.core.primitives import Actor
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.memory.service import (
     Lesson,

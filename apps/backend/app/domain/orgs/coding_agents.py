@@ -15,8 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import audit
-from app.core.primitives import Actor
+from app.core.audit_log import Actor, audit
 from app.domain.orgs.models import OrgCodingAgentRow
 
 log = structlog.get_logger("orgs.coding_agents")

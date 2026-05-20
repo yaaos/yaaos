@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace import Workspace, WorkspaceExecError
 from app.domain.coding_agent import (
     ActivityEvent,

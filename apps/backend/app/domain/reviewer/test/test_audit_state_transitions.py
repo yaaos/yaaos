@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-from app.core.primitives import Actor, ActorKind
+from app.core.audit_log import Actor, ActorKind
 from app.domain.reviewer.aggregate import PRReviewAggregate
 from app.domain.reviewer.service import dispatch_audits
 from app.domain.reviewer.types import (

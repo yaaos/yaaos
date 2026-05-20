@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-from app.core.primitives import Actor
+from app.core.audit_log import Actor
 from app.domain.reviewer.aggregate import PRReviewAggregate, RawFinding
 from app.domain.reviewer.types import (
     CodeAnchor,

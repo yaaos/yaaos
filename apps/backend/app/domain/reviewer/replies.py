@@ -22,8 +22,9 @@ from uuid import UUID
 import structlog
 from sqlalchemy import desc, select
 
+from app.core.audit_log import Actor
 from app.core.database import session as db_session
-from app.core.primitives import Actor, spawn
+from app.core.observability import spawn
 from app.core.workspace import (
     NetworkPolicy,
     RepoRefForSpec,

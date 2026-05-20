@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.domain.coding_agent import (
     HealthStatus,
     InvocationStatus,

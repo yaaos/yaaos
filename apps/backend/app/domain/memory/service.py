@@ -10,9 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 
-from app.core.audit_log import audit_for_lesson
+from app.core.audit_log import Actor, audit_for_lesson
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.domain.memory.models import LessonRow
 
 

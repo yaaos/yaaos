@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 
+from app.core.audit_log import Actor
 from app.core.audit_log import audit as audit_write
 from app.core.auth.cookies import (
     CSRF_COOKIE_NAME,
@@ -42,7 +43,6 @@ from app.core.auth.cookies import (
 from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.auth.dependencies import public_route
 from app.domain.identity import sessions as session_lifecycle

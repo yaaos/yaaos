@@ -65,8 +65,8 @@ async def _purge_expired_sessions() -> int:
     from pydantic import BaseModel as _BaseModel  # noqa: PLC0415
     from sqlalchemy import select as _select  # noqa: PLC0415
 
+    from app.core.audit_log import Actor as _Actor  # noqa: PLC0415
     from app.core.audit_log import audit as _audit  # noqa: PLC0415
-    from app.core.primitives import Actor as _Actor  # noqa: PLC0415
     from app.domain.identity.models import SessionRow  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 

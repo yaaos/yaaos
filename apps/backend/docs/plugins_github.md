@@ -118,7 +118,7 @@ After the install completes, GitHub redirects to `GET /api/github/install_callba
 
 ### Catch-up poller
 
-`_start_catchup` is the `on_startup` hook; spawns `run_catchup_loop()` via `core/primitives.spawn("github.catchup", ...)`.
+`_start_catchup` is the `on_startup` hook; spawns `run_catchup_loop()` via `core/observability.spawn("github.catchup", ...)`.
 
 `run_catchup_loop`:
 1. Sleep `yaaos_catchup_delay_seconds` (10s prod, 0s tests).

@@ -53,7 +53,7 @@ Every state transition is a row update on `workspaces`.
 
 ### The reaper
 
-Started from `lifespan` via `start_reaper(interval_seconds)`, which calls `core/primitives.spawn("workspace.reaper", _reaper_loop(...))`. Loop: sweep, sleep `YAAOS_REAPER_INTERVAL_SECONDS` (default 30s in prod; short in tests).
+Started from `lifespan` via `start_reaper(interval_seconds)`, which calls `core/observability.spawn("workspace.reaper", _reaper_loop(...))`. Loop: sweep, sleep `YAAOS_REAPER_INTERVAL_SECONDS` (default 30s in prod; short in tests).
 
 Per sweep:
 1. **Expire over-budget.** `status='active' AND expires_at < now()` → `expired`.

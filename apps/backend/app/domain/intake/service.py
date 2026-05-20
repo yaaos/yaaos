@@ -8,9 +8,8 @@ import structlog
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.audit_log import audit_for_ticket, audit_for_webhook_event
+from app.core.audit_log import Actor, audit_for_ticket, audit_for_webhook_event
 from app.core.database import session as db_session
-from app.core.primitives import Actor
 from app.domain import pull_requests, tickets, vcs
 from app.domain.intake.parsing import parse_rereview
 from app.domain.vcs import (

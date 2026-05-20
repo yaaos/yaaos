@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
     AnswerQuestionContext,

@@ -32,13 +32,14 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.audit_log import Actor
 from app.core.auth import public_route
 from app.core.auth.context import org_id_var, user_id_var
 from app.core.auth.types import Action
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.oauth import OAuthError, build_authorize_url
-from app.core.primitives import Actor, spawn
+from app.core.observability import spawn
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.auth.dependencies import current_actor, require
 from app.domain.integrations import service as integ

@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.core.auth import public_route
-from app.core.primitives import PluginMeta
+from app.core.plugin_meta import PluginMeta
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.settings.service import OnboardingStatus, get_onboarding_status, list_plugins
 

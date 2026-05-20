@@ -14,8 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import audit
-from app.core.primitives import Actor
+from app.core.audit_log import Actor, audit
 from app.domain.orgs.models import OrgRow
 
 log = structlog.get_logger("orgs.vcs")

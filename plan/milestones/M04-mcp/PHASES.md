@@ -161,16 +161,16 @@ Deferred — see [DECISIONS.md](DECISIONS.md). The `app/testing/e2e_setup/web.py
 
 ## Phase 6a — `core/primitives` dissolution
 
-- [ ] `Actor` + `ActorKind` moved into `core/audit_log/` (the audit-actor model's natural home)
-- [ ] `PluginMeta` + `PluginType` co-located with plugin discovery. Recommended: small `core/plugin_meta.py` standalone file (single-file module is OK here — two tiny classes). Runner picks; records in DECISIONS.md if certainty < 3.
-- [ ] `spawn()` + `active_task_count()` moved into `core/observability/` (their job is exception logging in background tasks — observability concern)
-- [ ] `apps/backend/app/core/primitives/` directory deleted
-- [ ] `apps/backend/docs/core_primitives.md` deleted
-- [ ] Every import site updated. `grep -rn "core.primitives\|from app.core.primitives" apps/backend` returns zero hits
-- [ ] `apps/backend/bin/sync_modules` produces no diff (tach config updated to match new module boundaries)
-- [ ] Tests stay green; no behavior change
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `Actor` + `ActorKind` moved into `core/audit_log/actor.py` (the audit-actor model's natural home; re-exported from the package)
+- [x] `PluginMeta` + `PluginType` moved into single-file `core/plugin_meta.py`
+- [x] `spawn()` + `active_task_count()` moved into `core/observability/spawn.py`, re-exported from the package
+- [x] `apps/backend/app/core/primitives/` directory deleted
+- [x] `apps/backend/docs/core_primitives.md` deleted
+- [x] Every import site updated. `grep -rn "core.primitives\|from app.core.primitives" apps/backend` returns only the docstring annotations in the three new files explaining the move
+- [x] `apps/backend/bin/sync_modules` produces no diff (tach config updated to match new module boundaries)
+- [x] Tests stay green; no behavior change (521 backend tests passing)
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 6b — `domain/settings` dissolution
 
