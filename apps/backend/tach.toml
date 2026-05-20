@@ -82,7 +82,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.events", "app
 
 [[modules]]
 path = "app.domain.integrations"
-depends_on = ["app.core.audit_log", "app.core.database", "app.core.oauth", "app.core.primitives", "app.core.secrets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.oauth", "app.core.primitives", "app.core.secrets", "app.core.webserver", "app.domain.auth"]
 
 [[modules]]
 path = "app.domain.mcp_proxy"

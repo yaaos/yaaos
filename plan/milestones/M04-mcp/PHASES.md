@@ -38,19 +38,19 @@
 
 ## Phase 1 — `core/oauth` extraction + GitHub plugin consolidation + outbound OAuth foundation (Linear)
 
-- [ ] `core/oauth` implemented: `build_authorize_url(provider_config, state, scopes) -> url`, `exchange_code(provider_config, code) -> Tokens`, `refresh_access_token(provider_config, refresh_token) -> Tokens`. `ProviderConfig` dataclass passed in (authorize_url, token_url, refresh_url, client_id, client_secret, scope_separator). No I/O outside the OAuth dance.
-- [ ] `plugins/oauth_github` folded into `plugins/github`. GitHub OAuth provider config, `/user` parse, `Provider` Protocol impl all move alongside the existing App + webhook code. Identity flow imports updated.
-- [ ] `apps/backend/app/plugins/oauth_github/` directory deleted; `grep -rn "plugins.oauth_github\|plugins/oauth_github" apps/backend` returns zero hits
-- [ ] `domain/integrations` service implements `connect_start(org_id, provider, user_initiating) -> redirect_url`, `connect_callback(provider, code, state) -> credential_row`, `get(org_id, provider)`, `refresh(org_id, provider)` (advisory-lock-guarded), `clear(org_id, provider)`, `validate(org_id, provider)`, `update_allowlist(org_id, provider, allowed_tools)`
-- [ ] Linear provider config implemented: OAuth URLs, scope list `["read"]`, known read-tool list, known write-tool list, `validate()` callable
+- [x] `core/oauth` implemented: `build_authorize_url(provider_config, state, scopes) -> url`, `exchange_code(provider_config, code) -> Tokens`, `refresh_access_token(provider_config, refresh_token) -> Tokens`. `ProviderConfig` dataclass passed in (authorize_url, token_url, refresh_url, client_id, client_secret, scope_separator). No I/O outside the OAuth dance.
+- [x] `plugins/oauth_github` folded into `plugins/github`. GitHub OAuth provider config, `/user` parse, `Provider` Protocol impl all move alongside the existing App + webhook code. Identity flow imports updated.
+- [x] `apps/backend/app/plugins/oauth_github/` directory deleted; `grep -rn "plugins.oauth_github\|plugins/oauth_github" apps/backend` returns zero hits
+- [x] `domain/integrations` service implements `connect_start(org_id, provider, user_initiating) -> redirect_url`, `connect_callback(provider, code, state) -> credential_row`, `get(org_id, provider)`, `refresh(org_id, provider)` (advisory-lock-guarded), `clear(org_id, provider)`, `validate(org_id, provider)`, `update_allowlist(org_id, provider, allowed_tools)` (refresh + advisory lock deferred — see [DECISIONS.md](DECISIONS.md))
+- [x] Linear provider config implemented: OAuth URLs, scope list `["read"]`, known read-tool list, known write-tool list, `validate()` callable
 - [ ] Per-`(org_id, provider)` Postgres advisory lock around `refresh` (key `hashtext('mcp:' || org_id::text || ':' || provider)`). Mirrors existing GitHub installation-token refresh pattern.
 - [ ] Refresh failure path: set `last_refresh_status = "failed"`, `last_refresh_failed_at = now()`, emit `mcp.linear.token_refresh_failed` audit entry, enqueue notification job
-- [ ] Tokens encrypted at rest via `core/secrets` (M03)
-- [ ] Endpoints: `GET /api/orgs/{slug}/integrations/{provider}/connect`, `GET /api/integrations/{provider}/callback`, `DELETE /api/orgs/{slug}/integrations/{provider}`, `POST /api/orgs/{slug}/integrations/{provider}/validate`
-- [ ] Signed `state` (via `itsdangerous`, reusing `yaaos_invitation_token_secret`) carries `(org_id, user_initiating)`; verified on callback
-- [ ] Tests: `core/oauth` round-trip against `apps/fake-linear` (real HTTP via the fake); inbound GitHub OAuth still green post-refactor; connect-callback persists tokens; clear removes them; refresh under contention serializes (two concurrent calls, only one upstream POST); failed refresh sets `last_refresh_status = "failed"` and audits correctly; state-signature tampering rejected
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] Tokens encrypted at rest via `core/secrets` (M03)
+- [x] Endpoints: `GET /api/orgs/{slug}/integrations/{provider}/connect`, `GET /api/integrations/{provider}/callback`, `DELETE /api/orgs/{slug}/integrations/{provider}`, `POST /api/orgs/{slug}/integrations/{provider}/validate`
+- [x] Signed `state` (via `itsdangerous`, reusing `yaaos_invitation_token_secret`) carries `(org_id, user_initiating)`; verified on callback
+- [x] Tests: `core/oauth` round-trip against `apps/fake-linear` (real HTTP via the fake); inbound GitHub OAuth still green post-refactor; connect-callback persists tokens; clear removes them; refresh under contention serializes (two concurrent calls, only one upstream POST); failed refresh sets `last_refresh_status = "failed"` and audits correctly; state-signature tampering rejected (refresh-related tests deferred with the refresh impl)
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 1b — Notion provider
 

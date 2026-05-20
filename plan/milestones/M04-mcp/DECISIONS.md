@@ -22,6 +22,21 @@ Keep entries terse. The user reads this at the end of the run; volume = friction
 
 <!-- Append below. Do not edit prior entries. -->
 
+### Phase 1 — advisory-lock-guarded refresh deferred
+
+- **Certainty**: 2/5
+- **Decision**: `domain/integrations` ships `connect_callback`, `get`, `clear`, `validate`, `update_allowlist` but NOT `refresh`. The Postgres advisory-lock-guarded refresh, the refresh-failure audit (`mcp.<provider>.token_refresh_failed`), and the refresh-contention test all land in a focused follow-up alongside Phase 2's MCP proxy.
+- **Alternatives considered**: Land refresh in this same pass.
+- **Why this one**: refresh is a Phase 2 prerequisite (the proxy refreshes expired tokens on demand) but it's not on Phase 1's critical UI path. The advisory-lock impl + the notification-queue path both deserve a dedicated commit with focused tests; better to land them alongside the proxy than rushed into Phase 1's wrap-up.
+- **Reversal cost**: low — `refresh()` is additive; no existing callers break.
+
+### Phase 1 — endpoints use header-based slug, not path-based
+
+- **Certainty**: 3/5 (matches the M03 pattern; logged for the auditor)
+- **Decision**: Endpoints mounted at `/api/integrations/{provider}/...` with `X-Org-Slug` header, not `/api/orgs/{slug}/integrations/{provider}/...`.
+- **Why this one**: matches every M03+ mutation endpoint (vcs, coding-agents, byok); the SPA's `apiFetch` carries `X-Org-Slug` automatically. The OAuth callback URL is the exception — the upstream provider doesn't know our header — so the signed `state` embeds the `org_id`.
+- **Reversal cost**: low.
+
 ### Phase 0b — fake-app standalone tests deferred to integration coverage
 
 - **Certainty**: 2/5

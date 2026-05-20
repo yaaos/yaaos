@@ -35,6 +35,10 @@ class Action(StrEnum):
     BYOK_WRITE = "byok.write"
     ORG_SETTINGS_WRITE = "org_settings.write"
 
+    # M04 — hosted-MCP integrations (Linear, Notion, ...). Owner+Admin only.
+    INTEGRATIONS_READ = "integrations.read"
+    INTEGRATIONS_WRITE = "integrations.write"
+
 
 # Public-allowlist prefixes: any path matching one of these bypasses the
 # X-Org-Slug requirement AND the post-response security guard.
@@ -65,13 +69,22 @@ M02_PROTECTED_PREFIXES: tuple[str, ...] = (
     "/api/coding-agents",  # exact + prefix
     "/api/orgs",  # exact + prefix
     "/api/byok",  # exact + prefix
+    "/api/integrations",  # exact + prefix
 )
 
 
 def is_public_path(path: str) -> bool:
     if path in PUBLIC_PATH_EXACT:
         return True
-    return any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
+    if any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
+        return True
+    # M04 — OAuth callback URLs under /api/integrations/{provider}/callback.
+    # The upstream OAuth provider doesn't know about our X-Org-Slug header;
+    # the signed `state` carries the org_id. Only the exact `/callback`
+    # suffix is public — `/connect`, `/validate`, etc. stay protected.
+    if path.startswith("/api/integrations/") and path.endswith("/callback"):
+        return True
+    return False
 
 
 def is_m02_protected_path(path: str) -> bool:

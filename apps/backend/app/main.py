@@ -51,6 +51,7 @@ from app.domain import settings  # noqa: F401, E402
 from app.domain import plugins as _domain_plugins  # noqa: F401, E402
 from app.domain.plugins import web as _domain_plugins_web  # noqa: F401, E402
 from app.domain.byok import web as _domain_byok_web  # noqa: F401, E402
+from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 from app.domain.orgs import coding_agents_web as _orgs_coding_agents_web  # noqa: F401, E402
 from app.domain.orgs import org_settings_web as _orgs_org_settings_web  # noqa: F401, E402
 from app.domain.orgs import vcs_web as _orgs_vcs_web  # noqa: F401, E402
