@@ -14,7 +14,7 @@ depends_on = ["app.core.config", "app.core.primitives"]
 
 [[modules]]
 path = "app.core.byok"
-depends_on = ["app.core.database"]
+depends_on = ["app.core.audit_log", "app.core.database", "app.core.primitives", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.config"
@@ -74,7 +74,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.secrets", "app.core.webserver", "app.domain.auth", "app.domain.identity"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.secrets", "app.core.webserver", "app.domain.auth", "app.domain.coding_agent", "app.domain.identity", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.plugins"
@@ -106,7 +106,7 @@ depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.identity", "app.domain.intake", "app.domain.settings", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.primitives", "app.core.webserver", "app.domain.identity", "app.domain.intake", "app.domain.orgs", "app.domain.settings", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.in_process_workspace"

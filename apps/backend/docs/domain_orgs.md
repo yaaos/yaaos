@@ -10,10 +10,12 @@ Owns the tenancy boundary. Every non-user yaaos data row is `org_id`-scoped; thi
 
 Exported from `app/domain/orgs/__init__.py`:
 
-- Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`.
-- Rows — `OrgRow`, `MembershipRow`, `InvitationRow`, `SsoConfigRow`.
+- Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`, `VcsState`, `CodingAgentInstall`.
+- Rows — `OrgRow`, `MembershipRow`, `InvitationRow`, `SsoConfigRow`, `OrgCodingAgentRow`.
 - Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`.
-- Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`.
+- VCS — `get_vcs`, `set_vcs`, `clear_vcs`. One VCS per org; state lives on the `orgs` row.
+- Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
+- Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.
 
 HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to break the `domain.orgs ↔ domain.auth` import cycle):
 
@@ -24,8 +26,23 @@ HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to brea
 | POST   | `/api/memberships/accept`       | public allowlist; session cookie identifies the acceptor. |
 | PATCH  | `/api/memberships/{user_id}`    | `MEMBERS_CHANGE_ROLE` — update role; revokes the target's existing sessions. |
 | DELETE | `/api/memberships/{user_id}`    | `MEMBERS_REMOVE` — drop the row + revoke every session for the user. |
+| GET    | `/api/vcs`                      | `VCS_READ` — current VCS install (plugin_id + settings). |
+| POST   | `/api/vcs`                      | `VCS_WRITE` — set chosen plugin; returns either the new state OR a redirect URL when the plugin needs an out-of-band install. |
+| DELETE | `/api/vcs`                      | `VCS_WRITE` — clear the org's VCS choice. |
+| GET    | `/api/coding-agents`            | `CODING_AGENT_READ` — list installed coding-agent plugins. |
+| POST   | `/api/coding-agents`            | `CODING_AGENT_WRITE` — install a plugin. |
+| PATCH  | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — replace settings. |
+| DELETE | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — uninstall. |
 
 SSO endpoints land in Phase 12.
+
+### VCS
+
+One VCS plugin per org. State lives on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). Switching is two-step: clear, then set. The github plugin's `install_url(org_id)` returns `/api/github/install`; the picker UI navigates the user there, the M02 handshake completes the install, and the install callback calls `set_vcs(...)` to durably record the org's choice. All three mutations audit (`vcs.installed`, `vcs.cleared`).
+
+### Coding agents
+
+Many coding-agent plugins per org. Each install is an `org_coding_agents` row keyed by `(org_id, plugin_id)` with a `settings jsonb`. Mutations audit (`coding_agent.installed`, `coding_agent.settings_updated`, `coding_agent.uninstalled`). Plugin-specific settings shape lives in the plugin itself (Phase 10 ships the Claude Code Pydantic model + bespoke UI).
 
 ## Module architecture
 

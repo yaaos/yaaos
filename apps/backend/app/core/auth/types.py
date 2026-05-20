@@ -26,6 +26,14 @@ class Action(StrEnum):
     GITHUB_APP_LINK = "github.app_link"
     REVIEW_TRIGGER = "review.trigger"
 
+    # M03 settings — VCS / coding-agents / BYOK. Owner+Admin only.
+    VCS_READ = "vcs.read"
+    VCS_WRITE = "vcs.write"
+    CODING_AGENT_READ = "coding_agent.read"
+    CODING_AGENT_WRITE = "coding_agent.write"
+    BYOK_READ = "byok.read"
+    BYOK_WRITE = "byok.write"
+
 
 # Public-allowlist prefixes: any path matching one of these bypasses the
 # X-Org-Slug requirement AND the post-response security guard.
@@ -52,6 +60,8 @@ M02_PROTECTED_PREFIXES: tuple[str, ...] = (
     "/api/memberships/",
     "/api/audit",  # exact + prefix both — endpoint is /api/audit and /api/audit/...
     "/api/plugins/",
+    "/api/vcs",  # exact + prefix
+    "/api/coding-agents",  # exact + prefix
 )
 
 

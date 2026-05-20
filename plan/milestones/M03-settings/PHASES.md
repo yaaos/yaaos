@@ -28,16 +28,16 @@
 
 ## Phase 2 — domain/orgs extensions (VCS + Coding Agents) + core/byok
 
-- [ ] `domain/orgs` service methods added: `set_vcs(org_id, plugin_id, settings)`, `get_vcs(org_id)`, `clear_vcs(org_id)`, `install_coding_agent(org_id, plugin_id, settings)`, `list_coding_agents(org_id)`, `update_coding_agent_settings(org_id, plugin_id, settings)`, `uninstall_coding_agent(org_id, plugin_id)`
-- [ ] All mutations emit audit-log entries via `core/audit_log` with `kind` names like `vcs.installed`, `vcs.cleared`, `coding_agent.installed`, `coding_agent.uninstalled`, `coding_agent.settings_updated`
-- [ ] VCS-set flow: if chosen plugin has `install_url`, return a redirect URL; otherwise store settings directly
-- [ ] Refactor M02's GitHub-App install handler to call `domain/orgs.set_vcs(org_id, "github", {installation_id, ...})` after install handshake
-- [ ] `core/byok` service implemented: `get(org_id, provider)`, `set(org_id, provider, plaintext)`, `clear(org_id, provider)`, `validate(org_id, provider, validator_callable)`. Uses `core/secrets` for encryption.
-- [ ] BYOK mutations audit-logged: `byok.set`, `byok.cleared`, `byok.validated`
-- [ ] Endpoints exposed for both VCS and coding-agents per [architecture.md § API](architecture.md#api)
-- [ ] Tests: VCS install/uninstall round-trip; coding-agent install across two plugins; settings-validation rejection; audit entries written; `core/byok` round-trip + decrypt + validator-callable invocation
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `domain/orgs` service methods added: `set_vcs(org_id, plugin_id, settings)`, `get_vcs(org_id)`, `clear_vcs(org_id)`, `install_coding_agent(org_id, plugin_id, settings)`, `list_coding_agents(org_id)`, `update_coding_agent_settings(org_id, plugin_id, settings)`, `uninstall_coding_agent(org_id, plugin_id)`
+- [x] All mutations emit audit-log entries via `core/audit_log` with `kind` names like `vcs.installed`, `vcs.cleared`, `coding_agent.installed`, `coding_agent.uninstalled`, `coding_agent.settings_updated`
+- [x] VCS-set flow: if chosen plugin has `install_url`, return a redirect URL; otherwise store settings directly
+- [x] Refactor M02's GitHub-App install handler to call `domain/orgs.set_vcs(org_id, "github", {installation_id, ...})` after install handshake
+- [x] `core/byok` service implemented: `get(org_id, provider)`, `set(org_id, provider, plaintext)`, `clear(org_id, provider)`, `validate(org_id, provider, validator_callable)`. Uses `core/secrets` for encryption.
+- [x] BYOK mutations audit-logged: `byok.set`, `byok.cleared`, `byok.validated`
+- [x] Endpoints exposed for both VCS and coding-agents per [architecture.md § API](architecture.md#api)
+- [x] Tests: VCS install/uninstall round-trip; coding-agent install across two plugins; settings-validation rejection; audit entries written; `core/byok` round-trip + decrypt + validator-callable invocation
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 3 — user profile additions
 

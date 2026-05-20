@@ -6,22 +6,20 @@
 
 Owns the `byok_keys` table. Stores one row per `(org_id, provider)` with the API key encrypted via [core/secrets](core_secrets.md). Lets the Claude Code plugin (and future LLM-using plugins) read a customer-supplied key at request time without ever surfacing it to the UI in plaintext.
 
-Skeleton only at Phase 0 — table + module shell exist; the `get`/`set`/`clear`/`validate` service surface lands in Phase 2.
-
 ## Public interface
 
-Planned (Phase 2):
+- `get(org_id, provider) -> str | None` — decrypts and returns the stored key, or `None` if no row exists. Raises `ByokDecryptError` if the row is corrupt.
+- `set(org_id, provider, plaintext, *, actor)` — encrypts via `core/secrets` and upserts. Audit: `byok.set`.
+- `clear(org_id, provider, *, actor) -> bool` — removes the row. Returns True if a row was removed. Audit: `byok.cleared` (only when something was actually removed).
+- `validate(org_id, provider, validator, *, actor) -> bool` — decrypts and hands plaintext to a caller-supplied `Awaitable[bool]` callable. Provider-specific HTTP logic lives in the validator, not here. On success: stamps `last_validated_at`. Audit: `byok.validated` with `{provider, success}`.
 
-- `get(org_id, provider) -> str | None` — decrypts and returns the stored key, or `None`.
-- `set(org_id, provider, plaintext) -> None` — encrypts via `core/secrets` and upserts.
-- `clear(org_id, provider) -> None` — removes the row.
-- `validate(org_id, provider, validator: Callable[[str], Awaitable[bool]]) -> bool` — runs a provider-supplied callable against the decrypted key; stamps `last_validated_at` on success.
-
-Provider plugins (Anthropic via `plugins/claude_code` for M03) supply their own validator callable so this module stays free of provider-specific HTTP logic.
+All four accept an optional `session` so callers can join an outer transaction.
 
 ## Module architecture
 
-Single table, no nested entities. All audit-log entries (`byok.set`, `byok.cleared`, `byok.validated`) are emitted at the service layer.
+- Single table, no nested entities.
+- The validator-callable pattern keeps `core/byok` free of provider-specific HTTP code: `plugins/claude_code` (or a future provider plugin) supplies its own minimal API call.
+- Plaintext crosses this module's boundary in only two directions — into `set()` and out of `get()`/`validate()`. Callers must not log the result.
 
 ## Data owned
 
@@ -29,4 +27,4 @@ Single table, no nested entities. All audit-log entries (`byok.set`, `byok.clear
 
 ## How it's tested
 
-Tests land alongside the Phase 2 implementation: round-trip set/get, clear, validate-callable invocation, audit-row writes.
+`test/test_service.py` covers: set/get round-trip, overwrite, clear (with the rowcount-based audit gating), validate (success + failure + missing-key), audit-row emission for each mutation, and empty-input rejection.

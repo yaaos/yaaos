@@ -502,6 +502,21 @@ async def github_install_callback(request: Request) -> RedirectResponse:
                 org_id=org_id,
                 session=s,
             )
+
+        # M03: register the github plugin as the org's VCS on first bind. The
+        # picker UI delegates the install handshake to this endpoint; this is
+        # where the org's VCS choice is durably recorded.
+        if first_bind:
+            from app.core.primitives import Actor as _Actor2  # noqa: PLC0415
+            from app.domain.orgs import set_vcs as _set_vcs  # noqa: PLC0415
+
+            await _set_vcs(
+                s,
+                org_id=org_id,
+                plugin_id="github",
+                settings={"installation_id": int(installation_id)},
+                actor=_Actor2(kind="system"),
+            )
         await s.commit()
 
     return _RedirectResponse("/")

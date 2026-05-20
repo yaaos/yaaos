@@ -42,6 +42,12 @@ _REQUIRED_ROLE: dict[Action, Role] = {
     Action.SSO_CONFIGURE: Role.OWNER,
     Action.GITHUB_APP_LINK: Role.OWNER,
     Action.REVIEW_TRIGGER: Role.MEMBER,
+    Action.VCS_READ: Role.ADMIN,
+    Action.VCS_WRITE: Role.ADMIN,
+    Action.CODING_AGENT_READ: Role.ADMIN,
+    Action.CODING_AGENT_WRITE: Role.ADMIN,
+    Action.BYOK_READ: Role.ADMIN,
+    Action.BYOK_WRITE: Role.ADMIN,
 }
 
 
