@@ -4,17 +4,17 @@
 
 ## Phase 0 — scaffolding
 
-- [ ] Single named migration `0XX_create_all_m03` registered in `core/database/service.py:_MIGRATIONS` (next available number)
-- [ ] New columns: `users.github_username text null`, `orgs.session_timeout_override int null`, `orgs.vcs_plugin_id text null`, `orgs.vcs_settings jsonb null`
-- [ ] New tables: `org_coding_agents` (`(org_id, plugin_id) PK`, `settings jsonb`, `created_at`, `updated_at`, `created_by`), `byok_keys` (`(org_id, provider) PK`, `encrypted_value`, `last_validated_at`, `last_used_at`, `created_at`, `updated_at`)
-- [ ] `core/secrets` module created: `encrypt(plaintext) -> bytes`, `decrypt(bytes) -> plaintext`. Wraps Fernet + master key (`yaaos_totp_master_key` env var, with fallback to `yaaos_encryption_key` in non-prod). `apps/backend/docs/core_secrets.md` written.
-- [ ] `domain/identity/totp.py` refactored to import from `core/secrets` instead of inline `_fernet()` helper
-- [ ] `domain/orgs/sso.py` refactored to import from `core/secrets` instead of inline `_fernet()` helper
-- [ ] `core/byok` module skeleton with `apps/backend/docs/core_byok.md` stub
-- [ ] Frontend skeletons: `apps/web/src/core/sidebar/`, `apps/web/src/domain/account/`, `apps/web/src/domain/org_settings/`, `apps/web/src/shared/plugin_picker/`
-- [ ] `apps/backend/bin/sync_modules` produces no diff
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] Single named migration `0XX_create_all_m03` registered in `core/database/service.py:_MIGRATIONS` (next available number)
+- [x] New columns: `users.github_username text null`, `orgs.session_timeout_override int null`, `orgs.vcs_plugin_id text null`, `orgs.vcs_settings jsonb null`
+- [x] New tables: `org_coding_agents` (`(org_id, plugin_id) PK`, `settings jsonb`, `created_at`, `updated_at`, `created_by`), `byok_keys` (`(org_id, provider) PK`, `encrypted_value`, `last_validated_at`, `last_used_at`, `created_at`, `updated_at`)
+- [x] `core/secrets` module created: `encrypt(plaintext) -> bytes`, `decrypt(bytes) -> plaintext`. Wraps Fernet + master key (`yaaos_totp_master_key` env var, with fallback to `yaaos_encryption_key` in non-prod). `apps/backend/docs/core_secrets.md` written.
+- [x] `domain/identity/totp.py` refactored to import from `core/secrets` instead of inline `_fernet()` helper
+- [x] `domain/orgs/sso.py` refactored to import from `core/secrets` instead of inline `_fernet()` helper
+- [x] `core/byok` module skeleton with `apps/backend/docs/core_byok.md` stub
+- [x] Frontend skeletons: `apps/web/src/core/sidebar/`, `apps/web/src/domain/account/`, `apps/web/src/domain/org_settings/`, `apps/web/src/shared/plugin_picker/`
+- [x] `apps/backend/bin/sync_modules` produces no diff
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 1 — plugin registry enumeration
 

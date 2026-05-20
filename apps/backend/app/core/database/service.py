@@ -135,6 +135,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("009_drop_classification_confidence", "drop_classification_confidence"),
     ("010_create_all_m02", "create_all_m02"),
     ("011_drop_claude_code_default_timeout_seconds", "drop_claude_code_default_timeout_seconds"),
+    ("012_create_all_m03", "create_all_m03"),
 )
 
 
@@ -442,6 +443,38 @@ async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[n
         await conn.execute(text(stmt))
 
 
+async def _apply_create_all_m03(conn) -> None:  # type: ignore[no-untyped-def]
+    """M03 — settings + sidebar restructure.
+
+    Adds: `users.github_username`, `orgs.session_timeout_override`,
+    `orgs.vcs_plugin_id`, `orgs.vcs_settings`, `org_coding_agents`, `byok_keys`.
+    All ALTERs use IF NOT EXISTS; `create_all` is idempotent. Safe to re-run.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.domain.identity.models")
+    importlib.import_module("app.domain.orgs.models")
+    importlib.import_module("app.core.byok.models")
+
+    alters = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_username TEXT",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS session_timeout_override INTEGER",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS vcs_plugin_id TEXT",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS vcs_settings JSONB",
+    ]
+    for stmt in alters:
+        await conn.execute(text(stmt))
+
+    new_tables = [
+        Base.metadata.tables[name]
+        for name in (
+            "org_coding_agents",
+            "byok_keys",
+        )
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_drop_claude_code_default_timeout_seconds(conn) -> None:  # type: ignore[no-untyped-def]
     """Drop the orphaned `claude_code_settings.default_timeout_seconds` column.
 
@@ -486,6 +519,8 @@ async def migrate() -> None:
                 await _apply_create_all_m02(conn)
             elif kind == "drop_claude_code_default_timeout_seconds":
                 await _apply_drop_claude_code_default_timeout_seconds(conn)
+            elif kind == "create_all_m03":
+                await _apply_create_all_m03(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

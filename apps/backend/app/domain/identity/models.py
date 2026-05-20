@@ -33,6 +33,9 @@ class UserRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # Verified GitHub login. Written by `plugins/oauth_github` on every login,
+    # or via the verify-only flow in `domain/account`. Nullable for SSO-only users.
+    github_username: Mapped[str | None] = mapped_column(String, nullable=True)
     # Soft-delete only. Deactivated users keep their row so prior audit
     # references resolve and the user is re-invitable.
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

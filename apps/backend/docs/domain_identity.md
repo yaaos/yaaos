@@ -27,7 +27,7 @@ HTTP routes for login + callback + logout live in [`domain/auth`](domain_auth.md
 - **UserEmail** — N per user. `is_primary` marks the canonical address; `verified_at` distinguishes provider-confirmed addresses from claimed-but-unverified ones. Sign-in matches any verified email.
 - **OAuthIdentity** — N per user. `(provider, external_subject)` is globally unique. Account-linking creates additional rows for the same `user_id`.
 - **Session** — one per active browser. PK is the sha256 hex of the raw token; raw tokens never live in the DB. Carries `user_id` xor `workspace_id`, the per-session CSRF token, and optional `sso_satisfied_for_org_id` + timestamp for the 8-hour SSO TTL.
-- **UserTotpSecret** — at most one per user. Fernet-encrypted base32 seed; `verified_at` set only after the user proves possession.
+- **UserTotpSecret** — at most one per user. Base32 seed encrypted via [core/secrets](core_secrets.md); `verified_at` set only after the user proves possession.
 - **GithubInstallation** — links a GitHub App installation id to the org that owns it. Inserted by the install callback (Phase 10).
 
 ### Key value objects

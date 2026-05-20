@@ -1,10 +1,9 @@
 """TOTP enrollment + verification + step-up login.
 
-Secrets are Fernet-encrypted with the `yaaos_totp_master_key` env var (a
-URL-safe base64 32-byte key, separate from `yaaos_encryption_key` so TOTP
-rotation can happen independently of plugin-credential rotation). Plaintext
-secrets live only on the wire — once `enroll` returns the QR seed, the row
-holds ciphertext forever.
+Secrets are encrypted via `core/secrets` (master key = `yaaos_totp_master_key`,
+falls back to `yaaos_encryption_key` in non-prod). Plaintext seeds live only
+on the wire — once `enroll` returns the QR seed, the row holds ciphertext
+forever.
 
 Verification advances `verified_at` once a code matches. Step-up login
 asks for a fresh code when the user has a verified secret AND the IdP
@@ -20,10 +19,9 @@ from uuid import UUID
 
 import pyotp
 import structlog
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.secrets import SecretsDecryptError, decrypt, encrypt
 from app.domain.identity import repository as repo
 
 log = structlog.get_logger("identity.totp")
@@ -31,15 +29,6 @@ log = structlog.get_logger("identity.totp")
 
 class TotpError(ValueError):
     """Code rejected or secret missing."""
-
-
-def _fernet() -> Fernet:
-    """Build a Fernet from `yaaos_totp_master_key`. Falls back to the global
-    `yaaos_encryption_key` in non-prod so dev/test stacks need only one
-    key. Production deployments are expected to set the dedicated TOTP key."""
-    s = get_settings()
-    key = s.yaaos_totp_master_key or s.yaaos_encryption_key
-    return Fernet(key.encode())
 
 
 def _new_seed() -> str:
@@ -62,7 +51,7 @@ async def enroll(
     be called with a current code before the row's `verified_at` is set.
     """
     seed = _new_seed()
-    ciphertext = _fernet().encrypt(seed.encode())
+    ciphertext = encrypt(seed)
     await repo.upsert_totp_secret(session, user_id=user_id, encrypted_secret=ciphertext)
     label = account_label or str(user_id)
     uri = pyotp.totp.TOTP(seed).provisioning_uri(name=label, issuer_name=issuer)
@@ -82,8 +71,8 @@ async def verify(
     if row is None:
         return False
     try:
-        seed = _fernet().decrypt(row.encrypted_secret).decode()
-    except InvalidToken:
+        seed = decrypt(row.encrypted_secret).decode()
+    except SecretsDecryptError:
         log.error("identity.totp.bad_ciphertext", user_id=str(user_id))
         return False
     totp = pyotp.totp.TOTP(seed)

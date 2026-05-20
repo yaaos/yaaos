@@ -1,9 +1,8 @@
 """Per-org SSO config + middleware-side enforcement.
 
 Owns the `sso_configs` table on the write side and the `sso_satisfied_for_org_id`
-session-row column on the read side. The SP private key is per-org and Fernet-
-encrypted with the same master key as TOTP (`yaaos_totp_master_key`, falls
-back to `yaaos_encryption_key` in non-prod).
+session-row column on the read side. The SP private key is per-org and encrypted
+via `core/secrets` (same master key as TOTP).
 """
 
 from __future__ import annotations
@@ -13,10 +12,9 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
-from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.secrets import encrypt
 from app.domain.orgs.models import SsoConfigRow
 
 log = structlog.get_logger("orgs.sso")
@@ -30,18 +28,12 @@ class ExemptOwnerWithoutTotpError(SsoConfigError):
     """Tried to set an exempt-Owner who hasn't enrolled + verified TOTP."""
 
 
-def _fernet() -> Fernet:
-    s = get_settings()
-    key = s.yaaos_totp_master_key or s.yaaos_encryption_key
-    return Fernet(key.encode())
-
-
 def _generate_sp_keypair() -> tuple[bytes, str]:
     """Mint a placeholder SP keypair for the org. Production deployments
     swap this for real RSA via `cryptography.hazmat`; the POC uses a
     random secret so the schema and Fernet round-trip are exercised."""
     raw = secrets.token_bytes(64)
-    return _fernet().encrypt(raw), "POC-PLACEHOLDER-CERT"
+    return encrypt(raw), "POC-PLACEHOLDER-CERT"
 
 
 async def upsert_config(

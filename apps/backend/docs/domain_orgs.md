@@ -34,7 +34,7 @@ SSO endpoints land in Phase 12.
 - **Org** — UUID PK + immutable unique `slug` used in `/orgs/{slug}/...` and the `X-Org-Slug` header. Soft-deleted via `archived_at`.
 - **Membership** — composite PK `(user_id, org_id)`. Carries a per-membership `@handle` (a user can be `@jack` here and `@jkora` there) and one of three roles.
 - **Invitation** — pending offer. Stores the sha256 hex of the signed invitation token, never the raw value. Single-use: `accepted_at` clamps the row.
-- **SsoConfig** — at most one per org. Holds the IdP metadata XML, JIT toggle, exempt-Owner pointer, and the Fernet-encrypted SP private key used to sign SAML AuthnRequests.
+- **SsoConfig** — at most one per org. Holds the IdP metadata XML, JIT toggle, exempt-Owner pointer, and the SP private key (encrypted via [core/secrets](core_secrets.md)) used to sign SAML AuthnRequests.
 
 ### Key value objects
 
