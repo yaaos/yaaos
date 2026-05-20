@@ -9,6 +9,7 @@ import {
   AuthSettingsPage,
   MembersSettingsPage,
   PlaceholderSettingsPage,
+  VcsSettingsPage,
 } from "@domain/org_settings";
 import { SettingsPage } from "@domain/settings";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
@@ -149,7 +150,7 @@ const orgSettingsAuditRoute = createRoute({
 const orgSettingsVcsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/settings/vcs",
-  component: () => <PlaceholderSettingsPage active="vcs" title="VCS" phase="Phase 8" />,
+  component: VcsSettingsPage,
 });
 
 const orgSettingsCodingAgentsRoute = createRoute({

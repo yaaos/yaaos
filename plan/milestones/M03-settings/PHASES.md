@@ -98,13 +98,13 @@
 
 ## Phase 8 — Org Settings > VCS
 
-- [ ] VCS sub-page renders empty-state picker when no VCS chosen; uses `<PluginPicker>` filtered by `PluginType.VCS`
-- [ ] Connected state shows current plugin's settings: GitHub App installation status, repo list, Reconnect / Remove actions
-- [ ] Add flow: if plugin has `install_url`, redirect; otherwise show settings form + save
-- [ ] Remove flow: confirmation modal, then `DELETE /api/orgs/{slug}/vcs`
+- [x] VCS sub-page renders empty-state picker when no VCS chosen; uses `<PluginPicker>` filtered by `PluginType.VCS`
+- [x] Connected state shows current plugin's settings: GitHub App installation status, repo list, Reconnect / Remove actions
+- [x] Add flow: if plugin has `install_url`, redirect; otherwise show settings form + save
+- [x] Remove flow: confirmation modal, then `DELETE /api/orgs/{slug}/vcs`
 - [ ] E2E: pick github plugin → redirected to App install → state updates to "Connected" → remove → state returns to picker
 - [ ] `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] Phase committed
 
 ## Phase 9 — Org Settings > Coding Agents (generic shell)
 
