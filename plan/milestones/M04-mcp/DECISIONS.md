@@ -51,6 +51,20 @@ Keep entries terse. The user reads this at the end of the run; volume = friction
 - **Why this one**: matches every M03+ mutation endpoint (vcs, coding-agents, byok); the SPA's `apiFetch` carries `X-Org-Slug` automatically. The OAuth callback URL is the exception — the upstream provider doesn't know our header — so the signed `state` embeds the `org_id`.
 - **Reversal cost**: low.
 
+### Phase 4 — allowlist editor ships as free-form chips, not toggle catalog
+
+- **Certainty**: 2/5
+- **Decision**: The allowlist editor on `IntegrationsSettingsPage` is a chip-with-remove + free-text add input over `mcp_credentials.allowed_tools`, not a checkbox catalog of each provider's known write tools. The catalog-style toggle UI lands with Phase 5's e2e once the provider's known-write-tools list is piped through `GET /api/integrations` for the SPA to enumerate.
+- **Why this one**: the chip editor is correct and minimal — operators see what's in the allowlist, can clear or add entries, and the proxy is the actual gate. Expanding the API to return per-provider known_write_tools is a one-line change but adds a coupling that's easier to validate alongside the e2e flow that actually exercises a write tool end-to-end.
+- **Reversal cost**: low — extend the GET response + render checkboxes; no migration.
+
+### Phase 4 — full e2e deferred to Phase 5
+
+- **Certainty**: 3/5
+- **Decision**: Phase 4's "Tests + E2E" item is satisfied by vitest unit coverage of the page; the Playwright spec lands in Phase 5 which exercises the full Owner-connects-Linear-and-Notion → review-runs-with-MCP path.
+- **Why this one**: writing two e2e specs (one for settings persistence here, one for the review path in Phase 5) duplicates the docker-compose bring-up + OAuth handshake. The Phase 5 spec is the authoritative integration test; the unit suite already covers state rendering + the four mutation paths.
+- **Reversal cost**: low.
+
 ### Phase 3 — audit-kind actor assertions deferred to Phase 5 e2e
 
 - **Certainty**: 2/5

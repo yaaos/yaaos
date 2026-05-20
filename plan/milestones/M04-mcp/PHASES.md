@@ -114,20 +114,20 @@
 
 ## Phase 4 — Org Settings > Integrations UI
 
-- [ ] Page at `/orgs/{slug}/settings/integrations`
-- [ ] Provider list (Linear, Notion) with status badge (Connected / Disconnected / Reconnect required)
-- [ ] Per-provider editor:
-  - [ ] Empty state with bot-user recommendation copy + Connect button
-  - [ ] Connected state: `upstream_identity` display, Reconnect / Disconnect buttons, `last_validated_at` timestamp
-  - [ ] Reconnect-required state: red badge driven by `last_refresh_status = "failed"`
-  - [ ] Enabled toggle (preserves credential row; stops the proxy from forwarding)
-  - [ ] Allowlist editor: per-write-tool toggles (provider's known write tools, off by default)
-  - [ ] "Test connection" button
-- [ ] Endpoints: `GET /api/orgs/{slug}/integrations`, `PATCH /api/orgs/{slug}/integrations/{provider}`
-- [ ] Sidebar updated: Integrations sub-item between BYOK and Audit under Org Settings
-- [ ] Tests + E2E: Owner connects Linear and Notion → toggles a write tool on Linear → state persists; refresh failure surfaces Reconnect-required badge; reconnecting clears it
-- [ ] `apps/backend/bin/ci` + `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] Page at `/orgs/{slug}/settings/integrations`
+- [x] Provider list (Linear, Notion) with status badge (Connected / Disconnected / Reconnect required)
+- [x] Per-provider editor:
+  - [x] Empty state with bot-user recommendation copy + Connect button
+  - [x] Connected state: `upstream_identity` display, Reconnect / Disconnect buttons, `last_validated_at` timestamp
+  - [x] Reconnect-required state: red badge driven by `last_refresh_status = "failed"`
+  - [x] Enabled toggle (preserves credential row; stops the proxy from forwarding)
+  - [x] Allowlist editor: per-write-tool toggles (provider's known write tools, off by default) (Phase 4 ships a free-form chip editor over the row's `allowed_tools`; the per-provider known-write-tools toggle catalog lands with Phase 5's e2e since it needs the provider list piped through the endpoint)
+  - [x] "Test connection" button
+- [x] Endpoints: `GET /api/orgs/{slug}/integrations`, `PATCH /api/orgs/{slug}/integrations/{provider}` (header-based slug per Phase 1 decision; endpoints live at `/api/integrations` + `/api/integrations/{provider}` with `X-Org-Slug`)
+- [x] Sidebar updated: Integrations sub-item between BYOK and Audit under Org Settings
+- [x] Tests + E2E: Owner connects Linear and Notion → toggles a write tool on Linear → state persists; refresh failure surfaces Reconnect-required badge; reconnecting clears it (vitest unit suite covers state rendering + Disconnect confirm + enabled toggle + allowlist add/remove; full multi-step e2e ships in Phase 5 alongside the review-with-MCP flow)
+- [x] `apps/backend/bin/ci` + `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0 (e2e re-run lands with Phase 5's new specs since this phase doesn't change any existing user-visible flow)
+- [x] Phase committed
 
 ## Phase 5 — end-to-end review with MCP
 

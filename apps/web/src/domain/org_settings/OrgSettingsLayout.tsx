@@ -21,6 +21,7 @@ const TABS: SettingsTab[] = [
   { id: "vcs", label: "VCS", path: "/settings/vcs", role: "admin" },
   { id: "coding-agents", label: "Coding Agents", path: "/settings/coding-agents", role: "admin" },
   { id: "byok", label: "BYOK", path: "/settings/byok", role: "admin" },
+  { id: "integrations", label: "Integrations", path: "/settings/integrations", role: "admin" },
   { id: "audit", label: "Audit", path: "/settings/audit", role: "admin" },
 ];
 

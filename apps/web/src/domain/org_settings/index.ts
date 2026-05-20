@@ -1,6 +1,7 @@
 export { AuditSettingsPage } from "./AuditSettingsPage";
 export { AuthSettingsPage } from "./AuthSettingsPage";
 export { BYOKSettingsPage } from "./byok/BYOKSettingsPage";
+export { IntegrationsSettingsPage } from "./integrations";
 export { CodingAgentSettingsPage } from "./coding_agents/CodingAgentSettingsPage";
 export { CodingAgentsSettingsPage } from "./coding_agents/CodingAgentsSettingsPage";
 // Side-effect import: registers the bespoke claude_code component in the

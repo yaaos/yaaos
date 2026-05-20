@@ -10,6 +10,7 @@ import {
   BYOKSettingsPage,
   CodingAgentSettingsPage,
   CodingAgentsSettingsPage,
+  IntegrationsSettingsPage,
   MembersSettingsPage,
   VcsSettingsPage,
 } from "@domain/org_settings";
@@ -176,6 +177,12 @@ const orgSettingsByokRoute = createRoute({
   component: BYOKSettingsPage,
 });
 
+const orgSettingsIntegrationsRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/integrations",
+  component: IntegrationsSettingsPage,
+});
+
 // Legacy aliases — M01-era links + e2e specs target `/dashboard`,
 // `/tickets`, `/memory`, `/settings`. Render the same components directly
 // (no auth probe) so M01 flows keep working. M02 flows go through
@@ -235,6 +242,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsCodingAgentsRoute,
     orgSettingsCodingAgentDetailRoute,
     orgSettingsByokRoute,
+    orgSettingsIntegrationsRoute,
   ]),
 ]);
 
