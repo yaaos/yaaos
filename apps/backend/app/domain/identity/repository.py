@@ -40,6 +40,31 @@ async def get_user(session: AsyncSession, user_id: UUID) -> UserRow | None:
     return (await session.execute(select(UserRow).where(UserRow.id == user_id))).scalar_one_or_none()
 
 
+async def set_user_display_name(session: AsyncSession, *, user_id: UUID, display_name: str) -> UserRow | None:
+    row = await get_user(session, user_id)
+    if row is None:
+        return None
+    row.display_name = display_name
+    await session.flush()
+    return row
+
+
+async def set_user_github_username(
+    session: AsyncSession, *, user_id: UUID, github_username: str | None
+) -> UserRow | None:
+    """Write `users.github_username`. Called by:
+    - the github OAuth login callback on every successful login (keeps the
+      column fresh if the user renames on GitHub)
+    - the verify-only flow in `domain/account` (one-shot consent OAuth that
+      writes only this column without issuing a session)."""
+    row = await get_user(session, user_id)
+    if row is None:
+        return None
+    row.github_username = github_username
+    await session.flush()
+    return row
+
+
 async def add_email(
     session: AsyncSession,
     *,

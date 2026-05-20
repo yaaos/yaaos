@@ -83,6 +83,46 @@ async def test_pending_invitation_creates_user_and_membership(db_session) -> Non
 
 
 @pytest.mark.asyncio
+async def test_github_login_refreshes_github_username(db_session) -> None:
+    """On every successful github login, users.github_username is rewritten
+    from the profile — handles GitHub renames without manual intervention."""
+    user = await repo.insert_user(db_session, display_name="U")
+    await repo.add_email(db_session, user_id=user.id, email="user@example.com", verified=True)
+    await repo.add_oauth_identity(db_session, user_id=user.id, provider="github", external_subject="42")
+    profile = ProviderProfile(
+        external_subject="42",
+        primary_email="user@example.com",
+        email_verified=True,
+        display_name="U",
+        provider_login="octocat",
+    )
+    await login_via_oauth(db_session, provider_id="github", profile=profile)
+    refreshed = await repo.get_user(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.github_username == "octocat"
+
+    # Simulate a GitHub rename: next login carries a new login.
+    profile2 = profile.model_copy(update={"provider_login": "octocat-2"})
+    await login_via_oauth(db_session, provider_id="github", profile=profile2)
+    refreshed = await repo.get_user(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.github_username == "octocat-2"
+
+
+@pytest.mark.asyncio
+async def test_non_github_provider_does_not_touch_github_username(db_session) -> None:
+    user = await repo.insert_user(db_session, display_name="U")
+    await repo.add_email(db_session, user_id=user.id, email="user@example.com", verified=True)
+    await repo.add_oauth_identity(db_session, user_id=user.id, provider="okta", external_subject="42")
+    # Stamp a known github_username so we can assert it's NOT overwritten.
+    await repo.set_user_github_username(db_session, user_id=user.id, github_username="kept")
+    await login_via_oauth(db_session, provider_id="okta", profile=_profile())
+    refreshed = await repo.get_user(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.github_username == "kept"
+
+
+@pytest.mark.asyncio
 async def test_expired_invitation_hard_rejects(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="acme2")
     db_session.add(

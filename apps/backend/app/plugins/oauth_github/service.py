@@ -104,6 +104,9 @@ class GitHubOAuthProvider:
             # second-factor check. No API verification needed; we don't
             # demand a separate yaaos TOTP step-up on top of GitHub login.
             mfa_satisfied=True,
+            # The GitHub `login` (a.k.a. username/handle). Surfaced so the
+            # callback path can write `users.github_username`.
+            provider_login=user.get("login"),
         )
 
 

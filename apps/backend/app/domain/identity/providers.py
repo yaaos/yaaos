@@ -41,6 +41,10 @@ class ProviderProfile(BaseModel):
     email_verified: bool
     display_name: str
     mfa_satisfied: bool = False
+    # Provider-specific login/handle (e.g. GitHub `login`). Surfaced so the
+    # `oauth_github` callback path can persist it as `users.github_username`.
+    # Other providers may leave it `None`.
+    provider_login: str | None = None
 
 
 class ProviderError(RuntimeError):

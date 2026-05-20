@@ -60,6 +60,8 @@ async def test_exchange_code_happy_path(monkeypatch, httpx_mock) -> None:
     assert profile.primary_email == "octo@example.com"
     assert profile.email_verified is True
     assert profile.display_name == "Octo Cat"
+    # M03 — provider_login surfaces GitHub `login` for users.github_username.
+    assert profile.provider_login == "octocat"
 
 
 @pytest.mark.asyncio

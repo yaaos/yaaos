@@ -18,6 +18,7 @@ from app.domain.identity.models import (
 class User(BaseModel):
     id: UUID
     display_name: str
+    github_username: str | None = None
     deactivated_at: datetime | None
     created_at: datetime
 
@@ -26,6 +27,7 @@ class User(BaseModel):
         return cls(
             id=row.id,
             display_name=row.display_name,
+            github_username=row.github_username,
             deactivated_at=row.deactivated_at,
             created_at=row.created_at,
         )

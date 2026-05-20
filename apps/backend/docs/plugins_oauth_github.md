@@ -24,9 +24,11 @@ The plugin exposes no HTTP routes of its own. `/api/auth/login?provider=github` 
 `exchange_code(code, redirect_uri)`:
 
 1. `POST https://github.com/login/oauth/access_token` via `authlib.integrations.httpx_client.AsyncOAuth2Client`. `Accept: application/json` so the response is JSON, not form-encoded.
-2. `GET /user` — stable `id` (becomes `external_subject`) + `name`/`login` (becomes `display_name`).
+2. `GET /user` — stable `id` (becomes `external_subject`) + `name`/`login` (becomes `display_name`) + `login` (becomes `provider_login`).
 3. `GET /user/emails` — pick the row with `primary: true`; copy its `verified` bool into `email_verified`.
 4. Lowercase the email before returning. Unverified is **not** rejected here; the callback handler enforces the `email_verified == true` invariant so the orchestrator never sees a tentative address.
+
+`provider_login` is the user's GitHub username (handle). `login_via_oauth` writes it to `users.github_username` on every successful github login, so the column tracks GitHub renames without manual intervention. The same field powers the verify-only flow in [`domain/identity`](domain_identity.md) — a separate consent OAuth that only refreshes this column, no identity row created, no session issued.
 
 Failure modes — `ProviderError`:
 - token exchange returned non-2xx or no `access_token`,

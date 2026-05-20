@@ -41,17 +41,17 @@
 
 ## Phase 3 — user profile additions
 
-- [ ] `users.github_username` wired through `domain/identity` user service + read/write API
-- [ ] `plugins/oauth_github` callback writes `github_username` from the GitHub `/user` response on every successful login
-- [ ] Verify-only flow in `domain/account`: `GET /api/account/github/verify` redirects via Authlib; `GET /api/account/github/verify/callback` exchanges code, reads username, writes `users.github_username`. No `oauth_identities` row touched. No session issued.
-- [ ] `PATCH /api/memberships/me/{org_id}` for handle changes (per-org). Enforces `UNIQUE(org_id, handle)` constraint via the existing M02 table.
-- [ ] `PATCH /api/account/me` for `display_name` updates
-- [ ] `GET /api/account/me` payload extended with `github_username` + per-org handle list
-- [ ] Tests: verify-only flow writes username without creating identity row; per-org handle update respects uniqueness; login flow updates username on every login (including when value changes)
-- [ ] `apps/backend/docs/domain_identity.md` updated for `github_username` field + verify-only flow
-- [ ] `apps/backend/docs/plugins_oauth_github.md` updated for the login-time `github_username` write
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `users.github_username` wired through `domain/identity` user service + read/write API
+- [x] `plugins/oauth_github` callback writes `github_username` from the GitHub `/user` response on every successful login
+- [x] Verify-only flow in `domain/account`: `GET /api/account/github/verify` redirects via Authlib; `GET /api/account/github/verify/callback` exchanges code, reads username, writes `users.github_username`. No `oauth_identities` row touched. No session issued.
+- [x] `PATCH /api/memberships/me/{org_id}` for handle changes (per-org). Enforces `UNIQUE(org_id, handle)` constraint via the existing M02 table.
+- [x] `PATCH /api/account/me` for `display_name` updates
+- [x] `GET /api/account/me` payload extended with `github_username` + per-org handle list
+- [x] Tests: verify-only flow writes username without creating identity row; per-org handle update respects uniqueness; login flow updates username on every login (including when value changes)
+- [x] `apps/backend/docs/domain_identity.md` updated for `github_username` field + verify-only flow
+- [x] `apps/backend/docs/plugins_oauth_github.md` updated for the login-time `github_username` write
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 4 — org settings additions (session-timeout override)
 

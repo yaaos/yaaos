@@ -80,6 +80,12 @@ async def login_via_oauth(
     if identity_row is not None:
         user_row = await repo.get_user(db, identity_row.user_id)
         assert user_row is not None
+        # Keep `github_username` fresh on every GitHub login — handles the
+        # case where the user renames their GitHub account.
+        if provider_id == "github" and profile.provider_login:
+            await repo.set_user_github_username(
+                db, user_id=user_row.id, github_username=profile.provider_login
+            )
         return LoginResult(user=User.from_row(user_row), newly_created=False)
 
     existing_user_row = await repo.find_user_by_email(db, profile.primary_email)
@@ -104,6 +110,8 @@ async def login_via_oauth(
         provider=provider_id,
         external_subject=profile.external_subject,
     )
+    if provider_id == "github" and profile.provider_login:
+        await repo.set_user_github_username(db, user_id=user_row.id, github_username=profile.provider_login)
     await _accept_invitation_for_user(db, invitation_row, user_id=user_row.id)
     return LoginResult(user=User.from_row(user_row), newly_created=True)
 
