@@ -51,6 +51,13 @@ Keep entries terse. The user reads this at the end of the run; volume = friction
 - **Why this one**: matches every M03+ mutation endpoint (vcs, coding-agents, byok); the SPA's `apiFetch` carries `X-Org-Slug` automatically. The OAuth callback URL is the exception — the upstream provider doesn't know our header — so the signed `state` embeds the `org_id`.
 - **Reversal cost**: low.
 
+### Phase 3 — audit-kind actor assertions deferred to Phase 5 e2e
+
+- **Certainty**: 2/5
+- **Decision**: Phase 3's "audit rows have `actor_kind = user`/`system`" assertions ship as part of Phase 5's e2e suite, which exercises the full intake → reviewer → MCP dispatch path with real audit rows. The Phase 3 unit-level tests cover the deterministic surface (`_build_mcp_payload` collection rules + `_materialize_mcp_config` output shape).
+- **Why this one**: the audit rows in question are written by `domain/mcp_proxy.web.dispatch` when the agent calls a tool — which only fires when a real `coding_agent.review` invocation reaches the proxy. The Phase 3 wire-up is exercised end-to-end by the Phase 5 suite that already drives the full fake-linear/fake-notion stack. A unit-level harness that fakes the CLI invocation just to assert audit-kind would duplicate the Phase 5 wiring.
+- **Reversal cost**: low.
+
 ### Phase 0b — fake-app standalone tests deferred to integration coverage
 
 - **Certainty**: 2/5

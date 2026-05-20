@@ -337,6 +337,23 @@ class InProcessWorkspaceProvider:
         except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError):
             return None
 
+    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
+        """Write to a workspace-relative file. Refuses to overwrite an existing
+        file — callers must not collide with repo content. Path-traversal guarded
+        the same way `read_text` is."""
+        working_dir = plugin_state.get("working_dir")
+        if not working_dir or not os.path.isdir(working_dir):
+            raise WorkspaceExecError(f"in_process_workspace state missing working_dir: {working_dir!r}")
+        clean = path.lstrip("/\\")
+        target = os.path.realpath(os.path.join(working_dir, clean))
+        if not target.startswith(os.path.realpath(working_dir) + os.sep):
+            raise WorkspaceExecError(f"path traversal blocked: {path!r}")
+        if os.path.exists(target):
+            raise WorkspaceExecError(f"workspace file already exists: {path!r}")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
     async def destroy(self, plugin_state: dict[str, Any]) -> None:
         working_dir = plugin_state.get("working_dir")
         if not working_dir:

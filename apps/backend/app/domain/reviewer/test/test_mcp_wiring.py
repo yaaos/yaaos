@@ -1,0 +1,211 @@
+"""Phase 3 wiring: `_build_mcp_payload` + mint/revoke + agent_config threading.
+
+The full reviewer worker is exercised by the e2e suite (Phase 5). These tests
+cover the small, deterministic surface: provider collection + token lifecycle
+hooked into the same payload the worker hands the coding-agent plugin.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+
+from app.core.oauth import ProviderConfig
+from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations.types import _REGISTRY
+from app.domain.mcp_proxy.models import McpReviewTokenRow
+from app.domain.mcp_proxy.service import _hash as _hash_token
+from app.domain.orgs import repository as orgs_repo
+from app.domain.pull_requests.models import PullRequestRow
+from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer.queue import _build_mcp_payload
+from app.domain.tickets.models import TicketRow
+
+
+def _stub_config() -> ProviderConfig:
+    return ProviderConfig(
+        authorize_url="https://stub.test/authorize",
+        token_url="https://stub.test/token",
+        refresh_url="https://stub.test/token",
+        mcp_url="https://stub.test/mcp",
+        client_id="cid",
+        client_secret="csecret",
+        scope_separator=" ",
+        default_scopes=("read",),
+        known_read_tools=("get_issue", "search"),
+        known_write_tools=("update_issue", "create_comment"),
+    )
+
+
+@dataclass
+class _StubProvider:
+    provider_id: str
+    config: ProviderConfig = field(default_factory=_stub_config)
+
+    async def validate(self, access_token: str) -> bool:
+        del access_token
+        return True
+
+
+@pytest.fixture
+def stub_providers():
+    """Register two stub providers for the duration of one test."""
+    prior_keys = set(_REGISTRY.keys())
+    _REGISTRY["linear_stub"] = _StubProvider(provider_id="linear_stub")
+    _REGISTRY["notion_stub"] = _StubProvider(provider_id="notion_stub")
+    try:
+        yield
+    finally:
+        for k in set(_REGISTRY.keys()) - prior_keys:
+            _REGISTRY.pop(k, None)
+
+
+async def _seed_org(db_session, slug: str):
+    return await orgs_repo.insert_org(db_session, slug=slug)
+
+
+async def _seed_review_row(db_session, *, org_id):
+    """Insert the minimal ticket → PR → review chain so `mcp_review_tokens`
+    FKs resolve. Returns the review row."""
+    ticket = TicketRow(
+        id=uuid4(),
+        org_id=org_id,
+        source="github_pr",
+        source_external_id=f"pr-{uuid4()}",
+        title="t",
+        plugin_id="github",
+        repo_external_id="owner/repo",
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    pr = PullRequestRow(
+        id=uuid4(),
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="owner/repo",
+        external_id=ticket.source_external_id,
+        number=1,
+        title="t",
+        body=None,
+        author_login="a",
+        author_type="user",
+        base_branch="main",
+        head_branch="b",
+        base_sha="0",
+        head_sha="1",
+        is_draft=False,
+        is_fork=False,
+        state="open",
+        html_url="http://test",
+        ticket_id=ticket.id,
+    )
+    db_session.add(pr)
+    await db_session.flush()
+    review = ReviewRow(
+        id=uuid4(),
+        org_id=org_id,
+        pr_id=pr.id,
+        sequence_number=1,
+        status="queued",
+        trigger_reason="manual_full",
+        destination="vcs",
+    )
+    db_session.add(review)
+    await db_session.flush()
+    return review
+
+
+async def _seed_credential(
+    db_session,
+    *,
+    org_id,
+    provider: str,
+    enabled: bool = True,
+    allowed_tools: list[str] | None = None,
+    last_refresh_status: str = "ok",
+) -> None:
+    db_session.add(
+        McpCredentialRow(
+            org_id=org_id,
+            provider=provider,
+            encrypted_access_token="enc-access",
+            encrypted_refresh_token=None,
+            expires_at=datetime.now(UTC),
+            scopes=["read"],
+            allowed_tools=allowed_tools or [],
+            enabled=enabled,
+            upstream_identity=f"{provider}-bot",
+            last_refresh_status=last_refresh_status,
+            last_validated_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_no_connected_providers_returns_none(db_session, stub_providers) -> None:
+    del stub_providers
+    org = await _seed_org(db_session, slug="mcp-none")
+    await db_session.commit()
+    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_disabled_provider_excluded(db_session, stub_providers) -> None:
+    del stub_providers
+    org = await _seed_org(db_session, slug="mcp-disabled")
+    await _seed_credential(db_session, org_id=org.id, provider="linear_stub", enabled=False)
+    await db_session.commit()
+    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_broken_creds_provider_excluded(db_session, stub_providers) -> None:
+    del stub_providers
+    org = await _seed_org(db_session, slug="mcp-broken")
+    await _seed_credential(
+        db_session,
+        org_id=org.id,
+        provider="linear_stub",
+        last_refresh_status="failed",
+    )
+    await db_session.commit()
+    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_connected_provider_mints_token_and_surfaces_servers(db_session, stub_providers) -> None:
+    del stub_providers
+    org = await _seed_org(db_session, slug="mcp-connected")
+    review = await _seed_review_row(db_session, org_id=org.id)
+    await _seed_credential(
+        db_session,
+        org_id=org.id,
+        provider="linear_stub",
+        allowed_tools=["update_issue"],
+    )
+    await _seed_credential(db_session, org_id=org.id, provider="notion_stub", allowed_tools=[])
+    await db_session.commit()
+
+    payload = await _build_mcp_payload(review.id, org_id=org.id)
+    assert payload is not None
+    assert payload["base_url"].endswith(f"/api/mcp/{review.id}")
+
+    providers = {s["provider"]: s for s in payload["servers"]}
+    assert set(providers.keys()) == {"linear_stub", "notion_stub"}
+    assert providers["linear_stub"]["allowed_tools"] == ["update_issue"]
+    assert "get_issue" in providers["linear_stub"]["known_read_tools"]
+
+    # The minted token is persisted with its sha256 hash and tagged to review_id.
+    token_hash = _hash_token(payload["token"])
+    row = (
+        await db_session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
+    ).scalar_one()
+    assert row.review_id == review.id

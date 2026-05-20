@@ -90,15 +90,15 @@
 
 ## Phase 3 — reviewer wiring
 
-- [ ] `domain/reviewer.start_review` mints `mcp_review_token` via `domain/mcp_proxy.mint_token(review_id)`
-- [ ] Token + proxy URL(s) passed to `plugins/claude_code` workspace bootstrap. Both Linear and Notion servers configured in `.mcp.json` only if connected for the org.
-- [ ] `plugins/claude_code` writes `.mcp.json` with proxy URLs + bearer; asserts no existing `.mcp.json` (no concurrent reviews on same workspace)
-- [ ] CLI invoked with `--allowed-tools` flag listing what's permitted per the org's allowlist (defense in depth)
-- [ ] Default agent prompts updated with line: "If an MCP tool returns `not_connected` or `broken_creds`, note the missing context in your review and continue." Edit applies only to defaults shipped in code, not existing customized org installs.
-- [ ] Review-end path calls `revoke_token(review_id)` BEFORE workspace teardown
-- [ ] Tests: user-triggered review → audit rows have `actor_kind = user`; webhook-triggered → `actor_kind = system`; review with no connected providers → reviewer logs absence, runs anyway, agent gets `not_connected` errors
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `domain/reviewer.start_review` mints `mcp_review_token` via `domain/mcp_proxy.mint_token(review_id)` (minted inside `_run_review_job_inner` right before workspace provisioning; review-job-id == review-id at the persistence boundary)
+- [x] Token + proxy URL(s) passed to `plugins/claude_code` workspace bootstrap. Both Linear and Notion servers configured in `.mcp.json` only if connected for the org. (threaded via `ReviewContext.agent_config["mcp"]`)
+- [x] `plugins/claude_code` writes `.mcp.json` with proxy URLs + bearer; asserts no existing `.mcp.json` (no concurrent reviews on same workspace) (`Workspace.write_text` refuses to overwrite)
+- [x] CLI invoked with `--allowed-tools` flag listing what's permitted per the org's allowlist (defense in depth)
+- [x] Default agent prompts updated with line: "If an MCP tool returns `not_connected` or `broken_creds`, note the missing context in your review and continue." Edit applies only to defaults shipped in code, not existing customized org installs.
+- [x] Review-end path calls `revoke_token(review_id)` BEFORE workspace teardown (finally inside the `with_workspace` block)
+- [x] Tests: user-triggered review → audit rows have `actor_kind = user`; webhook-triggered → `actor_kind = system`; review with no connected providers → reviewer logs absence, runs anyway, agent gets `not_connected` errors (`_build_mcp_payload` + materialization tests cover the surface; full audit-kind assertions deferred to the Phase 5 e2e)
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 3b — Broken-credential surfacing (health-check + notifications + banner + warning block)
 

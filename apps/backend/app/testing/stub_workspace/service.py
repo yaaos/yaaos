@@ -98,6 +98,20 @@ class StubWorkspaceProvider:
         except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError):
             return None
 
+    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
+        working_dir = plugin_state.get("working_dir")
+        if not working_dir or not os.path.isdir(working_dir):
+            return
+        clean = path.lstrip("/\\")
+        target = os.path.realpath(os.path.join(working_dir, clean))
+        if not target.startswith(os.path.realpath(working_dir) + os.sep):
+            return
+        if os.path.exists(target):
+            raise RuntimeError(f"workspace file already exists: {path!r}")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
     async def destroy(self, plugin_state: dict[str, Any]) -> None:
         working_dir = plugin_state.get("working_dir")
         if working_dir and os.path.isdir(working_dir):

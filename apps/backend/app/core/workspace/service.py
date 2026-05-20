@@ -87,6 +87,9 @@ class _WorkspaceImpl:
     async def read_text(self, path: str) -> str | None:
         return await self._provider.read_text(self._plugin_state, path)
 
+    async def write_text(self, path: str, content: str) -> None:
+        await self._provider.write_text(self._plugin_state, path, content)
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)

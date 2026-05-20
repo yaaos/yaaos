@@ -38,6 +38,10 @@ Per-mode prompt content lives next to the plugin under `prompts/`: `full_review.
 
 Single parent invocation. The CLI is given the Task tool so the parent can dispatch subagents.
 
+**Step 0 — materialize MCP context (`_materialize_mcp_config`):**
+
+When `ReviewContext.agent_config["mcp"]` is set (populated by `domain/reviewer.queue._build_mcp_payload`), writes `.mcp.json` into the workspace via `Workspace.write_text`. The file lists each connected provider as an HTTP MCP server with `Authorization: Bearer <per-review-token>` and the URL pointing at `domain/mcp_proxy`'s `/api/mcp/<review_id>/<provider>` endpoint. Returns the per-server `mcp__<server>__<tool>` allowlist additions (known read tools + the row's `allowed_tools` write subset) that `_prepare_invocation` appends to `--allowed-tools`. Defense-in-depth — the proxy is the actual gate. The full-review prompt header gains an MCP context block listing the connected providers and the broken-creds fallback instruction.
+
 **Step 1 — load settings + build argv (`_prepare_invocation`):**
 
 `_load_settings_for_invocation` selects the single `claude_code_settings` row and decrypts the Anthropic key. Returns `(api_key, cli_path)`. No key or no CLI path: early `AGENT_ERROR`. The default timeout is a module constant (`_DEFAULT_TIMEOUT_SECONDS = 1200`); per-call override via `agent_config["timeout_seconds"]`.

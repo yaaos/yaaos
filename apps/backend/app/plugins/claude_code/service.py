@@ -161,8 +161,26 @@ def _load_prompt(name: str) -> str:
 _PARENT_PROMPT_HEADER = _load_prompt("full_review")
 
 
+_MCP_BROKEN_CREDS_ADDENDUM = (
+    "If an MCP tool returns `not_connected` or `broken_creds`, note the missing "
+    "context in your review and continue."
+)
+
+
 def _assemble_review_prompt(ctx: ReviewContext) -> str:
     parts: list[str] = [_PARENT_PROMPT_HEADER, ""]
+    mcp = ctx.agent_config.get("mcp") if isinstance(ctx.agent_config, dict) else None
+    if mcp and mcp.get("servers"):
+        provider_names = sorted(s["provider"] for s in mcp["servers"])
+        parts.extend(
+            [
+                "## MCP context servers",
+                "The following MCP servers are connected for this review and may be "
+                f"called via the `mcp__<server>__<tool>` toolset: {', '.join(provider_names)}.",
+                _MCP_BROKEN_CREDS_ADDENDUM,
+                "",
+            ]
+        )
     if ctx.language_hint:
         parts.extend(
             [
@@ -589,7 +607,8 @@ class ClaudeCodePlugin:
         context: ReviewContext,
         on_activity: OnActivity | None = None,
     ) -> ReviewResult:
-        prep = await self._prepare_invocation(context.agent_config)
+        mcp_tools = await _materialize_mcp_config(workspace, context.agent_config.get("mcp"))
+        prep = await self._prepare_invocation(context.agent_config, extra_allowed_tools=mcp_tools)
         if isinstance(prep, ReviewResult):
             return prep
         argv, env, timeout = prep
@@ -642,6 +661,7 @@ class ClaudeCodePlugin:
         agent_config: dict[str, Any],
         *,
         allowed_tools_override: str | None = None,
+        extra_allowed_tools: list[str] | None = None,
     ) -> tuple[list[str], dict[str, str], int] | ReviewResult:
         """Load settings, build argv + env. Returns ReviewResult on early failure.
 
@@ -696,7 +716,8 @@ class ClaudeCodePlugin:
                     "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
                     "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)"
                 )
-            ),
+            )
+            + ("," + ",".join(extra_allowed_tools) if extra_allowed_tools else ""),
         ]
         return argv, env, timeout
 
@@ -1001,6 +1022,46 @@ class ClaudeCodePlugin:
 
 
 _plugin = ClaudeCodePlugin()
+
+
+_MCP_CONFIG_FILE = ".mcp.json"
+
+
+async def _materialize_mcp_config(
+    workspace: Workspace,
+    mcp_payload: dict[str, Any] | None,
+) -> list[str]:
+    """Write a Claude-Code `.mcp.json` into the workspace from the reviewer's
+    MCP payload. Returns the per-server `mcp__<server>__<tool>` allowed-tools
+    additions (defense in depth — the proxy is the actual gate).
+
+    Returns an empty list when no payload is provided.
+    """
+    if not mcp_payload or not mcp_payload.get("servers"):
+        return []
+    token = mcp_payload["token"]
+    base_url = mcp_payload["base_url"]
+    config = {
+        "mcpServers": {
+            s["provider"]: {
+                "type": "http",
+                "url": f"{base_url}/{s['provider']}",
+                "headers": {"Authorization": f"Bearer {token}"},
+            }
+            for s in mcp_payload["servers"]
+        }
+    }
+    await workspace.write_text(_MCP_CONFIG_FILE, json.dumps(config, indent=2))
+    extras: list[str] = []
+    for s in mcp_payload["servers"]:
+        provider = s["provider"]
+        allowed = set(s.get("allowed_tools") or [])
+        for tool in s.get("known_read_tools", []):
+            extras.append(f"mcp__{provider}__{tool}")
+        for tool in s.get("known_write_tools", []):
+            if tool in allowed:
+                extras.append(f"mcp__{provider}__{tool}")
+    return extras
 
 
 # ── Anthropic auth probe ──────────────────────────────────────────────────────

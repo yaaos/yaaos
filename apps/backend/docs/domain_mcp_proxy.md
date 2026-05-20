@@ -17,7 +17,7 @@ Planned (Phase 2):
 
 ## Module architecture
 
-Skeleton at Phase 0. Phase 2 ships the proxy core + structured JSON-RPC error envelopes for `not_connected`, `broken_creds`, `blocked_by_allowlist`.
+Skeleton at Phase 0. Phase 2 ships the proxy core + structured JSON-RPC error envelopes for `not_connected`, `broken_creds`, `blocked_by_allowlist`. Phase 3 wires the reviewer: `domain/reviewer.queue._build_mcp_payload` mints a token per review_job, threads it into the coding agent via `ReviewContext.agent_config["mcp"]`, and `domain/mcp_proxy.revoke_token(review_id)` runs in a `finally` before the workspace context tears down.
 
 ## Data owned
 
