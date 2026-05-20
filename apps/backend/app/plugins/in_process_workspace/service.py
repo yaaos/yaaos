@@ -20,6 +20,7 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import structlog
 
@@ -111,6 +112,17 @@ class InProcessWorkspaceProvider:
         display_name="In-Process Workspace",
         description="Host tempdir + git clone. POC only — no isolation; M02+ adds Docker workspaces.",
     )
+
+    def install_url(self, org_id: UUID) -> str | None:
+        """Workspace plugins are infra — no user-facing install flow."""
+        del org_id
+        return None
+
+    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """No user-tunable settings for the in-process workspace."""
+        if settings:
+            raise ValueError(f"in_process workspace takes no settings, got: {sorted(settings.keys())}")
+        return {}
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         """Create a tempdir + git clone the repo at spec.sha.

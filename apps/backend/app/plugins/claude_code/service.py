@@ -545,6 +545,22 @@ class ClaudeCodePlugin:
         docs_url="https://docs.claude.com/en/docs/claude-code",
     )
 
+    def install_url(self, org_id: UUID) -> str | None:
+        """No out-of-band install — Claude Code settings are pure form. The
+        bespoke settings page (Phase 10) handles it."""
+        del org_id
+        return None
+
+    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Bare structural check at the plugin boundary. The full Pydantic
+        model with sub-agent uniqueness + bounds lives in `domain/orgs` and
+        runs at the API layer (Phase 10). Here we only confirm the top-level
+        keys."""
+        unknown = set(settings.keys()) - {"orchestrator", "agents"}
+        if unknown:
+            raise ValueError(f"unknown claude_code settings keys: {sorted(unknown)}")
+        return dict(settings)
+
     async def _load_settings_for_invocation(self) -> tuple[str | None, str | None]:
         """Returns (decrypted_api_key, cli_path). Timeout is a constant — see
         `_DEFAULT_TIMEOUT_SECONDS`. Per-call override via `agent_config["timeout_seconds"]`."""

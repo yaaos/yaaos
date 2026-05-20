@@ -18,13 +18,13 @@
 
 ## Phase 1 — plugin registry enumeration
 
-- [ ] `list_plugins(type: PluginType) -> list[PluginMeta]` exposed via the existing plugin registry
-- [ ] `Plugin` Protocol extended with `install_url(org_id) -> str | None` and `validate_settings(settings) -> dict | raises`. Minimal additions.
-- [ ] Existing plugins (`github`, `claude_code`, `in_process_workspace`) backfilled with these methods
-- [ ] Endpoint `GET /api/plugins/available?type={vcs|coding_agent}` returns `[{meta}, ...]`
-- [ ] Tests: each existing plugin returns a non-empty `PluginMeta`; type filter works
-- [ ] `apps/backend/bin/ci` exits 0
-- [ ] Phase committed
+- [x] `list_plugins(type: PluginType) -> list[PluginMeta]` exposed via the existing plugin registry
+- [x] `Plugin` Protocol extended with `install_url(org_id) -> str | None` and `validate_settings(settings) -> dict | raises`. Minimal additions.
+- [x] Existing plugins (`github`, `claude_code`, `in_process_workspace`) backfilled with these methods
+- [x] Endpoint `GET /api/plugins/available?type={vcs|coding_agent}` returns `[{meta}, ...]`
+- [x] Tests: each existing plugin returns a non-empty `PluginMeta`; type filter works
+- [x] `apps/backend/bin/ci` exits 0
+- [x] Phase committed
 
 ## Phase 2 — domain/orgs extensions (VCS + Coding Agents) + core/byok
 

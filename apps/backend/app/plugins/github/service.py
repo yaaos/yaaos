@@ -27,6 +27,7 @@ from app.domain.vcs import (
     VCSAuthError,
     VCSNotFoundError,
     VCSPullRequest,
+    VCSValidationError,
     register_vcs_plugin,
 )
 from app.plugins.github.models import (
@@ -87,6 +88,23 @@ class GitHubPlugin:
     @property
     def base_url(self) -> str:
         return get_settings().github_api_base_url
+
+    def install_url(self, org_id: UUID) -> str | None:
+        """The picker sends the user to the existing M02 install-handshake
+        endpoint, which signs `state=<org_id>` and redirects on to GitHub's
+        `apps/{slug}/installations/new`. Settings live in `github_settings`.
+        Always returns a relative URL — the SPA navigates to it."""
+        del org_id
+        return "/api/github/install"
+
+    def validate_settings(self, settings: dict[str, object]) -> dict[str, object]:
+        """The github plugin's settings are populated by the install handshake;
+        the picker form has nothing the user types. Accept an empty dict;
+        reject unknown keys to keep callers honest."""
+        unknown = set(settings.keys()) - {"installation_id"}
+        if unknown:
+            raise VCSValidationError(f"unknown github settings keys: {sorted(unknown)}")
+        return dict(settings)
 
     async def _get_settings_row(self, org_id: UUID) -> GitHubSettingsRow | None:
         async with db_session() as s:

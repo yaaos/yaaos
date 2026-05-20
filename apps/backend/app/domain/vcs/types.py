@@ -208,6 +208,22 @@ class PluginNotFoundError(LookupError):
 class VCSPlugin(Protocol):
     meta: PluginMeta
 
+    def install_url(self, org_id: UUID) -> str | None:
+        """URL to redirect the user to for plugin install (e.g. GitHub App install).
+
+        Return `None` if this plugin has no out-of-band install step — the picker
+        UI saves settings directly in that case.
+        """
+        ...
+
+    def validate_settings(self, settings: dict[str, object]) -> dict[str, object]:
+        """Validate a settings payload (typically JSONB from the picker form).
+
+        Returns the canonicalized dict on success. Raises `VCSValidationError`
+        on invalid input. Keep cheap and synchronous — no network IO.
+        """
+        ...
+
     async def fetch_pr(self, external_id: str) -> VCSPullRequest: ...
     async def fetch_diff(self, external_id: str) -> Diff: ...
     async def list_yaaos_comments(self, external_id: str) -> list[Comment]: ...

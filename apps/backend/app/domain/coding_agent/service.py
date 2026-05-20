@@ -7,6 +7,7 @@ from typing import Any
 
 import structlog
 
+from app.core.primitives import PluginMeta
 from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
     AnswerQuestionContext,
@@ -161,3 +162,8 @@ async def health_check_all() -> dict[str, HealthStatus]:
 
 def registered_plugin_ids() -> list[str]:
     return list(_PLUGINS.keys())
+
+
+def list_plugin_metas() -> list[PluginMeta]:
+    """Return `PluginMeta` for every registered coding-agent plugin, sorted by id."""
+    return [_PLUGINS[pid].meta for pid in sorted(_PLUGINS)]

@@ -207,6 +207,12 @@ class StubCodingAgentPlugin:
     async def health_check(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="stub mode", checked_at=datetime.now(UTC))
 
+    def install_url(self, org_id: Any) -> str | None:
+        return self._wrapped.install_url(org_id)
+
+    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        return self._wrapped.validate_settings(settings)
+
 
 def wrap_all_registered_plugins() -> int:
     """Replace every entry in `domain.coding_agent._PLUGINS` with a stub wrapping it."""

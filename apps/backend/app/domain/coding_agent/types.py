@@ -255,6 +255,16 @@ class AnswerQuestionResult(BaseModel):
 class CodingAgentPlugin(Protocol):
     meta: PluginMeta
 
+    def install_url(self, org_id: UUID) -> str | None:
+        """URL to redirect the user to for plugin install. `None` for plugins
+        that have no out-of-band install step (settings-only)."""
+        ...
+
+    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Validate a settings payload. Returns the canonicalized dict on
+        success; raises `ValueError` on invalid input."""
+        ...
+
     async def review(
         self,
         workspace: Workspace,

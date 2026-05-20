@@ -51,6 +51,7 @@ M02_PROTECTED_PREFIXES: tuple[str, ...] = (
     "/api/account/",
     "/api/memberships/",
     "/api/audit",  # exact + prefix both — endpoint is /api/audit and /api/audit/...
+    "/api/plugins/",
 )
 
 

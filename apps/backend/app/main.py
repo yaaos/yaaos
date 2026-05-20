@@ -48,6 +48,8 @@ from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 from app.domain import intake  # noqa: F401, E402
 from app.domain import settings  # noqa: F401, E402
+from app.domain import plugins as _domain_plugins  # noqa: F401, E402
+from app.domain.plugins import web as _domain_plugins_web  # noqa: F401, E402
 
 # 7. Plugins.
 from app.plugins import in_process_workspace, claude_code, github  # noqa: F401, E402

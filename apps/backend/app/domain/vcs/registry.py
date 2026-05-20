@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.core.primitives import PluginMeta
 from app.domain.vcs.types import PluginNotFoundError, VCSPlugin
 
 _PLUGINS: dict[str, VCSPlugin] = {}
@@ -28,6 +29,11 @@ def is_registered(plugin_id: str) -> bool:
 
 def registered_plugin_ids() -> list[str]:
     return list(_PLUGINS.keys())
+
+
+def list_plugin_metas() -> list[PluginMeta]:
+    """Return `PluginMeta` for every registered VCS plugin, sorted by id."""
+    return [_PLUGINS[pid].meta for pid in sorted(_PLUGINS)]
 
 
 async def get_installation_token(plugin_id: str, org_id: UUID) -> str:
