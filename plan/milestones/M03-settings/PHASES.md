@@ -108,14 +108,14 @@
 
 ## Phase 9 — Org Settings > Coding Agents (generic shell)
 
-- [ ] Coding Agents sub-page renders list of installed coding-agent plugins + "Add coding agent" button
-- [ ] Add flow: picker filtered to plugins not yet installed for this org
-- [ ] Remove flow with confirmation modal
-- [ ] Per-plugin settings sub-route at `/orgs/{slug}/settings/coding-agents/{plugin_id}` dispatches to a registered component via `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`
-- [ ] Plugins without a registered component land on a "settings not available" placeholder
+- [x] Coding Agents sub-page renders list of installed coding-agent plugins + "Add coding agent" button
+- [x] Add flow: picker filtered to plugins not yet installed for this org
+- [x] Remove flow with confirmation modal
+- [x] Per-plugin settings sub-route at `/orgs/{slug}/settings/coding-agents/{plugin_id}` dispatches to a registered component via `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`
+- [x] Plugins without a registered component land on a "settings not available" placeholder
 - [ ] E2E: install one plugin → remove one. Claude Code's rich UI exercised in Phase 10.
 - [ ] `apps/web/bin/ci` + `apps/e2e/bin/ci` exit 0
-- [ ] Phase committed
+- [x] Phase committed
 
 ## Phase 10 — Claude Code plugin bespoke UI
 

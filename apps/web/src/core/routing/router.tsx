@@ -7,6 +7,8 @@ import { MemoryPage } from "@domain/memory";
 import {
   AuditSettingsPage,
   AuthSettingsPage,
+  CodingAgentSettingsPage,
+  CodingAgentsSettingsPage,
   MembersSettingsPage,
   PlaceholderSettingsPage,
   VcsSettingsPage,
@@ -156,9 +158,16 @@ const orgSettingsVcsRoute = createRoute({
 const orgSettingsCodingAgentsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/settings/coding-agents",
-  component: () => (
-    <PlaceholderSettingsPage active="coding-agents" title="Coding Agents" phase="Phase 9" />
-  ),
+  component: CodingAgentsSettingsPage,
+});
+
+const orgSettingsCodingAgentDetailRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/coding-agents/$pluginId",
+  component: function CodingAgentDetailRoute() {
+    const { pluginId } = orgSettingsCodingAgentDetailRoute.useParams();
+    return <CodingAgentSettingsPage pluginId={pluginId} />;
+  },
 });
 
 const orgSettingsByokRoute = createRoute({
@@ -224,6 +233,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsAuditRoute,
     orgSettingsVcsRoute,
     orgSettingsCodingAgentsRoute,
+    orgSettingsCodingAgentDetailRoute,
     orgSettingsByokRoute,
   ]),
 ]);
