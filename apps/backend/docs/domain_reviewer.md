@@ -42,6 +42,25 @@ HTTP routes (`/api/reviewer`):
 
 ## Module architecture
 
+### M05 workflows + commands (Phase 4 foundations)
+
+Five typed `Workflow` definitions live in `domain/reviewer/workflows/` and register at module import:
+
+- `pr_review_v1` — `CheckShouldReview → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`.
+- `incremental_review_v1` — same shape with `IncrementalReview` substituted.
+- `verify_fix_v1` — `ProvisionWorkspace → VerifyFix → ResolveFinding → CleanupWorkspace`.
+- `stale_check_v1` — `ProvisionWorkspace → StaleCheck → ArchiveStaleFindings → CleanupWorkspace`.
+- `answer_question_v1` — `ProvisionWorkspace → AnswerQuestion → PostReply → CleanupWorkspace`.
+
+Ten matching `WorkflowCommand`s ship as stubs in `domain/reviewer/commands/`:
+
+- Workspace category (5): `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion` — each wraps a `domain/coding_agent` invocation in the full implementation.
+- Local category (5): `CheckShouldReview` (admission gate before provisioning), `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply`.
+
+The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`) ship in [`core/workspace.commands`](core_workspace.md) and register through the reviewer bootstrap so any workflow can reference them.
+
+**Phase 4 foundations boundary:** command bodies are stubs returning `Outcome.success()`. The follow-on iteration wires them to `domain/coding_agent` + admission, dismantles `queue.py`, and drops the `review_jobs` table.
+
 ### Entities
 
 - `ReviewJob` — generation-1 run-level state per `(PR x run)`: status, heartbeat, model, effort, JSONB findings, JSONB activity log. Identity = `id` UUID.

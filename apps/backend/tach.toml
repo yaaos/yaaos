@@ -74,7 +74,7 @@ depends_on = ["app.core.database", "app.core.tasks"]
 
 [[modules]]
 path = "app.core.workspace"
-depends_on = ["app.core.database", "app.core.observability", "app.core.plugin_meta"]
+depends_on = ["app.core.database", "app.core.observability", "app.core.plugin_meta", "app.core.workflow"]
 
 [[modules]]
 path = "app.domain.coding_agent"
@@ -114,7 +114,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.observability", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.memory", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.memory", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.sessions"

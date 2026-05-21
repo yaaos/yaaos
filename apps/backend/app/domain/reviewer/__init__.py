@@ -214,3 +214,32 @@ __all__ = [
     "schedule_review",
     "startup_recovery",
 ]
+
+
+def _register_m05_workflows() -> None:
+    """Register the five M05 reviewer workflows + their WorkflowCommands +
+    the three workspace lifecycle commands against `core/workflow`. Called
+    at import time; idempotent on re-import (tests reset the engine)."""
+    from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
+    from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
+    from app.domain.reviewer.commands import (  # noqa: PLC0415
+        ALL_LOCAL_COMMANDS,
+        ALL_WORKSPACE_COMMANDS,
+    )
+    from app.domain.reviewer.workflows import ALL_WORKFLOWS  # noqa: PLC0415
+
+    engine = get_engine()
+    for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
+        try:
+            engine.register_command(cmd)
+        except WorkflowError:
+            # Already registered (test reload, double-import). Leave it.
+            pass
+    for wf in ALL_WORKFLOWS:
+        try:
+            engine.register_workflow(wf)
+        except WorkflowError:
+            pass
+
+
+_register_m05_workflows()
