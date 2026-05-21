@@ -1,0 +1,216 @@
+"""Service test (Phase 2 gap B): reviewer → MCP proxy → broken-creds tracker → review-output prefix.
+
+Stitches three pieces that are tested in isolation today:
+
+- `mcp_proxy.mint_token(review_id)` → bearer for the workspace.
+- `POST /api/mcp/{review_id}/{server}` → proxy dispatch + audit row + `record_broken_creds` side-effect.
+- `_prefix_broken_creds_warning(...)` → yellow GitHub callout on the review summary.
+
+Existing unit/HTTP-boundary tests cover each in isolation
+(`test_dispatch.py`, `test_broken_creds_prefix.py`). This service test asserts
+they actually compose into the contract the reviewer relies on.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from sqlalchemy import select
+
+from app.core.audit_log.models import AuditEntryRow
+from app.core.auth import AuthMiddleware
+from app.core.oauth import ProviderConfig
+from app.core.secrets import encrypt
+from app.core.webserver.registry import _specs
+from app.domain.identity import repository as identity_repo
+from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations.types import _REGISTRY
+from app.domain.mcp_proxy import consume_broken_creds, mint_token
+from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
+from app.domain.orgs import repository as orgs_repo
+from app.domain.pull_requests.models import PullRequestRow
+from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer.queue import _prefix_broken_creds_warning
+from app.domain.tickets.models import TicketRow
+
+
+def _config() -> ProviderConfig:
+    return ProviderConfig(
+        authorize_url="https://stub.test/authorize",
+        token_url="https://stub.test/token",
+        refresh_url="https://stub.test/token",
+        mcp_url="https://stub.test/mcp",
+        client_id="cid",
+        client_secret="csecret",
+        scope_separator=" ",
+        default_scopes=("read",),
+        known_read_tools=("get_issue",),
+        known_write_tools=("update_issue",),
+    )
+
+
+@dataclass
+class _StubProvider:
+    provider_id: str = "stub_pipeline"
+    config: ProviderConfig = field(default_factory=_config)
+
+    async def validate(self, access_token: str) -> bool:
+        del access_token
+        return True
+
+
+@pytest.fixture
+def stub_provider():
+    _REGISTRY["stub_pipeline"] = _StubProvider()
+    try:
+        yield
+    finally:
+        _REGISTRY.pop("stub_pipeline", None)
+
+
+def _app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    spec = _specs["mcp"]
+    app.include_router(spec.router, prefix=spec.url_prefix or "/api/mcp")
+    return app
+
+
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
+
+
+async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, str]:
+    """Seed org + ticket + PR + review + a `last_refresh_status="failed"` credential.
+    Mints the per-review bearer and returns (review, raw_token)."""
+    org = await orgs_repo.insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
+    await identity_repo.insert_user(db_session, display_name="U")
+    ticket = TicketRow(
+        id=uuid4(),
+        org_id=org.id,
+        source="github_pr",
+        source_external_id=f"pr-{uuid4()}",
+        title="t",
+        plugin_id="github",
+        repo_external_id="owner/repo",
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    pr = PullRequestRow(
+        id=uuid4(),
+        org_id=org.id,
+        plugin_id="github",
+        repo_external_id="owner/repo",
+        external_id=ticket.source_external_id,
+        number=1,
+        title="t",
+        body=None,
+        author_login="a",
+        author_type="user",
+        base_branch="main",
+        head_branch="b",
+        base_sha="0",
+        head_sha="1",
+        is_draft=False,
+        is_fork=False,
+        state="open",
+        html_url="http://test",
+        ticket_id=ticket.id,
+    )
+    db_session.add(pr)
+    await db_session.flush()
+    review = ReviewRow(
+        id=uuid4(),
+        org_id=org.id,
+        pr_id=pr.id,
+        sequence_number=1,
+        status="running",
+        trigger_reason="manual_full",
+        destination="vcs",
+    )
+    db_session.add(review)
+    await db_session.flush()
+    db_session.add(
+        McpCredentialRow(
+            org_id=org.id,
+            provider="stub_pipeline",
+            encrypted_access_token=encrypt("upstream-access").decode(),
+            encrypted_refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            scopes=["read"],
+            allowed_tools=[],
+            enabled=True,
+            upstream_identity="stub-bot",
+            last_refresh_status="failed",
+            last_refresh_failed_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+    raw = await mint_token(review.id, session=db_session)
+    await db_session.commit()
+    return review, raw
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_review_with_broken_creds_yields_prefixed_summary(db_session, stub_provider) -> None:
+    """Composition contract:
+
+    1. Mint bearer for a review.
+    2. Coding-agent calls a tool through the proxy.
+    3. Provider's credentials are broken → proxy returns `broken_creds` error.
+    4. `record_broken_creds` side-effect captures the provider in the per-review tracker.
+    5. Reviewer drains via `consume_broken_creds(review.id)` and prefixes the GitHub summary.
+    """
+    del stub_provider
+    review, token = await _seed_review_with_broken_credential(db_session)
+
+    # Coding-agent calls a tool via the proxy.
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_issue", "arguments": {"id": "LIN-1"}},
+    }
+    async with _client() as c:
+        r = await c.post(
+            f"/api/mcp/{review.id}/stub_pipeline",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body,
+        )
+    assert r.status_code == 200
+    assert r.json()["error"]["data"]["code"] == "broken_creds"
+
+    # The proxy recorded the provider for the reviewer to drain.
+    observed = consume_broken_creds(review.id)
+    assert observed == {"stub_pipeline"}
+
+    # Reviewer's review-output prefix composes the warning into the summary.
+    summary_with_prefix = _prefix_broken_creds_warning(
+        "Original review body.",
+        sorted(observed),
+    )
+    assert summary_with_prefix is not None
+    assert summary_with_prefix.startswith("> [!WARNING]")
+    assert "**stub_pipeline**" in summary_with_prefix
+    assert "Original review body." in summary_with_prefix
+
+    # No `dispatched` audit row because the proxy short-circuited on broken_creds.
+    audits = (
+        (
+            await db_session.execute(
+                select(AuditEntryRow).where(
+                    AuditEntryRow.org_id == review.org_id,
+                    AuditEntryRow.kind == "mcp.stub_pipeline.dispatched",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert audits == []
