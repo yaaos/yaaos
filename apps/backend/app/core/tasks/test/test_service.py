@@ -7,14 +7,19 @@ from sqlalchemy import select
 
 from app.core.outbox.models import OutboxEntryRow
 from app.core.tasks import TaskContext, enqueue, task
-from app.core.tasks.service import _reset_for_tests, get_registered, registered_task_names
+from app.core.tasks.service import (
+    _reset_for_tests,
+    _restore_after_tests,
+    get_registered,
+    registered_task_names,
+)
 
 
 @pytest.fixture(autouse=True)
 def _isolate_registry() -> None:
     _reset_for_tests()
     yield
-    _reset_for_tests()
+    _restore_after_tests()
 
 
 def test_task_decorator_registers_name() -> None:

@@ -97,6 +97,25 @@ async def enqueue(
     return await outbox_write(session, kind="taskiq_enqueue", payload=payload)
 
 
+_REGISTRY_SNAPSHOT: dict[str, tuple[TaskRef, Callable[..., Awaitable[Any]]]] | None = None
+
+
 def _reset_for_tests() -> None:
-    """Clear the task registry — used by tests that register synthetic tasks."""
+    """Save the current registry and clear it — used by tests that register
+    synthetic tasks. Pair every call with `_restore_after_tests()` so the
+    cross-test invariant (real module-level task registrations) is preserved.
+    Idempotent — repeated saves clobber the snapshot, which matches how the
+    autouse fixture pattern works (one save+one restore per test)."""
+    global _REGISTRY_SNAPSHOT
+    _REGISTRY_SNAPSHOT = dict(_REGISTRY)
     _REGISTRY.clear()
+
+
+def _restore_after_tests() -> None:
+    """Counterpart to `_reset_for_tests()`. No-op if nothing was saved."""
+    global _REGISTRY_SNAPSHOT
+    if _REGISTRY_SNAPSHOT is None:
+        return
+    _REGISTRY.clear()
+    _REGISTRY.update(_REGISTRY_SNAPSHOT)
+    _REGISTRY_SNAPSHOT = None

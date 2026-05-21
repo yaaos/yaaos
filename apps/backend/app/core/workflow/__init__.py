@@ -21,6 +21,11 @@ from app.core.workflow.service import (
     WorkflowEngine,
     _reset_for_tests,
     get_engine,
+    handle_agent_event,
+    request_cancel,
+    resume_hitl,
+    route_workflow,
+    start_step,
 )
 from app.core.workflow.types import (
     TERMINAL_STATES,
@@ -64,4 +69,9 @@ __all__ = [
     "WorkflowState",
     "_reset_for_tests",
     "get_engine",
+    "handle_agent_event",
+    "request_cancel",
+    "resume_hitl",
+    "route_workflow",
+    "start_step",
 ]
