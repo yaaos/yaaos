@@ -18,16 +18,16 @@
 
 Pure plumbing change. No behavior change. Lands before any new M05 modules so they're built on the new convention.
 
-- [ ] `apps/backend/docs/patterns.md` — new "Session management + atomicity" section with the required-session rule and one short example.
-- [ ] `core/audit_log.audit()` refactored: required session, no commit, optional-session branch deleted.
-- [ ] All callers of `audit()` updated to pass session explicitly.
-- [ ] Refactor every transactional service function in the codebase to take required `session: AsyncSession` and not commit. Grep audit: `grep -rn "session: AsyncSession | None\|session is None" apps/backend/app/` returns zero hits in service modules.
-- [ ] Add semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` (ERROR severity). `bin/ci` semgrep step picks it up.
-- [ ] Document convention in `apps/backend/docs/patterns.md`: type signature self-documenting (orchestrators don't take session; transactional services require it). No `_owns_session` suffix. Read-only services follow the same rule.
-- [ ] Endpoint handlers + `spawn()` task bodies are the orchestrating layer: they open `db_session()`, call services, commit.
-- [ ] Functions that legitimately own their own session (fire-and-forget maintenance, periodic tasks) are clearly named or live in entrypoint modules; documented in patterns.md.
-- [ ] Tests updated to pass session fixtures explicitly.
-- [ ] All existing CI green post-refactor: `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/e2e/bin/ci`.
+- [x] `apps/backend/docs/patterns.md` — new "Session management + atomicity" section with the required-session rule and one short example.
+- [x] `core/audit_log.audit()` refactored: required session, no commit, optional-session branch deleted.
+- [x] All callers of `audit()` updated to pass session explicitly.
+- [x] Refactor every transactional service function in the codebase to take required `session: AsyncSession` and not commit. Grep audit: `grep -rn "session: AsyncSession | None\|session is None" apps/backend/app/` returns zero hits in service modules.
+- [x] Add semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` (ERROR severity). `bin/ci` semgrep step picks it up.
+- [x] Document convention in `apps/backend/docs/patterns.md`: type signature self-documenting (orchestrators don't take session; transactional services require it). No `_owns_session` suffix. Read-only services follow the same rule.
+- [x] Endpoint handlers + `spawn()` task bodies are the orchestrating layer: they open `db_session()`, call services, commit.
+- [x] Functions that legitimately own their own session (fire-and-forget maintenance, periodic tasks) are clearly named or live in entrypoint modules; documented in patterns.md.
+- [x] Tests updated to pass session fixtures explicitly.
+- [x] All existing CI green post-refactor: `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/e2e/bin/ci`.
 
 ## Phase 0b — scaffolding
 
