@@ -139,6 +139,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("013_create_all_m04", "create_all_m04"),
     ("014_create_outbox_entries", "create_outbox_entries"),
     ("015_create_workflow_tables", "create_workflow_tables"),
+    ("016_tickets_m05_columns", "tickets_m05_columns"),
 )
 
 
@@ -481,6 +482,23 @@ async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_tickets_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 2 — extend `tickets` with `type`, `idempotency_key`,
+    `payload`, and `current_workflow_execution_id`. Idempotent ALTERs;
+    existing rows backfill `type='pr_review'` via the column default."""
+    statements: list[str] = [
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'pr_review'",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS current_workflow_execution_id UUID",
+        # Sparse-unique: legacy rows with NULL idempotency_key don't collide.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_tickets_idempotency_key ON tickets (idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 async def _apply_create_workflow_tables(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 1 — workflow engine tables.
 
@@ -579,6 +597,8 @@ async def migrate() -> None:
                 await _apply_create_outbox_entries(conn)
             elif kind == "create_workflow_tables":
                 await _apply_create_workflow_tables(conn)
+            elif kind == "tickets_m05_columns":
+                await _apply_tickets_m05_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

@@ -10,14 +10,15 @@ The policy layer above VCS plugins. Plugins emit raw semantic events; intake dec
 
 Exported from `app/domain/intake/__init__.py`:
 
-- `handle_vcs_events(events, *, org_id)` — main entry from plugins.
+- `handle_vcs_events(events, *, org_id)` — main entry from plugins (legacy path; preserved).
 - `refresh_pr_metadata(repo_external_id, pr, *, org_id)` — caller has a `VCSPullRequest`.
 - `refresh_pr_metadata_by_id(repo_external_id, pr_external_id, *, org_id)` — only external id known (catch-up).
 - `parse_rereview(body)` — pure helper, returns `(matched, agent_name | None)`.
 - `is_skippable_path(path)` — pure helper; `True` for lockfiles, vendor dirs, generated files, binary extensions. Also used by `domain/reviewer` for its trivial-diff check.
 - `IntakeError` — base exception; uncommon (most errors are audit-and-continue).
+- `IntakeType` (Protocol), `IntakePrepared`, `IntakeRejectedError`, `register_intake_type`, `get_intake_type`, `registered_intake_types`, `_reset_registry_for_tests` — the M05 intake-type registry.
 
-No HTTP routes. Webhook surface lives in the VCS plugin (e.g., `/api/github/webhook`); the plugin verifies HMAC, parses into `VCSEvent`s, and calls `handle_vcs_events`.
+HTTP route: `POST /api/intake/{type}` (M05) — generic intake endpoint. Plugins register `IntakeType` handlers; the endpoint verifies, dedups via `idempotency_key`, calls `domain/tickets.create()`, and starts the bound workflow via `core/workflow.get_engine().start()`. The legacy `POST /api/github/webhook` (in `plugins/github`) is preserved for non-PR flows (push, install lifecycle).
 
 ## Module architecture
 

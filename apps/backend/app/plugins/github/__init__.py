@@ -6,6 +6,7 @@ they share credentials, settings, and the test stack.
 """
 
 from app.plugins.github import web  # noqa: F401 — registers webhook route
+from app.plugins.github.intake_type import GithubPrIntakeType
 from app.plugins.github.models import (
     GitHubAppInstallationRow,
     GitHubPollerStateRow,
@@ -29,6 +30,7 @@ __all__ = [
     "GitHubPollerStateRow",
     "GitHubSettingsRow",
     "GitHubWebhookEventRow",
+    "GithubPrIntakeType",
     "bootstrap",
     "bootstrap_oauth",
     "get_plugin",
@@ -38,6 +40,16 @@ __all__ = [
 ]
 
 # Register at import time: the VCS plugin (always) + the OAuth identity
-# provider (skips itself when client_id / client_secret are unset).
+# provider (skips itself when client_id / client_secret are unset) + the
+# `github_pr` intake type (M05 Phase 2).
 bootstrap()
 bootstrap_oauth()
+
+from app.domain.intake import register_intake_type  # noqa: E402
+
+try:
+    register_intake_type(GithubPrIntakeType())
+except ValueError:
+    # Re-import in the same process (e.g., test reload). The previously
+    # registered handler is still in place.
+    pass

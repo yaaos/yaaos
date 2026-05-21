@@ -86,7 +86,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.domain.intake"
-depends_on = ["app.core.audit_log", "app.core.database", "app.core.events", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.events", "app.core.webserver", "app.core.workflow", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.integrations"
