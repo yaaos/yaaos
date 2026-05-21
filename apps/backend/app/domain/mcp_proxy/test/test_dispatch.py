@@ -45,6 +45,11 @@ from app.domain.pull_requests.models import PullRequestRow
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets.models import TicketRow
 
+# Every test in this file drives the MCP proxy end-to-end (real Postgres via
+# `db_session`, stub IntegrationProvider in `_REGISTRY`, stub upstream via
+# monkeypatched httpx.AsyncClient). Service tier.
+pytestmark = pytest.mark.service
+
 
 def _config() -> ProviderConfig:
     return ProviderConfig(

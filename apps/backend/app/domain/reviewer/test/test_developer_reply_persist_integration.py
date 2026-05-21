@@ -32,6 +32,10 @@ from app.domain.reviewer.service import (
     dispatch_events,
 )
 
+# Cross-module persist + audit + event chain (reviewer aggregate ↔ repository ↔
+# audit_log ↔ core/events bus). Service tier.
+pytestmark = pytest.mark.service
+
 
 async def _seed_pr_review_and_finding(
     db_session,  # type: ignore[no-untyped-def]

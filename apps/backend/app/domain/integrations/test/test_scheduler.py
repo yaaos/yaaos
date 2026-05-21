@@ -19,6 +19,11 @@ from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.email import get_test_inbox
 from app.domain.orgs.types import Role
 
+# Drives the hourly health-check loop end-to-end: provider.validate →
+# `mcp_credentials.last_refresh_status` flip → audit row → owner email.
+# Crosses scheduler + integrations + audit_log + orgs.email + identity. Service tier.
+pytestmark = pytest.mark.service
+
 
 def _config() -> ProviderConfig:
     return ProviderConfig(

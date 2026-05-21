@@ -33,6 +33,10 @@ from app.domain.reviewer.queue import _findingdrafts_to_raw, _raw_to_vcs_finding
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import dispatch_audits, dispatch_events
 
+# Drives the durable-findings persist + admission + audit + event chain
+# across reviewer aggregate ↔ repository ↔ audit_log ↔ events. Service tier.
+pytestmark = pytest.mark.service
+
 
 async def _seed_pr_and_review(
     db_session,  # type: ignore[no-untyped-def]
