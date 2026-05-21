@@ -90,6 +90,16 @@ Module-level `_PROVIDERS: dict[str, WorkspaceProvider]`. `register_workspace_pro
 
 Operational endpoints, unauthenticated (documented POC limitation; tightened when auth lands).
 
+### M05 single-flight claim + recovery (Phase 3)
+
+The workspace state machine runs one in-flight AgentCommand at a time. `try_claim(workspace_id, *, command_id, workflow_execution_id, session)` performs an atomic conditional `UPDATE` that succeeds iff the row is `status='active'` AND `current_command_id IS NULL`; concurrent callers racing the same workspace see `rowcount=0` and back off. `release_claim(workspace_id, *, command_id, session)` clears the claim only when the supplied command id still owns it — making it idempotent and safe against stale event redelivery. The terminal event must arrive before disposal: `release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id` so reconciliation / audit lookups can still find which workflow last touched the workspace.
+
+The recovery-policy registry (`register_recovery_policy(failure_label=, command_kind=)`, `get_recovery_policy(label)`, `registered_recovery_labels()`) maps AgentCommand failure labels to lifecycle WorkflowCommand kinds. One policy ships at boot: `auth_expired → RefreshWorkspaceAuth`. Phase 4 registers the `RefreshWorkspaceAuth` command body alongside the reviewer workflows.
+
+### Idle-timeout sweep (Phase 3)
+
+The reaper's second sweep marks any workspace that is `status='active'`, holds no claim, and has been activated longer than `max_idle_seconds` (default 600s) as `expired` so the destroy pass picks it up. Workspaces with a live claim are skipped — those are the engine's; cancellation goes through `workflow.request_cancel`. This is the cleanup-failsafe layer above the TTL sweep, catching workspaces that completed their work but whose cleanup workflow never ran.
+
 ### POC limits
 
 - `in_memory_workspace` ignores `ResourceCaps` and `NetworkPolicy` — the CLI runs with the same permissions as the yaaos process.
@@ -98,8 +108,8 @@ Operational endpoints, unauthenticated (documented POC limitation; tightened whe
 
 ## Data owned
 
-- `workspaces` — `(id, org_id, provider_id, spec jsonb, plugin_state jsonb, status, created_at, activated_at, expires_at, destroyed_at, destroy_attempts, last_destroy_attempt_at, last_destroy_error)`. Indexes: `(status, expires_at)` for the reaper's expiry sweep; `(org_id, created_at)` for org-scoped listings; `org_id` indexed independently.
+- `workspaces` — `(id, org_id, provider_id, spec jsonb, plugin_state jsonb, status, provider, current_command_id, current_holder_workflow_id, max_idle_seconds, created_at, activated_at, expires_at, destroyed_at, destroy_attempts, last_destroy_attempt_at, last_destroy_error)`. M05 Phase 3 added `provider`, `current_command_id`, `current_holder_workflow_id`, `max_idle_seconds` via migration `017_workspaces_m05_columns`. Indexes: `(status, expires_at)` for the reaper's expiry sweep; `(org_id, created_at)` for org-scoped listings; `current_holder_workflow_id` for the M05 event-to-workflow lookup chain; `org_id` indexed independently.
 
 ## How it's tested
 
-`app/core/workspace/test/` is a placeholder; exercised end-to-end by reviewer integration tests and the workspace plugin's tests. Coverage spans: provision → active → close → expired → destroy → destroyed; destroy retries with attempt increment; `destroy_failed` after 3 attempts; `startup_recovery` flipping orphaned rows; admin endpoints via `TestClient`.
+`app/core/workspace/test/test_dispatch.py` (M05 Phase 3) covers the single-flight claim + recovery registry directly: `try_claim` succeeds when unclaimed/active, loses on contention, refuses non-active rows; `release_claim` is idempotent and ignores wrong-command-id calls; the recovery registry idempotently re-registers the same target, raises on conflict, and the `auth_expired → RefreshWorkspaceAuth` boot policy is present. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; destroy retries with attempt increment; `destroy_failed` after 3 attempts; `startup_recovery` flipping orphaned rows; admin endpoints via `TestClient`) is exercised end-to-end by reviewer integration tests and the workspace plugin's tests.

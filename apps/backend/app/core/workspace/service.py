@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.core.database import session as get_session
 from app.core.observability import spawn
@@ -233,15 +233,31 @@ async def force_close_all(*, org_id: UUID) -> int:
 
 
 async def _reaper_sweep_once() -> None:
-    """One reaper pass — expire over-budget, destroy expired, mark stuck failed."""
+    """One reaper pass — expire over-budget, idle-timeout, destroy expired,
+    mark stuck failed."""
     now = _utcnow()
     async with get_session() as s:
-        # 1. Expire over-budget actives
+        # 1. Expire over-budget actives (TTL sweep).
         await s.execute(
             update(WorkspaceRow)
             .where(
                 WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
                 WorkspaceRow.expires_at < now,
+            )
+            .values(status=WorkspaceStatus.EXPIRED.value)
+        )
+        # 1b. Idle-timeout sweep (M05 Phase 3): an `active` workspace with no
+        # current claim that's been activated longer than `max_idle_seconds`
+        # is considered abandoned. Marked expired so the destroy pass picks
+        # it up. Workspaces with a live claim are skipped — the engine owns
+        # them; cancellation flows through `workflow.request_cancel`.
+        await s.execute(
+            update(WorkspaceRow)
+            .where(
+                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
+                WorkspaceRow.current_command_id.is_(None),
+                WorkspaceRow.activated_at.is_not(None),
+                func.extract("epoch", now - WorkspaceRow.activated_at) > WorkspaceRow.max_idle_seconds,
             )
             .values(status=WorkspaceStatus.EXPIRED.value)
         )

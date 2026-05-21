@@ -140,6 +140,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("014_create_outbox_entries", "create_outbox_entries"),
     ("015_create_workflow_tables", "create_workflow_tables"),
     ("016_tickets_m05_columns", "tickets_m05_columns"),
+    ("017_workspaces_m05_columns", "workspaces_m05_columns"),
 )
 
 
@@ -482,6 +483,24 @@ async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_workspaces_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 3 — extend `workspaces` with the M05 dispatch + claim
+    columns. `provider` discriminates in-memory vs remote-agent;
+    `current_command_id` + `current_holder_workflow_id` back the single-flight
+    claim; `max_idle_seconds` feeds the idle-timeout sweep. Idempotent
+    ALTERs; existing rows backfill to `provider='in_memory'`."""
+    statements: list[str] = [
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'in_memory'",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS current_command_id UUID",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS current_holder_workflow_id UUID",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS max_idle_seconds INTEGER NOT NULL DEFAULT 600",
+        "CREATE INDEX IF NOT EXISTS ix_workspaces_current_holder_workflow_id "
+        "ON workspaces (current_holder_workflow_id)",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 async def _apply_tickets_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 2 — extend `tickets` with `type`, `idempotency_key`,
     `payload`, and `current_workflow_execution_id`. Idempotent ALTERs;
@@ -599,6 +618,8 @@ async def migrate() -> None:
                 await _apply_create_workflow_tables(conn)
             elif kind == "tickets_m05_columns":
                 await _apply_tickets_m05_columns(conn)
+            elif kind == "workspaces_m05_columns":
+                await _apply_workspaces_m05_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},
