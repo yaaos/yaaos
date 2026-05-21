@@ -91,6 +91,35 @@ No generic task layer. State of in-flight work lives in the owning domain's tabl
 
 Single async SQLAlchemy session factory in `core/database`. Consumed via `async with session() as s:`. Transactions scoped to the HTTP request or the background task.
 
+### Session management + atomicity
+
+Transactional service functions take a required `session: AsyncSession` parameter and never commit. The caller — an *orchestrator* — opens `db_session()`, calls services, commits once at the end. This makes audit rows land atomically with the state change they describe and lets services compose inside a single transaction. Type signature is the documentation: if a function takes `session: AsyncSession`, it's a service; if it doesn't, it's an orchestrator (endpoint handler, `spawn()` task body, periodic-task entrypoint).
+
+```python
+# Service — required session, never commits.
+async def create_lesson(..., *, session: AsyncSession) -> Lesson:
+    row = LessonRow(...)
+    session.add(row)
+    await session.flush()
+    await audit_for_lesson(row.id, "lesson.created", ..., session=session)
+    return Lesson.from_row(row)
+
+# Orchestrator — opens, calls, commits.
+@router.post("/lessons")
+async def post_lesson(...) -> Lesson:
+    async with db_session() as s:
+        lesson = await create_lesson(..., session=s)
+        await s.commit()
+    return lesson
+```
+
+Rules:
+
+- Service modules never write `session: AsyncSession | None`, never check `if session is None`, never call `db_session()` themselves. Semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces this.
+- Read-only services follow the same rule — required session, no commits — so callers can compose snapshot-consistent read-then-write.
+- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract.
+- `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
+
 ### Idempotent migrations
 
 `core/database.migration_helpers` wraps `op.*` with idempotent variants (`create_table_if_not_exists`, `add_column_if_not_exists`, `create_index_if_not_exists`, `drop_column_if_exists`). Every migration uses these helpers; re-running a half-applied migration is always safe.

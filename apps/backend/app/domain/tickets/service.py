@@ -126,17 +126,17 @@ async def create_for_pr(
             pr_id=pr_id,
         )
         s.add(row)
-        await s.commit()
-        await s.refresh(row)
+        await s.flush()
         row_id = row.id
-
-    await audit_for_ticket(
-        row_id,
-        "ticket.created",
-        _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+        await audit_for_ticket(
+            row_id,
+            "ticket.created",
+            _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
     await publish(
         TicketStatusChanged(
             ticket_id=row_id,
@@ -249,17 +249,17 @@ async def _transition(
             raise InvalidTicketTransition(f"ticket {ticket_id} is terminal ({row.status}); cannot transition")
         prev = row.status
         await s.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(status=new_status))
-        await s.commit()
         repo_external_id = row.repo_external_id
         pr_id = row.pr_id
-
-    await audit_for_ticket(
-        ticket_id,
-        "ticket.status_changed",
-        _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.status_changed",
+            _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
     await publish(
         TicketStatusChanged(
             ticket_id=ticket_id,

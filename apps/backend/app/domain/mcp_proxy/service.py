@@ -9,6 +9,10 @@ drops anything past TTL (called once a day by the scheduler).
 
 Raw tokens never persist. Lookups are constant-time-safe because the hash
 is the primary key.
+
+Required-session: every transactional function takes `session: AsyncSession`
+from its caller; never commits. See `apps/backend/docs/patterns.md` §
+Session management + atomicity.
 """
 
 from __future__ import annotations
@@ -22,7 +26,6 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import session as db_session
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 
 log = structlog.get_logger("domain.mcp_proxy")
@@ -38,7 +41,7 @@ def _hash(raw: str) -> str:
 async def mint_token(
     review_id: UUID,
     *,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> str:
     """Issue a fresh bearer for a review. Returns the raw token exactly once;
     the DB sees only the sha256 hash."""
@@ -48,63 +51,38 @@ async def mint_token(
         review_id=review_id,
         expires_at=datetime.now(UTC) + REVIEW_TOKEN_TTL,
     )
-
-    async def _write(s: AsyncSession) -> None:
-        s.add(row)
-        await s.flush()
-
-    if session is not None:
-        await _write(session)
-    else:
-        async with db_session() as s:
-            await _write(s)
-            await s.commit()
+    session.add(row)
+    await session.flush()
     return raw
 
 
 async def lookup_token(
     raw_token: str,
     *,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> McpReviewTokenRow | None:
     """Return the row matching `raw_token` if not expired; None otherwise.
     Raw tokens never live in the DB — we hash and look up by primary key."""
     token_hash = _hash(raw_token)
-
-    async def _read(s: AsyncSession) -> McpReviewTokenRow | None:
-        row = (
-            await s.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
-        ).scalar_one_or_none()
-        if row is None:
-            return None
-        if row.expires_at < datetime.now(UTC):
-            return None
-        return row
-
-    if session is not None:
-        return await _read(session)
-    async with db_session() as s:
-        return await _read(s)
+    row = (
+        await session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    if row.expires_at < datetime.now(UTC):
+        return None
+    return row
 
 
 async def revoke_token(
     review_id: UUID,
     *,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> int:
     """Drop every token row for a review. Returns the count removed (review
     teardown calls this before the workspace is destroyed)."""
-
-    async def _delete(s: AsyncSession) -> int:
-        result = await s.execute(delete(McpReviewTokenRow).where(McpReviewTokenRow.review_id == review_id))
-        return int(result.rowcount or 0)
-
-    if session is not None:
-        return await _delete(session)
-    async with db_session() as s:
-        n = await _delete(s)
-        await s.commit()
-        return n
+    result = await session.execute(delete(McpReviewTokenRow).where(McpReviewTokenRow.review_id == review_id))
+    return int(result.rowcount or 0)
 
 
 # Per-review tracker for broken_creds / not_connected observations. The
@@ -123,18 +101,9 @@ def consume_broken_creds(review_id: UUID) -> set[str]:
     return _broken_creds_observed.pop(review_id, set())
 
 
-async def sweep_expired(*, session: AsyncSession | None = None) -> int:
+async def sweep_expired(*, session: AsyncSession) -> int:
     """Periodic-cleanup helper. Drops rows past TTL; returns the count."""
-
-    async def _sweep(s: AsyncSession) -> int:
-        result = await s.execute(
-            delete(McpReviewTokenRow).where(McpReviewTokenRow.expires_at < datetime.now(UTC))
-        )
-        return int(result.rowcount or 0)
-
-    if session is not None:
-        return await _sweep(session)
-    async with db_session() as s:
-        n = await _sweep(s)
-        await s.commit()
-        return n
+    result = await session.execute(
+        delete(McpReviewTokenRow).where(McpReviewTokenRow.expires_at < datetime.now(UTC))
+    )
+    return int(result.rowcount or 0)

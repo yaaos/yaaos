@@ -233,7 +233,9 @@ async def _build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any]
     if not servers:
         log.info("review.mcp.no_connected_providers", org_id=str(org_id))
         return None
-    raw_token = await mcp_proxy.mint_token(review_id)
+    async with db_session() as s:
+        raw_token = await mcp_proxy.mint_token(review_id, session=s)
+        await s.commit()
     return {
         "token": raw_token,
         "base_url": f"{get_settings().yaaos_app_base_url}/api/mcp/{review_id}",
@@ -325,22 +327,24 @@ async def schedule_review(
                 effort=_DEFAULT_EFFORT,
             )
         )
-        await s.commit()
-    for row in inflight:
+        for row in inflight:
+            await audit_for_review_job(
+                row.id,
+                "review_job.cancelled",
+                _CancelledPayload(reason="superseded"),
+                actor=actor,
+                org_id=org_id,
+                session=s,
+            )
         await audit_for_review_job(
-            row.id,
-            "review_job.cancelled",
-            _CancelledPayload(reason="superseded"),
+            new_id,
+            "review_job.scheduled",
+            _ScheduledPayload(trigger_reason=trigger_reason, debounce_seconds=debounce),
             actor=actor,
             org_id=org_id,
+            session=s,
         )
-    await audit_for_review_job(
-        new_id,
-        "review_job.scheduled",
-        _ScheduledPayload(trigger_reason=trigger_reason, debounce_seconds=debounce),
-        actor=actor,
-        org_id=org_id,
-    )
+        await s.commit()
     await publish(ReviewJobStatusChanged(pr_id=pr.id, review_job_id=new_id, status="queued"))
     task = spawn(
         f"review_job:{new_id}",
@@ -382,15 +386,16 @@ async def cancel_pending(
                 .where(ReviewRow.id == row.id)
                 .values(status="cancelled", skip_reason=reason, completed_at=_utcnow())
             )
+            await audit_for_review_job(
+                row.id,
+                "review_job.cancelled",
+                _CancelledPayload(reason=reason),
+                actor=actor,
+                org_id=org_id,
+                session=s,
+            )
         await s.commit()
     for row in inflight:
-        await audit_for_review_job(
-            row.id,
-            "review_job.cancelled",
-            _CancelledPayload(reason=reason),
-            actor=actor,
-            org_id=org_id,
-        )
         # Interrupt the in-flight coro so the CLI subprocess is actually
         # killed — not just left running until its own timeout. The asyncio
         # cancel propagates through `coding_agent.review` →
@@ -707,21 +712,21 @@ async def _run_review_job_inner(input: ReviewJobInput) -> None:
                         .where(ReviewRow.id == job_id)
                         .values(prompt_hash=prompt_hash, lessons_applied=lesson_ids)
                     )
+                    await audit_for_review_job(
+                        job_id,
+                        "review_job.prompt_sent",
+                        _PromptSentPayload(
+                            prompt_hash=prompt_hash,
+                            lessons_count=len(ctx.lessons),
+                            lessons_applied=lesson_ids,
+                            checkout_sha=ctx.vcs_pr.head_sha,
+                            language_hint=ctx.language,
+                        ),
+                        actor=Actor.system(),
+                        org_id=org_id,
+                        session=s,
+                    )
                     await s.commit()
-
-                await audit_for_review_job(
-                    job_id,
-                    "review_job.prompt_sent",
-                    _PromptSentPayload(
-                        prompt_hash=prompt_hash,
-                        lessons_count=len(ctx.lessons),
-                        lessons_applied=lesson_ids,
-                        checkout_sha=ctx.vcs_pr.head_sha,
-                        language_hint=ctx.language,
-                    ),
-                    actor=Actor.system(),
-                    org_id=org_id,
-                )
 
                 await _set_step(job_id, "invoking_agent", pr_id=pr.id)
                 result = await coding_agent.review(
@@ -746,7 +751,9 @@ async def _run_review_job_inner(input: ReviewJobInput) -> None:
                 # tempdir). Idempotent — sweep handles anything we miss.
                 if mcp_payload is not None:
                     try:
-                        await mcp_proxy.revoke_token(job_id)
+                        async with db_session() as s:
+                            await mcp_proxy.revoke_token(job_id, session=s)
+                            await s.commit()
                     except Exception:
                         log.exception("review_job.mcp_revoke_failed", review_job_id=str(job_id))
 
@@ -831,6 +838,7 @@ async def _run_review_job_inner(input: ReviewJobInput) -> None:
                     _AdmissionDropsPayload(drops=drops_payload),
                     actor=Actor.system(),
                     org_id=org_id,
+                    session=s,
                 )
             started = (await s.execute(select(ReviewRow).where(ReviewRow.id == job_id))).scalar_one_or_none()
             duration = None
@@ -882,21 +890,24 @@ async def _run_review_job_inner(input: ReviewJobInput) -> None:
                 continue
             key = r.source_agent or "unknown"
             by_agent[key] = by_agent.get(key, 0) + 1
-        await audit_for_review_job(
-            job_id,
-            "review_job.posted",
-            _PostedPayload(
-                verdict=result.state or "COMMENT",
-                finding_count=len(new_findings),
-                findings_by_agent=by_agent,
-                tokens_in=result.telemetry.tokens_in,
-                tokens_out=result.telemetry.tokens_out,
-                latency_ms=result.telemetry.latency_ms,
-                review_external_id=post_result.review_external_id,
-            ),
-            actor=Actor.system(),
-            org_id=org_id,
-        )
+        async with db_session() as s:
+            await audit_for_review_job(
+                job_id,
+                "review_job.posted",
+                _PostedPayload(
+                    verdict=result.state or "COMMENT",
+                    finding_count=len(new_findings),
+                    findings_by_agent=by_agent,
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
+                    latency_ms=result.telemetry.latency_ms,
+                    review_external_id=post_result.review_external_id,
+                ),
+                actor=Actor.system(),
+                org_id=org_id,
+                session=s,
+            )
+            await s.commit()
         await publish(ReviewJobStatusChanged(pr_id=ctx.pr_id, review_job_id=job_id, status="posted"))
 
         # Plan §10.13 — POC eval metrics. Log tier mix (severity distribution)
@@ -982,18 +993,19 @@ async def _transition_failed(
         values["activity_log"] = activity_log
     async with db_session() as s:
         await s.execute(update(ReviewRow).where(ReviewRow.id == job_id).values(**values))
+        await audit_for_review_job(
+            job_id,
+            "review_job.failed",
+            _FailedPayload(
+                invocation_status=invocation_status,
+                error=error,
+                raw_output_excerpt=raw_output_excerpt,
+            ),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
         await s.commit()
-    await audit_for_review_job(
-        job_id,
-        "review_job.failed",
-        _FailedPayload(
-            invocation_status=invocation_status,
-            error=error,
-            raw_output_excerpt=raw_output_excerpt,
-        ),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
 
 
 async def _transition_skipped(
@@ -1012,14 +1024,15 @@ async def _transition_skipped(
         values["activity_log"] = activity_log
     async with db_session() as s:
         await s.execute(update(ReviewRow).where(ReviewRow.id == job_id).values(**values))
+        await audit_for_review_job(
+            job_id,
+            "review_job.skipped",
+            _SkippedPayload(skip_reason=reason),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
         await s.commit()
-    await audit_for_review_job(
-        job_id,
-        "review_job.skipped",
-        _SkippedPayload(skip_reason=reason),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
 
 
 def _is_skip_path(path: str) -> bool:
@@ -1219,20 +1232,20 @@ async def startup_recovery() -> None:
                 )
             )
         queued = (await s.execute(select(ReviewRow).where(ReviewRow.status == "queued"))).scalars().all()
+        for jid in crashed:
+            await audit_for_review_job(
+                jid,
+                "review_job.failed",
+                _FailedPayload(
+                    invocation_status="crashed",
+                    error="yaaos restarted during execution",
+                    raw_output_excerpt="",
+                ),
+                actor=Actor.system(),
+                org_id=M01_ORG_ID,
+                session=s,
+            )
         await s.commit()
-
-    for jid in crashed:
-        await audit_for_review_job(
-            jid,
-            "review_job.failed",
-            _FailedPayload(
-                invocation_status="crashed",
-                error="yaaos restarted during execution",
-                raw_output_excerpt="",
-            ),
-            actor=Actor.system(),
-            org_id=M01_ORG_ID,
-        )
 
     # Resolve ticket_id per queued job (via the PR row) so we can respawn.
     from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415

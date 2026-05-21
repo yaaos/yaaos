@@ -97,7 +97,9 @@ async def set_key(
     if not body.value:
         raise _err(422, "empty_value")
     actor = current_actor()
-    await byok_service.set(org_id, provider, body.value, actor=actor)
+    async with db_session() as s:
+        await byok_service.set(org_id, provider, body.value, actor=actor, session=s)
+        await s.commit()
     return {"status": "configured"}
 
 
@@ -115,7 +117,9 @@ async def validate_key(
     validator = byok_service.get_validator(provider)
     if validator is None:
         raise _err(404, "unknown_provider")
-    ok = await byok_service.validate(org_id, provider, validator, actor=actor)
+    async with db_session() as s:
+        ok = await byok_service.validate(org_id, provider, validator, actor=actor, session=s)
+        await s.commit()
     return {"valid": ok}
 
 
@@ -127,7 +131,9 @@ async def clear_key(provider: Annotated[str, Path()]) -> dict[str, bool]:
     if provider not in _known_providers():
         raise _err(404, "unknown_provider")
     actor = current_actor()
-    removed = await byok_service.clear(org_id, provider, actor=actor)
+    async with db_session() as s:
+        removed = await byok_service.clear(org_id, provider, actor=actor, session=s)
+        await s.commit()
     return {"removed": removed}
 
 

@@ -77,18 +77,21 @@ async def _audit_event_failed(event: VCSEvent, e: Exception, *, org_id: UUID) ->
     # We don't have the webhook row id at this layer — use a synthetic UUID.
     from uuid import uuid4  # noqa: PLC0415
 
-    await audit_for_webhook_event(
-        uuid4(),
-        "webhook_event.failed",
-        _WebhookFailedPayload(
-            event_kind=event.kind,
-            source_event_id=event.source_event_id,
-            exception_type=type(e).__name__,
-            message=str(e),
-        ),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+    async with db_session() as s:
+        await audit_for_webhook_event(
+            uuid4(),
+            "webhook_event.failed",
+            _WebhookFailedPayload(
+                event_kind=event.kind,
+                source_event_id=event.source_event_id,
+                exception_type=type(e).__name__,
+                message=str(e),
+            ),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
 
 
 async def _dispatch_one(event: VCSEvent, *, org_id: UUID) -> None:
@@ -112,17 +115,20 @@ async def _dispatch_one(event: VCSEvent, *, org_id: UUID) -> None:
 async def _filter_audit(event: VCSEvent, reason: str, *, org_id: UUID) -> None:
     from uuid import uuid4  # noqa: PLC0415
 
-    await audit_for_webhook_event(
-        uuid4(),
-        "webhook_event.filtered",
-        _WebhookFilteredPayload(
-            reason=reason,
-            event_kind=event.kind,
-            source_event_id=event.source_event_id,
-        ),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+    async with db_session() as s:
+        await audit_for_webhook_event(
+            uuid4(),
+            "webhook_event.filtered",
+            _WebhookFilteredPayload(
+                reason=reason,
+                event_kind=event.kind,
+                source_event_id=event.source_event_id,
+            ),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
 
 
 async def _handle_pr_ready_for_review(event: PullRequestReadyForReview, *, org_id: UUID) -> None:
@@ -228,13 +234,16 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
     if cmd is None and parse_rereview(event.body)[0]:
         cmd = "full review"  # legacy `@yaaos rereview` ≡ full re-review
     if cmd is not None:
-        await audit_for_ticket(
-            ticket.id,
-            "ticket.rereview_requested",
-            _RereviewRequestedPayload(comment_external_id=event.comment_external_id),
-            actor=Actor.github_user(event.author_login),
-            org_id=org_id,
-        )
+        async with db_session() as s:
+            await audit_for_ticket(
+                ticket.id,
+                "ticket.rereview_requested",
+                _RereviewRequestedPayload(comment_external_id=event.comment_external_id),
+                actor=Actor.github_user(event.author_login),
+                org_id=org_id,
+                session=s,
+            )
+            await s.commit()
         if cmd == "cancel":
             await reviewer.cancel_pending(
                 ticket.id,
@@ -293,16 +302,19 @@ async def _handle_reaction_added(event: ReactionAdded, *, org_id: UUID) -> None:
     ticket = await tickets.get_by_pr(pr_id, org_id=org_id)
     if ticket is None:
         return
-    await audit_for_ticket(
-        ticket.id,
-        "ticket.reaction_received",
-        _ReactionReceivedPayload(
-            reaction=event.reaction,
-            target_comment_external_id=event.target_comment_external_id,
-        ),
-        actor=Actor.github_user(event.actor_login),
-        org_id=org_id,
-    )
+    async with db_session() as s:
+        await audit_for_ticket(
+            ticket.id,
+            "ticket.reaction_received",
+            _ReactionReceivedPayload(
+                reaction=event.reaction,
+                target_comment_external_id=event.target_comment_external_id,
+            ),
+            actor=Actor.github_user(event.actor_login),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
 
 
 # ── PR metadata sync helpers ─────────────────────────────────────────────────
@@ -354,15 +366,15 @@ async def refresh_pr_metadata(
         from sqlalchemy import update as sql_update  # noqa: PLC0415
 
         await s.execute(sql_update(TicketRow).where(TicketRow.id == ticket_id).values(pr_id=upserted.id))
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.created",
+            _TicketCreatedAuditPayload(pr_id=upserted.id, repo_external_id=repo_external_id),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
         await s.commit()
-
-    await audit_for_ticket(
-        ticket_id,
-        "ticket.created",
-        _TicketCreatedAuditPayload(pr_id=upserted.id, repo_external_id=repo_external_id),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
     from app.core.events import publish  # noqa: PLC0415
     from app.domain.tickets import TicketStatusChanged  # noqa: PLC0415
 
