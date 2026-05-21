@@ -142,10 +142,10 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 
 ## Phase 8 — span propagation across the wire
 
-- [ ] `traceparent` header threaded through every wire request (AgentCommand payloads + WebSocket activity messages).
-- [ ] Supervisor exports `TRACEPARENT` env to workspace process on spawn.
-- [ ] Workspace process exports same env to Claude Code subprocess.
-- [ ] E2E assertion: one trace ID covers `webhook → ... → terminal outcome` across both providers, for all five workflows.
+- [x] `traceparent` header threaded through every wire request (AgentCommand payloads + WebSocket activity messages). _(traceparent is already a field on every AgentCommand + AgentEvent + Heartbeat + task arg since Phases 1 and 5. Intake now records `current_traceparent()` and passes it to `engine.start()` so the workflow execution row's `otel_trace_context` reflects the originating trace.)_
+- [ ] Supervisor exports `TRACEPARENT` env to workspace process on spawn. _(Phase 6 follow-on — needs the workspace subcommand body.)_
+- [ ] Workspace process exports same env to Claude Code subprocess. _(Phase 6 follow-on alongside the workspace subprocess body.)_
+- [ ] E2E assertion: one trace ID covers `webhook → ... → terminal outcome` across both providers, for all five workflows. _(Helpers + unit tests verify span continuity across the in-process boundary today; full E2E rides on the Phase 4 follow-on command bodies + the Phase 6 follow-on Go subprocess work.)_
 
 ## Phase 8b — Activity streaming (CodingAgent → UI) with demand-pull
 
