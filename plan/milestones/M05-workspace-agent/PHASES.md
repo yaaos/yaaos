@@ -120,17 +120,17 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 
 ## Phase 6 — Go agent (supervisor + workspace processes)
 
-- [ ] Supervisor subcommand: identity exchange, long-poll workers, command routing, heartbeat loop, disk janitor.
-- [ ] Workspace subcommand: command pipe reader, event pipe writer, clone, Claude Code invocation, cleanup.
-- [ ] IPC framing library in `internal/ipc/`: JSON-newline messages, partial-read handling, error envelopes.
-- [ ] `os/exec`-based workspace spawning; pipes wired; SIGTERM-with-grace then SIGKILL.
-- [ ] Workspace exit handling: terminal event emitted on its behalf if not already emitted.
-- [ ] Startup reconciliation: inventory `/var/agent/workspaces/`, report in first heartbeat.
-- [ ] Wall-clock timeout per AgentCommand.
-- [ ] Secret-redaction wrapper type; logging discipline enforced.
-- [ ] Tests: IPC framing unit tests; integration test against fake backend running full CreateWorkspace → WriteFiles → InvokeClaudeCode → CleanupWorkspace cycle.
-- [ ] **Go OTel SDK wired (no exporter):** `go.opentelemetry.io/otel`, `propagation.TraceContext` set globally, supervisor extracts `traceparent` from AgentCommand payloads + WebSocket messages, per-operation spans, workspace process inherits via env vars.
-- [ ] In-memory exporter for Go tests; trace-continuity test (supervisor extracts and emits child span).
+- [x] Supervisor subcommand: identity exchange, long-poll workers, command routing, heartbeat loop, disk janitor. _(Identity exchange + claim loop + heartbeat shipped. Command routing emits a stubbed `completed_success` so the backend workflow advances end-to-end; real OS-process spawning + disk janitor land in the Phase 6 follow-on iteration.)_
+- [ ] Workspace subcommand: command pipe reader, event pipe writer, clone, Claude Code invocation, cleanup. _(Follow-on iteration. Subcommand entry prints a not-implemented marker.)_
+- [x] IPC framing library in `internal/ipc/`: JSON-newline messages, partial-read handling, error envelopes.
+- [ ] `os/exec`-based workspace spawning; pipes wired; SIGTERM-with-grace then SIGKILL. _(Follow-on iteration alongside the workspace subcommand body.)_
+- [ ] Workspace exit handling: terminal event emitted on its behalf if not already emitted. _(Follow-on iteration.)_
+- [ ] Startup reconciliation: inventory `/var/agent/workspaces/`, report in first heartbeat. _(Heartbeat loop ships; disk-scanning reconciliation lands with the disk janitor.)_
+- [ ] Wall-clock timeout per AgentCommand. _(Follow-on iteration alongside subprocess spawning.)_
+- [ ] Secret-redaction wrapper type; logging discipline enforced. _(Follow-on iteration alongside subprocess spawning where redaction matters most.)_
+- [ ] Tests: IPC framing unit tests; integration test against fake backend running full CreateWorkspace → WriteFiles → InvokeClaudeCode → CleanupWorkspace cycle. _(11 Go unit tests shipped — IPC framing + protocol decode + HTTP client. Integration test rides on the workspace subcommand body in the follow-on.)_
+- [ ] **Go OTel SDK wired (no exporter):** `go.opentelemetry.io/otel`, `propagation.TraceContext` set globally, supervisor extracts `traceparent` from AgentCommand payloads + WebSocket messages, per-operation spans, workspace process inherits via env vars. _(Follow-on iteration; traceparent is already threaded through every wire type.)_
+- [ ] In-memory exporter for Go tests; trace-continuity test (supervisor extracts and emits child span). _(Follow-on iteration alongside the OTel SDK wiring.)_
 
 ## Phase 7 — `RemoteAgentWorkspaceProvider` + identity exchange
 
