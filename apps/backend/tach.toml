@@ -70,7 +70,7 @@ depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core
 
 [[modules]]
 path = "app.core.workflow"
-depends_on = []
+depends_on = ["app.core.database", "app.core.tasks"]
 
 [[modules]]
 path = "app.core.workspace"

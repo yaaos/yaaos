@@ -138,6 +138,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("012_create_all_m03", "create_all_m03"),
     ("013_create_all_m04", "create_all_m04"),
     ("014_create_outbox_entries", "create_outbox_entries"),
+    ("015_create_workflow_tables", "create_workflow_tables"),
 )
 
 
@@ -480,6 +481,20 @@ async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_create_workflow_tables(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 1 — workflow engine tables.
+
+    `workflow_executions` is the in-flight workflow state machine; one row
+    per `core/workflow` execution. `pending_human_decisions` holds HITL
+    pauses (one row per `awaiting_human` step). Idempotent.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.workflow.models")
+    new_tables = [Base.metadata.tables[name] for name in ("workflow_executions", "pending_human_decisions")]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_create_all_m03(conn) -> None:  # type: ignore[no-untyped-def]
     """M03 — settings + sidebar restructure.
 
@@ -562,6 +577,8 @@ async def migrate() -> None:
                 await _apply_create_all_m04(conn)
             elif kind == "create_outbox_entries":
                 await _apply_create_outbox_entries(conn)
+            elif kind == "create_workflow_tables":
+                await _apply_create_workflow_tables(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},
