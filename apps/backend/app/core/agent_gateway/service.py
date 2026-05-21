@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
@@ -119,21 +119,32 @@ async def record_heartbeat(
     *,
     session: AsyncSession,
 ) -> HeartbeatResponse:
-    """Mark the agent as reachable, ingest workspace inventory, return
-    reconciliation hints (workspaces the agent reports but the control
-    plane no longer tracks → agent should clean them up).
+    """Bump `workspace_agents.last_heartbeat_at` for the pod identified
+    by `agent_id` and ingest workspace inventory. Returns reconciliation
+    hints — workspaces the agent reports but the control plane no longer
+    tracks should be torn down by the agent.
 
     Required `session`; caller commits.
     """
-    # Bump the row's last_heartbeat_at field. Phase 5 ships a placeholder
-    # write to a generic JSONB column in workspaces[agent_id]; the
-    # `workspace_agents` table proper lands in a future iteration alongside
-    # the row-creation flow. For now we treat the heartbeat as fire-and-log.
-    log.info(
-        "agent.heartbeat",
-        agent_id=str(agent_id),
-        workspace_count=len(request.workspaces),
-    )
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    now = datetime.now(UTC)
+    row = (
+        await session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent_id))
+    ).scalar_one_or_none()
+    if row is not None:
+        row.last_heartbeat_at = now
+        row.state = "reachable"
+    else:
+        # Heartbeat arrived for a pod the control plane doesn't know about —
+        # this happens transiently after a restart before identity exchange
+        # writes its row. Phase 7 follow-on tightens the contract; for now
+        # we just log.
+        log.info(
+            "agent.heartbeat.unknown_agent",
+            agent_id=str(agent_id),
+            workspace_count=len(request.workspaces),
+        )
 
     # Reconciliation: any workspace the agent reports that the control plane
     # has dropped (row deleted or marked `destroyed`) → tell the agent to
@@ -259,3 +270,79 @@ async def record_workspace_event(
         kind=event.kind,
         new_status=new_status,
     )
+
+
+# ── Identity-exchange writer + connection status ───────────────────────
+
+
+async def ensure_agent_row(
+    *,
+    org_id: UUID,
+    agent_pod_id: UUID,
+    iam_arn: str,
+    version: str | None,
+    session: AsyncSession,
+) -> UUID:
+    """Insert or update the `workspace_agents` row for `(org_id, agent_pod_id)`
+    on a successful identity exchange. Returns the row's `id` — this is
+    the `agent_id` the bearer is scoped to and that subsequent endpoints
+    use to address the pod. Caller commits."""
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    row = (
+        await session.execute(
+            select(WorkspaceAgentRow).where(
+                WorkspaceAgentRow.org_id == org_id,
+                WorkspaceAgentRow.agent_pod_id == agent_pod_id,
+            )
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    if row is None:
+        row = WorkspaceAgentRow(
+            org_id=org_id,
+            agent_pod_id=agent_pod_id,
+            iam_arn=iam_arn,
+            version=version,
+            last_heartbeat_at=now,
+            state="reachable",
+        )
+        session.add(row)
+        await session.flush()
+    else:
+        row.iam_arn = iam_arn
+        row.version = version
+        row.last_heartbeat_at = now
+        row.state = "reachable"
+    return row.id
+
+
+async def connection_status_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> dict[str, object]:
+    """Aggregate `workspace_agents` for `org_id`. Returns:
+    `{state, pod_count, latest_heartbeat_at}` where `state` is one of:
+
+    - `connected` — at least one pod heartbeated within the last 90s
+    - `lost` — at least one row exists but none recent enough
+    - `not_configured` — no rows at all for this org
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    rows = (
+        (await session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.org_id == org_id)))
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return {"state": "not_configured", "pod_count": 0, "latest_heartbeat_at": None}
+    latest = max((r.last_heartbeat_at for r in rows if r.last_heartbeat_at is not None), default=None)
+    cutoff = datetime.now(UTC) - timedelta(seconds=90)
+    state = "connected" if latest is not None and latest >= cutoff else "lost"
+    return {
+        "state": state,
+        "pod_count": len(rows),
+        "latest_heartbeat_at": latest.isoformat() if latest is not None else None,
+    }

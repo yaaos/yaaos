@@ -49,6 +49,7 @@ _REQUIRED_ROLE: dict[Action, Role] = {
     Action.BYOK_READ: Role.ADMIN,
     Action.BYOK_WRITE: Role.ADMIN,
     Action.ORG_SETTINGS_WRITE: Role.ADMIN,
+    Action.ORG_SETTINGS_READ: Role.ADMIN,
     Action.INTEGRATIONS_READ: Role.ADMIN,
     Action.INTEGRATIONS_WRITE: Role.ADMIN,
 }

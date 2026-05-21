@@ -2,12 +2,16 @@
 
 | Method | Path        | Action               |
 |--------|-------------|----------------------|
-| PATCH  | `/api/orgs` | `ORG_SETTINGS_WRITE` — Owner/Admin can update `session_timeout_override` (and future top-level org fields). |
+| PATCH  | `/api/orgs` | `ORG_SETTINGS_WRITE` — Owner/Admin can update `session_timeout_override`, `workspace_provider`, `registered_iam_arn`. |
 
 Org identified by `X-Org-Slug` header (M02 pattern). Architecture.md documents
 the URL as `/api/orgs/{slug}` for readability; this implementation mirrors the
 other M03 endpoints which all take the slug via header. The single endpoint
 returns the updated org's relevant settings.
+
+`workspace_provider` is `in_memory` or `remote_agent`. When set to
+`remote_agent`, `registered_iam_arn` must also be set — the identity-exchange
+verifier matches the agent's signed STS payload against this ARN.
 """
 
 from __future__ import annotations
@@ -37,9 +41,14 @@ class _PatchOrgRequest(BaseModel):
     _set_session_timeout_override: bool = False  # internal: did the client include the key?
 
 
+_ALLOWED_WORKSPACE_PROVIDERS = {"in_memory", "remote_agent"}
+
+
 class _OrgSettingsResponse(BaseModel):
     slug: str
     session_timeout_override: int | None
+    workspace_provider: str | None = None
+    registered_iam_arn: str | None = None
 
 
 def _err(status: int, code: str) -> HTTPException:
@@ -63,9 +72,27 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
                 if not isinstance(value, int) or value <= 0:
                     raise _err(422, "invalid_session_timeout_override")
             row.session_timeout_override = value
+        if "workspace_provider" in body:
+            value = body["workspace_provider"]
+            if value is not None and value not in _ALLOWED_WORKSPACE_PROVIDERS:
+                raise _err(422, "invalid_workspace_provider")
+            row.workspace_provider = value
+        if "registered_iam_arn" in body:
+            value = body["registered_iam_arn"]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise _err(422, "invalid_registered_iam_arn")
+            row.registered_iam_arn = value
+        # Cross-field: remote_agent provider requires an ARN.
+        if row.workspace_provider == "remote_agent" and not row.registered_iam_arn:
+            raise _err(422, "remote_agent_requires_iam_arn")
         await s.commit()
         await s.refresh(row)
-    return _OrgSettingsResponse(slug=row.slug, session_timeout_override=row.session_timeout_override)
+    return _OrgSettingsResponse(
+        slug=row.slug,
+        session_timeout_override=row.session_timeout_override,
+        workspace_provider=row.workspace_provider,
+        registered_iam_arn=row.registered_iam_arn,
+    )
 
 
 register_routes(RouteSpec(module_name="orgs", router=router, url_prefix="/api/orgs"))

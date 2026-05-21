@@ -141,6 +141,8 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("015_create_workflow_tables", "create_workflow_tables"),
     ("016_tickets_m05_columns", "tickets_m05_columns"),
     ("017_workspaces_m05_columns", "workspaces_m05_columns"),
+    ("018_create_workspace_agents", "create_workspace_agents"),
+    ("019_orgs_workspace_provider", "orgs_workspace_provider"),
 )
 
 
@@ -483,6 +485,29 @@ async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_orgs_workspace_provider(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 7 — per-org workspace provider selection columns. Idempotent."""
+    statements: list[str] = [
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS workspace_provider TEXT",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS registered_iam_arn TEXT",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_create_workspace_agents(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 7 — `workspace_agents` table: per-pod identity rows.
+
+    Each agent pod that successfully exchanges identity gets a row. The
+    `(org_id, agent_pod_id)` uniqueness constraint dedups across re-exchange
+    after a pod restart. Idempotent."""
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.agent_gateway.models")
+    new_tables = [Base.metadata.tables["workspace_agents"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_workspaces_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 3 — extend `workspaces` with the M05 dispatch + claim
     columns. `provider` discriminates in-memory vs remote-agent;
@@ -620,6 +645,10 @@ async def migrate() -> None:
                 await _apply_tickets_m05_columns(conn)
             elif kind == "workspaces_m05_columns":
                 await _apply_workspaces_m05_columns(conn)
+            elif kind == "create_workspace_agents":
+                await _apply_create_workspace_agents(conn)
+            elif kind == "orgs_workspace_provider":
+                await _apply_orgs_workspace_provider(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

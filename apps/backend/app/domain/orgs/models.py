@@ -40,6 +40,13 @@ class OrgRow(Base):
     # Chosen VCS plugin (one per org). `vcs_settings` carries plugin-specific config.
     vcs_plugin_id: Mapped[str | None] = mapped_column(String, nullable=True)
     vcs_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # M05 Phase 7: per-org workspace provider selection. `in_memory` (default)
+    # runs workspaces in-process; `remote_agent` dispatches to a customer-
+    # deployed WorkspaceAgent via `core/agent_gateway`. `registered_iam_arn`
+    # is required when provider is `remote_agent` and is what the identity-
+    # exchange verifier matches against in Phase 7 follow-on.
+    workspace_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    registered_iam_arn: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

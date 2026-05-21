@@ -119,7 +119,9 @@ async def test_patch_org_admin_can_set_override(seeded, db_session) -> None:
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
-    assert r.json() == {"slug": seeded["org"].slug, "session_timeout_override": 30}
+    body = r.json()
+    assert body["slug"] == seeded["org"].slug
+    assert body["session_timeout_override"] == 30
 
     org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
     assert org_row.session_timeout_override == 30
