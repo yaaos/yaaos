@@ -2,56 +2,51 @@
 
 > Customer-deployed worker that hosts isolated workspaces and runs coding agents (Claude Code today; others later) against customer code, on customer infrastructure. Plus a generalized Workflow + WorkflowCommand model in the control plane that subsumes today's `review_job` and supports future investigation / planning / implementation / HITL workflows.
 
-**Status:** [in progress] — strategic design captured; many implementation details TBD.
+## Status
+
+`[planned]` — design complete; ready for autonomous execution. All twelve audit topics resolved (workflow model, reviewer cutover, cancellation, session refactor, admission placement, workspace protocol, streaming, versioning, multi-tenancy, observability, MCP proxy, onboarding). Phase decomposition locked in [PHASES.md](PHASES.md).
 
 ## Reading order
 
-1. [requirements.md](requirements.md) — locked decisions and open questions. Covers the module map, entity model, Workflow + WorkflowCommand model, agent process architecture, lifecycle, single-flight, disposable + recovery, protocol, secrets, tracing, end-to-end flow, and TBDs.
+1. [requirements.md](requirements.md) — what M05 ships and what's cut. Scope + locked decisions + non-goals + open questions.
+2. [architecture.md](architecture.md) — module layout, data model, lifecycles, protocol, the Workflow + WorkflowCommand model, workflow execution model, trust boundary, tracing.
+3. [implementation-plan.md](implementation-plan.md) — phased build order.
 
-(More docs — `architecture.md`, OpenAPI spec, deployment runbook — added as the milestone matures.)
+## Autonomous execution
+
+Once the strategic gaps are resolved and PHASES.md is fleshed out, autonomous execution follows the same shape as prior milestones:
+
+- [START_HERE.md](START_HERE.md) — ritual, decision protocol, definition of done.
+- [PHASES.md](PHASES.md) — ledger; checkboxes are source of truth.
+- [DECISIONS.md](DECISIONS.md) — append-only log of low-certainty calls.
+
+## Scope at a glance
+
+- **Five new core modules:** `core/agent_gateway` (wire protocol), `core/workflow` (engine), `core/tasks` (taskiq+Redis wrapper), `core/outbox` (atomic DB-write + enqueue), `core/sse_pubsub` (Redis pub/sub for activity streaming).
+- **Two domain modules extended (existing):** `domain/tickets`, `domain/intake`.
+- **Existing modules evolve:** `core/workspace`, `core/audit_log`, `domain/coding_agent`, `domain/reviewer`.
+- **Project-wide pattern shift:** transactional service functions take a required `session: AsyncSession` parameter and never commit. Refactor of existing code lands as Phase 0; documented in `apps/backend/docs/patterns.md`.
+- **taskiq + Redis** as the task queue, wrapped by `core/tasks` so the rest of the codebase doesn't import taskiq directly. Atomic DB-write + enqueue via `core/outbox` (outbox pattern). Workers run as a separate process (same Docker image, different entrypoint). Redis also serves `core/sse_pubsub` for activity streaming.
+- **Two provider implementations behind one contract:** `InMemoryWorkspaceProvider` and `RemoteAgentWorkspaceProvider`. Per-org configurable.
+- **One end-to-end flow:** GitHub webhook → ticket → workflow → workspace → Claude Code → findings posted on PR. Same E2E suite runs against both providers.
+- **OTel tracing** end-to-end, propagated through the wire protocol and into workspace processes.
+- **New `docs/system-security.md`** describing the M05 security posture as shipped.
 
 ## What's locked
 
-### Architecture
+See [requirements.md § Locked decisions](requirements.md#locked-decisions). Short version:
 
-- **Two new core modules:** `core/agent_gateway` (wire protocol), `core/workflow` (engine mechanics — taskiq as just a task scheduler).
-- **Two new domain modules:** `domain/ticket`, `domain/intake` (webhooks + intake types + workflow definitions + routing).
-- **Existing modules evolve:** `core/workspace`, `domain/coding_agent`, `domain/reviewer`.
-
-### Concepts
-
-- **Entity model:** Intake → Ticket → Workflow Execution → WorkflowCommand → AgentCommand → Workspace. Agent represents the host (no Instance entity).
-- **Two command layers, deliberately distinct:** `WorkflowCommand` (engine-level, three categories — Workspace / Local / HITL) and `AgentCommand` (wire-protocol, four kinds).
-- **Workflows are typed data structures** with steps, transitions, retry policies, HITL flags, and an append-steps escape hatch. Workflow definitions live in `domain/intake/workflows/`.
-- **Three-tier retry separation:** AgentCommand recovery (in `core/workspace`) → WorkflowCommand step retry (engine) → workflow-level transition (engine).
-- **Three distinct liveness signals:** agent / workspace / AgentCommand. Not conflated.
-- **Three OTel span layers:** workflow execution → step → AgentCommand (with wire propagation via `traceparent`).
-
-### Agent
-
-- **Language:** Go. **Deployment:** public Docker image; customer runs in ECS/Fargate.
-- **Process model:** supervisor process + one OS process per workspace, IPC over pipes.
-- **Zero biz logic in the agent.** Every threshold, prompt, lesson, depth, timeout supplied by control plane.
-
-### Workspaces
-
-- **Bound to their agent for life** (no migration in POC). TTL ≤ 1h.
-- **Bound to exactly one workflow execution for M05.** Schema (`current_holder_workflow_id` nullable) keeps future reuse relaxation add-only.
-- **Disposable with recovery-first policy** — control plane tries known fixes (e.g. `RefreshWorkspaceAuth`) before dispose-and-replace.
-- **Single-flight per workspace** — enforced in control plane (atomic claim on `current_command_id`) and in agent (one command pipe per workspace process).
-- **Failure report precedes disposal** — invariant.
-
-### Protocol
-
-- **Long-poll HTTPS, single egress, sigv4-based identity exchange** (Vault AWS auth pattern).
-- **Five endpoints, four AgentCommand kinds.** `traceparent` on every AgentCommand and AgentEvent.
-- **Trust boundary:** source code never leaves customer VPC; only findings + structured supervisor telemetry + spans cross. Workspace processes have no yaaof control plane credentials.
-
-### Provider contract
-
-- **`WorkspaceProvider` is uniform.** `InMemoryWorkspaceProvider` (existing, for dev / E2E) and `RemoteAgentWorkspaceProvider` (new, for prod) implement the same protocol, enforce the same invariants.
-- **Per-org configurable** via org settings: `workspace_provider: in_memory | remote_agent`.
+- **Language:** Go for the agent. **Deployment:** public Docker image; customer runs in ECS/Fargate.
+- **Entity model:** Intake → Ticket → Workflow Execution → WorkflowCommand → AgentCommand → Workspace.
+- **Two command layers** (`WorkflowCommand`, `AgentCommand`) — deliberately distinct.
+- **Three-tier retry separation:** AgentCommand recovery → WorkflowCommand step retry → workflow transition.
+- **Workspaces bound to their agent for life; bound to exactly one workflow execution; TTL ≤ 1h.**
+- **Disposable workspaces with recovery-first policy.** Single-flight per workspace. Failure-report-precedes-disposal invariant.
+- **Trust boundary:** source code never leaves customer VPC; workspace processes have no yaaos control plane credentials.
 
 ## What's not yet decided
 
-See the "Open questions / TBD" section in [requirements.md](requirements.md) — covers protocol schemas, agent internals, control-plane refactor specifics, identity flow, operations, failure-mode coverage, and four strategic gaps deferred from this round (image + protocol versioning, multi-tenancy + fairness, customer-side observability + audit, MCP proxy interaction details).
+Two layers of open questions in [requirements.md](requirements.md):
+
+- **Strategic gaps** (each deserving its own design round): image + protocol versioning, multi-tenancy + fairness, customer-side observability + audit, MCP proxy interaction details.
+- **Implementation TBDs**: OpenAPI schemas, Claude Code invocation specifics, IPC framing details, sigv4 verifier library choice, etc. — resolve during implementation.
