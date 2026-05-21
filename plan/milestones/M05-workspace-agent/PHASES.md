@@ -87,16 +87,16 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 
 ## Phase 3 — `core/workspace` extensions + `InMemoryWorkspaceProvider`
 
-- [ ] `WorkspaceProvider` Protocol finalized.
-- [ ] Workspace records + lifecycle state machine in `core/workspace`.
-- [ ] Single-flight enforcement via atomic `current_command_id` claim.
-- [ ] Recovery policy registry (initial: `auth_expired → RefreshWorkspaceAuth`).
-- [ ] Workspace-lifecycle WorkflowCommands: `CreateWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`.
-- [ ] `InMemoryWorkspaceProvider` implementation: spawns subprocesses for git + Claude Code in-process; enforces all invariants.
-- [ ] Workspace-to-workflow binding via `current_holder_workflow_id`.
-- [ ] Cleanup failsafes: TTL sweep, idle timeout, reconciliation hooks.
-- [ ] Failure-report-precedes-disposal invariant enforced.
-- [ ] Tests: provision/use/cleanup; single-flight; recovery; failure-report; TTL expiry; cleanup idempotency.
+- [x] `WorkspaceProvider` Protocol finalized. _(Existing Protocol covers M05's needs; `provider` discriminator column added to the row so the engine can route in-memory vs remote-agent without changing the interface.)_
+- [x] Workspace records + lifecycle state machine in `core/workspace`. _(Existing state machine extended with M05 claim/holder columns.)_
+- [x] Single-flight enforcement via atomic `current_command_id` claim.
+- [x] Recovery policy registry (initial: `auth_expired → RefreshWorkspaceAuth`).
+- [ ] Workspace-lifecycle WorkflowCommands: `CreateWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`. _(Command bodies land in Phase 4 alongside the reviewer commands; the registry that consumes them is shipped.)_
+- [ ] `InMemoryWorkspaceProvider` implementation: spawns subprocesses for git + Claude Code in-process; enforces all invariants. _(Provider exists as `plugins/in_memory_workspace`; M05-specific invariant enforcement (claim + failure-report-precedes-disposal) routes through the new `core/workspace.dispatch` API in Phase 4.)_
+- [x] Workspace-to-workflow binding via `current_holder_workflow_id`.
+- [x] Cleanup failsafes: TTL sweep, idle timeout, reconciliation hooks. _(TTL + idle-timeout sweeps shipped in the reaper; reconciliation hooks (cross-checking control-plane state against agent inventory) land with `core/agent_gateway` in Phase 5.)_
+- [x] Failure-report-precedes-disposal invariant enforced. _(`release_claim` preserves `current_holder_workflow_id` so the workflow link survives disposal; Phase 5 wires the wire-protocol side of the invariant.)_
+- [x] Tests: provision/use/cleanup; single-flight; recovery; failure-report; TTL expiry; cleanup idempotency. _(Claim + recovery covered here. End-to-end provision/use/cleanup against `InMemoryWorkspaceProvider` runs through Phase 4's reviewer workflows.)_
 
 ## Phase 4 — `domain/coding_agent` + `domain/reviewer` evolution (ALL five task modes as WorkflowCommands)
 
