@@ -38,8 +38,8 @@ test.describe("auth + members", () => {
     await page.getByTestId("login-test").click();
     await page.waitForURL(/\/orgs\/acme\/dashboard$/);
 
-    // Members page: invite a new member.
-    await page.goto(`${BASE}/orgs/acme/members`);
+    // Members page: invite a new member. M03+ re-homed it under settings.
+    await page.goto(`${BASE}/orgs/acme/settings/members`);
     await page.locator('input[type="email"]').fill("bob@example.com");
     await page.getByTestId("invite-role").selectOption("member");
     await page.getByRole("button", { name: "Invite" }).click();
@@ -73,8 +73,8 @@ test.describe("auth + members", () => {
     await page.reload();
     await page.getByTestId("role-bob").selectOption("admin");
 
-    // Sign out of every session.
-    await page.goto(`${BASE}/account`);
+    // Sign out of every session. M03+ moved the action to the Security page.
+    await page.goto(`${BASE}/account/security`);
     await page.getByTestId("logout-all").click();
     await page.waitForURL(/\/login$/);
   });

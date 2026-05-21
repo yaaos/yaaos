@@ -37,6 +37,7 @@ async def reset() -> dict[str, str]:
 
 class _CredentialsAndInstallRequest(BaseModel):
     org_login: str = Field(default="acme", min_length=1)
+    target_org_slug: str | None = Field(default=None, min_length=1)
 
 
 @router.post("/seed/credentials_and_install")
@@ -45,7 +46,10 @@ async def seed_credentials_and_install(
 ) -> dict[str, str]:
     _guard_dev()
     payload = req or _CredentialsAndInstallRequest()
-    await service.seed_credentials_and_install(org_login=payload.org_login)
+    await service.seed_credentials_and_install(
+        org_login=payload.org_login,
+        target_org_slug=payload.target_org_slug,
+    )
     return {"status": "seeded"}
 
 

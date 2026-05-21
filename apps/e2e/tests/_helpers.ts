@@ -42,10 +42,19 @@ export async function resetStack(): Promise<void> {
 
 /** Make yaaos "ready" — credentials + active install — without going through
  *  the manifest flow. Use this in specs that aren't testing the setup UI.
+ *
+ *  `targetOrgSlug`, when set, attaches the install + settings rows to the
+ *  yaaos org with that slug (seeded earlier via `bootstrap_owner`). Specs
+ *  that authenticate a user should pass it so the install lives on the
+ *  same org the user is a member of. Default behavior (no slug) keeps the
+ *  legacy M01-org stub for unauthenticated specs.
  */
-export async function seedCredentialsAndInstall(orgLogin = "acme"): Promise<void> {
+export async function seedCredentialsAndInstall(
+  opts: { orgLogin?: string; targetOrgSlug?: string } = {},
+): Promise<void> {
   await jsonPost(`${YAAOS_URL}/api/testing/seed/credentials_and_install`, {
-    org_login: orgLogin,
+    org_login: opts.orgLogin ?? "acme",
+    target_org_slug: opts.targetOrgSlug,
   });
 }
 

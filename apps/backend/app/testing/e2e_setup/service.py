@@ -88,20 +88,43 @@ async def reset() -> None:
     await truncate_all_tables()
 
 
-async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
+async def seed_credentials_and_install(
+    *,
+    org_login: str = "acme",
+    target_org_slug: str | None = None,
+) -> None:
     """Populate yaaos with credentials and an active install pointing at the
     fake-github seeded org.
+
+    `org_login` is the GitHub-side `account_login` on the install row.
+    `target_org_slug`, when provided, picks the yaaos-side org row to attach
+    the rows to (looked up by slug); otherwise the legacy `M01_ORG_ID` stub
+    is used. Specs that also log a user in via `bootstrap_owner` pass the
+    bootstrapped org's slug here so the install lives on the same org as the
+    authenticated user — `/orgs/<slug>/tickets` then surfaces webhook-created
+    tickets under the route the user is on.
 
     The Fernet-encrypted blobs use placeholder bytes; fake-github accepts any
     bearer token, so the actual key material is never validated downstream.
     The seeded slug matches fake-github's `/app` response (`yaaos-test`).
     """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.domain.orgs.models import OrgRow  # noqa: PLC0415
+
     fernet = Fernet(get_settings().yaaos_encryption_key.encode())
     async with db_session() as s:
+        if target_org_slug is not None:
+            org = (await s.execute(select(OrgRow).where(OrgRow.slug == target_org_slug))).scalar_one_or_none()
+            if org is None:
+                raise ValueError(f"org {target_org_slug!r} not found — seed it first via bootstrap_owner")
+            target_org_id = org.id
+        else:
+            target_org_id = M01_ORG_ID
         s.add(
             GitHubSettingsRow(
                 id=uuid4(),
-                org_id=M01_ORG_ID,
+                org_id=target_org_id,
                 app_id="12345",
                 slug="yaaos-test",
                 encrypted_private_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-PEM"),
@@ -111,7 +134,7 @@ async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
         s.add(
             GitHubAppInstallationRow(
                 id=uuid4(),
-                org_id=M01_ORG_ID,
+                org_id=target_org_id,
                 install_external_id="fake-install-1",
                 account_login=org_login,
                 status="active",
@@ -120,7 +143,7 @@ async def seed_credentials_and_install(*, org_login: str = "acme") -> None:
         s.add(
             ClaudeCodeSettingsRow(
                 id=uuid4(),
-                org_id=M01_ORG_ID,
+                org_id=target_org_id,
                 encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
             )
         )
