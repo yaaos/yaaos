@@ -218,6 +218,7 @@ __all__ = [
     "metrics_summary",
     "review_summary",
     "schedule_review",
+    "start_pr_review",
     "startup_recovery",
 ]
 
@@ -231,6 +232,49 @@ class _TicketWorkflowContextProvider:
         from app.domain.tickets.service import get_workspace_ticket_context  # noqa: PLC0415
 
         return await get_workspace_ticket_context(ticket_id)
+
+
+async def start_pr_review(
+    ticket_id,  # type: ignore[no-untyped-def]
+    *,
+    org_id,
+    trigger_reason: str = "pr_ready",
+):
+    """Start an M05 `pr_review_v1` workflow for a ticket.
+
+    Replaces the legacy `schedule_review` call for the full-review path.
+    Intake + the /rereview endpoint use this so production has a single
+    path into the M05 engine. Returns the workflow_execution_id.
+
+    `trigger_reason` is recorded on the workflow's audit trail; the M05
+    workflow doesn't gate behavior on it (legacy queue.py did) — kept
+    for observability + audit-log compatibility.
+    """
+    from uuid import UUID  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.core.workflow import get_engine  # noqa: PLC0415
+    from app.core.workspace import get_workflow_context_provider  # noqa: PLC0415
+
+    del trigger_reason  # observed via workflow_executions.workflow_name today
+    provider = get_workflow_context_provider()
+    if provider is None:
+        raise RuntimeError("workflow context provider not registered")
+    ticket_uuid = ticket_id if isinstance(ticket_id, UUID) else UUID(str(ticket_id))
+    ctx = await provider.get_workspace_ticket_context(ticket_uuid)
+    if ctx is None:
+        raise RuntimeError(f"ticket {ticket_id} not found")
+    del org_id  # ticket-context already carries org_id; kept for caller-side clarity
+    async with db_session() as s:
+        wfx_id = await get_engine().start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(ticket_uuid),
+            workspace_provider="in_memory",
+            ticket_payload=dict(ctx.payload),
+            session=s,
+        )
+        await s.commit()
+    return wfx_id
 
 
 def _register_m05_workflows() -> None:
