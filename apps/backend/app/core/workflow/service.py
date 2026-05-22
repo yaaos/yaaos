@@ -25,10 +25,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
+from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import session as db_session
+from app.core.observability import with_remote_parent_span
 from app.core.tasks import TaskContext, TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.types import (
@@ -49,6 +51,7 @@ from app.core.workflow.types import (
 )
 
 log = structlog.get_logger("core.workflow")
+_tracer = trace.get_tracer("core.workflow")
 
 
 # Key prefix in WorkflowExecutionRow.step_state used to persist append_steps
@@ -99,8 +102,34 @@ async def start_step(
       `route_workflow` via the outbox in the same transaction.
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
       writes the `pending_human_decisions` row, sets `state = awaiting_human`.
+
+    Span: emits a `workflow.start_step` span whose parent is the upstream
+    span encoded in `traceparent`, so all task bodies in one workflow run
+    nest under the same trace ID. The span sets the `workflow_execution_id`
+    + `step_id` + `attempt` attributes for observability.
     """
     del ctx  # session is opened per-task here; future broker wiring may pass it via ctx
+    with with_remote_parent_span(_tracer, "workflow.start_step", traceparent) as span:
+        span.set_attribute("workflow.execution_id", workflow_execution_id)
+        span.set_attribute("workflow.step_id", step_id)
+        span.set_attribute("workflow.attempt", attempt)
+        await _start_step_impl(
+            workflow_execution_id=workflow_execution_id,
+            step_id=step_id,
+            attempt=attempt,
+            inputs=inputs,
+            traceparent=traceparent,
+        )
+
+
+async def _start_step_impl(
+    *,
+    workflow_execution_id: str,
+    step_id: str,
+    attempt: int,
+    inputs: dict[str, Any],
+    traceparent: str | None,
+) -> None:
     async with db_session() as s:
         wfx = await _load_execution(s, workflow_execution_id)
         if wfx is None:
@@ -256,8 +285,33 @@ async def handle_agent_event(
     `core/agent_gateway`. Validates against `pending_agent_command_id`
     (race guard), clears it, transitions back to `running`, enqueues
     `route_workflow`. Idempotent: a duplicate event for a workflow that
-    has already advanced exits cleanly."""
+    has already advanced exits cleanly.
+
+    Span: nests under the upstream span from `traceparent` so the agent's
+    work and the control-plane's resumption are one trace.
+    """
     del ctx
+    with with_remote_parent_span(_tracer, "workflow.handle_agent_event", traceparent) as span:
+        span.set_attribute("workflow.execution_id", workflow_execution_id)
+        span.set_attribute("workflow.agent_command_id", agent_command_id)
+        span.set_attribute("workflow.outcome_label", outcome_label)
+        await _handle_agent_event_impl(
+            workflow_execution_id=workflow_execution_id,
+            agent_command_id=agent_command_id,
+            outcome_label=outcome_label,
+            outputs=outputs,
+            traceparent=traceparent,
+        )
+
+
+async def _handle_agent_event_impl(
+    *,
+    workflow_execution_id: str,
+    agent_command_id: str,
+    outcome_label: str,
+    outputs: dict[str, Any],
+    traceparent: str | None,
+) -> None:
     async with db_session() as s:
         wfx = await _load_execution(s, workflow_execution_id)
         if wfx is None:
@@ -315,8 +369,34 @@ async def route_workflow(
     """Persist the completed step's outcome, apply retry budget, evaluate
     the step's transitions, and either enqueue the next `start_step` or
     mark the workflow terminal. Atomic transition + outbox enqueue in a
-    single transaction."""
+    single transaction.
+
+    Span: nests under the upstream span from `traceparent`.
+    """
     del ctx
+    with with_remote_parent_span(_tracer, "workflow.route_workflow", traceparent) as span:
+        span.set_attribute("workflow.execution_id", workflow_execution_id)
+        if completed_step_id is not None:
+            span.set_attribute("workflow.completed_step_id", completed_step_id)
+        if outcome_label is not None:
+            span.set_attribute("workflow.outcome_label", outcome_label)
+        await _route_workflow_impl(
+            workflow_execution_id=workflow_execution_id,
+            completed_step_id=completed_step_id,
+            outcome_label=outcome_label,
+            outputs=outputs,
+            traceparent=traceparent,
+        )
+
+
+async def _route_workflow_impl(
+    *,
+    workflow_execution_id: str,
+    completed_step_id: str | None,
+    outcome_label: str | None,
+    outputs: dict[str, Any],
+    traceparent: str | None,
+) -> None:
     async with db_session() as s:
         wfx = await _load_execution(s, workflow_execution_id)
         if wfx is None:
