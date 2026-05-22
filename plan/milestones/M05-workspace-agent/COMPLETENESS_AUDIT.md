@@ -173,6 +173,6 @@ The 8-step flow:
 - Phase 7 STS verifier + Org Settings UI + provisioning policy
 - Phase 8 Go-side traceparent env propagation
 - Phase 8b SPA-side activity-stream consumer + WS reconnect + uvicorn ping/pong
-- Phase 10 remaining audits (provider parity, trace linkage, cleanup failsafes, security-posture slim)
+- Phase 10 remaining audits (provider parity, trace linkage, security-posture slim) — ~~cleanup failsafes~~ **shipped (slice 34)**: nine fault-injection tests in `app/core/workspace/test/test_reaper_failsafes.py` cover provider-not-registered → DESTROY_FAILED, retry-and-flip-to-DESTROY_FAILED at third attempt, happy-path destroy clears `last_destroy_error`, idle-timeout sweep flips abandoned ACTIVE rows, idle sweep skips rows with live claims, and `close_workspace` idempotency on already-EXPIRED + phantom ids.
 
 **Bottom line**: per the [Definition-of-done](START_HERE.md), M05 is not closed — 31 unchecked items remain in PHASES.md, each carrying a deferral annotation that names its owning follow-on. This audit catalogs each one and confirms no requirement was silently dropped.
