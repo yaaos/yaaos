@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import re
 
-from app.domain.vcs import Diff
+from app.domain.reviewer.constants import REVIEWER_TAG
+from app.domain.vcs import Diff, Review
 
 # Order matters only insofar as we return the first match — pick more
 # specific patterns first if you add overlapping rules.
@@ -44,4 +45,18 @@ def detect_secrets(diff: Diff) -> str | None:
     return None
 
 
-__all__ = ["detect_secrets"]
+def secrets_warning_review(rule_id: str) -> Review:
+    """Build a refusal `Review` for the case where `detect_secrets` matched.
+    Posted to the PR as a regular review with a single explanatory comment;
+    no findings, state `"COMMENT"` (yaaos doesn't take a position on the
+    code — it refused to look)."""
+    body = (
+        "yaaos refused to review this PR — the diff contains content that "
+        f"looks like a leaked secret (rule: `{rule_id}`). Remove the secret, "
+        "rotate it on the upstream provider, then push a fresh commit and the "
+        "review will run automatically."
+    )
+    return Review(agent_tag=REVIEWER_TAG, state="COMMENT", summary_body=body, findings=[])
+
+
+__all__ = ["detect_secrets", "secrets_warning_review"]

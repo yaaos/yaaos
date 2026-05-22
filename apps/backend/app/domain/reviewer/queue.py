@@ -60,6 +60,12 @@ from app.domain.reviewer.constants import (
 from app.domain.reviewer.constants import (
     REVIEWER_TAG as _REVIEWER_TAG,
 )
+from app.domain.reviewer.diff_utils import (
+    detect_language as _detect_language,
+)
+from app.domain.reviewer.diff_utils import (
+    ticket_skip_reason as _ticket_skip_reason,
+)
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.mcp_wiring import (
@@ -73,6 +79,9 @@ from app.domain.reviewer.queue_events import (
 )
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
+from app.domain.reviewer.secrets_detection import (
+    secrets_warning_review as _secrets_warning_review,
+)
 from app.domain.reviewer.service import dispatch_audits, dispatch_events
 from app.domain.vcs import Diff, Review, VCSPullRequest
 from app.domain.vcs import (
@@ -864,17 +873,8 @@ async def _run_review_job_inner(input: ReviewJobInput) -> None:
         )
 
 
-def _ticket_skip_reason(pr: Any, diff: Diff) -> str | None:
-    if pr.is_fork:
-        return "fork"
-    if pr.author_type == "bot":
-        return "bot_author"
-    if diff.files and all(_is_skip_path(f.path) for f in diff.files):
-        return "trivial_diff"
-    total_lines = sum(f.additions + f.deletions for f in diff.files)
-    if total_lines > 5000:
-        return "too_large"
-    return None
+# `_ticket_skip_reason` moved to `domain/reviewer/diff_utils.py` (slice 42).
+# Imported at the top of the file under the legacy underscore-prefixed name.
 
 
 async def _transition_failed(
@@ -938,20 +938,10 @@ async def _transition_skipped(
         await s.commit()
 
 
-def _is_skip_path(path: str) -> bool:
-    from app.domain.intake.parsing import is_skippable_path  # noqa: PLC0415
-
-    return is_skippable_path(path)
-
-
-def _secrets_warning_review(rule_id: str) -> Review:
-    body = (
-        "yaaos refused to review this PR — the diff contains content that "
-        f"looks like a leaked secret (rule: `{rule_id}`). Remove the secret, "
-        "rotate it on the upstream provider, then push a fresh commit and the "
-        "review will run automatically."
-    )
-    return Review(agent_tag=_REVIEWER_TAG, state="COMMENT", summary_body=body, findings=[])
+# `_is_skip_path` moved to `domain/reviewer/diff_utils.py` (slice 42).
+# `_secrets_warning_review` moved to `domain/reviewer/secrets_detection.py`
+# (slice 42). Both re-imported at the top of the file under the legacy
+# underscore-prefixed names.
 
 
 async def _set_step(job_id: UUID, step: str, *, pr_id: UUID) -> None:
@@ -965,33 +955,8 @@ async def _set_step(job_id: UUID, step: str, *, pr_id: UUID) -> None:
     await publish(ReviewJobStepProgress(pr_id=pr_id, review_job_id=job_id, current_step=step))
 
 
-def _detect_language(diff: Any) -> str | None:
-    ext_to_lang = {
-        ".py": "Python",
-        ".ts": "TypeScript",
-        ".tsx": "TypeScript",
-        ".js": "JavaScript",
-        ".jsx": "JavaScript",
-        ".go": "Go",
-        ".rs": "Rust",
-        ".rb": "Ruby",
-        ".java": "Java",
-        ".kt": "Kotlin",
-        ".swift": "Swift",
-        ".c": "C",
-        ".cpp": "C++",
-        ".cc": "C++",
-        ".h": "C/C++",
-    }
-    counts: dict[str, int] = {}
-    for f in diff.files:
-        for ext, lang in ext_to_lang.items():
-            if f.path.lower().endswith(ext):
-                counts[lang] = counts.get(lang, 0) + 1
-                break
-    if not counts:
-        return None
-    return max(counts.items(), key=lambda kv: kv[1])[0]
+# `_detect_language` moved to `domain/reviewer/diff_utils.py` (slice 42).
+# Imported at the top of the file under the legacy underscore-prefixed name.
 
 
 # Severity tier-collapse moved to `admission._SEVERITY_TO_VCS`. Imported
