@@ -28,6 +28,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/yaaos/agent/internal/activity"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
 )
@@ -54,6 +55,21 @@ type Config struct {
 	// reconciliation; production usually sets it from
 	// `YAAOS_WORKSPACE_ROOT`.
 	WorkspaceRoot string
+
+	// ActivityWSURL is the backend's activity-stream WebSocket URL
+	// (e.g. "wss://yaaos.example.com/api/v1/agents/<agent_id>/activity").
+	// Empty disables the WS path: progress events fall back to per-event
+	// HTTP POSTs (slice 76). Non-empty: the supervisor dials at startup,
+	// constructs an `activity.Conductor`, and routes progress events
+	// through it. Demand-pull semantics apply — events for workspaces
+	// the backend hasn't sent `subscribe` for are dropped at the
+	// Conductor's gate (slice 78). The literal `{agent_id}` placeholder
+	// gets substituted post-identity-exchange.
+	ActivityWSURL string
+
+	// ActivityBatchInterval controls the Conductor's flush cadence.
+	// Defaults to 250ms.
+	ActivityBatchInterval time.Duration
 }
 
 // Logger is the minimal logging surface the supervisor needs. Real
@@ -95,6 +111,14 @@ type Supervisor struct {
 	// (not the supervisor) — only orphans (from a previous run) need
 	// supervisor-side path tracking.
 	workspacePaths map[string]string
+
+	// conductor + wsConn are non-nil iff cfg.ActivityWSURL is set AND
+	// the WS dial succeeded. Progress events route through the
+	// Conductor when present; otherwise they fall back to HTTP POSTs
+	// (slice 76). Terminal events always use HTTP — only progress
+	// streaming is on the WS.
+	conductor *activity.Conductor
+	wsConn    *activity.WSConn
 }
 
 // New constructs a Supervisor. The client is wired but identity hasn't
@@ -114,6 +138,9 @@ func New(cfg Config, client *protocol.Client, log Logger) *Supervisor {
 	}
 	if cfg.Spawn == nil {
 		cfg.Spawn = ExecSpawn(os.Args[0], 5*time.Second, log)
+	}
+	if cfg.ActivityBatchInterval <= 0 {
+		cfg.ActivityBatchInterval = 250 * time.Millisecond
 	}
 	return &Supervisor{
 		cfg:            cfg,
@@ -155,6 +182,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.log.Info("supervisor.reconciliation_orphans", "count", len(orphans))
 	}
 
+	// Activity WebSocket: opt-in via cfg.ActivityWSURL. On dial failure
+	// the supervisor keeps running with progress events on HTTP — the
+	// WS is an efficiency hop, not a correctness requirement.
+	if s.cfg.ActivityWSURL != "" {
+		s.setupActivityWS(ctx, resp.Bearer)
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < s.cfg.Concurrency; i++ {
 		wg.Add(1)
@@ -169,10 +203,46 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.heartbeatLoop(ctx)
 	}()
 	wg.Wait()
+	// Tear down the activity WS first so the read-loop exits before the
+	// pool shuts down; otherwise a slow flush could race with ctx cancel.
+	if s.conductor != nil {
+		s.conductor.Stop()
+	}
+	if s.wsConn != nil {
+		_ = s.wsConn.Close()
+	}
 	// Reap any still-running workspace subprocesses on shutdown. Each
 	// runner gets SIGTERM → grace → SIGKILL via its own Close.
 	s.pool.CloseAll(context.Background())
 	return nil
+}
+
+// setupActivityWS dials the activity-stream WebSocket and wires the
+// Conductor. Failure is logged but not fatal — the supervisor falls
+// back to HTTP-only progress posts.
+func (s *Supervisor) setupActivityWS(ctx context.Context, bearer string) {
+	// 5s dial timeout — production WS handshakes shouldn't take this
+	// long; if it does, the network is hosed and we move on.
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	url := s.cfg.ActivityWSURL
+	conn, err := activity.Dial(dialCtx, url, bearer)
+	if err != nil {
+		s.log.Warn("supervisor.activity_ws_dial_failed", "url", url, "err", err.Error())
+		return
+	}
+	s.wsConn = conn
+	s.conductor = activity.NewConductor(s.cfg.ActivityBatchInterval, conn.Send)
+	s.conductor.Start(ctx)
+	// Read-loop: ctx cancel unblocks Read. RunInbound returns on the
+	// first transport error; we log and let the supervisor continue
+	// (progress events stop reaching the UI but commands keep flowing).
+	go func() {
+		if err := activity.RunInbound(ctx, conn, s.conductor); err != nil && ctx.Err() == nil {
+			s.log.Warn("supervisor.activity_ws_read_loop_exited", "err", err.Error())
+		}
+	}()
+	s.log.Info("supervisor.activity_ws_connected", "url", url)
 }
 
 func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityExchangeResponse, error) {
@@ -302,17 +372,19 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd *protocol.AgentComman
 		setHeaderTraceparent(cmd, childTP)
 	}
 
-	// Progress-event forwarder (slice 76): each in-flight progress
-	// AgentEvent the workspace process emits gets posted directly to
-	// the control plane via the same endpoint as the terminal event.
-	// The backend's `record_agent_event` handles kind=progress without
-	// triggering workflow-engine resumption (only completed_* events
-	// resume). Activity batching over the WebSocket is a follow-on —
-	// for now each progress event is its own POST. PostCommandEvent
-	// failures are logged and dropped; missing progress events aren't
-	// a correctness issue (the terminal event still carries the
-	// outcome).
+	// Progress-event forwarder: when the activity WS is up (slice 83
+	// wiring), each in-flight progress AgentEvent goes through the
+	// Conductor — batched at ~250ms, filtered by the SubscriptionSet
+	// (demand-pull: dropped when no UI is watching this workflow). When
+	// the WS isn't configured / dial failed, falls back to per-event
+	// HTTP POST (slice 76 path). Either way, missing progress events
+	// aren't a correctness issue — the terminal event still carries
+	// the outcome.
 	progressForwarder := func(pev protocol.AgentEvent) {
+		if s.conductor != nil {
+			s.conductor.Publish(header.WorkspaceID, pev)
+			return
+		}
 		if perr := s.client.PostCommandEvent(ctx, header.CommandID, pev); perr != nil {
 			s.log.Warn("supervisor.progress_post_failed",
 				"command_id", header.CommandID, "err", perr.Error())

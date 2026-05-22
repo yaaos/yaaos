@@ -51,6 +51,14 @@ func NewConductor(flushInterval time.Duration, send SendFunc) *Conductor {
 func (c *Conductor) Start(ctx context.Context) { c.batcher.Start(ctx) }
 func (c *Conductor) Stop()                     { c.batcher.Stop() }
 
+// IsSubscribed reports whether the backend has sent a `subscribe` for
+// `workspaceID` and not yet sent the matching `unsubscribe`. Exposed
+// for tests + diagnostics; consumers typically don't need to check —
+// the Conductor filters at Publish time.
+func (c *Conductor) IsSubscribed(workspaceID string) bool {
+	return c.subs.Contains(workspaceID)
+}
+
 // HandleInbound decodes one frame and applies it. Returns the decode
 // error so the caller can log / disconnect on malformed traffic.
 func (c *Conductor) HandleInbound(raw []byte) error {
