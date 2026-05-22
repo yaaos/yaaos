@@ -162,11 +162,11 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 
 ## Phase 9 — packaging + release
 
-- [ ] Dockerfile for `apps/agent/` producing a static-binary image.
-- [ ] Public image registry decision recorded (TBD strategic gap — see requirements).
-- [ ] Image tagging strategy recorded.
-- [ ] `apps/agent/docs/README.md` with deployment guide.
-- [ ] Local dev story documented: `docker-compose up` with backend + agent + fake STS.
+- [x] Dockerfile for `apps/agent/` producing a static-binary image.
+- [x] Public image registry decision recorded (TBD strategic gap — see requirements). _(GHCR — `ghcr.io/yaaos/yaaos-agent`, logged in [DECISIONS.md](DECISIONS.md).)_
+- [x] Image tagging strategy recorded. _(`vX.Y.Z` immutable + `latest` for getting-started + `sha-<short>` for build traceability; multi-arch amd64+arm64.)_
+- [x] `apps/agent/docs/README.md` with deployment guide.
+- [x] Local dev story documented: `docker-compose up` with backend + agent + fake STS. _(Compose service shipped + setup.md updated. "Fake STS" is the placeholder identity-exchange verifier — the real STS replay is the Phase 7 follow-on, at which point a fake STS service joins the test stack.)_
 
 ## Phase 10 — docs + completeness audit + CI green
 
