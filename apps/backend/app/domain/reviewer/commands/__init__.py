@@ -25,7 +25,7 @@ dismantle that wires the existing reviewer pipeline through them.
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -506,7 +506,104 @@ class ArchiveStaleFindings(_LocalReviewCommand):
 
 
 class PostReply(_LocalReviewCommand):
+    """Append a yaaos-authored reply to a finding's comment thread.
+
+    Inputs:
+    - `reply_body`: text of the reply (from the prior `AnswerQuestion`
+      Workspace step).
+    - `finding_id`: which finding's thread to reply on (from
+      `$ticket.finding_id`).
+
+    Loads the reviewer aggregate by `pr_id`, finds the thread for
+    `finding_id`, appends a `CommentMessage` with `author_kind="yaaos"`.
+    The external_comment_id is set to a `local-<uuid>` placeholder — the
+    GitHub-side post (vcs.post_comment_reply) is a follow-on slice; today
+    the reply persists locally but doesn't appear on GitHub yet.
+
+    Defensive: empty/missing inputs → success-no-op (workflow drain).
+    Missing pr_id, unknown finding, or no existing thread → success-no-op
+    with a log line (the reply has nothing to attach to). Real errors
+    (provider missing) return failure.
+    """
+
     kind = "PostReply"
+
+    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+        reply_body = inputs.get("reply_body")
+        finding_id_raw = inputs.get("finding_id")
+        if not reply_body or not finding_id_raw:
+            return Outcome.success(outputs={"posted": False, "reason": "empty_input"})
+
+        try:
+            finding_id = UUID(str(finding_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid finding_id: {finding_id_raw!r}")
+
+        provider = get_workflow_context_provider()
+        if provider is None:
+            return Outcome.failure(reason="no workflow_context provider registered")
+
+        ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
+        if ticket_ctx is None or ticket_ctx.pr_id is None:
+            log.info(
+                "post_reply.no_pr_link",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.success(outputs={"posted": False, "reason": "no_pr_link"})
+
+        # Deferred import — heavy module.
+        from app.domain.reviewer.repository import (  # noqa: PLC0415
+            SqlAlchemyAggregateRepository,
+        )
+
+        async with db_session() as s:
+            repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await repo.load(pr_id=ticket_ctx.pr_id, org_id=ticket_ctx.org_id)
+            known_ids = {f.id for f in aggregate.findings}
+            if finding_id not in known_ids:
+                log.info(
+                    "post_reply.unknown_finding",
+                    workflow_execution_id=ctx.workflow_execution_id,
+                    finding_id=str(finding_id),
+                )
+                return Outcome.success(outputs={"posted": False, "reason": "unknown_finding"})
+
+            thread = aggregate.thread_for_finding(finding_id)
+            if thread is None:
+                log.info(
+                    "post_reply.no_thread",
+                    workflow_execution_id=ctx.workflow_execution_id,
+                    finding_id=str(finding_id),
+                )
+                return Outcome.success(outputs={"posted": False, "reason": "no_thread"})
+
+            # Placeholder external id — GitHub post lands in the follow-on
+            # slice. Matches the existing local-<id> convention from queue.py.
+            placeholder_external_id = f"local-reply-{uuid4()}"
+            aggregate.append_message(
+                thread_id=thread.id,
+                author_kind="yaaos",
+                author_external_id="yaaos",
+                external_comment_id=placeholder_external_id,
+                body=str(reply_body),
+            )
+            await repo.save(aggregate)
+            await s.commit()
+
+        log.info(
+            "post_reply.persisted",
+            workflow_execution_id=ctx.workflow_execution_id,
+            finding_id=str(finding_id),
+            thread_id=str(thread.id),
+        )
+        return Outcome.success(
+            outputs={
+                "posted": True,
+                "thread_id": str(thread.id),
+                "external_comment_id": placeholder_external_id,
+            }
+        )
 
 
 ALL_WORKSPACE_COMMANDS: tuple[_WorkspaceReviewCommand, ...] = (
