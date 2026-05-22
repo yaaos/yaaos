@@ -22,10 +22,15 @@ from pydantic import BaseModel
 
 
 class WorkspaceTicketContext(BaseModel):
-    """Everything a Workspace-category WorkflowCommand needs from a ticket
-    to build a `WorkspaceSpec`. Returned by the registered provider.
-    Pydantic-frozen so callers can't accidentally mutate before passing
-    into `create_workspace`."""
+    """Everything a Workspace-category or Local WorkflowCommand needs from
+    a ticket. Returned by the registered provider. Pydantic-frozen so
+    callers can't accidentally mutate before passing into `create_workspace`.
+
+    `pr_id` is None when the ticket isn't (yet) associated with a PR row —
+    intake creates the ticket before PR materialization in some flows, so
+    Local commands that need the reviewer aggregate must handle the None
+    case (typically by returning success-without-action).
+    """
 
     model_config = {"frozen": True}
 
@@ -33,6 +38,7 @@ class WorkspaceTicketContext(BaseModel):
     plugin_id: str
     repo_external_id: str
     payload: dict[str, Any]
+    pr_id: UUID | None = None
 
 
 @runtime_checkable

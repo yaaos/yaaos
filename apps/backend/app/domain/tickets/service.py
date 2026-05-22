@@ -290,6 +290,7 @@ async def get_workspace_ticket_context(ticket_id: UUID):  # type: ignore[no-unty
         plugin_id=row.plugin_id or "github",
         repo_external_id=row.repo_external_id or "",
         payload=dict(row.payload or {}),
+        pr_id=row.pr_id,
     )
 
 
