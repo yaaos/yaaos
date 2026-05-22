@@ -6,7 +6,7 @@ scans added lines (so a removed secret doesn't trigger).
 
 from __future__ import annotations
 
-from app.domain.reviewer.queue import _detect_secrets
+from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
 from app.domain.vcs import Diff
 
 

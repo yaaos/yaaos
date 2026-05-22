@@ -34,8 +34,10 @@ from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import repository as orgs_repo
 from app.domain.pull_requests.models import PullRequestRow
+from app.domain.reviewer.mcp_wiring import (
+    prefix_broken_creds_warning as _prefix_broken_creds_warning,
+)
 from app.domain.reviewer.models import ReviewRow
-from app.domain.reviewer.queue import _prefix_broken_creds_warning
 from app.domain.tickets.models import TicketRow
 
 

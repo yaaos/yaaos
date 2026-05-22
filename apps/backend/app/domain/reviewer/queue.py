@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,14 +43,16 @@ from app.domain import (
     pull_requests,
     tickets,
 )
-from app.domain import (
-    integrations as mcp_integrations,
-)
 from app.domain.coding_agent import ActivityEvent, FindingDraft, InvocationStatus, ReviewContext
 from app.domain.reviewer.aggregate import RawFinding
 from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
+from app.domain.reviewer.mcp_wiring import (
+    prefix_broken_creds_warning as _prefix_broken_creds_warning,
+)
 from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
 from app.domain.reviewer.service import dispatch_audits, dispatch_events
 from app.domain.vcs import Diff, Review, VCSPullRequest
 from app.domain.vcs import (
@@ -176,66 +177,6 @@ class _AdmissionDropsPayload(BaseModel):
     """Audit payload for plan §10.5 admission drops (one row per review)."""
 
     drops: list[dict[str, Any]]
-
-
-def _prefix_broken_creds_warning(body: str | None, providers: list[str]) -> str | None:
-    """Prefix the PR review summary with a yellow GitHub callout listing any
-    MCP providers that returned `broken_creds`/`not_connected` during this
-    review. No-op when nothing was observed."""
-    if not providers:
-        return body
-    names = ", ".join(providers)
-    note = (
-        "> [!WARNING]\n"
-        f"> The following MCP integrations returned errors during this review "
-        f"and were skipped: **{names}**. Reconnect them in Org Settings → Integrations.\n"
-    )
-    if not body:
-        return note
-    return f"{note}\n{body}"
-
-
-async def _build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any] | None:
-    """Collect connected MCP providers for the org and mint a per-review bearer.
-
-    Returns None when no providers are connected (or all are broken/disabled) —
-    the reviewer still runs, just without MCP context. The bearer + provider
-    catalogue are threaded into the agent via `ReviewContext.agent_config["mcp"]`;
-    `plugins/claude_code` materializes the workspace `.mcp.json` from it.
-    """
-    servers: list[dict[str, Any]] = []
-    async with db_session() as s:
-        for provider_id in mcp_integrations.known_providers():
-            row = await mcp_integrations.get(s, org_id, provider_id)
-            if row is None or not row.enabled:
-                continue
-            if row.last_refresh_status == "failed":
-                log.warning(
-                    "review.mcp.broken_creds_skipped",
-                    provider=provider_id,
-                    org_id=str(org_id),
-                )
-                continue
-            prov = mcp_integrations.get_provider(provider_id)
-            servers.append(
-                {
-                    "provider": provider_id,
-                    "allowed_tools": list(row.allowed_tools),
-                    "known_read_tools": list(prov.config.known_read_tools) if prov else [],
-                    "known_write_tools": list(prov.config.known_write_tools) if prov else [],
-                }
-            )
-    if not servers:
-        log.info("review.mcp.no_connected_providers", org_id=str(org_id))
-        return None
-    async with db_session() as s:
-        raw_token = await mcp_proxy.mint_token(review_id, session=s)
-        await s.commit()
-    return {
-        "token": raw_token,
-        "base_url": f"{get_settings().yaaos_app_base_url}/api/mcp/{review_id}",
-        "servers": servers,
-    }
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -1034,25 +975,6 @@ def _is_skip_path(path: str) -> bool:
     from app.domain.intake.parsing import is_skippable_path  # noqa: PLC0415
 
     return is_skippable_path(path)
-
-
-_SECRET_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}")),
-    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9]{32,}\b")),
-    ("private_key_pem", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-)
-
-
-def _detect_secrets(diff: Diff) -> str | None:
-    for raw_line in (diff.raw or "").splitlines():
-        if not raw_line.startswith("+") or raw_line.startswith("+++"):
-            continue
-        for rule_id, pat in _SECRET_RULES:
-            if pat.search(raw_line):
-                return rule_id
-    return None
 
 
 def _secrets_warning_review(rule_id: str) -> Review:
