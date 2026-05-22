@@ -221,13 +221,16 @@ async def activity_ws(websocket: WebSocket, agent_id: UUID = Path(...)) -> None:
     passes. Phase 7 follow-on swaps in the real STS-issued bearer check.
 
     Protocol:
-      - **WorkspaceAgent → backend:** `{"type": "activity_batch", "workspace_id": "...", "events": [...]}`.
+      - **WorkspaceAgent → backend:** `{"type": "activity_batch", "workflow_execution_id": "...", "events": [...]}`.
         Backend publishes each event to `activity:{workflow_execution_id}`
         via `core/sse_pubsub`. The SSE handler in `web.py` (Phase 8b
         follow-on) consumes them per workflow execution.
-      - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "..."}` /
-        `{"type": "unsubscribe", "workspace_id": "..."}`. Driven by the
-        subscriber registry's 0→1 / 1→0 transitions.
+      - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "...", "workflow_execution_id": "..."}` /
+        `{"type": "unsubscribe", "workspace_id": "...", "workflow_execution_id": "..."}`.
+        Driven by the subscriber registry's 0→1 / 1→0 transitions.
+        The agent caches the mapping so its `activity_batch` outbound
+        carries the right `workflow_execution_id` keyed by the
+        `workspace_id` it learned at subscribe time.
 
     Failure modes:
       - Missing/empty `Authorization` header → close with 4401.

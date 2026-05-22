@@ -67,8 +67,10 @@ def test_ws_accepts_bearer_and_registers_sender() -> None:
 
 @pytest.mark.asyncio
 async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
-    """An incoming `activity_batch` message should publish each event to
-    `activity:{workflow_execution_id}` on the in-memory pubsub."""
+    """An incoming `activity_batch` carries `workflow_execution_id` (the
+    agent learned it from the `subscribe` message it received) and the
+    handler publishes each event to `activity:{workflow_execution_id}`
+    on the in-memory pubsub."""
     app = _app()
     agent_id = uuid4()
     workflow_id = uuid4()

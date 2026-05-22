@@ -4,9 +4,12 @@ UI is watching.
 `SubscriberRegistry.track(workflow_execution_id, workspace_id, agent_id, sender)`
 is called by an SSE handler when a client connects. The registry
 increments a per-workflow counter; on the `0 → 1` transition it dispatches
-`{type: "subscribe", workspace_id: ...}` to the WebSocket whose ID
-matches `agent_id`. Symmetrically, `untrack(...)` decrements; on the
-`1 → 0` transition it dispatches an `unsubscribe`.
+`{type: "subscribe", workspace_id: ..., workflow_execution_id: ...}` to
+the WebSocket whose ID matches `agent_id`. The agent caches the
+`workspace_id → workflow_execution_id` mapping so its outbound
+`activity_batch` frames carry the right workflow id. Symmetrically,
+`untrack(...)` decrements; on the `1 → 0` transition it dispatches an
+`unsubscribe` with the same key shape.
 
 The actual WebSocket send is parameterized via `sender: Sender` (an async
 callable). That keeps `subscribers.py` free of FastAPI / Starlette
@@ -85,7 +88,17 @@ class SubscriberRegistry:
             self._routes[workflow_execution_id] = (workspace_id, agent_id)
             if count == 0:
                 send = self._senders.get(agent_id)
-                message = {"type": "subscribe", "workspace_id": str(workspace_id)}
+                # Agent caches workspace_id → workflow_execution_id from
+                # this payload so its outbound `activity_batch` can carry
+                # the right `workflow_execution_id` keyed by the
+                # `workspace_id` it learned at subscribe time. Without
+                # this, the agent would have no way to populate the
+                # workflow id on its outbound frames.
+                message = {
+                    "type": "subscribe",
+                    "workspace_id": str(workspace_id),
+                    "workflow_execution_id": str(workflow_execution_id),
+                }
         if send is not None and message is not None:
             try:
                 await send(message)
@@ -113,7 +126,14 @@ class SubscriberRegistry:
                 if route is not None:
                     workspace_id, agent_id = route
                     send = self._senders.get(agent_id)
-                    message = {"type": "unsubscribe", "workspace_id": str(workspace_id)}
+                    # Mirror `subscribe` payload shape so the agent can
+                    # drop the cached mapping on the same key it used to
+                    # add it.
+                    message = {
+                        "type": "unsubscribe",
+                        "workspace_id": str(workspace_id),
+                        "workflow_execution_id": str(workflow_execution_id),
+                    }
         if send is not None and message is not None:
             try:
                 await send(message)

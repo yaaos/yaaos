@@ -38,7 +38,13 @@ async def test_first_track_sends_subscribe() -> None:
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
-    assert sent == [{"type": "subscribe", "workspace_id": str(workspace_id)}]
+    assert sent == [
+        {
+            "type": "subscribe",
+            "workspace_id": str(workspace_id),
+            "workflow_execution_id": str(workflow_id),
+        }
+    ]
     assert reg.count(workflow_id) == 1
 
 
@@ -97,7 +103,11 @@ async def test_last_untrack_sends_unsubscribe() -> None:
 
     await reg.untrack(workflow_execution_id=workflow_id)
     assert reg.count(workflow_id) == 0
-    assert sent[-1] == {"type": "unsubscribe", "workspace_id": str(workspace_id)}
+    assert sent[-1] == {
+        "type": "unsubscribe",
+        "workspace_id": str(workspace_id),
+        "workflow_execution_id": str(workflow_id),
+    }
 
 
 @pytest.mark.asyncio
