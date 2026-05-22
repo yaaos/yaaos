@@ -26,7 +26,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/tracing"
 )
 
 // Config carries the supervisor's runtime knobs.
@@ -210,6 +213,13 @@ func (s *Supervisor) sendHeartbeat(ctx context.Context) {
 // a workspace subprocess on the first command for a given workspace_id,
 // reuses it for subsequent commands, and reaps it after CleanupWorkspace.
 //
+// Trace propagation: the command header carries the backend's W3C
+// traceparent; we extract that into the ctx, start a child
+// `supervisor.dispatch.<kind>` span, then rewrite the command's
+// traceparent on the wire so the workspace subprocess sees our span as
+// its parent. The resulting AgentEvent's traceparent likewise carries
+// our span back to the backend.
+//
 // On runner I/O error / context cancel, the pool emits a synthetic
 // `completed_failure` event so the workflow-engine on the backend always
 // sees an outcome (it never silently hangs waiting for our reply).
@@ -218,13 +228,64 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd *protocol.AgentComman
 	s.recordInventory(header.WorkspaceID, header.CommandID, "running")
 	defer s.clearInventory(header.WorkspaceID)
 
+	ctx = tracing.ExtractContext(ctx, header.Traceparent)
+	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch."+string(cmd.Kind),
+		attribute.String("workspace_id", header.WorkspaceID),
+		attribute.String("command_id", header.CommandID),
+		attribute.String("kind", string(cmd.Kind)),
+	)
+
+	// Rewrite the wire's traceparent so the workspace subprocess + the
+	// AgentEvent we'll post back upstream both see this dispatch span as
+	// their parent. The original (backend) parent is recorded via the
+	// SDK's span linkage — no information lost.
+	childTP := tracing.InjectTraceparent(ctx)
+	if childTP != "" {
+		setHeaderTraceparent(cmd, childTP)
+	}
+
 	event := s.pool.Dispatch(ctx, cmd)
+	// The pool's failureEvent / runner-relayed events keep whatever
+	// traceparent the dispatcher saw. Make sure the supervisor's span is
+	// what the backend correlates against.
+	if childTP != "" {
+		event.Traceparent = childTP
+	}
+
+	var postErr error
 	if err := s.client.PostCommandEvent(ctx, header.CommandID, event); err != nil {
 		if err == protocol.ErrStaleClaim {
 			s.log.Info("supervisor.event_stale_claim", "command_id", header.CommandID)
-			return
+		} else {
+			postErr = err
+			s.log.Warn("supervisor.event_post_failed", "command_id", header.CommandID, "err", err.Error())
 		}
-		s.log.Warn("supervisor.event_post_failed", "command_id", header.CommandID, "err", err.Error())
+	}
+	// Span carries the dispatch-level error (post-back failure or pool
+	// failure if Dispatch returned a completed_failure event).
+	if event.Kind == protocol.EventCompletedFailure {
+		end(fmt.Errorf("dispatch failure: %s", event.FailureReason))
+		return
+	}
+	end(postErr)
+}
+
+// setHeaderTraceparent mutates the concrete AgentCommand payload's
+// embedded CommandHeader.Traceparent in place. Used to rewrite the wire's
+// trace context to the supervisor's child span before forwarding to the
+// workspace subprocess.
+func setHeaderTraceparent(cmd *protocol.AgentCommand, tp string) {
+	switch cmd.Kind {
+	case protocol.KindCreateWorkspace:
+		cmd.CreateWorkspace.Traceparent = tp
+	case protocol.KindWriteFiles:
+		cmd.WriteFiles.Traceparent = tp
+	case protocol.KindRefreshWorkspaceAuth:
+		cmd.RefreshWorkspaceAuth.Traceparent = tp
+	case protocol.KindInvokeClaudeCode:
+		cmd.InvokeClaudeCode.Traceparent = tp
+	case protocol.KindCleanupWorkspace:
+		cmd.CleanupWorkspace.Traceparent = tp
 	}
 }
 

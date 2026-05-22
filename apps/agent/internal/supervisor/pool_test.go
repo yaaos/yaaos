@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/tracing"
 	"github.com/yaaos/agent/internal/workspace"
 )
 
@@ -240,6 +241,87 @@ func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 	}
 	if !strings.Contains(ev.FailureReason, "missing workspace_id") {
 		t.Errorf("failure_reason: %q", ev.FailureReason)
+	}
+}
+
+// TestPool_TraceContinuity_BackendParentToWorkspaceChild proves the
+// supervisor → workspace dispatch path links spans through one trace_id.
+// The backend's traceparent enters via the AgentCommand header; the
+// workspace's handle.<kind> span on the way out should share that
+// trace_id and have a parent_span_id linking back through the chain.
+func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
+	exp := tracing.Init(true)
+	defer exp.Reset()
+	defer tracing.Init(false)
+
+	// Backend-emitted traceparent: trace_id aabb..ff99, span_id 1122..eeff.
+	const backendParent = "00-aabbccddeeff00112233445566778899-1122334455667788-01"
+
+	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	defer pool.CloseAll(context.Background())
+
+	// Simulate the supervisor's wrapping span around dispatch (what
+	// supervisor.routeCommand does in production). The new ctx has the
+	// supervisor's child of the backend parent as the active span.
+	ctx := tracing.ExtractContext(context.Background(), backendParent)
+	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.CreateWorkspace")
+
+	// Now rewrite the cmd's traceparent to the supervisor's span (the
+	// same rewrite supervisor.routeCommand does before pool.Dispatch).
+	cmd := newCreateCmd("ws-1", "c-1")
+	cmd.CreateWorkspace.Traceparent = tracing.InjectTraceparent(ctx)
+	if cmd.CreateWorkspace.Traceparent == "" {
+		t.Fatal("supervisor span should produce non-empty traceparent")
+	}
+
+	ev := pool.Dispatch(ctx, cmd)
+	end(nil)
+	if ev.Kind != protocol.EventCompletedSuccess {
+		t.Fatalf("dispatch: %q (reason=%q)", ev.Kind, ev.FailureReason)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) < 2 {
+		t.Fatalf("want at least 2 spans (supervisor + workspace), got %d", len(spans))
+	}
+	const wantTraceID = "aabbccddeeff00112233445566778899"
+	for _, s := range spans {
+		if s.SpanContext.TraceID().String() != wantTraceID {
+			t.Errorf("span %q: trace_id=%s want %s", s.Name, s.SpanContext.TraceID(), wantTraceID)
+		}
+	}
+
+	// Check parent linkage: supervisor span's parent is the backend
+	// parent span_id; workspace span's parent is the supervisor span's
+	// span_id.
+	var supervisorSpan, wsSpan *struct {
+		spanID, parentSpanID string
+	}
+	for i := range spans {
+		s := spans[i]
+		entry := &struct{ spanID, parentSpanID string }{
+			spanID:       s.SpanContext.SpanID().String(),
+			parentSpanID: s.Parent.SpanID().String(),
+		}
+		switch {
+		case strings.HasPrefix(s.Name, "supervisor.dispatch"):
+			supervisorSpan = entry
+		case strings.HasPrefix(s.Name, "workspace.handle"):
+			wsSpan = entry
+		}
+	}
+	if supervisorSpan == nil {
+		t.Fatal("no supervisor.dispatch.* span")
+	}
+	if wsSpan == nil {
+		t.Fatal("no workspace.handle.* span")
+	}
+	if supervisorSpan.parentSpanID != "1122334455667788" {
+		t.Errorf("supervisor span parent: want 1122334455667788 got %s", supervisorSpan.parentSpanID)
+	}
+	if wsSpan.parentSpanID != supervisorSpan.spanID {
+		t.Errorf("workspace span parent: want %s (supervisor's span_id) got %s",
+			supervisorSpan.spanID, wsSpan.parentSpanID)
 	}
 }
 

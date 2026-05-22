@@ -27,7 +27,8 @@ The agent is **zero biz logic** — every threshold, prompt, lesson, depth, and 
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes.
 - `internal/protocol/` — wire types + HTTP client matching the OpenAPI spec.
 - `internal/supervisor/` — supervisor loop, long-poll workers, heartbeat.
-- `internal/workspace/` — workspace child-process dispatch loop (`Run` + `Handler` interface + `StubHandler`).
+- `internal/workspace/` — workspace child-process dispatch loop (`Run` + `Handler` interface + `StubHandler`). Each dispatch opens a `workspace.handle.<kind>` span around the Handler call.
+- `internal/tracing/` — OTel wiring. `Init(withInMemory)` registers the W3C `TraceContext` propagator + an optional in-memory tracer provider for tests. `ExtractContext` parses an incoming traceparent into the active span slot so SDK `Start` derives the new span's parent correctly. `StartSpan` opens a span + returns an `end(err)` closure that records errors. `TraceparentEnv(ctx)` formats the current span as `TRACEPARENT=<value>` for export to child processes.
 - `internal/identity/` — SigV4-signed STS `GetCallerIdentity` for control-plane verification. **Stub** in foundations.
 - `bin/ci` — `go vet ./... && go build ./... && go test ./...`.
 
@@ -52,7 +53,8 @@ See [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml
 - **Phase 5** — backend's `core/agent_gateway` implements the five HTTPS endpoints + placeholder bearer issuer.
 - **Phase 6 foundations** — IPC framing library, wire-protocol Go types + HTTP client, supervisor identity-exchange + claim + heartbeat loops, command-routing stub. Tests for IPC + protocol decoding + client + an httptest-driven end-to-end against a fake backend.
 - **Phase 6 follow-on slice 62** — workspace dispatch loop (`workspace.Run` + `Handler`) wired into `cmd/agent`. `StubHandler` returns success outputs for every command kind.
-- **Phase 6 follow-on slice 63 (this)** — supervisor `Pool` + `WorkspaceRunner` interface, production `ExecSpawn` (`os/exec` of `os.Args[0] workspace` with stdin/stdout pipes + process-group SIGTERM→SIGKILL on close), test `InProcessSpawn` (in-goroutine `workspace.Run` over `io.Pipe`). `routeCommand` rewritten to dispatch through the pool. Real handler bodies (clone, WriteFiles, Claude Code subprocess, cleanup) + wall-clock timeout + disk janitor + OTel SDK still pending.
+- **Phase 6 follow-on slice 63** — supervisor `Pool` + `WorkspaceRunner` interface, production `ExecSpawn` (`os/exec` of `os.Args[0] workspace` with stdin/stdout pipes + process-group SIGTERM→SIGKILL on close), test `InProcessSpawn` (in-goroutine `workspace.Run` over `io.Pipe`). `routeCommand` rewritten to dispatch through the pool.
+- **Phase 6 follow-on slice 64 (this)** — OTel SDK + `internal/tracing` package. Supervisor extracts the backend's traceparent from each AgentCommand header, opens a `supervisor.dispatch.<kind>` span, rewrites the wire's traceparent before forwarding so the workspace sees the supervisor's span as parent. Workspace extracts per-command traceparent and opens a `workspace.handle.<kind>` span. `ExecSpawn` exports `TRACEPARENT=<value>` into the workspace subprocess's env so any future Claude Code shim inherits trace context. Real handler bodies (clone, WriteFiles, Claude Code subprocess, cleanup) + wall-clock timeout + disk janitor + production exporter still pending.
 - **Phase 7** — real SigV4-signed STS verifier on the backend side; `RemoteAgentWorkspaceProvider` integration.
 - **Phase 9 (this commit)** — multi-stage Dockerfile producing a distroless static image at `ghcr.io/yaaos/yaaos-agent`. Deployment guide below.
 

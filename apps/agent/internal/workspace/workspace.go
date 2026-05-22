@@ -28,8 +28,11 @@ import (
 	"io"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/tracing"
 )
 
 // Handler executes the action for each AgentCommand kind. Implementations
@@ -98,12 +101,28 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, h Handler, opts Optio
 // dispatch routes one command into the right Handler method and converts
 // the result into an AgentEvent. Pure transformation — pulled out so it
 // can be exercised without pipe plumbing.
+//
+// Trace propagation: extracts the parent traceparent from the command
+// header (the supervisor's dispatch span), starts a child
+// `workspace.handle.<kind>` span around the Handler call, and writes its
+// own traceparent onto the outgoing event so the supervisor sees the
+// workspace's span as the upstream child.
 func dispatch(ctx context.Context, cmd *protocol.AgentCommand, h Handler, now time.Time) protocol.AgentEvent {
 	header := cmd.Header()
+	ctx = tracing.ExtractContext(ctx, header.Traceparent)
+	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(cmd.Kind),
+		attribute.String("workspace_id", header.WorkspaceID),
+		attribute.String("command_id", header.CommandID),
+		attribute.String("kind", string(cmd.Kind)),
+	)
+	childTP := tracing.InjectTraceparent(ctx)
 	base := protocol.AgentEvent{
 		CommandID:   header.CommandID,
 		ReportedAt:  now,
-		Traceparent: header.Traceparent,
+		Traceparent: childTP,
+	}
+	if base.Traceparent == "" {
+		base.Traceparent = header.Traceparent
 	}
 	var (
 		outputs map[string]any
@@ -123,15 +142,18 @@ func dispatch(ctx context.Context, cmd *protocol.AgentCommand, h Handler, now ti
 	default:
 		base.Kind = protocol.EventCompletedFailure
 		base.FailureReason = fmt.Sprintf("unknown command kind %q", cmd.Kind)
+		end(fmt.Errorf("unknown command kind %q", cmd.Kind))
 		return base
 	}
 	if err != nil {
 		base.Kind = protocol.EventCompletedFailure
 		base.FailureReason = err.Error()
+		end(err)
 		return base
 	}
 	base.Kind = protocol.EventCompletedSuccess
 	base.Outputs = outputs
+	end(nil)
 	return base
 }
 

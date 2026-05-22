@@ -21,6 +21,7 @@ import (
 
 	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/tracing"
 )
 
 // ExecSpawn returns a SpawnFunc that runs `<binary> workspace` as a child
@@ -43,6 +44,18 @@ func ExecSpawn(binary string, closeGrace time.Duration, log Logger) SpawnFunc {
 		// runner explicitly tears it down.
 		cmd := exec.Command(binary, "workspace")
 		cmd.Stderr = os.Stderr
+		// Inherit the supervisor's env so the workspace + Claude Code
+		// grand-children see PATH, HOME, etc. Append TRACEPARENT carrying
+		// the current span context — the workspace process can pick that
+		// up at startup and use it as the spawn-time parent for any of
+		// its own startup spans. Per-command parents still travel on the
+		// AgentCommand wire (per the protocol header), so this env value
+		// is most useful when a grand-grand-child (Claude Code) needs to
+		// inherit context from outside the command stream.
+		cmd.Env = os.Environ()
+		if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
+			cmd.Env = append(cmd.Env, tpEnv)
+		}
 		// Detach into its own process group so SIGKILL on the group reaps
 		// any grand-children (Claude Code subprocess).
 		cmd.SysProcAttr = procAttrNewPGroup()
