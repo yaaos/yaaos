@@ -1,14 +1,12 @@
 // RealHandler — production workspace.Handler that owns the per-workspace
-// tempdir lifecycle. Implements four of five AgentCommand kinds:
+// tempdir lifecycle. Implements all five AgentCommand kinds:
 //
-//   - CreateWorkspace      — `os.MkdirTemp` under the configured root,
-//                            stash auth + repo metadata in an in-memory
-//                            slot keyed by workspace_id. Git clone is
-//                            deferred to a follow-on (it'd need either
-//                            the `git` binary in the runtime image or a
-//                            pure-Go go-git dep). Emits a structured
-//                            `clone_pending=true` output so the backend
-//                            can observe the deferral.
+//   - CreateWorkspace      — `os.MkdirTemp` under the configured root +
+//                            real `git clone` via the configured
+//                            `CloneFunc` (auth injected as
+//                            `x-access-token:<token>@…`) + a
+//                            `.workspace-id` manifest for startup
+//                            reconciliation.
 //   - WriteFiles           — write each (path, content) entry under the
 //                            workspace root. Refuses paths that escape
 //                            the root via `..` or absolute components.
@@ -16,12 +14,16 @@
 //                            No I/O — used by the supervisor when the
 //                            backend rotates a GitHub installation token
 //                            mid-flight.
+//   - InvokeClaudeCode     — read `invocation.exec` from the wire
+//                            ({argv, stdin, env}, slice 72), merge env
+//                            on top of `os.Environ()`, add TRACEPARENT
+//                            for span linkage, dispatch via
+//                            `RunStreaming` with the workspace tempdir
+//                            as cwd. Captured stdout is returned in the
+//                            output map. Zero biz logic — the backend
+//                            owns prompt assembly + argv flags.
 //   - CleanupWorkspace     — `os.RemoveAll` the tempdir + drop the slot.
 //                            Idempotent on a missing workspace_id.
-//
-// InvokeClaudeCode stays a `not yet implemented` error in this slice —
-// it lands when the Claude Code subprocess wrapper is wired (per slice
-// 65's TODO note + DECISIONS.md).
 //
 // Concurrency: a single sync.Mutex serializes slot lookups + mutations.
 // Each Handler method is short and non-blocking; the workspace process
@@ -32,6 +34,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -43,6 +46,7 @@ import (
 	"sync"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/tracing"
 )
 
 // tokenRedactRe matches `x-access-token:<anything-not-@>@`. Compiled once
@@ -241,17 +245,100 @@ func (h *RealHandler) RefreshWorkspaceAuth(_ context.Context, cmd *protocol.Refr
 	}, nil
 }
 
-func (h *RealHandler) InvokeClaudeCode(_ context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+// invocationExec is the wire shape under `cmd.Invocation.exec` —
+// produced by `domain/coding_agent.build_invocation` (slice 72). The
+// rest of `cmd.Invocation` (mode, context, prompt_config) is
+// observability/contract surface that the agent ignores by design — the
+// "zero biz logic" rule means the backend owns prompt assembly.
+type invocationExec struct {
+	Exec struct {
+		Argv  []string          `json:"argv"`
+		Stdin string            `json:"stdin"`
+		Env   map[string]string `json:"env"`
+	} `json:"exec"`
+}
+
+func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
 	h.mu.Lock()
-	_, ok := h.slots[cmd.WorkspaceID]
+	slot, ok := h.slots[cmd.WorkspaceID]
 	h.mu.Unlock()
 	if !ok {
 		return nil, ErrUnknownWorkspace
 	}
-	// Real Claude Code subprocess wiring lands in a follow-on slice.
-	// Returning an explicit error here surfaces the gap to the backend's
-	// workflow engine rather than silently completing the step.
-	return nil, errors.New("InvokeClaudeCode: subprocess wiring not yet implemented (Phase 6 follow-on)")
+
+	var inv invocationExec
+	if err := json.Unmarshal(cmd.Invocation, &inv); err != nil {
+		return nil, fmt.Errorf("decode invocation: %w", err)
+	}
+	if len(inv.Exec.Argv) == 0 {
+		return nil, errors.New("invocation.exec.argv missing or empty")
+	}
+
+	// Env layering, low-to-high priority:
+	//   1. Parent process env (PATH, HOME, …) so claude can find its
+	//      binary + write to $HOME/.claude state.
+	//   2. exec.env from the wire (ANTHROPIC_API_KEY, etc.). Backend-
+	//      supplied secrets win over anything the parent inherited.
+	//   3. TRACEPARENT from the current ctx so the spawned subprocess
+	//      can link its spans into the supervisor's trace (slice 64
+	//      already does this for the supervisor → workspace hop; this
+	//      extends it one more step to the Claude Code grand-child).
+	env := os.Environ()
+	for k, v := range inv.Exec.Env {
+		env = append(env, k+"="+v)
+	}
+	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
+		env = append(env, tpEnv)
+	}
+
+	// Wall-clock cap on the subprocess comes from
+	// `InvokeClaudeCodeCommand.Limits.WallclockSeconds` on the wire,
+	// enforced one level up in `supervisor.Pool.Dispatch` (slice 68) via
+	// `context.WithTimeout`. Here we just inherit that ctx — the
+	// subprocess is killed via SIGTERM/SIGKILL on ctx cancel.
+	res, err := RunStreaming(ctx, RunStreamingOptions{
+		Argv:  inv.Exec.Argv,
+		Stdin: []byte(inv.Exec.Stdin),
+		Env:   env,
+		Dir:   slot.path,
+		// OnStdoutLine left nil → buffer the full stdout. Live streaming
+		// of Claude Code's stream-json events back to the supervisor as
+		// progress AgentEvents lands when `workspace.Run` learns to emit
+		// multiple events per command (today's dispatch loop emits one
+		// terminal event). The captured stdout is enough for the
+		// workflow engine's CodeReview step to admit findings.
+	})
+	if err != nil {
+		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
+		// res still populated; we surface stderr + exit code via the
+		// returned error so the supervisor's failure event carries
+		// actionable info. Context cancel / timeout → ctx.Err which the
+		// supervisor's pool already maps to a "timeout:" reason.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && res != nil {
+			stderrExcerpt := string(res.Stderr)
+			if len(stderrExcerpt) > 2048 {
+				stderrExcerpt = stderrExcerpt[:2048] + "...[truncated]"
+			}
+			return nil, fmt.Errorf("claude exit %d: %s", res.ExitCode, stderrExcerpt)
+		}
+		return nil, fmt.Errorf("claude subprocess: %w", err)
+	}
+
+	stdoutExcerpt := ""
+	if len(res.Stdout) <= 16*1024 {
+		stdoutExcerpt = string(res.Stdout)
+	} else {
+		stdoutExcerpt = string(res.Stdout[:16*1024]) + "...[truncated]"
+	}
+	return map[string]any{
+		"workspace_id": cmd.WorkspaceID,
+		"exit_code":    res.ExitCode,
+		"duration_ms":  res.Duration.Milliseconds(),
+		"stdout":       string(res.Stdout), // full output for the engine to parse
+		"stderr":       string(res.Stderr),
+		"stdout_excerpt": stdoutExcerpt,
+	}, nil
 }
 
 func (h *RealHandler) CleanupWorkspace(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (map[string]any, error) {

@@ -193,9 +193,22 @@ func RunStreaming(ctx context.Context, opts RunStreamingOptions) (*RunStreamingR
 		_, _ = io.Copy(io.Discard, stderr)
 	}()
 
-	// Wait in a goroutine so we can race against ctx.Done.
+	// Wait in a goroutine, but only AFTER both stdout + stderr readers
+	// have drained. `cmd.Wait` closes parent-side pipes the instant the
+	// child exits — calling it before our io.Copy goroutines have seen
+	// EOF races the closer against the reader, occasionally clipping the
+	// captured output to empty bytes (observed as a slice-73 flake on
+	// short-lived commands like `pwd` and `echo $VAR`). Per `*Cmd.Wait`
+	// docs: "incorrect to call Wait before all reads from the pipe have
+	// completed".
+	//
+	// On ctx cancel we need to signal the child without waiting for
+	// readers (the child might be hung holding the pipe open) — see the
+	// killer path below.
 	waitDone := make(chan error, 1)
 	go func() {
+		<-stdoutDone
+		<-stderrDone
 		waitDone <- cmd.Wait()
 	}()
 
@@ -203,10 +216,13 @@ func RunStreaming(ctx context.Context, opts RunStreamingOptions) (*RunStreamingR
 	var waitErr error
 	select {
 	case waitErr = <-waitDone:
-		// Process exited on its own.
+		// Process exited on its own; readers already drained (waiter
+		// only fires after both done channels close).
 	case <-ctx.Done():
 		timedOut = true
 		// SIGTERM the process group + give a 2s grace, then SIGKILL.
+		// Killing the child closes its stdout/stderr, which lets our
+		// reader goroutines EOF and the waiter then call cmd.Wait.
 		killGroupWS(cmd.Process.Pid, syscall.SIGTERM)
 		select {
 		case waitErr = <-waitDone:
@@ -215,10 +231,6 @@ func RunStreaming(ctx context.Context, opts RunStreamingOptions) (*RunStreamingR
 			waitErr = <-waitDone
 		}
 	}
-
-	// Drain readers so we don't return before the buffers are settled.
-	<-stdoutDone
-	<-stderrDone
 
 	exitCode := -1
 	if cmd.ProcessState != nil {

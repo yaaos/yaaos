@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -249,17 +250,157 @@ func TestRealHandler_CleanupWorkspace_UnknownWorkspace_IdempotentSuccess(t *test
 	}
 }
 
-func TestRealHandler_InvokeClaudeCode_NotImplemented(t *testing.T) {
+func TestRealHandler_InvokeClaudeCode_HappyPath_EchoesStdin(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not on PATH; subprocess test needs a POSIX shell env")
+	}
+	h := realHandlerWithNoopClone(t)
+	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
+
+	// Build an invocation whose exec block runs `cat` — echoes stdin to
+	// stdout. Lets us verify the whole pipe: argv resolved, stdin piped,
+	// stdout captured, exit_code surfaced.
+	exec := map[string]any{
+		"exec": map[string]any{
+			"argv":  []string{"cat"},
+			"stdin": "hello from the test",
+			"env":   map[string]string{},
+		},
+	}
+	rawInv, _ := json.Marshal(exec)
+	out, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if out["stdout"] != "hello from the test" {
+		t.Errorf("stdout: want 'hello from the test' got %q", out["stdout"])
+	}
+	if out["exit_code"] != 0 {
+		t.Errorf("exit_code: want 0 got %v", out["exit_code"])
+	}
+	if _, ok := out["duration_ms"]; !ok {
+		t.Errorf("duration_ms missing from outputs")
+	}
+}
+
+func TestRealHandler_InvokeClaudeCode_EnvOverridesParent(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH; subprocess test needs a POSIX shell")
+	}
+	h := realHandlerWithNoopClone(t)
+	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
+
+	// `printenv FOO_FROM_EXEC` resolves to the env value we passed
+	// through exec.env. Proves the layering picks up exec.env on top of
+	// os.Environ().
+	rawInv, _ := json.Marshal(map[string]any{
+		"exec": map[string]any{
+			"argv":  []string{"sh", "-c", "echo $FOO_FROM_EXEC"},
+			"stdin": "",
+			"env":   map[string]string{"FOO_FROM_EXEC": "exec-wins"},
+		},
+	})
+	out, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if strings.TrimSpace(out["stdout"].(string)) != "exec-wins" {
+		t.Errorf("env not propagated: stdout=%q", out["stdout"])
+	}
+}
+
+func TestRealHandler_InvokeClaudeCode_CwdIsWorkspacePath(t *testing.T) {
+	if _, err := exec.LookPath("pwd"); err != nil {
+		t.Skip("pwd not on PATH")
+	}
+	h := realHandlerWithNoopClone(t)
+	cr, _ := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
+	wsPath := cr["path"].(string)
+
+	rawInv, _ := json.Marshal(map[string]any{
+		"exec": map[string]any{
+			"argv":  []string{"pwd"},
+			"stdin": "",
+			"env":   map[string]string{},
+		},
+	})
+	out, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	got := strings.TrimSpace(out["stdout"].(string))
+	// macOS adds /private prefix on tempdirs.
+	if got != wsPath && got != "/private"+wsPath {
+		t.Errorf("cwd: want %q got %q", wsPath, got)
+	}
+}
+
+func TestRealHandler_InvokeClaudeCode_NonZeroExit_ReturnsError(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	h := realHandlerWithNoopClone(t)
+	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
+
+	rawInv, _ := json.Marshal(map[string]any{
+		"exec": map[string]any{
+			"argv":  []string{"sh", "-c", "echo error-text >&2; exit 9"},
+			"stdin": "",
+			"env":   map[string]string{},
+		},
+	})
+	_, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err == nil {
+		t.Fatal("want error on non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "exit 9") {
+		t.Errorf("err: want 'exit 9' substring, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "error-text") {
+		t.Errorf("err should include stderr excerpt, got %q", err.Error())
+	}
+}
+
+func TestRealHandler_InvokeClaudeCode_MissingArgv_Errors(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
+	rawInv, _ := json.Marshal(map[string]any{"exec": map[string]any{"argv": []string{}}})
+	_, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err == nil {
+		t.Fatal("want error on empty argv")
+	}
+	if !strings.Contains(err.Error(), "argv missing") {
+		t.Errorf("err: want 'argv missing', got %q", err.Error())
+	}
+}
+
+func TestRealHandler_InvokeClaudeCode_MalformedInvocation_Errors(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
 	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	_, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
-		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-1"},
+		Invocation:    []byte("{not json"),
 	})
 	if err == nil {
-		t.Fatal("want explicit not-implemented error")
+		t.Fatal("want decode error")
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("err: want 'not yet implemented' substring, got %q", err.Error())
+	if !strings.Contains(err.Error(), "decode invocation") {
+		t.Errorf("err: want 'decode invocation' prefix, got %q", err.Error())
 	}
 }
 
