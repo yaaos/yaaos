@@ -137,6 +137,38 @@ async def _load_finding_by_id(pr_id: UUID, org_id: UUID, finding_id: UUID):  # t
     return None
 
 
+def _activity_publisher_for(ctx: CommandContext):  # type: ignore[no-untyped-def]
+    """Build an `on_activity` callback that fan-outs each `ActivityEvent`
+    to `core/sse_pubsub` on `channel_for(ctx.workflow_execution_id)`.
+
+    Hands the in-memory workspace path the same SSE feed the remote-agent
+    path gets — the SPA's `/api/workflows/{id}/activity` consumer sees
+    events whether the workflow runs inline or via a wire-dispatched
+    AgentCommand.
+
+    Best-effort: publish failures are caught + logged so a flaky pubsub
+    backend doesn't sink the review. Tests that don't subscribe just
+    drop the events (the InMemoryPubsub no-ops when no subscribers).
+    """
+
+    async def _publisher(event):  # type: ignore[no-untyped-def]
+        from app.core.sse_pubsub import channel_for  # noqa: PLC0415
+        from app.core.sse_pubsub import publish as sse_publish  # noqa: PLC0415
+
+        try:
+            await sse_publish(
+                channel_for(ctx.workflow_execution_id),
+                event.model_dump(mode="json"),
+            )
+        except Exception:
+            log.exception(
+                "workspace_review.activity_publish_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+            )
+
+    return _publisher
+
+
 async def _read_code_snippet_at_anchor(
     workspace: Workspace, file_path: str, line_start: int, line_end: int
 ) -> str:
@@ -210,7 +242,9 @@ class CodeReview(_WorkspaceReviewCommand):
 
         review_ctx = ReviewContext(pr=pr, diff=diff, language_hint=None)
         try:
-            result = await coding_agent.review("claude_code", workspace, review_ctx)
+            result = await coding_agent.review(
+                "claude_code", workspace, review_ctx, on_activity=_activity_publisher_for(ctx)
+            )
         except Exception as exc:
             log.exception(
                 "code_review.coding_agent_failed",
@@ -248,7 +282,9 @@ class IncrementalReview(_WorkspaceReviewCommand):
             diff=Diff(raw="", files=[]),
         )
         try:
-            result = await coding_agent.incremental_review("claude_code", workspace, review_ctx)
+            result = await coding_agent.incremental_review(
+                "claude_code", workspace, review_ctx, on_activity=_activity_publisher_for(ctx)
+            )
         except Exception as exc:
             log.exception(
                 "incremental_review.coding_agent_failed",
@@ -273,7 +309,6 @@ class VerifyFix(_WorkspaceReviewCommand):
     kind = "VerifyFix"
 
     async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del ctx
         finding_id_raw = inputs.get("finding_id")
         if not finding_id_raw:
             return Outcome.failure(reason="missing finding_id input")
@@ -311,7 +346,9 @@ class VerifyFix(_WorkspaceReviewCommand):
             ),
         )
         try:
-            result = await coding_agent.verify_fix("claude_code", workspace, vctx)
+            result = await coding_agent.verify_fix(
+                "claude_code", workspace, vctx, on_activity=_activity_publisher_for(ctx)
+            )
         except Exception as exc:
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
@@ -336,7 +373,6 @@ class StaleCheck(_WorkspaceReviewCommand):
     kind = "StaleCheck"
 
     async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del ctx
         ids_raw = inputs.get("finding_ids") or []
         if not ids_raw or ticket_ctx.pr_id is None:
             return Outcome.success(outputs={"stale_finding_ids": []})
@@ -367,7 +403,9 @@ class StaleCheck(_WorkspaceReviewCommand):
                 diff_summary="",
             )
             try:
-                result = await coding_agent.stale_check("claude_code", workspace, sctx)
+                result = await coding_agent.stale_check(
+                    "claude_code", workspace, sctx, on_activity=_activity_publisher_for(ctx)
+                )
             except Exception:
                 log.exception("stale_check.coding_agent_failed", finding_id=str(fid))
                 continue
@@ -385,7 +423,6 @@ class AnswerQuestion(_WorkspaceReviewCommand):
     kind = "AnswerQuestion"
 
     async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del ctx
         finding_id_raw = inputs.get("finding_id")
         question = inputs.get("question_body") or ""
         if not finding_id_raw or not question:
@@ -424,7 +461,9 @@ class AnswerQuestion(_WorkspaceReviewCommand):
             head_sha=str(ticket_ctx.payload.get("head_sha") or ""),
         )
         try:
-            result = await coding_agent.answer_question("claude_code", workspace, actx)
+            result = await coding_agent.answer_question(
+                "claude_code", workspace, actx, on_activity=_activity_publisher_for(ctx)
+            )
         except Exception as exc:
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
