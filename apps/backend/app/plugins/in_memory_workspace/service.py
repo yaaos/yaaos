@@ -237,9 +237,9 @@ class InMemoryWorkspaceProvider:
 
         - **Timeout** (`asyncio.wait_for(..., timeout=timeout_seconds)`) — returns
           a `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
-        - **Cancellation** — caller (e.g. `reviewer.cancel_pending`) cancels the
-          surrounding task. We kill the process group, then re-raise
-          `CancelledError` so the cancellation unwinds normally.
+        - **Cancellation** — caller (e.g. workflow-engine `request_cancel`)
+          cancels the surrounding task. We kill the process group, then
+          re-raise `CancelledError` so the cancellation unwinds normally.
 
         When `on_stream_line` is provided, stdout is consumed line-by-line and
         each newline-terminated chunk is forwarded to the callback as it

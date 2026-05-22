@@ -46,9 +46,9 @@ Lets a coding-agent plugin run a CLI inside the workspace. Provider owns subproc
 Two kill paths share a single `_kill_process_group(proc)` helper (SIGTERM → 2s grace → SIGKILL of the whole process group):
 
 - **Timeout** — `asyncio.wait_for` raises `TimeoutError`; we kill, drain, return `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
-- **Caller cancel** — outer task is cancelled (e.g., `reviewer.cancel_pending` → `task.cancel()`); `CancelledError` raises inside `wait_for`. We kill, drain (with a 5s upper bound so a wedged child can't block the cancel forever), then re-raise `CancelledError`. The cancellation unwinds normally; the workspace's `async with` exit destroys the tempdir.
+- **Caller cancel** — outer task is cancelled (e.g., workflow-engine `request_cancel` flips `cancel_requested=True` and the engine's per-step task gets cancelled); `CancelledError` raises inside `wait_for`. We kill, drain (with a 5s upper bound so a wedged child can't block the cancel forever), then re-raise `CancelledError`. The cancellation unwinds normally; the workspace's `async with` exit destroys the tempdir.
 
-Without the cancel kill path, the CLI would keep running until its own timeout even though the row is `cancelled` and the UI shows it.
+Without the cancel kill path, the CLI would keep running until its own timeout even though the workflow transitioned to `cancelled`.
 
 Provider does not interpret `argv` or `stdout`; schema-aware logic lives in the coding-agent plugin.
 

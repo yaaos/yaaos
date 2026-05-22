@@ -1,17 +1,25 @@
-"""domain/reviewer — review workflow + per-PR queue + durable findings.
+"""domain/reviewer — M05 workflow-engine reviews + durable findings.
 
-Two generations are live in this module:
+Entry points:
 
-- Generation 1: `ReviewJob` row + JSONB findings + `schedule_review` → vcs.post_review.
-  Exported as-is so today's intake/UI keep working.
-- Generation 2: `PRReviewAggregate` + first-class `Finding`/`Review`/threads/acks
-  with a state machine. Not yet reachable from the public schedule_review flow
-  — wires in §13 step 7.
+- `start_pr_review(ticket_id, *, org_id, trigger_reason)` — starts a
+  `pr_review_v1` workflow execution via `core/workflow` for the full-review
+  path. Intake's pr-ready handler + `/yaaos full review` + the SPA `/rereview`
+  endpoint all route through here.
+- `handle_push(pr_id, *, new_head_sha, prev_head_sha, org_id)` — runs the §7
+  trigger policy for incremental review on push. Today this spawns the
+  self-contained runner in `incremental.py`; a follow-on moves it onto the
+  `incremental_review_v1` engine path.
+- `cancel_workflows_for_ticket(ticket_id)` — `workflow.request_cancel` on
+  every non-terminal `workflow_executions` row for the ticket.
 
-External callers depend on the generation-1 surface for now. Generation-2
-helpers (`SqlAlchemyAggregateRepository`, `acquire_pr_lock`, aggregate types)
-are exported so other modules can extend the durable-findings flow once the
-cut-over lands.
+Generation 2 (`PRReviewAggregate` + `Finding`/`Review`/threads/acks with a
+state machine) is the durable layer; helpers like
+`SqlAlchemyAggregateRepository`, `acquire_pr_lock`, and the aggregate types
+are exported for extension by other modules.
+
+The legacy `ReviewJob` queue + `schedule_review` runner was retired with the
+queue.py dismantle (slices 40-61).
 """
 
 from app.domain.reviewer import web  # noqa: F401

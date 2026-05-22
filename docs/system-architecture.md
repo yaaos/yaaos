@@ -26,9 +26,9 @@ How the apps fit together and the conventions spanning them. App-internal archit
 
 1. GitHub (or `fake-github` in tests) sends HMAC-signed `pull_request.opened` to `POST /api/github/webhook`.
 2. `plugins/github` verifies HMAC, parses into a `VCSEvent`, hands to `domain/intake`.
-3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.schedule_review`.
-4. `domain/reviewer` creates ONE review_job and spawns the handler coro.
-5. Handler provisions the workspace and calls `coding_agent.review` once. The parent Claude Code agent dispatches `yaaos-*` subagents in parallel via the Task tool, synthesizes their findings (re-reads cited code to verify, deduplicates, ranks), and returns one merged result. Handler posts a single `vcs.Review` to GitHub with each finding tagged by its `source_agent` subagent.
+3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.start_pr_review` which starts a `pr_review_v1` workflow execution via `core/workflow`.
+4. The workflow engine routes `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`. Each step is a `WorkflowCommand` body under `domain/reviewer/commands/`.
+5. `CodeReview` provisions a workspace via the configured provider (in-memory locally; remote-agent in prod) and invokes `coding_agent.review`. The parent Claude Code agent dispatches `yaaos-*` subagents in parallel via the Task tool, synthesizes findings (re-reads cited code, dedupes, ranks), and returns one merged result. `PostFindings` runs admission, then posts a single `vcs.Review` to GitHub with each finding tagged by its `source_agent`. `CleanupWorkspace` always runs as the workflow's `final` step.
 
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 

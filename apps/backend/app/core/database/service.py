@@ -238,7 +238,7 @@ async def _table_exists(conn, name: str) -> bool:  # type: ignore[no-untyped-def
 async def _apply_add_review_jobs_triggered_by_destination(conn) -> None:  # type: ignore[no-untyped-def]
     """Promote audit-only `trigger_reason` into a queryable column and add
     `destination` so future `run_review` callers can be distinguished from
-    today's `schedule_review → post-to-VCS` flow.
+    the legacy `schedule_review → post-to-VCS` flow (retired in M05).
 
     No-op on fresh DBs (post-cutover `001_create_all` produces `reviews`, not
     `review_jobs` — and `008_reviews_cutover` drops the old table anyway).

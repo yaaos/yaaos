@@ -81,7 +81,7 @@ async def admit_raw_findings(
 
     `commit_sha`: head_sha at review start; stored on the Review row.
     `trigger`: `coding_agent.ReviewTrigger` literal (default `scheduled_full`
-    matches the legacy `schedule_review` path).
+    matches the M05 `pr_review_v1` full-review path).
     `scope`: `coding_agent.ReviewScope` literal (default `full`).
     `diff_files`: when supplied, the gate drops findings whose anchor file
     isn't in the set (plan §10.9 off-diff suppression). Pass None for

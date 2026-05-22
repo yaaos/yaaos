@@ -34,12 +34,12 @@ HTTP route: `POST /api/intake/{type}` (M05) — generic intake endpoint. Plugins
 
 ### Per-event handlers
 
-- `_handle_pr_ready_for_review` — filters forks and bot authors (writing `webhook_event.filtered`), calls `refresh_pr_metadata`, then `reviewer.schedule_review(trigger_reason="pr_ready")`. No repo-allowlist gate — the GitHub App install picks the access scope.
-- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), schedules a review with `trigger_reason="pr_synchronized"`, then calls `reviewer.handle_push(pr.id, new_head_sha=..., prev_head_sha=event.prev_head_sha, org_id=...)`. `prev_head_sha` comes from the webhook payload's `before` field via `payload_parser`. The reviewer's debounce + per-PR queue collapses bursts; `handle_push` runs the §7 trigger policy.
-- `_handle_pr_closed` — updates PR state to `merged` or `closed`, transitions the ticket to `complete` if `in_review`, calls `reviewer.cancel_pending`.
+- `_handle_pr_ready_for_review` — filters forks and bot authors (writing `webhook_event.filtered`), calls `refresh_pr_metadata`, then `reviewer.start_pr_review(ticket.id, org_id=, trigger_reason="pr_ready")` which starts a `pr_review_v1` workflow execution via the engine. No repo-allowlist gate — the GitHub App install picks the access scope.
+- `_handle_pr_synchronized` — looks up the PR, refreshes via the by-id variant (fresh VCS fetch), then calls `reviewer.handle_push(pr.id, new_head_sha=..., prev_head_sha=event.prev_head_sha, org_id=...)`. `prev_head_sha` comes from the webhook payload's `before` field via `payload_parser`. `handle_push` runs the §7 trigger policy and spawns the incremental runner.
+- `_handle_pr_closed` — updates PR state to `merged` or `closed`, transitions the ticket to `complete` if `in_review`, calls `reviewer.cancel_workflows_for_ticket` which flips every non-terminal workflow execution for the ticket via `workflow.request_cancel`.
 - `_handle_pr_reopened` — updates PR state to `open`. No review triggered — the next commit does so via `pr_synchronized`.
 - `_handle_comment_created` — skips yaaos bot comments (`YAAOS_BOT_LOGIN = "yaaos[bot]"`) and `author_type == "bot"`. Then:
-  1. **Re-review command** — `parse_rereview(event.body)`. On match: write `ticket.rereview_requested` with the GitHub user as actor, call `reviewer.schedule_review` with `trigger_reason="rereview_command"`.
+  1. **Canonical commands** (`parse_yaaos_command`): `/yaaos cancel` calls `cancel_workflows_for_ticket`; `/yaaos full review` calls `start_pr_review(..., trigger_reason="manual_full")`; `/yaaos review` calls `handle_push` for an incremental run. Legacy `@yaaos rereview` maps to `full review` for backwards compat. Every match writes `ticket.rereview_requested` first.
   2. **Inline replies are deferred.** A future `review_comments` table will own that lifecycle; intake silently drops them today.
 - `_handle_reaction_added` — looks up the comment in `posted_comments`. On hit: write `ticket.reaction_received`. Reactions are signal-only — no review triggered.
 

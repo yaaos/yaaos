@@ -3,7 +3,7 @@
 `ensure_plugins_registered()` defensively re-bootstraps the plugin registries
 (`coding_agent`, `workspace`, `vcs`) — some tests in the suite call
 `_reset_plugins_for_tests()` which clears these registries; service tests
-that drive `reviewer.schedule_review` or `intake.handle_vcs_events` need the
+that drive `reviewer.start_pr_review` or `intake.handle_vcs_events` need the
 real plugin entries (wrapped by `stub_coding_agent` + `stub_workspace`)
 present regardless of test ordering.
 
