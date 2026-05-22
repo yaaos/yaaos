@@ -155,9 +155,41 @@ async def replay_caller_identity(
     return arn
 
 
+# ── Production entry point ────────────────────────────────────────────────
+
+
+_verify_override = None
+
+
+async def verify_identity(signed_request: str) -> str:
+    """Parse + replay the agent's signed STS request; return the caller
+    ARN. Convenience wrapper for the `/identity/exchange` endpoint —
+    parses, replays via a per-call `httpx.AsyncClient`, returns the ARN
+    or raises `InvalidSignedRequestError`.
+
+    Tests can swap the verifier wholesale via
+    `set_verify_identity_override(stub)` so they don't need to thread a
+    `MockTransport` through the endpoint plumbing.
+    """
+    if _verify_override is not None:
+        return await _verify_override(signed_request)
+    signed = parse_signed_request(signed_request)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        return await replay_caller_identity(signed, client=client)
+
+
+def set_verify_identity_override(callback) -> None:  # type: ignore[no-untyped-def]
+    """Test hook: swap the production `verify_identity` for a stub.
+    Pass `None` to restore."""
+    global _verify_override
+    _verify_override = callback
+
+
 __all__ = [
     "InvalidSignedRequestError",
     "SignedSTSRequest",
     "parse_signed_request",
     "replay_caller_identity",
+    "set_verify_identity_override",
+    "verify_identity",
 ]

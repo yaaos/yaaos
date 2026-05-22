@@ -1,10 +1,15 @@
 """HTTP routes for the WorkspaceAgent wire protocol.
 
 Five endpoints mounted under `/v1/`. The implementation calls into
-`core.agent_gateway.service`; this module is the FastAPI shim. The
-identity verifier in Phase 5 is a placeholder — it accepts any non-empty
-bearer and trusts the `agent_pod_id` the caller supplies in
-`/v1/identity/exchange`. The real STS-replay verifier lands in Phase 7.
+`core.agent_gateway.service`; this module is the FastAPI shim.
+
+`/v1/identity/exchange` runs the real Vault-AWS-auth pattern via
+`core.agent_gateway.sts_verifier`: the agent's sigv4-signed STS
+GetCallerIdentity is replayed against AWS, the returned ARN is matched
+against `orgs.registered_iam_arn`, and a `workspace_agents` row is
+persisted before a 24-hour bearer is issued. The remaining endpoints
+still use a placeholder bearer verifier (any non-empty token) pending
+the bearer-issuance ledger.
 """
 
 from __future__ import annotations
@@ -71,21 +76,73 @@ def _bearer_dep(authorization: str | None = Header(default=None)) -> None:
 
 @router.post("/identity/exchange", dependencies=[Depends(public_route)])
 async def exchange_identity(request: IdentityExchangeRequest) -> IdentityExchangeResponse:
-    """Placeholder: accepts any non-empty `signed_request` and issues a
-    24-hour bearer scoped to the supplied `agent_pod_id`. Phase 7 replaces
-    the verification step with the real STS GetCallerIdentity replay."""
+    """Vault AWS-auth pattern: agent supplies a sigv4-signed STS
+    GetCallerIdentity request; control plane replays it against AWS;
+    extracted ARN must match an `orgs.registered_iam_arn` row. On
+    success persists/updates a `workspace_agents` row + returns a
+    24-hour bearer scoped to the resolved agent_id.
+
+    Failure modes:
+    - empty `signed_request` → 401 `unauthorized`
+    - parse / shape / non-STS-endpoint / wrong-body / replay-rejected
+      → 401 `unauthorized` with `sts_verification_failed` detail
+    - ARN doesn't match any registered org → 403 `forbidden_unregistered_arn`
+    """
     if not request.signed_request:
         raise HTTPException(
             status_code=401,
             detail={"error": "unauthorized", "detail": "empty signed_request"},
         )
-    # The agent_id is the per-pod row id in `workspace_agents`. Phase 5
-    # synthesizes one per call; persistence comes with the wire-protocol
-    # iteration that ships `workspace_agents` writes.
+
+    from app.core.agent_gateway.service import ensure_agent_row  # noqa: PLC0415
+    from app.core.agent_gateway.sts_verifier import (  # noqa: PLC0415
+        InvalidSignedRequestError,
+        verify_identity,
+    )
+
+    try:
+        arn = await verify_identity(request.signed_request)
+    except InvalidSignedRequestError as exc:
+        log.info("identity_exchange.verify_failed", error=str(exc))
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "detail": "sts_verification_failed"},
+        )
+
+    # Match the verified ARN against `orgs.registered_iam_arn`. The
+    # agent_gateway is core — we touch the orgs table directly rather
+    # than importing the domain (same pattern as the workspace_agents
+    # writes elsewhere in this module).
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    async with db_session() as s:
+        org_row = (
+            await s.execute(
+                sa_text("SELECT id FROM orgs WHERE registered_iam_arn = :arn LIMIT 1"),
+                {"arn": arn},
+            )
+        ).first()
+        if org_row is None:
+            log.info("identity_exchange.arn_not_registered", arn=arn)
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "forbidden", "detail": "forbidden_unregistered_arn"},
+            )
+        org_id = org_row[0]
+
+        agent_id = await ensure_agent_row(
+            org_id=org_id,
+            agent_pod_id=request.agent_pod_id,
+            iam_arn=arn,
+            version=request.version or "0.0.1",
+            session=s,
+        )
+        await s.commit()
+
     return IdentityExchangeResponse(
         bearer=f"placeholder-{uuid4()}",
         expires_at=datetime.now(UTC) + timedelta(hours=24),
-        agent_id=request.agent_pod_id,
+        agent_id=agent_id,
     )
 
 
