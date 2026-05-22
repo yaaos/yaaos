@@ -9,7 +9,8 @@ M05 Phase 6 (foundations) ships the wire-protocol layer + supervisor skeleton:
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes (with partial-read tolerance + concurrency-safe encoder).
 - `internal/protocol/` — Go mirror of the OpenAPI spec at [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml) + HTTP client for the five backend endpoints.
 - `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop. Command-routing stub emits `completed_success` for every command kind so the backend's workflow engine can advance end-to-end; real workspace OS-process spawning + Claude Code invocation lands in the follow-on iteration.
-- `cmd/agent/main.go` — `agent supervisor` runs the full loop against `YAAOS_BACKEND_URL`. `agent workspace` prints a not-implemented marker.
+- `internal/workspace/` — per-workspace child-process dispatcher. `Run(ctx, in, out, handler, opts)` reads framed AgentCommands from stdin, dispatches by `kind` to the `Handler` interface, writes framed AgentEvents back to stdout. Slice 62 ships the dispatch loop + `StubHandler`; real bodies (clone, WriteFiles, Claude Code subprocess, cleanup) replace the stub on the same interface in later slices.
+- `cmd/agent/main.go` — `agent supervisor` runs the full long-poll loop against `YAAOS_BACKEND_URL`. `agent workspace` runs the dispatch loop mounted against `workspace.StubHandler`.
 
 ## Architecture
 
@@ -18,7 +19,7 @@ The agent is **zero biz logic** — every threshold, prompt, lesson, depth, and 
 ### Subcommands
 
 - `agent supervisor` — long-poll [`core/agent_gateway`](../../backend/docs/core_agent_gateway.md), exchange identity, spawn one OS process per active workspace, heartbeat back inventory + liveness, run the disk janitor. **Phase 6 foundations**: identity + claim loop + heartbeat loop ship; per-workspace OS-process spawning + disk janitor + wall-clock timeout enforcement land in the follow-on.
-- `agent workspace` — per-workspace child process; reads AgentCommands over stdin, writes AgentEvents over stdout. Wraps git clone + Claude Code CLI. **Phase 6 follow-on.**
+- `agent workspace` — per-workspace child process; reads AgentCommands over stdin, writes AgentEvents over stdout via `ipc` framing. Dispatch frame ships (slice 62); real bodies (git clone, WriteFiles, Claude Code subprocess, cleanup) land in later slices on the same `Handler` interface.
 
 ### Layout
 
@@ -26,7 +27,7 @@ The agent is **zero biz logic** — every threshold, prompt, lesson, depth, and 
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes.
 - `internal/protocol/` — wire types + HTTP client matching the OpenAPI spec.
 - `internal/supervisor/` — supervisor loop, long-poll workers, heartbeat.
-- `internal/workspace/` — workspace process body. **Stub** in foundations.
+- `internal/workspace/` — workspace child-process dispatch loop (`Run` + `Handler` interface + `StubHandler`).
 - `internal/identity/` — SigV4-signed STS `GetCallerIdentity` for control-plane verification. **Stub** in foundations.
 - `bin/ci` — `go vet ./... && go build ./... && go test ./...`.
 
@@ -49,8 +50,8 @@ See [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml
 
 - **Phase 0b** — directory + go.mod + skeleton package files + `bin/ci`.
 - **Phase 5** — backend's `core/agent_gateway` implements the five HTTPS endpoints + placeholder bearer issuer.
-- **Phase 6 foundations (this)** — IPC framing library, wire-protocol Go types + HTTP client, supervisor identity-exchange + claim + heartbeat loops, command-routing stub. Tests for IPC + protocol decoding + client + an httptest-driven end-to-end against a fake backend.
-- **Phase 6 follow-on** — workspace OS-process spawning, IPC reader/writer in the workspace process, repo clone + Claude Code invocation, wall-clock timeout, disk janitor, OTel SDK wiring (`go.opentelemetry.io/otel` with `propagation.TraceContext` + in-memory exporter for tests + traceparent extraction into child spans).
+- **Phase 6 foundations** — IPC framing library, wire-protocol Go types + HTTP client, supervisor identity-exchange + claim + heartbeat loops, command-routing stub. Tests for IPC + protocol decoding + client + an httptest-driven end-to-end against a fake backend.
+- **Phase 6 follow-on slice 62 (this)** — workspace dispatch loop (`workspace.Run` + `Handler`) wired into `cmd/agent`. `StubHandler` returns success outputs for every command kind; supervisor-side OS-process spawning + real handler bodies (clone, WriteFiles, Claude Code subprocess, cleanup) + wall-clock timeout + disk janitor + OTel SDK land in later slices.
 - **Phase 7** — real SigV4-signed STS verifier on the backend side; `RemoteAgentWorkspaceProvider` integration.
 - **Phase 9 (this commit)** — multi-stage Dockerfile producing a distroless static image at `ghcr.io/yaaos/yaaos-agent`. Deployment guide below.
 

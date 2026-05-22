@@ -6,10 +6,11 @@
 //	                       AgentCommands, heartbeat. Phase 6 ships the
 //	                       skeleton; real workspace spawning lands in a
 //	                       follow-on iteration.
-//	agent workspace      — per-workspace child process. Phase 6 ships the
-//	                       package stub; the subcommand entry currently
-//	                       prints a marker so integration smoke tests
-//	                       observe it (full impl: follow-on).
+//	agent workspace      — per-workspace child process. Slice 62 wires
+//	                       the IPC dispatcher (stdin → commands, stdout →
+//	                       events) against a stub handler. Real bodies
+//	                       (clone, WriteFiles, Claude Code invocation,
+//	                       cleanup) land in later slices.
 //
 // Zero business logic — every threshold, prompt, lesson, depth, timeout
 // comes from the control plane via payload.
@@ -28,6 +29,7 @@ import (
 
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/supervisor"
+	"github.com/yaaos/agent/internal/workspace"
 )
 
 func main() {
@@ -41,11 +43,9 @@ func main() {
 			log.Fatalf("supervisor: %v", err)
 		}
 	case "workspace":
-		// Phase 6 foundations: stub. Full body lands alongside the workspace
-		// subprocess management work (IPC reader/writer, repo clone, Claude
-		// Code invocation, cleanup).
-		fmt.Fprintln(os.Stderr, "workspace subcommand: not implemented (Phase 6 follow-on)")
-		os.Exit(1)
+		if err := runWorkspace(); err != nil {
+			log.Fatalf("workspace: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", os.Args[1])
 		os.Exit(2)
@@ -71,6 +71,22 @@ func runSupervisor() error {
 		return err
 	}
 	log.Printf("supervisor.stopped")
+	return nil
+}
+
+func runWorkspace() error {
+	// The supervisor spawns this process with stdin = command pipe and
+	// stdout = event pipe. Run reads commands, dispatches via the Handler,
+	// writes events back. Today we mount the stub Handler — real bodies
+	// (clone, WriteFiles, Claude Code invocation, cleanup) replace it in
+	// later slices.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	log.Printf("workspace.starting")
+	if err := workspace.Run(ctx, os.Stdin, os.Stdout, workspace.StubHandler{}, workspace.Options{}); err != nil {
+		return err
+	}
+	log.Printf("workspace.stopped")
 	return nil
 }
 
