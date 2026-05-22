@@ -28,7 +28,7 @@ Tick the phase's `Reflection — verify …` item only after all six axes have b
 - [x] Add "no module-name collisions across core/domain/plugins" rule to `apps/backend/docs/modularity.md`.
 - [x] Run `apps/backend/bin/sync_modules`; tach happy.
 - [x] All existing CI green.
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: grep for `domain/auth`, `domain/byok`, `in_process_workspace` in app/docs returns only the modularity-rule reference that documents the rename. Architecture: no-collision rule added to [modularity.md:18](../../../apps/backend/docs/modularity.md). Testing: rename-only — covered by existing test suite. Observability/Security: no new code paths. Docs sync: per-module docs renamed in the same commits.
 
 ## Phase 0 — required-session pattern + refactor existing code
 
@@ -44,7 +44,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] Functions that legitimately own their own session (fire-and-forget maintenance, periodic tasks) are clearly named or live in entrypoint modules; documented in patterns.md.
 - [x] Tests updated to pass session fixtures explicitly.
 - [x] All existing CI green post-refactor: `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/e2e/bin/ci`.
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: `grep -rn "session: AsyncSession \| None\|session is None" apps/backend/app/` returns only SessionRow checks in `domain/sessions` (different type — user sessions, not DB sessions). Architecture: Session-management section in [patterns.md](../../../apps/backend/docs/patterns.md). Testing: pure refactor — existing suite green. Observability: no new code paths. Security: semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces. Docs sync: patterns.md updated.
 
 ## Phase 0b — scaffolding
 
@@ -55,7 +55,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] `core/tasks` scaffold: taskiq broker configured with Redis (`REDIS_URL` from settings); `@task` decorator wrapping taskiq; `enqueue(task, args, *, session)` routes through `core/outbox` for atomic-in-session enqueue; `TaskContext` dataclass; worker entrypoint at `apps/backend/bin/worker` (runs taskiq workers + outbox drain in same process). _(Decorator + enqueue + TaskContext + Redis setting shipped. Broker wiring + `bin/worker` entrypoint land in Phase 1.)_
 - [x] `apps/backend/docs/core_tasks.md` doc skeleton.
 - [x] Per-module doc skeletons in `apps/backend/docs/` for each new module.
-- [ ] `core/workspace` extended skeleton: `WorkspaceProvider` Protocol declared / refined. _(Existing Protocol satisfies Phase 0b needs; M05-specific extensions ship in Phase 3.)_
+- [x] `core/workspace` extended skeleton: `WorkspaceProvider` Protocol declared / refined. _(Existing Protocol satisfies Phase 0b needs; M05-specific extensions shipped in Phase 3.)_
 - [x] `apps/agent/` Go module skeletoned (`cmd/agent/`, `internal/supervisor/`, `internal/workspace/`, `internal/ipc/`, `internal/identity/`).
 - [x] `apps/backend/openapi/agent-api.yaml` skeleton.
 - [x] `docs/setup.md` updated with M05 dev-story note (agent + worker process).
@@ -72,7 +72,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] In-memory `SpanExporter` fixture for tests.
 - [x] `apps/backend/docs/core_observability.md` documents the conventions + the "no exporter in prod yet" note.
 - [x] All existing CI green.
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: TracerProvider, W3C propagator, FastAPI + SQLAlchemy instrumentation, structlog trace-id processor, in-memory SpanExporter fixture all shipped in [core/observability/service.py](../../../apps/backend/app/core/observability/service.py). Architecture: traceparent threading (Phase 8) builds on this foundation. Testing: [test_otel.py](../../../apps/backend/app/core/observability/test/test_otel.py) + [test_traceparent.py](../../../apps/backend/app/core/observability/test/test_traceparent.py). Observability: this IS observability. Security: no new surface (no exporter wired by default). Docs sync: [core_observability.md](../../../apps/backend/docs/core_observability.md) documents the conventions.
 
 ## Phase 1 — `core/workflow` engine (async event-driven model)
 
@@ -86,7 +86,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] `handle_agent_event` triggered by `core/agent_gateway`; validates `pending_agent_command_id` match; enqueues `route_workflow`. _(Body shipped; `core/agent_gateway` enqueue site lands in Phase 5.)_
 - [x] `route_workflow` persists outcome, applies retry budget, evaluates transitions.
 - [x] State machine includes `awaiting_agent` state + `pending_agent_command_id` column on `workflow_executions`.
-- [ ] Event-to-workflow lookup chain in `core/agent_gateway` (`agent_command_id → workspaces → current_holder_workflow_id`). _(Lives in `core/agent_gateway`, Phase 5.)_
+- [x] Event-to-workflow lookup chain in `core/agent_gateway` (`agent_command_id → workspaces → current_holder_workflow_id`). _(Shipped in `record_agent_event` via Phase 5 — [apps/backend/app/core/agent_gateway/service.py:199](../../../apps/backend/app/core/agent_gateway/service.py).)_
 - [x] Atomic state transitions + outbox enqueue in single Postgres transaction.
 - [x] Tier-2 retry per step policy.
 - [x] Tier-3 transition on retry exhaustion.
@@ -104,7 +104,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] `github_pr` intake type registered. _(Lives in `plugins/github` and self-registers at bootstrap so domain doesn't import plugin.)_
 - [x] Webhook endpoint `POST /api/intake/{type}` — verifies, dedups, creates ticket, starts workflow, returns 200.
 - [x] Tests: signature failure → 401; duplicate → idempotent 200; happy path → ticket + workflow execution + enqueued task.
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: `tickets.create(type, payload, idempotency_key)` + intake registry + `POST /api/intake/{type}` + HMAC verification + dedup all shipped. Architecture: `domain/intake` doesn't import `plugins/github`; `GithubPrIntakeType` self-registers in [plugins/github/intake_type.py](../../../apps/backend/app/plugins/github/intake_type.py). Testing: 401/200/idempotent paths covered in [domain/intake/test/](../../../apps/backend/app/domain/intake/test). Observability: structlog at intake decision points; `current_traceparent()` recorded on workflow execution. Security: HMAC `X-Hub-Signature-256` + `X-Github-Delivery` idempotency_key documented in [docs/system-security.md](../../../docs/system-security.md). Docs sync: [domain_intake.md](../../../apps/backend/docs/domain_intake.md) + [domain_tickets.md](../../../apps/backend/docs/domain_tickets.md) updated.
 
 ## Phase 3 — `core/workspace` extensions + `InMemoryWorkspaceProvider`
 
@@ -140,7 +140,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] `core/agent_gateway` implementation: per-agent in-memory queue, long-poll, identity exchange (placeholder verifier), heartbeat with inventory ingestion, event ingestion.
 - [x] Stale-claim guard: `410 Gone` on attempt mismatch.
 - [x] Tests: long-poll 204 / 200; heartbeat reconciliation; event routing.
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: 5 endpoints + AgentCommand union + AgentEvent + stale-claim guard + heartbeat shipped; codegen deferred with annotation. Architecture: per-agent FIFO + long-poll via `asyncio.Condition` in [core/agent_gateway/service.py](../../../apps/backend/app/core/agent_gateway/service.py); event-to-workflow lookup chain on line 199. Testing: long-poll 204/200, heartbeat reconciliation, stale-claim 410, event routing all covered. Observability: structlog at decision points; traceparent threaded on every AgentCommand + AgentEvent + Heartbeat. Security: stale-claim guard returns 410; placeholder identity-exchange documented in [docs/system-security.md](../../../docs/system-security.md). Docs sync: [core_agent_gateway.md](../../../apps/backend/docs/core_agent_gateway.md) describes contracts.
 
 ## Phase 6 — Go agent (supervisor + workspace processes)
 
@@ -195,7 +195,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] Image tagging strategy recorded. _(`vX.Y.Z` immutable + `latest` for getting-started + `sha-<short>` for build traceability; multi-arch amd64+arm64.)_
 - [x] `apps/agent/docs/README.md` with deployment guide.
 - [x] Local dev story documented: `docker-compose up` with backend + agent + fake STS. _(Compose service shipped + setup.md updated. "Fake STS" is the placeholder identity-exchange verifier — the real STS replay is the Phase 7 follow-on, at which point a fake STS service joins the test stack.)_
-- [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
+- [x] Reflection — Six axes walked. Requirements: Dockerfile, GHCR registry decision (DECISIONS.md), tagging strategy (vX.Y.Z + latest + sha-<short>), deployment guide, dev-story all shipped. Architecture: image stays plumbing-only per [agent_zero_biz_logic](../../../../.claude/memory/agent_zero_biz_logic.md). Testing: docker-compose service in [docker/docker-compose.yml](../../../docker/docker-compose.yml). Observability: no new code paths. Security: distroless `nonroot` base image; no shell. Docs sync: [apps/agent/docs/README.md](../../../apps/agent/docs/README.md) + [docs/setup.md](../../../docs/setup.md) updated.
 
 ## Phase 10 — docs + completeness audit + CI green
 
