@@ -27,12 +27,12 @@ from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.auth.types import Action
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.auth.dependencies import current_actor, public_route, require
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import invitations as inv
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.service import Membership
 from app.domain.orgs.types import InvitationError, Role
+from app.domain.sessions.dependencies import current_actor, public_route, require
 
 log = structlog.get_logger("orgs.web")
 

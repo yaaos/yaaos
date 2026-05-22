@@ -19,11 +19,11 @@ from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
 from app.core.auth.types import M02_PROTECTED_PREFIXES, is_m02_protected_path
-from app.domain.auth import web as _auth_web  # noqa: F401 — ensures /api/auth registers
 from app.domain.identity import account_web as _account_web  # noqa: F401
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import sso_web as _sso_web  # noqa: F401
 from app.domain.orgs import web as _orgs_web  # noqa: F401
+from app.domain.sessions import web as _auth_web  # noqa: F401 — ensures /api/auth registers
 
 
 def _app() -> FastAPI:

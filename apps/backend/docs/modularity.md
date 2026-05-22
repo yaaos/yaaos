@@ -15,6 +15,10 @@ Layering rule: each layer may depend on lower layers, never higher. Production c
 
 Nuance: `core` modules may define domain-aware *data types* (e.g., `Actor` references the agent concept) — but never *behaviour* that encodes business decisions.
 
+### No module-name collisions across `core`, `domain`, `plugins`
+
+Module names are globally unique across the three layers. Reusing a name (e.g. `core/auth` *and* `domain/auth`) makes import sites ambiguous to read, breaks unique RouteSpec keys, and produces confusing audit-kind prefixes. When a domain shim needs to live alongside its core primitive, rename the domain module so the relationship is one-way and the names don't collide (e.g. `core/auth` is the middleware; `domain/sessions` is the FastAPI dep + `/api/auth/*` routes that bind it to identity + orgs). Same for `core/byok`: its HTTP shim lives inside `domain/orgs/byok_routes.py`, not in a new `domain/byok` module.
+
 ## Module shape
 
 Each subdirectory of a layer is a module. Conventional files:
@@ -54,7 +58,7 @@ Protocols are hosted in `core/` or `domain/` depending on whether their primitiv
 |---|---|---|
 | `VCSPlugin` | `domain/vcs` | `plugins/github` |
 | `CodingAgentPlugin` | `domain/coding_agent` | `plugins/claude_code` |
-| `WorkspaceProvider` | `core/workspace` | `plugins/in_process_workspace` |
+| `WorkspaceProvider` | `core/workspace` | `plugins/in_memory_workspace` |
 
 Plugins register themselves at import time (in their `__init__.py`). `app/main.py` imports every plugin package that should be active.
 

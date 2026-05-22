@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket
 from app.core.database import session as db_session
@@ -92,6 +93,93 @@ class _TicketStatusChangedPayload(BaseModel):
     reason: str | None = None
 
 
+async def create(
+    *,
+    type: str,
+    payload: dict,
+    idempotency_key: str,
+    org_id: UUID,
+    title: str | None = None,
+    description: str | None = None,
+    source: str = "intake",
+    source_external_id: str | None = None,
+    plugin_id: str = "github",
+    repo_external_id: str = "",
+    session: AsyncSession,
+) -> tuple[UUID, bool]:
+    """Create a ticket from an intake event, or return the existing one if
+    `idempotency_key` already produced a ticket. Required `session`; the
+    caller commits. Returns `(ticket_id, created)` — `created=False` on
+    idempotent return.
+
+    The ticket starts in status `pending`; the workflow engine moves it to
+    `running` when the first step dispatches and to `done|failed|cancelled`
+    on terminal outcome.
+    """
+    if not idempotency_key:
+        raise ValueError("idempotency_key required")
+    if not type:
+        raise ValueError("type required")
+
+    existing = (
+        await session.execute(
+            select(TicketRow).where(
+                TicketRow.org_id == org_id,
+                TicketRow.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing.id, False
+
+    row = TicketRow(
+        id=uuid4(),
+        org_id=org_id,
+        source=source,
+        source_external_id=source_external_id or idempotency_key,
+        title=title or "",
+        description=description,
+        status="pending",
+        plugin_id=plugin_id,
+        repo_external_id=repo_external_id,
+        pr_id=None,
+        type=type,
+        idempotency_key=idempotency_key,
+        payload=payload,
+        current_workflow_execution_id=None,
+    )
+    session.add(row)
+    await session.flush()
+    await audit_for_ticket(
+        row.id,
+        "ticket.created",
+        _TicketCreatedFromIntakePayload(type=type, idempotency_key=idempotency_key),
+        actor=Actor.system(),
+        org_id=org_id,
+        session=session,
+    )
+    return row.id, True
+
+
+async def attach_workflow_execution(
+    ticket_id: UUID,
+    workflow_execution_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Stamp the canonical workflow execution onto the ticket. Caller commits."""
+    await session.execute(
+        update(TicketRow)
+        .where(TicketRow.id == ticket_id)
+        .values(current_workflow_execution_id=workflow_execution_id)
+    )
+
+
+class _TicketCreatedFromIntakePayload(BaseModel):
+    type: str
+    idempotency_key: str
+
+
 async def create_for_pr(
     repo_external_id: str,
     source_external_id: str,
@@ -126,17 +214,17 @@ async def create_for_pr(
             pr_id=pr_id,
         )
         s.add(row)
-        await s.commit()
-        await s.refresh(row)
+        await s.flush()
         row_id = row.id
-
-    await audit_for_ticket(
-        row_id,
-        "ticket.created",
-        _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+        await audit_for_ticket(
+            row_id,
+            "ticket.created",
+            _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
     await publish(
         TicketStatusChanged(
             ticket_id=row_id,
@@ -169,6 +257,41 @@ async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
                 t.author_login = pr.author_login
                 t.is_draft = pr.is_draft
     return t
+
+
+async def get_payload(ticket_id: UUID, *, session: AsyncSession) -> dict[str, Any]:
+    """Return the ticket's intake payload dict. Required session — read-only,
+    no commits. M05 reviewer commands read admission signals (`is_draft`,
+    `is_fork`, `labels`, etc.) from here without re-fetching from GitHub."""
+    row = (await session.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
+    if row is None:
+        raise TicketNotFoundError(str(ticket_id))
+    return dict(row.payload or {})
+
+
+async def get_workspace_ticket_context(ticket_id: UUID):  # type: ignore[no-untyped-def]
+    """Read the ticket fields a Workspace WorkflowCommand needs to build a
+    `WorkspaceSpec` — `org_id`, `plugin_id`, `repo_external_id`, `payload`.
+    Returns None when the ticket is missing.
+
+    Owns its session (read-only, no commits). Registered with
+    `core/workspace.register_workflow_context_provider` at boot so
+    `ProvisionWorkspace` can read tickets without crossing the
+    core → domain layer boundary.
+    """
+    from app.core.workspace import WorkspaceTicketContext  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
+    if row is None:
+        return None
+    return WorkspaceTicketContext(
+        org_id=row.org_id,
+        plugin_id=row.plugin_id or "github",
+        repo_external_id=row.repo_external_id or "",
+        payload=dict(row.payload or {}),
+        pr_id=row.pr_id,
+    )
 
 
 async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
@@ -249,17 +372,17 @@ async def _transition(
             raise InvalidTicketTransition(f"ticket {ticket_id} is terminal ({row.status}); cannot transition")
         prev = row.status
         await s.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(status=new_status))
-        await s.commit()
         repo_external_id = row.repo_external_id
         pr_id = row.pr_id
-
-    await audit_for_ticket(
-        ticket_id,
-        "ticket.status_changed",
-        _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.status_changed",
+            _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
     await publish(
         TicketStatusChanged(
             ticket_id=ticket_id,

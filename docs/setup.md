@@ -79,8 +79,31 @@ After bootstrap, sign in via the GitHub OAuth provider button on the login page.
 
 From the repo root:
 
-- `docker compose -f docker/docker-compose.yml --env-file .env up -d --build` brings up Postgres + the yaaos backend (which serves the API on `:8080` and the bundled SPA).
+- `docker compose -f docker/docker-compose.yml --env-file .env up -d --build` brings up Postgres + Redis + the yaaos backend (which serves the API on `:8080` and the bundled SPA).
 - Visit `http://localhost:8080`. The dashboard renders the onboarding stepper because no GitHub App is installed and no Anthropic key is set.
+
+### M05 dev story (in progress)
+
+M05 adds a separate worker process (`apps/backend/bin/worker`) that runs taskiq workers + the outbox drain in a single Python process against Redis. Local dev uses the in-memory `WorkspaceProvider` so no Go `apps/agent/` container is required; remote-agent provisioning is exercised in the test stack only. Wire-up lands across Phases 0b–9 — until then, the worker process and Go agent are scaffolds and review work still runs in-process via the legacy reviewer queue.
+
+#### Running the WorkspaceAgent locally (Phase 9)
+
+The dev compose overlay ships an `agent` service that talks to the backend over the docker network using the placeholder identity-exchange verifier (any non-empty `YAAOS_SIGNED_STS_REQUEST` satisfies it):
+
+```bash
+docker compose \
+    -f docker/docker-compose.yml \
+    -f docker/docker-compose.dev.yml \
+    --env-file .env up -d --build agent
+```
+
+The agent's first long-poll lands at the backend; from then on it heartbeats every 30s and waits for AgentCommands. `agent supervisor` is the only subcommand wired today — `agent workspace` prints a not-implemented marker pending the Phase 6 follow-on workspace subcommand body.
+
+When the Phase 7 follow-on lands the real STS verifier, this service grows a `YAAOS_AGENT_IAM_ROLE_ARN` env var that must match `orgs.registered_iam_arn` for the org you're testing against.
+
+#### WebSocket activity stream
+
+The agent opens `WSS /api/v1/agents/{id}/activity` after identity exchange. Behind ALB / nginx, configure `--ws-ping-interval=30 --ws-ping-timeout=10` on uvicorn so idle WebSocket connections survive proxy idle-timeouts (typically 60s). Local dev uses uvicorn defaults — the agent reconnect loop covers any drops.
 
 ## 3. Create the GitHub App (Manifest Flow)
 

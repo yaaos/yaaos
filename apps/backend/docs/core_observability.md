@@ -1,16 +1,16 @@
 # core/observability
 
-> structlog setup + conditional OTel SDK initialization.
+> structlog + always-on OTel SDK initialization.
 
 ## Purpose
 
-Logging and tracing bootstrap. Configures structlog once at process start, picks renderer based on `YAAOS_ENV` (console-pretty in `dev`, JSON in `prod`), and conditionally wires the OpenTelemetry SDK with an OTLP gRPC exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exposes `get_logger` — the standard logger factory used everywhere.
+Logging + tracing bootstrap. Configures structlog once at process start (console-pretty in `dev`, JSON in `prod`) and **always** wires the OpenTelemetry SDK — `TracerProvider` + W3C trace-context propagator + FastAPI/SQLAlchemy auto-instrumentation. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, spans flow to that endpoint via a `BatchSpanProcessor`; when unset (the default in M05) spans are created and discarded. structlog log records carry `trace_id` + `span_id` whenever a span is active.
 
 ## Public interface
 
-- `configure()` — initialize structlog and (when endpoint set) the OTel SDK. Idempotent. Called once from `main.py` at boot.
+- `configure()` — initialize structlog + OTel SDK. Idempotent. Called once from `main.py` at boot.
 - `get_logger(name=None)` — returns a bound structlog logger. Used in place of `logging.getLogger`.
-- `spawn(name, coro)` — fire-and-forget background work. Wraps `asyncio.create_task` with a try/except that logs `spawn.crashed`. Every long-running background coroutine goes through this; the wrapped task is also retained in a module-level set so the GC doesn't collect it mid-flight. Relocated from `core/primitives` in M04 Phase 6a — its job is exception logging in background tasks, an observability concern.
+- `spawn(name, coro)` — fire-and-forget background work. Wraps `asyncio.create_task` with a try/except that logs `spawn.crashed`. The wrapped task is retained in a module-level set so the GC doesn't collect it mid-flight.
 - `active_task_count()` — test helper; number of pending spawned tasks.
 
 No HTTP routes. No tables. See `app/core/observability/__init__.py`.
@@ -19,15 +19,36 @@ No HTTP routes. No tables. See `app/core/observability/__init__.py`.
 
 ### structlog
 
-Always configured. Reads `settings.log_level` and `settings.yaaos_env`, installs a processor chain: `merge_contextvars`, `add_log_level`, ISO-UTC `TimeStamper`, stack/exception formatters, then `ConsoleRenderer(colors=True)` in `dev` or `JSONRenderer` otherwise. Filtering happens in structlog via `make_filtering_bound_logger`; `cache_logger_on_first_use=True`. `logging.basicConfig` is also called so non-structlog logs land on stdout at the same level.
+Reads `settings.log_level` and `settings.yaaos_env`. Processor chain: `merge_contextvars`, `_inject_trace_context` (M05 — pulls `trace_id` + `span_id` from the active OTel span), `add_log_level`, ISO-UTC `TimeStamper`, stack/exception formatters, then `ConsoleRenderer(colors=True)` in `dev` or `JSONRenderer` otherwise. `logging.basicConfig` is also called so non-structlog logs land on stdout at the same level.
 
-### OTel (conditional)
+### OTel — always on, exporter optional
 
-`Settings.otel_enabled` is true iff `otel_exporter_otlp_endpoint` is set. When enabled, `_configure_otel` lazily imports the SDK (so it never loads when disabled), builds a `TracerProvider` with `service.name = settings.otel_service_name`, adds a `BatchSpanProcessor` wrapping an `OTLPSpanExporter`, and sets the provider. Unset endpoint returns immediately. FastAPI and SQLAlchemy auto-instrumentation pick up the provider; this module doesn't wire them.
+`_configure_otel` (called from `configure()` regardless of endpoint):
+
+- Builds a `TracerProvider` with `service.name = settings.otel_service_name`.
+- Sets `TraceContextTextMapPropagator` as the global propagator so W3C `traceparent` headers cross every HTTP boundary by default.
+- Attaches a `BatchSpanProcessor(OTLPSpanExporter(endpoint))` **only when** `otel_exporter_otlp_endpoint` is set. Without an endpoint, spans are still created and discarded — code that emits spans never needs feature flags.
+- Runs `FastAPIInstrumentor().instrument()` + `SQLAlchemyInstrumentor().instrument()`. Both calls swallow "already instrumented" errors so test reloads stay benign.
+
+### No exporter in prod yet
+
+The boot path always sets up the SDK so M05 wire-protocol code (`traceparent` propagation, structlog correlation, ActivityEvent linkage) can rely on it without flags. Adding a real exporter in prod later (Datadog / Honeycomb / Tempo) is a single env-var flip — no code change.
+
+### Wire-protocol trace propagation (Phase 8)
+
+Three helpers bridge the in-process OTel SDK and the `traceparent` strings the wire protocol carries:
+
+- `current_traceparent() -> str | None` — serializes the active span context as a W3C `traceparent`. Returns `None` outside any span.
+- `restore_traceparent_context(traceparent) -> Context | None` — parses a `traceparent` and returns the OTel `Context` whose active span points at the remote span.
+- `with_remote_parent_span(tracer, name, traceparent)` — context manager that emits a span sharing the trace id of `traceparent`. Falls back to a fresh trace when `traceparent` is None / malformed.
+
+`domain/intake/web.post_intake` records `current_traceparent()` when a webhook arrives and passes it into `core/workflow.get_engine().start(traceparent=...)`. The workflow execution row stamps `otel_trace_context`; downstream tasks restore that context when they emit work-spans. The architecture's "one trace_id covers webhook → ... → terminal outcome" property rides on this thread.
+
+Task-body span emission (per-`start_step`, per-`route_workflow`, per-`handle_agent_event` work spans) lands in the Phase 8 follow-on; the helpers are in place and unit-tested today.
 
 ### Idempotency
 
-Module-level `_initialized` flag guards repeat calls. The OTel SDK has its own global state — re-configure doesn't replace the provider.
+Module-level `_initialized` flag guards repeat `configure()` calls. The OTel SDK has its own global state — a second `set_tracer_provider` is a no-op; the instrument-once try/except in `_configure_otel` absorbs the duplicate-instrumentation exceptions raised by FastAPI/SQLAlchemy instrumentors on test reload.
 
 ## Data owned
 
@@ -35,4 +56,6 @@ None.
 
 ## How it's tested
 
-`app/core/observability/test/` is a placeholder. Smoke-tested via `/api/health` and by every integration test (each runs `configure()` at startup).
+`app/core/observability/test/test_otel.py` covers: `_inject_trace_context` adds `trace_id`/`span_id` only when a span is active, hex widths are correct, and the in-memory `SpanExporter` fixture captures emitted spans. Real exporter wiring is verified indirectly — every integration test runs `configure()` and the auto-instrumentation emits spans on every request.
+
+The in-memory exporter pattern (attach an `InMemorySpanExporter` via `SimpleSpanProcessor` for a test) is the M05-blessed way to assert on span shape — see the `in_memory_spans` fixture for an example.

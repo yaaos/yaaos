@@ -137,6 +137,12 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("011_drop_claude_code_default_timeout_seconds", "drop_claude_code_default_timeout_seconds"),
     ("012_create_all_m03", "create_all_m03"),
     ("013_create_all_m04", "create_all_m04"),
+    ("014_create_outbox_entries", "create_outbox_entries"),
+    ("015_create_workflow_tables", "create_workflow_tables"),
+    ("016_tickets_m05_columns", "tickets_m05_columns"),
+    ("017_workspaces_m05_columns", "workspaces_m05_columns"),
+    ("018_create_workspace_agents", "create_workspace_agents"),
+    ("019_orgs_workspace_provider", "orgs_workspace_provider"),
 )
 
 
@@ -232,7 +238,7 @@ async def _table_exists(conn, name: str) -> bool:  # type: ignore[no-untyped-def
 async def _apply_add_review_jobs_triggered_by_destination(conn) -> None:  # type: ignore[no-untyped-def]
     """Promote audit-only `trigger_reason` into a queryable column and add
     `destination` so future `run_review` callers can be distinguished from
-    today's `schedule_review → post-to-VCS` flow.
+    the legacy `schedule_review → post-to-VCS` flow (retired in M05).
 
     No-op on fresh DBs (post-cutover `001_create_all` produces `reviews`, not
     `review_jobs` — and `008_reviews_cutover` drops the old table anyway).
@@ -465,6 +471,92 @@ async def _apply_create_all_m04(conn) -> None:  # type: ignore[no-untyped-def]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 0b — DB-atomic outbound message queue table.
+
+    Backs `core/outbox.write()` + the drain loop in `apps/backend/bin/worker`.
+    Future M05 phases add their own migrations as more tables come online
+    (see plan/milestones/M05-workspace-agent/DECISIONS.md). Idempotent.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.outbox.models")
+    new_tables = [Base.metadata.tables["outbox_entries"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_orgs_workspace_provider(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 7 — per-org workspace provider selection columns. Idempotent."""
+    statements: list[str] = [
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS workspace_provider TEXT",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS registered_iam_arn TEXT",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_create_workspace_agents(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 7 — `workspace_agents` table: per-pod identity rows.
+
+    Each agent pod that successfully exchanges identity gets a row. The
+    `(org_id, agent_pod_id)` uniqueness constraint dedups across re-exchange
+    after a pod restart. Idempotent."""
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.agent_gateway.models")
+    new_tables = [Base.metadata.tables["workspace_agents"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_workspaces_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 3 — extend `workspaces` with the M05 dispatch + claim
+    columns. `provider` discriminates in-memory vs remote-agent;
+    `current_command_id` + `current_holder_workflow_id` back the single-flight
+    claim; `max_idle_seconds` feeds the idle-timeout sweep. Idempotent
+    ALTERs; existing rows backfill to `provider='in_memory'`."""
+    statements: list[str] = [
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'in_memory'",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS current_command_id UUID",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS current_holder_workflow_id UUID",
+        "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS max_idle_seconds INTEGER NOT NULL DEFAULT 600",
+        "CREATE INDEX IF NOT EXISTS ix_workspaces_current_holder_workflow_id "
+        "ON workspaces (current_holder_workflow_id)",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_tickets_m05_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 2 — extend `tickets` with `type`, `idempotency_key`,
+    `payload`, and `current_workflow_execution_id`. Idempotent ALTERs;
+    existing rows backfill `type='pr_review'` via the column default."""
+    statements: list[str] = [
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'pr_review'",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS current_workflow_execution_id UUID",
+        # Sparse-unique: legacy rows with NULL idempotency_key don't collide.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_tickets_idempotency_key ON tickets (idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_create_workflow_tables(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 Phase 1 — workflow engine tables.
+
+    `workflow_executions` is the in-flight workflow state machine; one row
+    per `core/workflow` execution. `pending_human_decisions` holds HITL
+    pauses (one row per `awaiting_human` step). Idempotent.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.workflow.models")
+    new_tables = [Base.metadata.tables[name] for name in ("workflow_executions", "pending_human_decisions")]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_create_all_m03(conn) -> None:  # type: ignore[no-untyped-def]
     """M03 — settings + sidebar restructure.
 
@@ -545,6 +637,18 @@ async def migrate() -> None:
                 await _apply_create_all_m03(conn)
             elif kind == "create_all_m04":
                 await _apply_create_all_m04(conn)
+            elif kind == "create_outbox_entries":
+                await _apply_create_outbox_entries(conn)
+            elif kind == "create_workflow_tables":
+                await _apply_create_workflow_tables(conn)
+            elif kind == "tickets_m05_columns":
+                await _apply_tickets_m05_columns(conn)
+            elif kind == "workspaces_m05_columns":
+                await _apply_workspaces_m05_columns(conn)
+            elif kind == "create_workspace_agents":
+                await _apply_create_workspace_agents(conn)
+            elif kind == "orgs_workspace_provider":
+                await _apply_orgs_workspace_provider(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

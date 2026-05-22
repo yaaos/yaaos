@@ -45,3 +45,21 @@ services:
       # a fresh `pnpm --filter ./apps/web build` on the host shows up
       # immediately on browser refresh. No backend restart needed.
       - ../apps/web/dist:/app/apps/web/dist
+
+  # M05 — local WorkspaceAgent talking to the backend over the docker
+  # network. Uses the placeholder identity-exchange verifier (any
+  # non-empty YAAOS_SIGNED_STS_REQUEST satisfies it). Phase 7 follow-on
+  # wires the real STS verifier, at which point this service grows an
+  # IAM-role-arn env var and the backend's `orgs.registered_iam_arn`
+  # has to match.
+  agent:
+    build:
+      context: ../apps/agent
+      dockerfile: Dockerfile
+    environment:
+      YAAOS_BACKEND_URL: http://app:8080
+      YAAOS_AGENT_VERSION: dev
+      YAAOS_SIGNED_STS_REQUEST: placeholder-dev
+    depends_on:
+      app:
+        condition: service_started

@@ -12,11 +12,13 @@ Exported from `app/domain/tickets/__init__.py`:
 
 - `Ticket` — Pydantic row view; carries denormalized PR fields (`pr_number`, `author_login`, `is_draft`) populated at read time.
 - `TicketFilter` — list filter (`repo_external_ids`, `author_logins`, `created_after`, `created_before`, `statuses`).
-- `TicketStatus` — `Literal["open", "in_review", "complete", "abandoned"]`.
+- `TicketStatus` — `Literal["open", "in_review", "complete", "abandoned"]` (legacy values; M05 also writes `pending|running|done|failed|cancelled` for intake-created tickets).
 - `TicketStatusChanged` — published on every transition (subclass of `core.events.Event`).
 - `TicketRow` — SQLAlchemy model (exported so cross-module joins avoid import cycles).
-- Service — `create_for_pr`, `get`, `get_by_pr`, `list_tickets`, `complete`, `abandon`.
+- Service — `create` (M05 intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `get`, `get_by_pr`, `list_tickets`, `complete`, `abandon`, `attach_workflow_execution`.
 - Exceptions — `TicketNotFoundError`, `InvalidTicketTransition`.
+
+M05 columns on `tickets`: `type` (`pr_review` default), `idempotency_key` (sparse-unique), `payload` (JSONB), `current_workflow_execution_id` (soft pointer into `workflow_executions`). Created by migration `016_tickets_m05_columns`.
 
 HTTP routes (`/api/tickets`):
 

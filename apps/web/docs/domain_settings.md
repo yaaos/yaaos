@@ -1,18 +1,18 @@
 # domain/settings
 
-> Three independent cards: GitHub App, Model API key, Plugin health. No gating between them.
+> Four independent cards: GitHub App, Model API key, Workspace provider, Plugin health. No gating between them.
 
 ## Purpose
 
-The `/settings` page. Three peer cards, each standing alone. Operators save the Anthropic key whether or not GitHub is installed, paste GitHub credentials whether or not Anthropic is configured, and the plugin-health card iterates whatever plugins exist without hardcoding them.
+The `/settings` page. Four peer cards, each standing alone. Operators save the Anthropic key whether or not GitHub is installed, paste GitHub credentials whether or not Anthropic is configured, pick the workspace provider whether or not anything else is configured, and the plugin-health card iterates whatever plugins exist without hardcoding them.
 
 ## Public interface
 
-- `SettingsPage` — mounted by `core/routing` at `/settings`. All subcomponents private (`GitHubAppCard`, `NoAppBody`, `AppCreatedBody`, `InstalledBody`, `ManifestForm`, `CredentialsForm`, `ApiKeyCard`, `PluginHealthCard`, `RepositoriesList`).
+- `SettingsPage` — mounted by `core/routing` at `/settings`. All subcomponents private (`GitHubAppCard`, `NoAppBody`, `AppCreatedBody`, `InstalledBody`, `ManifestForm`, `CredentialsForm`, `ApiKeyCard`, `WorkspaceSettingsCard`, `ConnectionStatusLine`, `PluginHealthCard`, `RepositoriesList`).
 
 ## Module architecture
 
-`apps/web/src/domain/settings/index.tsx` is a single ~545-LOC file, three cards stacked.
+`apps/web/src/domain/settings/index.tsx` is a single ~730-LOC file, four cards stacked.
 
 ### Card 1 — GitHub App
 
@@ -45,7 +45,26 @@ Escape hatch: a `<details>` block labelled "Already have an App? Enter it manual
 
 `onboarding.anthropic_key_set` is authoritative from the backend — true only when the key authenticates against Anthropic (or when `YAAOS_CODING_AGENT_STUB=1` short-circuits). A typo keeps the badge red.
 
-### Card 3 — Plugin health
+### Card 3 — Workspace provider
+
+`<WorkspaceSettingsCard>` reads `useOrgSettings()` (`GET /api/orgs`, slice 85) and dispatches by `workspace_provider`:
+
+- Header badge (`data-testid="workspace-status"`): `in-process` (soft) when `in_memory`, `remote agent` (soft) when `remote_agent`, `not configured` (danger) when null.
+- Provider dropdown (`workspace-provider-select`) lists `— not configured —` / `in-process` / `remote agent`.
+- ARN input (`workspace-arn`) appears only when `remote agent` is picked; placeholder shows the canonical AWS ARN shape.
+- Save button (`workspace-save`) disables when nothing changed or when `remote_agent` is picked without an ARN; inline danger text explains the ARN requirement. Mutates via `useUpdateOrgSettings` → `PATCH /api/orgs`; invalidates both the org-settings and connection-status caches on success.
+
+When `remote_agent` is the saved value, `<ConnectionStatusLine>` polls `useWorkspaceConnectionStatus(true)` (`GET /api/workspaces/connection_status`) every 3s and renders one of three badges:
+
+| `state`            | Badge          | Meaning                                                |
+|--------------------|----------------|--------------------------------------------------------|
+| `connected`        | success        | At least one pod heartbeated in the last 90s.          |
+| `lost`             | danger         | Pods registered but none recent enough.                |
+| `not_configured`   | soft           | No `workspace_agents` rows for this org.               |
+
+Pre-save (user picked `remote_agent` but hasn't hit Save) the line shows a hint instead of polling — the backend would always answer `not_configured` until the ARN lands.
+
+### Card 4 — Plugin health
 
 `<PluginHealthCard>` iterates `usePluginsList()` (`GET /api/settings/plugins`, returns `PluginMeta[]` from the backend's discovery endpoint). Each row calls `usePluginHealth(plugin.id)` (`GET /api/${pluginId}/health`) and renders `{healthy, message}` with a badge and refresh timestamp. No hardcoded plugin list.
 

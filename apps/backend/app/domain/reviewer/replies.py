@@ -42,6 +42,7 @@ from app.domain.coding_agent import (
 from app.domain.coding_agent import (
     FindingAnchor as AgentFindingAnchor,
 )
+from app.domain.reviewer.constants import REVIEWER_TAG as _REVIEWER_TAG
 from app.domain.reviewer.llm import (
     ClassifyReplyInput,
     classify_reply,
@@ -49,7 +50,6 @@ from app.domain.reviewer.llm import (
 from app.domain.reviewer.llm.classifier import PriorMessage
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import CommentMessageRow, CommentThreadRow, FindingRow
-from app.domain.reviewer.queue import _REVIEWER_TAG
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import (
     apply_classified_reply,

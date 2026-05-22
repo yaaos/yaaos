@@ -34,4 +34,4 @@ A single module-global `_NEXT_PROFILE` slot. Tests reset it via `set_next_profil
 
 ## How it's tested
 
-`app/plugins/oauth_test/test/test_provider.py` — sanity coverage that the stub registers, that `authorization_url` echoes the state, and that staged profiles round-trip. End-to-end coverage of the full callback flow (linking, hard-reject, invitation acceptance) lives in `app/domain/auth/test/test_oauth_endpoints.py` and drives the stub indirectly.
+`app/plugins/oauth_test/test/test_provider.py` — sanity coverage that the stub registers, that `authorization_url` echoes the state, and that staged profiles round-trip. End-to-end coverage of the full callback flow (linking, hard-reject, invitation acceptance) lives in `app/domain/sessions/test/test_oauth_endpoints.py` and drives the stub indirectly.

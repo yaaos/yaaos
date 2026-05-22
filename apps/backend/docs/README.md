@@ -9,7 +9,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-27 modules: **10 core · 10 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections.
+33 modules: **15 core · 10 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections. M05 scaffolding adds 5 core modules (`tasks`, `outbox`, `workflow`, `agent_gateway`, `sse_pubsub`) — most are skeletons in Phase 0b, fleshed out in later phases.
 
 ### Core — infrastructure, no business logic
 
@@ -25,6 +25,11 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [core_plugin_meta](core_plugin_meta.md) | `PluginMeta` + `PluginType` — self-description every plugin exposes. |
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 | [core_auth](core_auth.md) | M02 default-deny middleware, contextvars, `Action` enum, `org_context()`. |
+| [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis (M05 scaffold). |
+| [core_outbox](core_outbox.md) | DB-atomic outbound message queue backing `core/tasks` (M05 scaffold). |
+| [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (M05 skeleton). |
+| [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (M05 skeleton). |
+| [core_sse_pubsub](core_sse_pubsub.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers (M05 skeleton). |
 
 ### Domain — business logic, vendor-neutral
 
@@ -39,7 +44,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 | [domain_identity](domain_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP (M02). |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (M02+). |
-| [domain_auth](domain_auth.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints (M02). |
+| [domain_sessions](domain_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints (M02). |
 
 ### Plugins — vendor-specific implementations
 
@@ -47,7 +52,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 |---|---|
 | [plugins_github](plugins_github.md) | `VCSPlugin` + `Provider` for GitHub: App auth, HMAC, REST, Manifest Flow, catch-up poller, OAuth login (M04 collapsed `plugins/oauth_github` here). |
 | [plugins_claude_code](plugins_claude_code.md) | `CodingAgentPlugin` wrapping the Claude Code CLI. |
-| [plugins_in_process_workspace](plugins_in_process_workspace.md) | `WorkspaceProvider` using tempdir + git clone (POC). |
+| [plugins_in_memory_workspace](plugins_in_memory_workspace.md) | `WorkspaceProvider` using tempdir + git clone (POC). |
 | [plugins_linear](plugins_linear.md) | `IntegrationProvider` for Linear (hosted MCP via `domain/integrations`). |
 | [plugins_notion](plugins_notion.md) | `IntegrationProvider` for Notion (hosted MCP via `domain/integrations`). |
 | [plugins_oauth_test](plugins_oauth_test.md) | Test-only `Provider` stub; refuses to load outside `YAAOS_ENV=test`. |
@@ -57,6 +62,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | Module | Responsibility |
 |---|---|
 | [testing_stub_coding_agent](testing_stub_coding_agent.md) | Wraps every `CodingAgentPlugin` with deterministic responses. |
+| [testing_fake_coding_agent](testing_fake_coding_agent.md) | Standalone `CodingAgentPlugin` fake for tests that register a plugin on the fly. |
 | [testing_stub_workspace](testing_stub_workspace.md) | Wraps every `WorkspaceProvider` with no-op tempdir. |
 | [testing_e2e_setup](testing_e2e_setup.md) | `POST /api/testing/reset` + `seed/*` for Playwright. |
 

@@ -1,7 +1,7 @@
 """core/auth — security middleware, contextvars, action enum.
 
 Pure infrastructure. The role-resolving dependency factories
-(`require(action)`, `public_route`) live in `domain/auth` because they
+(`require(action)`, `public_route`) live in `domain/sessions` because they
 depend on `domain/identity` + `domain/orgs`. The middleware here only
 enforces the header check + post-response guard.
 """

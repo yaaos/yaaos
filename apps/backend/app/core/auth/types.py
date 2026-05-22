@@ -42,6 +42,8 @@ class Action(StrEnum):
     BYOK_READ = "byok.read"
     BYOK_WRITE = "byok.write"
     ORG_SETTINGS_WRITE = "org_settings.write"
+    # M05 Phase 7 — Owner/Admin can read the workspace-agent connection status.
+    ORG_SETTINGS_READ = "org_settings.read"
 
     # M04 — hosted-MCP integrations (Linear, Notion, ...). Owner+Admin only.
     INTEGRATIONS_READ = "integrations.read"

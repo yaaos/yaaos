@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +27,23 @@ class TicketRow(Base):
     plugin_id: Mapped[str] = mapped_column(String, nullable=False, server_default="github")
     repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     pr_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # M05: ticket type (`pr_review` only today). Future types (`investigation`,
+    # `verify_fix`, etc.) reuse the same row shape.
+    type: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_review")
+    # M05: idempotency key for intake-driven creation. Same key + same type →
+    # the existing ticket is returned. Sparse-unique; legacy ticket rows leave
+    # it NULL.
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    # M05: optional payload bag carrying intake-time parameters that the
+    # workflow's first step consumes. Stays JSONB so future ticket types add
+    # fields without schema churn.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # M05: pointer to the workflow execution currently driving this ticket.
+    # Soft FK (no DB constraint) — workflow_executions live in core/workflow
+    # and the link is informational.
+    current_workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -249,3 +249,6 @@ apps/web/tmp/
 # ownership across sessions in the same project; everything else under
 # `.claude/` (skills, agents, etc.) is intentionally tracked.
 .claude/scheduled_tasks.lock
+
+# Design artifacts
+**/design/

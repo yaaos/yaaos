@@ -11,6 +11,7 @@ domain results. Subagent definitions live under
 Code agent directory by the `plugins/claude_code` plugin at bootstrap.
 """
 
+from app.domain.coding_agent.invocation import InvocationMode, build_invocation
 from app.domain.coding_agent.service import (
     _PLUGINS,
     _reset_plugins_for_tests,
@@ -66,6 +67,7 @@ __all__ = [
     "HealthStatus",
     "IncrementalReviewContext",
     "IncrementalReviewResult",
+    "InvocationMode",
     "InvocationStatus",
     "InvocationTelemetry",
     "OnActivity",
@@ -81,6 +83,7 @@ __all__ = [
     "VerifyFixResult",
     "_reset_plugins_for_tests",
     "answer_question",
+    "build_invocation",
     "get_plugin",
     "health_check_all",
     "incremental_review",

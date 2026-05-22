@@ -169,7 +169,7 @@ async def sso_acs(
         # bypass branch will have written nothing — but a direct SSO
         # signin still counts as satisfaction. Capture the break-glass
         # case via a separate audit row when middleware lets exempt
-        # bypass. Marker emitted in `domain/auth/dependencies` is the
+        # bypass. Marker emitted in `domain/sessions/dependencies` is the
         # source of truth for "Owner skipped SSO".
         await s.commit()
 
@@ -197,7 +197,7 @@ def _verify_assertion(saml_response: str, idp_metadata_xml: str) -> dict | None:
 
 
 def _require_sso_configure():
-    from app.domain.auth.dependencies import require  # noqa: PLC0415
+    from app.domain.sessions.dependencies import require  # noqa: PLC0415
 
     return require(Action.SSO_CONFIGURE)
 
@@ -230,10 +230,10 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     the exempt-Owner pointer changed."""
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.auth.context import user_id_var  # noqa: PLC0415
-    from app.domain.auth.dependencies import current_actor  # noqa: PLC0415
     from app.domain.identity.totp import can_be_sso_exempt_owner  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
     from app.domain.orgs.sso import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
+    from app.domain.sessions.dependencies import current_actor  # noqa: PLC0415
 
     org_id = org_id_var.get()
     assert org_id is not None

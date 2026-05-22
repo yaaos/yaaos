@@ -53,12 +53,23 @@ services:
       timeout: 2s
       retries: 30
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
   yaaos:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
+      REDIS_URL: redis://redis:6379/0
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       YAAOS_ENV: test
       GITHUB_API_BASE_URL: http://fake-github:8080
@@ -86,6 +97,8 @@ services:
       YAAOS_CATCHUP_DELAY_SECONDS: "0"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       fake-github:
         condition: service_started

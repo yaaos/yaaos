@@ -1,0 +1,169 @@
+package protocol
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// ErrNoCommand is returned by Client.ClaimCommand when the long-poll
+// timed out without work — the agent re-arms the poll.
+var ErrNoCommand = errors.New("protocol: no command available (204)")
+
+// ErrStaleClaim is returned by event endpoints when the backend says
+// the command/workspace no longer holds the claim — agent abandons.
+var ErrStaleClaim = errors.New("protocol: stale claim (410)")
+
+// Client is the HTTP client wrapper for the 5 backend endpoints. Safe
+// for concurrent use — http.Client itself is concurrency-safe.
+type Client struct {
+	baseURL string
+	bearer  string
+	http    *http.Client
+}
+
+// NewClient returns a Client targeting `baseURL` (e.g. "https://yaaos.example.com").
+// `httpClient` may be nil — a default `&http.Client{}` with no global timeout
+// is used so long-poll requests aren't cut off; per-call timeouts are
+// supplied via the request context.
+func NewClient(baseURL string, httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+	return &Client{baseURL: baseURL, http: httpClient}
+}
+
+// SetBearer installs the bearer that subsequent calls send in the
+// Authorization header. Pass empty to clear (only the identity-exchange
+// endpoint accepts an unauthenticated call).
+func (c *Client) SetBearer(b string) { c.bearer = b }
+
+// ExchangeIdentity POSTs the signed-STS payload and returns the bearer
+// + agent_id. On success the bearer is NOT stored — caller decides.
+func (c *Client) ExchangeIdentity(ctx context.Context, req IdentityExchangeRequest) (*IdentityExchangeResponse, error) {
+	var resp IdentityExchangeResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/identity/exchange", req, &resp, false); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Heartbeat reports liveness + workspace inventory.
+func (c *Client) Heartbeat(ctx context.Context, agentID string, req HeartbeatRequest) (*HeartbeatResponse, error) {
+	var resp HeartbeatResponse
+	path := fmt.Sprintf("/api/v1/agents/%s/heartbeat", agentID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, &resp, true); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ClaimCommand long-polls for the next AgentCommand. Returns
+// ErrNoCommand when the backend responds 204.
+func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequest) (*AgentCommand, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/commands/claim", agentID)
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyBearer(httpReq)
+	httpResp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer httpResp.Body.Close()
+
+	switch httpResp.StatusCode {
+	case http.StatusOK:
+		var cmd AgentCommand
+		if err := json.NewDecoder(httpResp.Body).Decode(&cmd); err != nil {
+			return nil, fmt.Errorf("decode command: %w", err)
+		}
+		return &cmd, nil
+	case http.StatusNoContent:
+		return nil, ErrNoCommand
+	case http.StatusUnauthorized:
+		return nil, fmt.Errorf("claim: unauthorized")
+	default:
+		return nil, fmt.Errorf("claim: unexpected status %d", httpResp.StatusCode)
+	}
+}
+
+// PostCommandEvent reports progress or terminal outcome for an
+// AgentCommand. ErrStaleClaim → agent silently drops the command.
+func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event AgentEvent) error {
+	path := fmt.Sprintf("/api/v1/commands/%s/events", commandID)
+	if event.ReportedAt.IsZero() {
+		event.ReportedAt = time.Now().UTC()
+	}
+	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
+}
+
+// PostWorkspaceEvent reports a workspace-state transition.
+func (c *Client) PostWorkspaceEvent(ctx context.Context, workspaceID string, event WorkspaceEvent) error {
+	path := fmt.Sprintf("/api/v1/workspaces/%s/events", workspaceID)
+	if event.ReportedAt.IsZero() {
+		event.ReportedAt = time.Now().UTC()
+	}
+	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
+}
+
+// doJSON is the generic POST helper. `out` may be nil for endpoints that
+// don't return a typed body. `withBearer=false` is only used by the
+// identity-exchange path which is unauthenticated.
+func (c *Client) doJSON(ctx context.Context, method, path string, in, out any, withBearer bool) error {
+	var body io.Reader
+	if in != nil {
+		buf, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+		body = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if withBearer {
+		c.applyBearer(req)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		if out == nil || resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+		return json.NewDecoder(resp.Body).Decode(out)
+	case http.StatusUnauthorized:
+		return fmt.Errorf("%s %s: unauthorized", method, path)
+	case http.StatusGone:
+		return ErrStaleClaim
+	default:
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, string(raw))
+	}
+}
+
+func (c *Client) applyBearer(req *http.Request) {
+	if c.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	}
+}

@@ -275,19 +275,48 @@ class SqlAlchemyAggregateRepository:
     async def save(self, aggregate: PRReviewAggregate) -> None:
         pending = aggregate.pop_pending()
 
-        # Reviews — update existing rows. queue.py / incremental.py own the
-        # initial INSERT (because they hold the per-PR advisory lock at
-        # schedule time and assign sequence_number); the aggregate's
+        # Reviews. Legacy queue.py / incremental.py paths INSERT the
+        # ReviewRow externally before kicking off the runner; the aggregate
         # mutations (mark_review_running, complete_review, supersede_review,
-        # set_pending_replay) propagate through here.
-        for r in pending.new_reviews + pending.updated_reviews:
+        # set_pending_replay) flow through here as UPDATEs to an existing
+        # row. The M05 `admission.admit_raw_findings` path calls
+        # `aggregate.start_review` and expects the repo to materialize the
+        # row — so when `pending.new_reviews` carries an id that's NOT yet
+        # in the DB, we INSERT it. Existing rows fall through to the UPDATE
+        # branch unchanged.
+        for r in pending.new_reviews:
             row = await self._session.get(ReviewRow, r.id)
             if row is None:
-                # Aggregate-side `start_review` was called without a
-                # paired DB INSERT first. queue.py + incremental.py insert
-                # ReviewRow before kicking off the runner; tests that
-                # exercise the aggregate directly need to insert the row
-                # themselves before saving.
+                self._session.add(
+                    ReviewRow(
+                        id=r.id,
+                        org_id=r.org_id,
+                        pr_id=r.pr_id,
+                        sequence_number=r.sequence_number,
+                        trigger_reason=r.trigger_reason,
+                        scope_kind=r.scope,
+                        commit_sha_at_start=r.commit_sha_at_start,
+                        status=r.status,
+                        superseded_by_review_id=r.superseded_by_review_id,
+                        pending_replay=r.pending_replay,
+                    )
+                )
+            else:
+                row.status = r.status
+                row.commit_sha_at_start = r.commit_sha_at_start
+                row.superseded_by_review_id = r.superseded_by_review_id
+                row.pending_replay = r.pending_replay
+                if r.status == "running" and row.started_at is None:
+                    row.started_at = r.created_at
+                if r.status in {"done", "failed", "superseded"} and row.completed_at is None:
+                    row.completed_at = r.created_at
+
+        for r in pending.updated_reviews:
+            row = await self._session.get(ReviewRow, r.id)
+            if row is None:
+                # An UPDATE for an id never inserted is a bug; skip rather
+                # than blow up to preserve the legacy "tests insert
+                # externally" escape hatch.
                 continue
             row.status = r.status
             row.commit_sha_at_start = r.commit_sha_at_start
@@ -297,6 +326,10 @@ class SqlAlchemyAggregateRepository:
                 row.started_at = r.created_at
             if r.status in {"done", "failed", "superseded"} and row.completed_at is None:
                 row.completed_at = r.created_at
+
+        # Flush so new ReviewRows exist before the dependent findings INSERTs
+        # reference them (findings.first_seen_review_id has a FK to reviews.id).
+        await self._session.flush()
 
         # Findings + observations need FK ordering: findings first, flush so
         # PG sees the row, then observations + threads + messages + acks.

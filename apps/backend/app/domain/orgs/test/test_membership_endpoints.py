@@ -12,7 +12,6 @@ from fastapi import FastAPI
 
 from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware
-from app.domain.auth import web as _auth_web  # noqa: F401 — triggers auth.dep load
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
 from app.domain.orgs import invite as invite_service
@@ -20,6 +19,7 @@ from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
 from app.domain.orgs.email import get_test_inbox
 from app.domain.orgs.types import Role
+from app.domain.sessions import web as _auth_web  # noqa: F401 — triggers auth.dep load
 
 
 def _app() -> FastAPI:

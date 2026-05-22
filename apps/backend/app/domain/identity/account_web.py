@@ -52,9 +52,9 @@ def _err(status: int, code: str) -> HTTPException:
 
 
 def _require_account():
-    """Lazy: domain/auth imports domain/identity, so the dep factory has
+    """Lazy: domain/sessions imports domain/identity, so the dep factory has
     to be looked up at call time, not at module import."""
-    from app.domain.auth.dependencies import require  # noqa: PLC0415
+    from app.domain.sessions.dependencies import require  # noqa: PLC0415
 
     return require(Action.ACCOUNT_UPDATE_SELF)
 

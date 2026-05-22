@@ -10,12 +10,12 @@ from pydantic import BaseModel
 
 from app.core.audit_log import Actor, audit
 from app.core.auth import AuthMiddleware
-from app.domain.auth import web as _auth_web  # noqa: F401
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role
+from app.domain.sessions import web as _auth_web  # noqa: F401
 
 
 class _Payload(BaseModel):

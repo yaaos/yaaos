@@ -70,9 +70,15 @@ async def audit(
     actor: Actor,
     *,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
-    """Generic escape hatch. Per-entity helpers below are preferred."""
+    """Generic escape hatch. Per-entity helpers below are preferred.
+
+    Required-session: the caller owns the transaction and commits. The row is
+    flushed but never committed here so the audit lands atomically with the
+    state change it describes. See `apps/backend/docs/patterns.md` §
+    Session management + atomicity.
+    """
     if not entity_kind:
         raise ValueError("entity_kind required")
     if not kind:
@@ -92,15 +98,8 @@ async def audit(
         actor_user_id=actor.user_id,
         actor_workspace_id=actor.workspace_id,
     )
-
-    if session is not None:
-        session.add(row)
-        await session.flush()
-    else:
-        async with get_session() as s:
-            s.add(row)
-            await s.commit()
-            await s.refresh(row)
+    session.add(row)
+    await session.flush()
     return AuditEntry.from_row(row)
 
 
@@ -114,7 +113,7 @@ async def audit_for_ticket(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit("ticket", ticket_id, kind, payload, actor, org_id=org_id, session=session)
 
@@ -126,7 +125,7 @@ async def audit_for_pr(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit("pull_request", pr_id, kind, payload, actor, org_id=org_id, session=session)
 
@@ -138,7 +137,7 @@ async def audit_for_lesson(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit("lesson", lesson_id, kind, payload, actor, org_id=org_id, session=session)
 
@@ -150,7 +149,7 @@ async def audit_for_review_job(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit("review_job", review_job_id, kind, payload, actor, org_id=org_id, session=session)
 
@@ -162,7 +161,7 @@ async def audit_for_finding(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     """Plan §5.3: every durable-finding state transition writes an audit row."""
     return await audit("finding", finding_id, kind, payload, actor, org_id=org_id, session=session)
@@ -175,7 +174,7 @@ async def audit_for_webhook_event(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit(
         "webhook_event", webhook_event_id, kind, payload, actor, org_id=org_id, session=session
@@ -189,7 +188,7 @@ async def audit_for_workspace(
     *,
     actor: Actor,
     org_id: UUID,
-    session: AsyncSession | None = None,
+    session: AsyncSession,
 ) -> AuditEntry:
     return await audit("workspace", workspace_id, kind, payload, actor, org_id=org_id, session=session)
 

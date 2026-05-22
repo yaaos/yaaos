@@ -170,7 +170,9 @@ async def run_scheduler_loop() -> None:
             counts = await run_health_check_once()
             if any(counts.values()):
                 log.info("integrations.health_check.ran", **counts)
-            n_swept = await sweep_expired()
+            async with db_session() as s:
+                n_swept = await sweep_expired(session=s)
+                await s.commit()
             if n_swept:
                 log.info("integrations.mcp_tokens.swept", removed=n_swept)
         except Exception:

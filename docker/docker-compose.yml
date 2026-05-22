@@ -48,11 +48,25 @@ services:
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
+      # M05 — Redis backs taskiq workflow tasks + sse_pubsub fanout.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8080:8080"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
   # on the `app` service to `http://otel-collector:4317` to wire it up.

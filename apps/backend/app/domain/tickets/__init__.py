@@ -10,10 +10,13 @@ from app.domain.tickets.service import (
     TicketStatus,
     TicketStatusChanged,
     abandon,
+    attach_workflow_execution,
     complete,
+    create,
     create_for_pr,
     get,
     get_by_pr,
+    get_payload,
     list_tickets,
 )
 
@@ -26,9 +29,12 @@ __all__ = [
     "TicketStatus",
     "TicketStatusChanged",
     "abandon",
+    "attach_workflow_execution",
     "complete",
+    "create",
     "create_for_pr",
     "get",
     "get_by_pr",
+    "get_payload",
     "list_tickets",
 ]

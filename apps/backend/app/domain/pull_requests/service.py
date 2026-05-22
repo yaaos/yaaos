@@ -141,18 +141,17 @@ async def upsert(
                 setattr(existing, field, new)
                 changed.append(field)
         existing.last_synced_at = datetime.now(UTC)
-        await s.commit()
-        await s.refresh(existing)
         row_id = existing.id
-
-    if changed:
-        await audit_for_pr(
-            row_id,
-            "pull_request.synced",
-            _PRSyncedPayload(changed_fields=changed),
-            actor=Actor.system(),
-            org_id=org_id,
-        )
+        if changed:
+            await audit_for_pr(
+                row_id,
+                "pull_request.synced",
+                _PRSyncedPayload(changed_fields=changed),
+                actor=Actor.system(),
+                org_id=org_id,
+                session=s,
+            )
+        await s.commit()
 
     async with db_session() as s:
         existing = (await s.execute(select(PullRequestRow).where(PullRequestRow.id == row_id))).scalar_one()
@@ -172,14 +171,15 @@ async def update_state(pr_id: UUID, new_state: PRState, *, org_id: UUID) -> None
             return
         prev = row.state
         await s.execute(update(PullRequestRow).where(PullRequestRow.id == pr_id).values(state=new_state))
+        await audit_for_pr(
+            pr_id,
+            "pull_request.state_changed",
+            _PRStateChangedPayload(from_state=prev, to_state=new_state),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=s,
+        )
         await s.commit()
-    await audit_for_pr(
-        pr_id,
-        "pull_request.state_changed",
-        _PRStateChangedPayload(from_state=prev, to_state=new_state),
-        actor=Actor.system(),
-        org_id=org_id,
-    )
 
 
 async def get(pr_id: UUID, *, org_id: UUID) -> PullRequest:

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # GitHub API base URL — overridden in the test stack to point at `apps/fake-github`.
     github_api_base_url: str = "https://api.github.com"
 
+    # M05 — Redis backs taskiq workflow tasks + sse_pubsub fanout. Required
+    # at runtime once `core/tasks` workers and SSE handlers are wired; optional
+    # at boot so the existing M01-M04 surface still starts without Redis.
+    redis_url: str | None = None
+
     # core/llm gateway. Both unset = direct provider calls via ANTHROPIC_API_KEY.
     braintrust_api_key: str | None = None
     braintrust_api_url: str | None = None  # e.g. https://gateway.braintrust.dev

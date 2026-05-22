@@ -2,18 +2,22 @@ import {
   type GithubInstallation,
   type PluginMeta,
   type PluginType,
+  type WorkspaceProvider,
   useGithubInstallation,
   useGithubRepositories,
   useOnboarding,
+  useOrgSettings,
   usePluginHealth,
   usePluginsList,
   useSetAnthropicKey,
   useSetGithubCredentials,
+  useUpdateOrgSettings,
+  useWorkspaceConnectionStatus,
 } from "@core/api";
 import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
 import { ago } from "@shared/utils/ago";
-import { Activity, Github, Zap } from "lucide-react";
-import { useState } from "react";
+import { Activity, Github, Server, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
 
 const PLUGIN_TYPE_LABEL: Record<PluginType, string> = {
   vcs: "VCS",
@@ -33,7 +37,186 @@ export function SettingsPage() {
 
       <GitHubAppCard />
       <ApiKeyCard />
+      <WorkspaceSettingsCard />
       <PluginHealthCard />
+    </div>
+  );
+}
+
+// ─── Workspace settings (PHASES item 164) ────────────────────────────────────
+
+function WorkspaceSettingsCard() {
+  const { data: settings, isLoading } = useOrgSettings();
+  const update = useUpdateOrgSettings();
+  // Hydrate the form from the server value on mount + whenever the server
+  // updates (e.g. after a save). Local state lets the user edit without
+  // round-tripping until they hit Save.
+  const [provider, setProvider] = useState<WorkspaceProvider | "">("");
+  const [arn, setArn] = useState<string>("");
+  useEffect(() => {
+    if (!settings) return;
+    setProvider(settings.workspace_provider ?? "");
+    setArn(settings.registered_iam_arn ?? "");
+  }, [settings]);
+
+  // Connection-status polling only matters once the org has committed to
+  // remote_agent — otherwise it'll always be `not_configured`.
+  const status = useWorkspaceConnectionStatus(settings?.workspace_provider === "remote_agent");
+
+  const dirty =
+    !!settings &&
+    ((settings.workspace_provider ?? "") !== provider ||
+      (settings.registered_iam_arn ?? "") !== arn);
+
+  const remoteRequiresArn = provider === "remote_agent" && !arn.trim();
+
+  const headerBadge = (() => {
+    if (!settings) return null;
+    if (settings.workspace_provider === "remote_agent") {
+      return <Badge variant="soft">remote agent</Badge>;
+    }
+    if (settings.workspace_provider === "in_memory") {
+      return <Badge variant="soft">in-process</Badge>;
+    }
+    return <Badge variant="danger">not configured</Badge>;
+  })();
+
+  return (
+    <Card>
+      <CardHeader>
+        <Server size={15} className="text-text-2" />
+        <h2 className="font-semibold text-[13.5px]">Workspace provider</h2>
+        <div className="flex-1" />
+        <span data-testid="workspace-status">{headerBadge}</span>
+      </CardHeader>
+      <CardContent>
+        {isLoading || !settings ? (
+          <div className="text-text-3 text-[12.5px]">Loading…</div>
+        ) : (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!dirty || remoteRequiresArn) return;
+              update.mutate({
+                workspace_provider: provider === "" ? null : provider,
+                registered_iam_arn: arn.trim() === "" ? null : arn.trim(),
+              });
+            }}
+          >
+            <p className="text-text-3 text-[12px]">
+              <b className="text-text-2">in-process</b> runs reviews inside the backend container —
+              convenient for local dev, sized for a single org.
+              <br />
+              <b className="text-text-2">remote agent</b> dispatches to a deployed WorkspaceAgent
+              pod; requires registering the pod's IAM role ARN so identity exchange can verify it.
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="text-text-2 text-[11.5px] font-medium">Provider</span>
+              <select
+                data-testid="workspace-provider-select"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as WorkspaceProvider | "")}
+                className="px-2 py-1.5 text-[12.5px] border border-border-soft rounded bg-bg"
+              >
+                <option value="">— not configured —</option>
+                <option value="in_memory">in-process</option>
+                <option value="remote_agent">remote agent</option>
+              </select>
+            </label>
+            {provider === "remote_agent" && (
+              <>
+                <label className="flex flex-col gap-1">
+                  <span className="text-text-2 text-[11.5px] font-medium">Agent IAM role ARN</span>
+                  <input
+                    data-testid="workspace-arn"
+                    type="text"
+                    value={arn}
+                    onChange={(e) => setArn(e.target.value)}
+                    placeholder="arn:aws:iam::123456789012:role/yaaos-agent"
+                    className="px-2 py-1.5 text-[12.5px] mono border border-border-soft rounded bg-bg"
+                  />
+                </label>
+                <ConnectionStatusLine
+                  state={status.data?.state}
+                  podCount={status.data?.pod_count ?? 0}
+                  latest={status.data?.latest_heartbeat_at ?? null}
+                  saved={settings.workspace_provider === "remote_agent"}
+                />
+              </>
+            )}
+            <div className="flex items-center gap-3">
+              <Button
+                type="submit"
+                disabled={!dirty || remoteRequiresArn || update.isPending}
+                data-testid="workspace-save"
+              >
+                Save
+              </Button>
+              {remoteRequiresArn && (
+                <span className="text-danger text-[12px]">
+                  remote agent requires a non-empty ARN
+                </span>
+              )}
+              {update.isSuccess && !dirty && (
+                <span className="text-success text-[12px]" data-testid="workspace-saved">
+                  Saved.
+                </span>
+              )}
+              {update.isError && (
+                <span className="text-danger text-[12px]">{(update.error as Error).message}</span>
+              )}
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConnectionStatusLine({
+  state,
+  podCount,
+  latest,
+  saved,
+}: {
+  state: "connected" | "lost" | "not_configured" | undefined;
+  podCount: number;
+  latest: string | null;
+  saved: boolean;
+}) {
+  // Pre-save (the user picked remote_agent but hasn't saved yet) there's no
+  // point asking the backend for heartbeat state — show a hint instead.
+  if (!saved) {
+    return (
+      <div className="text-text-3 text-[12px]" data-testid="workspace-connection-hint">
+        Save the ARN to start polling for the agent's heartbeat.
+      </div>
+    );
+  }
+  if (!state) {
+    return <div className="text-text-3 text-[12px]">Loading status…</div>;
+  }
+  const badge =
+    state === "connected" ? (
+      <Badge variant="success">connected</Badge>
+    ) : state === "lost" ? (
+      <Badge variant="danger">no heartbeat</Badge>
+    ) : (
+      <Badge variant="soft">not configured</Badge>
+    );
+  return (
+    <div className="flex items-center gap-2 text-[12px]" data-testid="workspace-connection-line">
+      {badge}
+      <span className="text-text-3">
+        {podCount} pod{podCount === 1 ? "" : "s"}
+        {latest && (
+          <>
+            {" "}
+            · last heartbeat <span className="text-text-4">{ago(latest)}</span>
+          </>
+        )}
+      </span>
     </div>
   );
 }

@@ -11,7 +11,6 @@ from sqlalchemy import select
 from app.core.audit_log import Actor
 from app.core.audit_log.models import AuditEntryRow
 from app.core.auth import AuthMiddleware
-from app.domain.auth import web as _auth_web  # noqa: F401
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
 from app.domain.orgs import (
@@ -29,6 +28,7 @@ from app.domain.orgs import (
     repository as orgs_repo,
 )
 from app.domain.orgs.types import Role
+from app.domain.sessions import web as _auth_web  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

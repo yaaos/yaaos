@@ -26,9 +26,9 @@ How the apps fit together and the conventions spanning them. App-internal archit
 
 1. GitHub (or `fake-github` in tests) sends HMAC-signed `pull_request.opened` to `POST /api/github/webhook`.
 2. `plugins/github` verifies HMAC, parses into a `VCSEvent`, hands to `domain/intake`.
-3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.schedule_review`.
-4. `domain/reviewer` creates ONE review_job and spawns the handler coro.
-5. Handler provisions the workspace and calls `coding_agent.review` once. The parent Claude Code agent dispatches `yaaos-*` subagents in parallel via the Task tool, synthesizes their findings (re-reads cited code to verify, deduplicates, ranks), and returns one merged result. Handler posts a single `vcs.Review` to GitHub with each finding tagged by its `source_agent` subagent.
+3. `domain/intake` upserts PR (`domain/pull_requests`) + ticket (`domain/tickets`), calls `reviewer.start_pr_review` which starts a `pr_review_v1` workflow execution via `core/workflow`.
+4. The workflow engine routes `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`. Each step is a `WorkflowCommand` body under `domain/reviewer/commands/`.
+5. `CodeReview` provisions a workspace via the configured provider (in-memory locally; remote-agent in prod) and invokes `coding_agent.review`. The parent Claude Code agent dispatches `yaaos-*` subagents in parallel via the Task tool, synthesizes findings (re-reads cited code, dedupes, ranks), and returns one merged result. `PostFindings` runs admission, then posts a single `vcs.Review` to GitHub with each finding tagged by its `source_agent`. `CleanupWorkspace` always runs as the workflow's `final` step.
 
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
@@ -159,6 +159,36 @@ All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secret
 
 ### Dumb frontend
 SPA renders data and dispatches actions. It does not compute verdicts, derive status, hold permissions, or own any rule the backend doesn't also enforce. FE validation is for UX immediacy; backend re-validates. See [`apps/web/docs/patterns.md`](../apps/web/docs/patterns.md).
+
+## M05 — workspace agent + workflow engine
+
+M05 reshapes how reviews actually execute. Three new concepts cross every app:
+
+- **Workflow engine** (`core/workflow`) — typed `Workflow` definitions registered at startup, driven by three taskiq task bodies (`start_step`, `handle_agent_event`, `route_workflow`) over the existing `core/tasks` + `core/outbox` substrate. Workspace commands park in `awaiting_agent` and resume on the wire-protocol terminal event; workers never block on long-running agent work. Five workflows ship: `pr_review_v1`, `incremental_review_v1`, `verify_fix_v1`, `stale_check_v1`, `answer_question_v1`. Definitions in [`domain/reviewer/workflows/`](../apps/backend/app/domain/reviewer/workflows/); 13 commands across [`domain/reviewer/commands/`](../apps/backend/app/domain/reviewer/commands/) + [`core/workspace/commands.py`](../apps/backend/app/core/workspace/commands.py). See [`core_workflow.md`](../apps/backend/docs/core_workflow.md).
+- **Workspace provider abstraction** (`core/workspace`) — two implementations behind one Protocol: `InMemoryWorkspaceProvider` (existing in-process) and `RemoteAgentWorkspaceProvider` (new — dispatches via the wire protocol to a customer-deployed Go agent). Per-org config selects the provider (`orgs.workspace_provider`). Single-flight claim via `try_claim`/`release_claim` enforces "one in-flight AgentCommand per workspace"; the failure-report-precedes-disposal invariant preserves `current_holder_workflow_id` across release so reconciliation lookups always resolve.
+- **WorkspaceAgent** (`apps/agent/`) — customer-deployed Go binary that holds customer source code locally. Talks to the control plane via five HTTPS endpoints + one bidirectional WebSocket under `/api/v1/`:
+  - `POST /api/v1/identity/exchange` — SigV4-signed STS → short-lived bearer.
+  - `POST /api/v1/agents/{id}/heartbeat` — liveness + workspace inventory reconciliation.
+  - `POST /api/v1/agents/{id}/commands/claim` — long-poll for the next AgentCommand.
+  - `POST /api/v1/workspaces/{id}/events` — workspace-state transitions.
+  - `POST /api/v1/commands/{id}/events` — AgentCommand events; terminal events resume the workflow.
+  - `WSS /api/v1/agents/{id}/activity` — bidirectional activity stream with `subscribe`/`unsubscribe` from the backend on the `0 → 1` / `1 → 0` UI-subscriber transitions (demand-pull: no activity flows when nobody's watching). See [`core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md).
+
+### End-to-end (current foundations)
+
+1. GitHub webhook → `POST /api/intake/github_pr` ([`domain/intake/web.py`](../apps/backend/app/domain/intake/web.py)) verifies HMAC, dedups via `X-Github-Delivery`, calls `domain/tickets.create(type="pr_review", payload=…, idempotency_key=…)`, starts the workflow via `core/workflow.get_engine().start("pr_review_v1", ticket_id=…)`. The intake records the active `traceparent` so downstream tasks share the trace.
+2. `route_workflow` task picks up; first step is `CheckShouldReview` (Local; admission gate). Then `ProvisionWorkspace` (Workspace category) — `start_step` parks the workflow in `awaiting_agent` and dispatches via either the in-process provider or `core/agent_gateway.enqueue_command` (for the remote agent).
+3. Agent picks up the command via its long-poll loop; runs the operation; reports outcome via `POST /api/v1/commands/{id}/events`. Backend's `record_agent_event` validates the stale-claim guard, resolves the lookup chain `command_id → workspaces → current_holder_workflow_id`, enqueues `handle_agent_event` via the outbox.
+4. `handle_agent_event` validates the pending command id, clears the claim, enqueues `route_workflow` which transitions to the next step (`CodeReview` → `PostFindings` → `CleanupWorkspace`).
+5. Activity events from the workspace process flow over the WebSocket only when a UI tab is subscribed — `SubscriberRegistry` issues `subscribe` on the first SSE attach, `unsubscribe` when the last detaches.
+
+### Persistence
+
+New tables: `workflow_executions`, `pending_human_decisions`, `outbox_entries`, `workspace_agents`. Existing tables extended: `tickets` (type, idempotency_key, payload, current_workflow_execution_id), `workspaces` (provider, current_command_id, current_holder_workflow_id, max_idle_seconds), `orgs` (workspace_provider, registered_iam_arn). Activity events are **never persisted** — they exist only in flight from WebSocket → `core/sse_pubsub` → SSE → UI. State of record stays in audit + workflow rows.
+
+### M05 status
+
+M05 ships **foundations across every phase**: schema + module surfaces + Pydantic types + wire protocol + Go skeleton + Dockerfile + docs. Integration follow-on still required for the full milestone-done bar — see [`plan/milestones/M05-workspace-agent/PHASES.md`](../plan/milestones/M05-workspace-agent/PHASES.md) for the per-phase deferral annotations and what remains.
 
 ## Stack at a glance
 

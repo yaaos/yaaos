@@ -104,17 +104,17 @@ async def create(
             source_pr_url=source_pr_url,
         )
         s.add(row)
-        await s.commit()
-        await s.refresh(row)
+        await s.flush()
         row_id = row.id
-
-    await audit_for_lesson(
-        row_id,
-        "lesson.created",
-        _LessonCreatedPayload(title=title, body_length=len(body)),
-        actor=actor,
-        org_id=org_id,
-    )
+        await audit_for_lesson(
+            row_id,
+            "lesson.created",
+            _LessonCreatedPayload(title=title, body_length=len(body)),
+            actor=actor,
+            org_id=org_id,
+            session=s,
+        )
+        await s.commit()
     return await get(row_id, org_id=org_id)
 
 
@@ -191,21 +191,20 @@ async def update(
         if source_pr_url is not None and source_pr_url != row.source_pr_url:
             row.source_pr_url = source_pr_url
             changed.append("source_pr_url")
+        if changed:
+            await audit_for_lesson(
+                lesson_id,
+                "lesson.updated",
+                _LessonUpdatedPayload(
+                    fields_changed=changed,
+                    prior_body_hash=prior_body_hash,
+                    new_body_hash=_hash(new_body),
+                ),
+                actor=actor,
+                org_id=org_id,
+                session=s,
+            )
         await s.commit()
-        await s.refresh(row)
-
-    if changed:
-        await audit_for_lesson(
-            lesson_id,
-            "lesson.updated",
-            _LessonUpdatedPayload(
-                fields_changed=changed,
-                prior_body_hash=prior_body_hash,
-                new_body_hash=_hash(new_body),
-            ),
-            actor=actor,
-            org_id=org_id,
-        )
     return await get(lesson_id, org_id=org_id)
 
 
@@ -219,11 +218,12 @@ async def delete(lesson_id: UUID, *, actor: Actor, org_id: UUID) -> None:
         title = row.title
         body_hash = _hash(row.body)
         await s.execute(sql_delete(LessonRow).where(LessonRow.id == lesson_id))
+        await audit_for_lesson(
+            lesson_id,
+            "lesson.deleted",
+            _LessonDeletedPayload(title=title, body_hash_at_deletion=body_hash),
+            actor=actor,
+            org_id=org_id,
+            session=s,
+        )
         await s.commit()
-    await audit_for_lesson(
-        lesson_id,
-        "lesson.deleted",
-        _LessonDeletedPayload(title=title, body_hash_at_deletion=body_hash),
-        actor=actor,
-        org_id=org_id,
-    )

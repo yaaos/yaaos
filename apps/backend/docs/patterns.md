@@ -91,6 +91,35 @@ No generic task layer. State of in-flight work lives in the owning domain's tabl
 
 Single async SQLAlchemy session factory in `core/database`. Consumed via `async with session() as s:`. Transactions scoped to the HTTP request or the background task.
 
+### Session management + atomicity
+
+Transactional service functions take a required `session: AsyncSession` parameter and never commit. The caller — an *orchestrator* — opens `db_session()`, calls services, commits once at the end. This makes audit rows land atomically with the state change they describe and lets services compose inside a single transaction. Type signature is the documentation: if a function takes `session: AsyncSession`, it's a service; if it doesn't, it's an orchestrator (endpoint handler, `spawn()` task body, periodic-task entrypoint).
+
+```python
+# Service — required session, never commits.
+async def create_lesson(..., *, session: AsyncSession) -> Lesson:
+    row = LessonRow(...)
+    session.add(row)
+    await session.flush()
+    await audit_for_lesson(row.id, "lesson.created", ..., session=session)
+    return Lesson.from_row(row)
+
+# Orchestrator — opens, calls, commits.
+@router.post("/lessons")
+async def post_lesson(...) -> Lesson:
+    async with db_session() as s:
+        lesson = await create_lesson(..., session=s)
+        await s.commit()
+    return lesson
+```
+
+Rules:
+
+- Service modules never write `session: AsyncSession | None`, never check `if session is None`, never call `db_session()` themselves. Semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces this.
+- Read-only services follow the same rule — required session, no commits — so callers can compose snapshot-consistent read-then-write.
+- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract.
+- `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
+
 ### Idempotent migrations
 
 `core/database.migration_helpers` wraps `op.*` with idempotent variants (`create_table_if_not_exists`, `add_column_if_not_exists`, `create_index_if_not_exists`, `drop_column_if_exists`). Every migration uses these helpers; re-running a half-applied migration is always safe.
@@ -100,6 +129,42 @@ Single async SQLAlchemy session factory in `core/database`. Consumed via `async 
 `schema_migrations` records every applied version. The runner is `core/database.migrate()`, not stock `alembic upgrade head`: reads applied versions, scans `alembic/versions/*.py`, applies any file whose `revision` isn't in the table. Robust to branch-switching and multiple heads.
 
 Alembic CLI is only used for `alembic revision --autogenerate -m "..."`. Direct `alembic upgrade` is forbidden.
+
+## Durable tasks via `core/tasks` + `core/outbox`
+
+Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a workflow. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
+
+`@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (`apps/backend/bin/worker`, Phase 1+) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits.
+
+Task bodies must be idempotent — a drain crash between dispatch and `dispatched_at` stamp can redispatch. Bodies look up state from DB (don't carry "do this once" semantics in the args).
+
+## WorkflowCommand discipline
+
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories with a single `execute(inputs, ctx) -> Outcome` shape:
+
+- **Workspace** — issues one or more AgentCommands. `start_step` dispatches and parks the workflow in `awaiting_agent`; `handle_agent_event` resumes when the terminal event arrives. Worker never blocks on the agent.
+- **Local** — runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
+- **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
+
+Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
+
+### Single-flight per workspace
+
+The workspace state machine accepts one in-flight AgentCommand at a time. [`core/workspace.try_claim`](core_workspace.md) is an atomic conditional UPDATE that succeeds iff `current_command_id IS NULL` AND `status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off. Pair every claim with `release_claim(workspace_id, command_id=…)` once the terminal event has been observed.
+
+### Failure-report-precedes-disposal invariant
+
+`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal AgentEvent must arrive before the workspace row is disposed. This means reconciliation lookups can always resolve `command_id → workspace → current_holder_workflow_id → workflow_execution` — even after the workspace is being torn down.
+
+### Recovery policy registry
+
+AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workspace.register_recovery_policy`. The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original.
+
+## WorkspaceProvider contract
+
+[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; two implementations ship in M05: `InMemoryWorkspaceProvider` (existing in-process plugin) and `RemoteAgentWorkspaceProvider` (dispatches via [`core/agent_gateway`](core_agent_gateway.md)). The Protocol is the single seam between control plane and provider — both implementations enforce the same invariants (single-flight, failure-report-precedes-disposal, recovery). Per-org selection lives on `orgs.workspace_provider`.
+
+The Protocol's `run_coding_agent_cli` is synchronous-shaped — natural for the in-process provider, awkward for the remote provider. `RemoteAgentWorkspaceProvider` raises on those methods; the Phase 4 Workspace WorkflowCommands enqueue AgentCommands directly and the engine handles awaits through `handle_agent_event`. The Protocol shape is preserved for compatibility with the M01 callers that still rely on the in-process path.
 
 ## Audit log discipline
 
@@ -163,7 +228,7 @@ Every yaaos-issued bearer follows the same shape — adopted in M02 for sessions
 
 ## Route security declarations
 
-Every `/api/*` route declares its security via `Depends(require(action))` (org-scoped, role-gated) or `Depends(public_route)` (no org context required). The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset — the gate is at the route, not the docs. Action → minimum-role map lives in `app/domain/auth/dependencies.py:_REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new protected URL prefix requires extending `app/core/auth/types.py:M02_PROTECTED_PREFIXES` so the middleware forces `X-Org-Slug` resolution before any route logic runs.
+Every `/api/*` route declares its security via `Depends(require(action))` (org-scoped, role-gated) or `Depends(public_route)` (no org context required). The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset — the gate is at the route, not the docs. Action → minimum-role map lives in `app/domain/sessions/dependencies.py:_REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new protected URL prefix requires extending `app/core/auth/types.py:M02_PROTECTED_PREFIXES` so the middleware forces `X-Org-Slug` resolution before any route logic runs.
 
 ## Testing
 
@@ -250,6 +315,6 @@ Don't wrap every domain function — noise hurts more than detail helps.
 4. Import webserver registry — `app.core.webserver` *before any module registers routes*.
 5. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.workspace`.
 6. Domain modules in dependency order — types first (vcs, memory), then coding_agent, then leaf domain modules, then dependents.
-7. Plugins — `in_process_workspace`, `claude_code`, `github`.
+7. Plugins — `in_memory_workspace`, `claude_code`, `github`.
 8. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 9. Build the FastAPI app — `webserver.create_app()`.

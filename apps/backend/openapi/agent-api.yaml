@@ -1,0 +1,568 @@
+openapi: 3.1.0
+info:
+  title: yaaos WorkspaceAgent wire protocol
+  version: 0.1.0
+  summary: |
+    HTTPS long-poll protocol between the customer-deployed WorkspaceAgent
+    (`apps/agent/`, Go) and the yaaos control plane (`core/agent_gateway`).
+
+    Five HTTPS endpoints carry command-and-control: identity exchange,
+    heartbeat (+ workspace inventory), command claim (long-poll),
+    workspace-state events, and AgentCommand events. A separate WebSocket
+    `WSS /api/v1/agents/{id}/activity` carries high-frequency CodingAgent
+    ActivityEvents back to the control plane; that channel is specified
+    alongside the M05 Phase 8b work and is intentionally out of this
+    file's current revision.
+
+    Every AgentCommand and AgentEvent carries `traceparent` (W3C trace
+    context) so spans nest correctly across the wire.
+
+    M05 Phase 5: hand-written. Future codegen (Pydantic on the backend,
+    oapi-codegen on the Go side) consumes this file; until then the
+    in-tree types under `app/core/agent_gateway/types.py` are the
+    canonical Pydantic mirror. A drift-detection test
+    (`app/core/agent_gateway/test/test_openapi_mirror_drift.py`, slice 66)
+    catches add/rename/remove between this spec and the Pydantic mirror.
+
+servers:
+  - url: https://agent.yaaos.dev
+    description: production
+  - url: http://localhost:8080
+    description: local dev
+
+paths:
+  /api/v1/identity/exchange:
+    post:
+      summary: Exchange a SigV4-signed STS request for a short-lived bearer.
+      description: |
+        Vault AWS-auth pattern. The agent submits a pre-signed
+        `GetCallerIdentity` request that the control plane replays to
+        AWS STS; on success it issues a bearer with the agent's
+        registered ARN. M05 Phase 5 ships a placeholder verifier that
+        accepts any non-empty `signed_request` and returns a bearer
+        scoped to the request-supplied `agent_pod_id`. The real STS
+        verifier lands in Phase 7.
+      operationId: exchangeIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityExchangeRequest'
+      responses:
+        '200':
+          description: Bearer issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityExchangeResponse'
+        '401':
+          description: Signature did not verify.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/agents/{agent_id}/heartbeat:
+    post:
+      summary: Supervisor liveness + workspace inventory reconciliation.
+      operationId: heartbeat
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatRequest'
+      responses:
+        '200':
+          description: Acknowledged. Body carries reconciliation hints.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/agents/{agent_id}/commands/claim:
+    post:
+      summary: Long-poll for an AgentCommand. Returns 204 when no work.
+      description: |
+        Long-poll up to ~30s (configurable via `wait_seconds`, capped at
+        55s). Returns a single AgentCommand when one becomes available;
+        otherwise 204 No Content so the agent can re-arm the poll.
+      operationId: claimCommand
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+      responses:
+        '200':
+          description: AgentCommand to execute.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentCommand'
+        '204':
+          description: No work available within `wait_seconds`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/workspaces/{workspace_id}/events:
+    post:
+      summary: Report a workspace-state transition scoped to a command_id.
+      description: |
+        The supervisor reports workspace state changes (created, expired,
+        destroyed, failed) so the control plane can update its mirror.
+        Scoped to the `command_id` that drove the transition so the
+        stale-claim guard can fail mismatched events with 410.
+      operationId: postWorkspaceEvent
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceEvent'
+      responses:
+        '200':
+          description: Accepted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/StaleClaim'
+
+  /api/v1/commands/{command_id}/events:
+    post:
+      summary: Report AgentCommand progress + terminal result.
+      description: |
+        Triggers `core/workflow.handle_agent_event` when the event is
+        terminal. The control plane validates `command_id` against the
+        workspace's `current_command_id` (single-flight claim); a stale
+        command (workspace already moved on) returns 410.
+      operationId: postCommandEvent
+      parameters:
+        - $ref: '#/components/parameters/CommandId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentEvent'
+      responses:
+        '200':
+          description: Accepted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/StaleClaim'
+
+components:
+  parameters:
+    AgentId:
+      name: agent_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CommandId:
+      name: command_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    StaleClaim:
+      description: The supplied command_id no longer holds the workspace claim. Agent abandons silently.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+
+    IdentityExchangeRequest:
+      type: object
+      required: [agent_pod_id, signed_request]
+      properties:
+        agent_pod_id:
+          type: string
+          format: uuid
+          description: Stable id generated by the agent pod at startup.
+        version:
+          type: string
+          description: Agent binary version.
+        signed_request:
+          type: string
+          description: |
+            Base64-encoded SigV4-signed STS GetCallerIdentity payload.
+            Phase 5 placeholder verifier accepts any non-empty value;
+            Phase 7 wires the real STS replay.
+
+    IdentityExchangeResponse:
+      type: object
+      required: [bearer, expires_at, agent_id]
+      properties:
+        bearer:
+          type: string
+          description: Short-lived bearer to send in `Authorization` for all subsequent calls.
+        expires_at:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+          format: uuid
+          description: |
+            Per-pod row id in `workspace_agents`. Stable for the lifetime
+            of the pod; recycled when the pod restarts and a new bearer
+            is exchanged.
+
+    HeartbeatRequest:
+      type: object
+      required: [reported_at, workspaces]
+      properties:
+        reported_at:
+          type: string
+          format: date-time
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeartbeatWorkspaceEntry'
+
+    HeartbeatWorkspaceEntry:
+      type: object
+      required: [workspace_id, status]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: Agent-side workspace status — `running | exited | unknown`.
+        current_command_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    HeartbeatResponse:
+      type: object
+      required: [reconciled_at]
+      properties:
+        reconciled_at:
+          type: string
+          format: date-time
+        forgotten_workspaces:
+          type: array
+          description: Workspaces the control plane no longer knows about; agent should clean them up.
+          items:
+            type: string
+            format: uuid
+
+    ClaimRequest:
+      type: object
+      required: [wait_seconds]
+      properties:
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 55
+          description: Long-poll horizon. 0 returns immediately if no work.
+
+    AgentCommand:
+      oneOf:
+        - $ref: '#/components/schemas/CreateWorkspaceCommand'
+        - $ref: '#/components/schemas/WriteFilesCommand'
+        - $ref: '#/components/schemas/RefreshWorkspaceAuthCommand'
+        - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
+        - $ref: '#/components/schemas/CleanupWorkspaceCommand'
+      discriminator:
+        propertyName: kind
+        mapping:
+          CreateWorkspace: '#/components/schemas/CreateWorkspaceCommand'
+          WriteFiles: '#/components/schemas/WriteFilesCommand'
+          RefreshWorkspaceAuth: '#/components/schemas/RefreshWorkspaceAuthCommand'
+          InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
+          CleanupWorkspace: '#/components/schemas/CleanupWorkspaceCommand'
+
+    CommandBase:
+      type: object
+      required: [command_id, workspace_id, traceparent]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        traceparent:
+          type: string
+          description: W3C trace context the agent restores when emitting child spans.
+
+    CreateWorkspaceCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind, repo, history, auth, ttl_seconds, max_idle_seconds]
+          properties:
+            kind:
+              type: string
+              enum: [CreateWorkspace]
+            repo:
+              type: object
+              required: [plugin_id, external_id, clone_url, head_sha]
+              properties:
+                plugin_id:
+                  type: string
+                external_id:
+                  type: string
+                clone_url:
+                  type: string
+                head_sha:
+                  type: string
+                base_sha:
+                  type: string
+                  nullable: true
+                branch_name:
+                  type: string
+                  nullable: true
+            history:
+              type: integer
+              description: Shallow-clone depth.
+              minimum: 1
+            auth:
+              type: object
+              required: [kind, token]
+              properties:
+                kind:
+                  type: string
+                  enum: [github_installation, oauth]
+                token:
+                  type: string
+                  description: Treated as a secret; never logged in cleartext.
+            ttl_seconds:
+              type: integer
+              minimum: 60
+            max_idle_seconds:
+              type: integer
+              minimum: 60
+
+    WriteFilesCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind, files]
+          properties:
+            kind:
+              type: string
+              enum: [WriteFiles]
+            files:
+              type: array
+              items:
+                type: object
+                required: [path, content]
+                properties:
+                  path:
+                    type: string
+                    description: |
+                      Workspace-relative path. Supervisor rejects `..`
+                      escapes and absolute paths before writing.
+                  content:
+                    type: string
+                  mode:
+                    type: string
+                    description: POSIX file mode (e.g. `0644`).
+
+    RefreshWorkspaceAuthCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind, new_token]
+          properties:
+            kind:
+              type: string
+              enum: [RefreshWorkspaceAuth]
+            new_token:
+              type: string
+
+    InvokeClaudeCodeCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind, invocation, limits]
+          properties:
+            kind:
+              type: string
+              enum: [InvokeClaudeCode]
+            invocation:
+              type: object
+              description: |
+                Claude-Code-specific payload owned by `domain/coding_agent`.
+                Carries the cross-language contract (mode + context +
+                prompt_config) plus an `exec` block with the literal
+                argv + stdin + env the Go agent feeds to
+                `workspace.RunStreaming`. The agent reads `exec` and
+                ignores the contract-surface fields — they're there for
+                observability + future Pydantic-codegen.
+              properties:
+                mode:
+                  type: string
+                  enum: [review, incremental_review, verify_fix, stale_check, answer_question]
+                context:
+                  type: object
+                  description: The mode-specific Pydantic context dumped as JSON.
+                prompt_config:
+                  type: object
+                  properties:
+                    model:
+                      type: string
+                    effort:
+                      type: string
+                exec:
+                  type: object
+                  required: [argv, stdin, env]
+                  properties:
+                    argv:
+                      type: array
+                      items: { type: string }
+                      description: |
+                        Full command + flags. argv[0] is the binary name
+                        (`claude`) — resolved via PATH in the Go agent's
+                        runtime image.
+                    stdin:
+                      type: string
+                      description: |
+                        Fully-rendered prompt body (incl. the schema
+                        appendix that constrains the agent's response
+                        to a strict JSON shape).
+                    env:
+                      type: object
+                      additionalProperties: { type: string }
+                      description: |
+                        Secrets the agent merges into the subprocess
+                        environment (e.g. ANTHROPIC_API_KEY).
+            mcp_servers:
+              type: array
+              items:
+                type: object
+            limits:
+              type: object
+              required: [wallclock_seconds]
+              properties:
+                wallclock_seconds:
+                  type: integer
+                  minimum: 1
+            result_spec:
+              type: object
+              description: Where the supervisor delivers raw output (typically `stdout`).
+
+    CleanupWorkspaceCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [CleanupWorkspace]
+
+    AgentEvent:
+      type: object
+      required: [command_id, kind, reported_at, traceparent]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          description: Which AgentCommand this event reports against.
+        kind:
+          type: string
+          enum:
+            - progress
+            - completed_success
+            - completed_failure
+            - completed_skipped
+          description: |
+            Progress is non-terminal. `completed_*` is terminal — the
+            backend then resolves the event-to-workflow lookup chain
+            (`command_id → workspace → current_holder_workflow_id`) and
+            enqueues `core/workflow.handle_agent_event`.
+        outcome_label:
+          type: string
+          nullable: true
+          description: Free-form label set on terminal events (`success | failure | <recovery-label>`).
+        outputs:
+          type: object
+          description: Per-command typed outputs.
+        failure_reason:
+          type: string
+          nullable: true
+        attempt:
+          type: integer
+          minimum: 0
+          description: Used by the stale-claim guard alongside command_id.
+        reported_at:
+          type: string
+          format: date-time
+        traceparent:
+          type: string
+
+    WorkspaceEvent:
+      type: object
+      required: [workspace_id, command_id, kind, reported_at]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        command_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [created, ready, exited, destroyed, failed]
+        message:
+          type: string
+        reported_at:
+          type: string
+          format: date-time

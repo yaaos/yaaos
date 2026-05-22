@@ -129,7 +129,7 @@ async def public_route() -> None:
     """FastAPI dependency for routes that have no auth requirement. Sets
     `route_security_resolved = "public"` so the middleware's post-response
     guard recognizes the declaration. Lives in `core/auth` (not
-    `domain/auth`) so non-domain modules can use it without a layering
+    `domain/sessions`) so non-domain modules can use it without a layering
     cycle."""
     route_security_resolved.set("public")
 

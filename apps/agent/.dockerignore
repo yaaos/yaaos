@@ -1,0 +1,8 @@
+# Keep the build context lean — Docker copies the whole `apps/agent`
+# directory unless filtered here.
+bin/
+docs/
+*.md
+*.test
+*.out
+.DS_Store

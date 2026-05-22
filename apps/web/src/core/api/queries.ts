@@ -402,3 +402,60 @@ export function usePluginHealth(pluginId: string) {
     refetchInterval: 10_000,
   });
 }
+
+// ── Org settings (workspace_provider + registered_iam_arn) ──────────────
+
+export type WorkspaceProvider = "in_memory" | "remote_agent";
+
+export type OrgSettings = {
+  slug: string;
+  session_timeout_override: number | null;
+  workspace_provider: WorkspaceProvider | null;
+  registered_iam_arn: string | null;
+};
+
+export function useOrgSettings() {
+  return useQuery<OrgSettings>({
+    queryKey: ["org-settings"],
+    queryFn: () => apiFetch<OrgSettings>("/api/orgs"),
+  });
+}
+
+export type UpdateOrgSettingsInput = {
+  workspace_provider?: WorkspaceProvider | null;
+  registered_iam_arn?: string | null;
+};
+
+export function useUpdateOrgSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateOrgSettingsInput) =>
+      apiFetch<OrgSettings>("/api/orgs", {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["org-settings"] });
+      qc.invalidateQueries({ queryKey: ["workspace-connection-status"] });
+    },
+  });
+}
+
+// ── Workspace connection status (heartbeat banner) ──────────────────────
+
+export type WorkspaceConnectionState = "connected" | "lost" | "not_configured";
+
+export type WorkspaceConnectionStatus = {
+  state: WorkspaceConnectionState;
+  pod_count: number;
+  latest_heartbeat_at: string | null;
+};
+
+export function useWorkspaceConnectionStatus(enabled = true) {
+  return useQuery<WorkspaceConnectionStatus>({
+    queryKey: ["workspace-connection-status"],
+    queryFn: () => apiFetch<WorkspaceConnectionStatus>("/api/workspaces/connection_status"),
+    refetchInterval: 3_000,
+    enabled,
+  });
+}

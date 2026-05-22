@@ -17,7 +17,7 @@ Exported from `app/domain/orgs/__init__.py`:
 - Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
 - Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.
 
-HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to break the `domain.orgs ↔ domain.auth` import cycle):
+HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to break the `domain.orgs ↔ domain.sessions` import cycle):
 
 | Method | Path | Action |
 |---|---|---|
@@ -34,12 +34,20 @@ HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to brea
 | PATCH  | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — replace settings. |
 | DELETE | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — uninstall. |
 | PATCH  | `/api/orgs`                     | `ORG_SETTINGS_WRITE` — update top-level org settings (today: `session_timeout_override`). |
+| GET    | `/api/byok`                     | `BYOK_READ` — list providers with status (`configured` / `not_set`) + timestamps. |
+| POST   | `/api/byok/{provider}`          | `BYOK_WRITE` — set/update the encrypted key for a provider. |
+| POST   | `/api/byok/{provider}/validate` | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
+| DELETE | `/api/byok/{provider}`          | `BYOK_WRITE` — remove the row. |
 
 SSO endpoints land in Phase 12.
 
+### BYOK routes
+
+The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here because BYOK keys are per-org and the routes need `domain/sessions` deps; `core/byok` stays free of HTTP. Plaintext crosses the boundary only inbound on `POST {provider}` — `GET` returns `configured` / `not_set` only. The provider list is sourced from `core/byok`'s validator registry: a plugin registering its validator auto-surfaces here.
+
 ### Session-timeout override
 
-`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`domain/auth`](domain_auth.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
+`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`domain/sessions`](domain_sessions.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
 
 ### VCS
 
@@ -88,7 +96,7 @@ Both write `membership/role_changed` or `membership/removed` audit entries with 
 
 ### Import-cycle break
 
-`domain.orgs.web` imports `domain.auth.dependencies` (for `require`, `public_route`, `current_actor`). `domain.auth.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/main.py` after both modules have finished loading.
+`domain.orgs.web` imports `domain.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `domain.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/main.py` after both modules have finished loading.
 
 ## Data owned
 

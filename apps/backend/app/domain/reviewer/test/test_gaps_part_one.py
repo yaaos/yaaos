@@ -4,8 +4,6 @@ Each test pins one specific behavior the plan requires. They start failing,
 get fixed in the same commit, and stay green going forward.
 
 Covered:
-- `superseded_by_review_id` populated when `schedule_review` cancels an
-  in-flight review (plan §6.3 / §7).
 - Off-diff finding suppression (plan §10.9): findings on files NOT in the
   current diff get dropped by the aggregate.
 - Cross-file dedup (plan §10.8): when N findings share a rule_id via
@@ -22,7 +20,6 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-from app.core.audit_log import Actor
 from app.domain.reviewer.aggregate import PRReviewAggregate, RawFinding
 from app.domain.reviewer.types import (
     CodeAnchor,
@@ -143,72 +140,6 @@ def test_cross_file_dedup_carries_file_list() -> None:
     assert "src/a.py" in survivor.body
     assert "src/b.py" in survivor.body
     assert "src/c.py" in survivor.body
-
-
-# ─── superseded_by_review_id (plan §6.3 / §7) ──────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_schedule_review_sets_superseded_by_on_cancelled_inflight(db_session) -> None:  # type: ignore[no-untyped-def]
-    """When `schedule_review` cancels an in-flight review, the cancelled
-    row's `superseded_by_review_id` must point at the new one."""
-    from app.domain.reviewer.queue import schedule_review  # noqa: PLC0415
-
-    org_id = uuid.uuid4()
-    # Seed ticket + PR + an in-flight review.
-    ticket_id = uuid.uuid4()
-    pr_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            "INSERT INTO tickets"
-            " (id, org_id, source, source_external_id, title, status, plugin_id, repo_external_id)"
-            " VALUES (:id, :org_id, 'github_pr', 'acme/web#1', 't',"
-            "         'in_review', 'github', 'acme/web')"
-        ),
-        {"id": ticket_id, "org_id": org_id},
-    )
-    await db_session.execute(
-        text(
-            "INSERT INTO pull_requests"
-            " (id, org_id, ticket_id, plugin_id, external_id, repo_external_id, number, title, body,"
-            "  author_login, author_type, base_branch, head_branch, base_sha, head_sha,"
-            "  is_draft, is_fork, state, html_url)"
-            " VALUES (:id, :org_id, :tid, 'github', 'acme/web#1', 'acme/web', 1, 't', '',"
-            "         'dev', 'user', 'main', 'feature', 'b', 'h', false, false, 'open', 'https://x')"
-        ),
-        {"id": pr_id, "org_id": org_id, "tid": ticket_id},
-    )
-    # Link ticket → pr_id so schedule_review's ticket lookup resolves to a PR.
-    await db_session.execute(
-        text("UPDATE tickets SET pr_id = :pr_id WHERE id = :id"),
-        {"pr_id": pr_id, "id": ticket_id},
-    )
-    inflight_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            "INSERT INTO reviews (id, org_id, pr_id, sequence_number, status, trigger_reason, scope_kind, destination)"
-            " VALUES (:id, :org_id, :pr_id, 1, 'running', 'pr_ready', 'full', 'vcs')"
-        ),
-        {"id": inflight_id, "org_id": org_id, "pr_id": pr_id},
-    )
-    await db_session.commit()
-
-    new_id = await schedule_review(
-        ticket_id=ticket_id,
-        trigger_reason="manual_full",
-        actor=Actor.system(),
-        org_id=org_id,
-    )
-    assert new_id is not None
-    await db_session.commit()
-
-    superseded_by = (
-        await db_session.execute(
-            text("SELECT superseded_by_review_id FROM reviews WHERE id = :id"),
-            {"id": inflight_id},
-        )
-    ).scalar_one()
-    assert superseded_by == new_id
 
 
 # ─── Mid-band ack rationale (plan §6.4 step 4) ─────────────────────────────

@@ -79,7 +79,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--app-dir", "apps/backend"]
+# `--ws-ping-interval=30 --ws-ping-timeout=10` keeps the WorkspaceAgent
+# activity WebSocket alive behind ALB/nginx idle-timeouts (typically 60s);
+# see docs/setup.md § Networking.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--app-dir", "apps/backend", "--ws-ping-interval=30", "--ws-ping-timeout=10"]
 
 # ────────────────────────────────────────────────────────────────────────
 # Stage 3: backend CI image

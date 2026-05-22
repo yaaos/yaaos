@@ -48,9 +48,9 @@ from app.domain.orgs.vcs import (
     set_vcs,
 )
 
-# NOTE: `orgs.web` is registered from `main.py` (after `domain.auth` loads),
+# NOTE: `orgs.web` is registered from `main.py` (after `domain.sessions` loads),
 # not here — importing it from this __init__ would cycle through
-# `domain.auth.dependencies`, which imports from `domain.orgs`.
+# `domain.sessions.dependencies`, which imports from `domain.orgs`.
 
 __all__ = [
     "CodingAgentAlreadyInstalledError",

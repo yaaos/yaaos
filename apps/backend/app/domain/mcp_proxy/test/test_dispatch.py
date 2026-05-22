@@ -390,7 +390,7 @@ async def test_token_lifecycle_round_trip_revokes(db_session, stub_provider) -> 
     review, token = await _seed_review(db_session)
     await _seed_credential(db_session, org_id=review.org_id, last_refresh_status="failed")
 
-    n = await revoke_token(review.id)
+    n = await revoke_token(review.id, session=db_session)
     assert n == 1
 
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the security middleware mounted on the FastAPI app, the contextvars that thread `org_id` / `user_id` / `actor_kind` / `actor_id` through one request, and the central `Action` enum that names every distinct privilege check in the codebase. The dependency factories that actually resolve sessions and memberships live in [`domain/auth`](domain_auth.md) (they need `domain/identity` + `domain/orgs`); `core/auth` is the contract those deps render against.
+Owns the security middleware mounted on the FastAPI app, the contextvars that thread `org_id` / `user_id` / `actor_kind` / `actor_id` through one request, and the central `Action` enum that names every distinct privilege check in the codebase. The dependency factories that actually resolve sessions and memberships live in [`domain/sessions`](domain_sessions.md) (they need `domain/identity` + `domain/orgs`); `core/auth` is the contract those deps render against.
 
 ## Public interface
 
@@ -43,7 +43,7 @@ Only paths matching `M02_PROTECTED_PREFIXES` participate in the strict checks. L
 Single grep-able catalogue of every distinct privilege check. Adding a new endpoint that needs role gating means:
 
 1. Add the action to `Action` (e.g., `MEMBERS_INVITE = "members.invite"`).
-2. Map it to its minimum `Role` in `domain/auth/dependencies._REQUIRED_ROLE`.
+2. Map it to its minimum `Role` in `domain/sessions/dependencies._REQUIRED_ROLE`.
 3. Write `Depends(require(Action.MEMBERS_INVITE))` on the route.
 
 A unit test asserts every `Action` member has a matching `_REQUIRED_ROLE` entry; forgetting the mapping breaks CI.
@@ -81,7 +81,7 @@ None.
 
 ## How it's tested
 
-`apps/backend/app/domain/auth/test/test_middleware.py` exercises every middleware behavior via an ad-hoc FastAPI app driven by `httpx.AsyncClient` over an ASGI transport (asyncpg refuses to straddle event loops, so `fastapi.testclient.TestClient` is unsuitable).
+`apps/backend/app/domain/sessions/test/test_middleware.py` exercises every middleware behavior via an ad-hoc FastAPI app driven by `httpx.AsyncClient` over an ASGI transport (asyncpg refuses to straddle event loops, so `fastapi.testclient.TestClient` is unsuitable).
 
 Coverage:
 - Missing `X-Org-Slug` → 400.

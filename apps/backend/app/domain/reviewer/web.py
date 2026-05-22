@@ -8,20 +8,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.audit_log import Actor
 from app.core.auth import public_route
 from app.core.database import session
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
-from app.domain.reviewer.queue import (
-    ReviewJob,
-    cancel_pending,
-    list_review_jobs_for_pr,
-    metrics_summary,
-    schedule_review,
-    startup_recovery,
-)
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.review_job import ReviewJob
 from app.domain.reviewer.service import (
     all_conversations_view,
     list_findings_view,
@@ -41,47 +33,116 @@ class RereviewRequest(BaseModel):
 
 @router.post("/rereview")
 async def rereview_ticket(req: RereviewRequest) -> dict[str, Any]:
+    """Re-review a ticket — drives `pr_review_v1` via the M05 workflow engine.
+
+    Replaces the legacy `schedule_review` / `review_jobs` flow. The SPA's
+    only contract with this endpoint is the `scheduled_count` field; the
+    response now carries `workflow_execution_id` instead of `review_job_id`
+    so the caller can poll workflow state if desired.
+    """
     try:
         await tickets.get(req.ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-    job_id = await schedule_review(
-        ticket_id=req.ticket_id,
-        trigger_reason="ui_button",
-        actor=Actor.system(),
-        org_id=M01_ORG_ID,
-    )
+
+    # Read ticket context via the workflow-context provider (registered at
+    # domain/reviewer bootstrap). Routes the same path intake uses, so the
+    # workflow engine receives a payload-derived `$ticket.*` view + the
+    # right org id without re-fetching here.
+    from app.core.workflow import get_engine  # noqa: PLC0415
+    from app.core.workspace import get_workflow_context_provider  # noqa: PLC0415
+
+    provider = get_workflow_context_provider()
+    if provider is None:
+        raise HTTPException(
+            status_code=500,
+            detail="workflow context provider not registered",
+        )
+    ctx = await provider.get_workspace_ticket_context(req.ticket_id)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with session() as s:
+        workflow_execution_id = await get_engine().start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(req.ticket_id),
+            workspace_provider="in_memory",
+            ticket_payload=dict(ctx.payload),
+            session=s,
+        )
+        await s.commit()
+
     return {
-        "scheduled_count": 1 if job_id else 0,
-        "review_job_id": str(job_id) if job_id else None,
+        "scheduled_count": 1,
+        "workflow_execution_id": workflow_execution_id,
     }
 
 
 @router.post("/cancel")
 async def cancel_jobs(ticket_id: UUID) -> dict[str, int]:
-    """Cancel queued/running review jobs for a ticket."""
+    """Cancel any non-terminal workflow_executions for this ticket.
+
+    The legacy `review_jobs` cancel path was retired with the queue.py
+    dismantle (slice 60); now `workflow.request_cancel` is the single
+    source of truth. The engine transitions the workflow to `cancelled`
+    at its next step boundary.
+    """
     try:
         await tickets.get(ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-    n = await cancel_pending(ticket_id, actor=Actor.system(), org_id=M01_ORG_ID, reason="ui_cancel")
-    return {"cancelled_count": n}
+
+    from app.domain.reviewer import cancel_workflows_for_ticket  # noqa: PLC0415
+
+    cancelled = await cancel_workflows_for_ticket(ticket_id)
+    return {"cancelled_count": cancelled}
 
 
 @router.get("/jobs/by-ticket/{ticket_id}")
 async def jobs_by_ticket(ticket_id: UUID) -> list[ReviewJob]:
+    """Per-ticket review history.
+
+    Reads from `workflow_executions` for this ticket, projected into the
+    `ReviewJob` shape via `workflow_review_view`. Newest first. The
+    legacy `review_jobs` merge was dropped with the queue.py dismantle
+    (slice 60) — that table is no longer written by any code path.
+    """
+    from app.domain.reviewer.workflow_review_view import (  # noqa: PLC0415
+        list_review_jobs_for_ticket as list_workflow_jobs,
+    )
+
     try:
         t = await tickets.get(ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-    if t.pr_id is None:
-        return []
-    return await list_review_jobs_for_pr(t.pr_id, org_id=M01_ORG_ID)
+
+    # Workflow projection needs a PR id to populate `pr_id`. Use the
+    # ticket's pr_id if present; otherwise zero-UUID (SPA tolerates).
+    pr_id_for_projection = t.pr_id or UUID(int=0)
+    rows = await list_workflow_jobs(ticket_id, pr_id=pr_id_for_projection, org_id=M01_ORG_ID)
+    rows.sort(key=lambda j: j.scheduled_at, reverse=True)
+    return rows
 
 
 @router.get("/metrics")
 async def metrics() -> dict[str, Any]:
-    return await metrics_summary(org_id=M01_ORG_ID)
+    """Aggregate review counters, sourced from `workflow_executions` via
+    the workflow_review_view projection. The legacy `review_jobs` source
+    was dropped with the queue.py dismantle (slice 60)."""
+    from app.domain.reviewer.workflow_review_view import (  # noqa: PLC0415
+        workflow_metrics_summary,
+    )
+
+    workflow = await workflow_metrics_summary(org_id=M01_ORG_ID)
+    by_status: dict[str, int] = dict(workflow.get("review_jobs_by_status") or {})
+    posted = workflow.get("total_reviews_posted") or 0
+    failed = workflow.get("failure_count") or 0
+    return {
+        "review_jobs_by_status": by_status,
+        "total_reviews_posted": posted,
+        "failure_count": failed,
+        "failure_rate": (failed / (posted + failed)) if (posted + failed) > 0 else 0.0,
+    }
 
 
 @router.get("/findings/by-ticket/{ticket_id}")
@@ -276,6 +337,5 @@ register_routes(
     RouteSpec(
         module_name="reviewer",
         router=router,
-        on_startup=[startup_recovery],
     )
 )

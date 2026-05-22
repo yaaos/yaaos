@@ -7,7 +7,9 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.domain.mcp_proxy.service import consume_broken_creds, record_broken_creds
-from app.domain.reviewer.queue import _prefix_broken_creds_warning
+from app.domain.reviewer.mcp_wiring import (
+    prefix_broken_creds_warning as _prefix_broken_creds_warning,
+)
 
 
 def test_no_providers_returns_body_unchanged() -> None:

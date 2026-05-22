@@ -22,10 +22,10 @@ from app.core.auth.context import org_id_var, user_id_var
 from app.core.auth.types import Action
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.auth.dependencies import current_actor, require
 from app.domain.coding_agent import PluginNotFoundError
 from app.domain.coding_agent import get_plugin as get_coding_agent_plugin
 from app.domain.orgs import coding_agents as ca_service
+from app.domain.sessions.dependencies import current_actor, require
 
 log = structlog.get_logger("orgs.coding_agents.web")
 

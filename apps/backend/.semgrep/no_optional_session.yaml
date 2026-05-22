@@ -1,0 +1,18 @@
+rules:
+  - id: no-optional-async-session
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Service functions must take a required `session: AsyncSession` parameter
+      and never commit. Orchestrators (endpoint handlers, `spawn()` task bodies,
+      periodic-task entrypoints) open `db_session()` and commit. See
+      `apps/backend/docs/patterns.md` § Session management + atomicity.
+    pattern-either:
+      - pattern: |
+          def $F(..., session: AsyncSession | None = ..., ...): ...
+      - pattern: |
+          async def $F(..., session: AsyncSession | None = ..., ...): ...
+      - pattern: |
+          def $F(..., session: AsyncSession | None, ...): ...
+      - pattern: |
+          async def $F(..., session: AsyncSession | None, ...): ...

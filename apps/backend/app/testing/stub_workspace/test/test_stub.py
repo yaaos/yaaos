@@ -13,7 +13,7 @@ from app.core.workspace import (
     register_workspace_provider,
 )
 from app.core.workspace.service import _PROVIDERS, _reset_providers_for_tests
-from app.plugins.in_process_workspace import get_provider as get_in_process_provider
+from app.plugins.in_memory_workspace import get_provider as get_in_process_provider
 from app.testing.stub_workspace import (
     StubWorkspaceProvider,
     wrap_all_registered_workspace_providers,
