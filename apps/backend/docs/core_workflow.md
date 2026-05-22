@@ -63,6 +63,15 @@ Exports `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `Outcom
 
 Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; `handle_agent_event` is enqueued when the terminal event arrives at `core/agent_gateway`; `route_workflow` does the routing. Workers stay free during the wait. See [architecture.md § Why three tasks (not two)](../../../plan/milestones/M05-workspace-agent/architecture.md#why-three-tasks-not-two).
 
+### Input-expression resolver
+
+`Step.inputs: dict[str, Any]` values can be literal or reference shorthand. Supported `$`-prefixed shapes resolved by `_resolve_input_expression`:
+
+- `$<step_id>.<field>` — value from a prior step's `outputs` dict. Returns None if the step hasn't completed or the field is absent.
+- `$ticket.<field>` — value from the ticket payload stashed at `engine.start(ticket_payload=...)` time. Returns None when the caller didn't supply a payload or the field isn't present.
+
+Anything else passes through verbatim (literals).
+
 ### Recovery-policy insertion (Tier-1)
 
 Before Tier-2 retry / Tier-3 transition, `route_workflow` checks the failed step's `outcome_label` against `core/workspace.get_recovery_policy(label)`. When a policy is registered (boot ships `auth_expired → RefreshWorkspaceAuth`), the engine:

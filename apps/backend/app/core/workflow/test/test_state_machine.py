@@ -787,3 +787,92 @@ async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
     assert len(review_calls) == 2
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_ticket_payload_resolved_in_step_inputs(db_session) -> None:
+    """`$ticket.<field>` resolves from the payload stashed at engine.start()
+    time. Lets workflow definitions pass ticket fields into Local commands
+    without each body re-fetching from the DB."""
+    captured: list[dict[str, Any]] = []
+
+    class _CaptureInputs:
+        kind = "CaptureInputs"
+        category = CommandCategory.LOCAL
+        restart_safe = True
+
+        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+            del ctx
+            captured.append(dict(inputs))
+            return Outcome.success()
+
+    wf = Workflow(
+        name="payload-1",
+        version=1,
+        steps=(
+            Step(
+                id="capture",
+                command_kind="CaptureInputs",
+                inputs={
+                    "sha": "$ticket.head_sha",
+                    "missing": "$ticket.does_not_exist",
+                    "from_step": "$ticket.author",
+                },
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+        ),
+        entry_step_id="capture",
+    )
+    eng = _engine_with(_CaptureInputs(), workflow=wf)
+    exec_id = await eng.start(
+        workflow_name="payload-1",
+        ticket_id=_ticket_id(),
+        ticket_payload={"head_sha": "deadbeef", "author": "alice"},
+        session=db_session,
+    )
+    await db_session.commit()
+    await _drain_workflow_outbox(db_session)
+
+    assert len(captured) == 1
+    assert captured[0]["sha"] == "deadbeef"
+    assert captured[0]["from_step"] == "alice"
+    assert captured[0]["missing"] is None
+
+    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+    assert wfx.state == WorkflowState.DONE.value
+
+
+@pytest.mark.asyncio
+async def test_ticket_payload_missing_when_not_supplied(db_session) -> None:
+    """Engine.start without ticket_payload → $ticket.<field> resolves to None."""
+    captured: list[Any] = []
+
+    class _CaptureValue:
+        kind = "CaptureValue"
+        category = CommandCategory.LOCAL
+        restart_safe = True
+
+        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+            del ctx
+            captured.append(inputs.get("v"))
+            return Outcome.success()
+
+    wf = Workflow(
+        name="payload-2",
+        version=1,
+        steps=(
+            Step(
+                id="cap",
+                command_kind="CaptureValue",
+                inputs={"v": "$ticket.head_sha"},
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+        ),
+        entry_step_id="cap",
+    )
+    eng = _engine_with(_CaptureValue(), workflow=wf)
+    await eng.start(workflow_name="payload-2", ticket_id=_ticket_id(), session=db_session)
+    await db_session.commit()
+    await _drain_workflow_outbox(db_session)
+
+    assert captured == [None]

@@ -60,6 +60,7 @@ _AFTER_APPEND_KEY = "__after_append__"
 _ATTEMPTS_KEY = "__attempts__"
 _WORKSPACE_PROVIDER_KEY = "__workspace_provider__"
 _RECOVERED_STEPS_KEY = "__recovered_steps__"
+_TICKET_PAYLOAD_KEY = "__ticket_payload__"
 
 # Provider values stashed by `engine.start()`. The intake layer passes the
 # org's `workspace_provider` setting (or "in_memory" when unset). The Workspace
@@ -598,15 +599,29 @@ async def _enqueue_start_step(
 
 
 def _resolve_input_expression(wfx: WorkflowExecutionRow, expr: Any) -> Any:
-    """Resolve `$<step_id>.<field>` references from step_state. Anything
-    else passes through verbatim. Future expansion: `$ticket.<field>`
-    resolution against the ticket row."""
+    """Resolve workflow-input references. Anything not a `$`-prefixed string
+    passes through verbatim.
+
+    Supported shapes:
+    - `$<step_id>.<field>` — resolves from prior step's `outputs`. Returns
+      None if the step hasn't completed or the field isn't in outputs.
+    - `$ticket.<field>` — resolves from the ticket payload stashed at
+      `engine.start()` time (passed via the `ticket_payload` parameter,
+      typically by the intake layer that already has it in hand). Returns
+      None if `ticket_payload` wasn't supplied at start time or the field
+      isn't in the payload.
+    """
     if not isinstance(expr, str) or not expr.startswith("$"):
         return expr
     body = expr[1:]
     if "." not in body:
         return None
     head, tail = body.split(".", 1)
+    if head == "ticket":
+        payload = wfx.step_state.get(_TICKET_PAYLOAD_KEY)
+        if not isinstance(payload, dict):
+            return None
+        return payload.get(tail)
     bucket = wfx.step_state.get(head)
     if not isinstance(bucket, dict):
         return None
@@ -823,6 +838,7 @@ class WorkflowEngine:
         version: int | None = None,
         traceparent: str | None = None,
         workspace_provider: str | None = None,
+        ticket_payload: dict[str, Any] | None = None,
         session: AsyncSession,
     ) -> str:
         """Create a `workflow_executions` row in `pending` state, enqueue
@@ -835,7 +851,14 @@ class WorkflowEngine:
         commands run inline in the engine. When `remote_agent`, they
         dispatch over the wire and pause the workflow in `awaiting_agent`
         until the terminal AgentEvent arrives. Callers that don't know the
-        org's setting can pass None — the engine defaults to in_memory."""
+        org's setting can pass None — the engine defaults to in_memory.
+
+        `ticket_payload`: the ticket's intake payload dict. Stashed on the
+        execution row so workflow input expressions can reference
+        `$ticket.<field>` (e.g. `$ticket.head_sha`) without each step
+        re-fetching from the DB. Callers that have it in hand (intake
+        layer) pass it; callers without can omit — the resolver returns
+        None for missing fields."""
         wf = self.get_workflow(workflow_name, version=version)
         for step in wf.steps:
             self.get_command(step.command_kind)
@@ -843,6 +866,8 @@ class WorkflowEngine:
         initial_state: dict[str, Any] = {}
         if workspace_provider is not None:
             initial_state[_WORKSPACE_PROVIDER_KEY] = workspace_provider
+        if ticket_payload is not None:
+            initial_state[_TICKET_PAYLOAD_KEY] = dict(ticket_payload)
 
         row = WorkflowExecutionRow(
             ticket_id=ticket_id,
