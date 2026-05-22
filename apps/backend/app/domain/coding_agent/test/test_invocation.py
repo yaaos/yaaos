@@ -8,6 +8,7 @@ shape so an accidental change shows up loudly.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,8 +16,10 @@ from app.domain.coding_agent import (
     AnswerQuestionContext,
     FindingAnchor,
     InvocationMode,
+    ReviewContext,
     build_invocation,
 )
+from app.domain.vcs.types import Diff, VCSPullRequest
 
 
 def _ctx() -> AnswerQuestionContext:
@@ -67,3 +70,105 @@ def test_all_five_modes_typecheck() -> None:
     for mode in ("review", "incremental_review", "verify_fix", "stale_check", "answer_question"):
         m: InvocationMode = mode  # type: ignore[assignment]
         del m
+
+
+# ── exec block shape (slice 72) ─────────────────────────────────────────
+
+
+def test_exec_block_has_argv_stdin_env() -> None:
+    """`exec` is what the Go agent reads to spawn Claude Code. It must
+    carry the three fields `RunStreaming` expects + nothing else
+    (forward-compat — Go side decodes strict)."""
+    inv = build_invocation(mode="answer_question", context=_ctx(), anthropic_api_key="sk-test")
+    assert set(inv["exec"].keys()) == {"argv", "stdin", "env"}
+    assert isinstance(inv["exec"]["argv"], list)
+    assert isinstance(inv["exec"]["stdin"], str)
+    assert isinstance(inv["exec"]["env"], dict)
+
+
+def test_exec_argv_starts_with_claude_print_streamjson() -> None:
+    inv = build_invocation(mode="answer_question", context=_ctx(), anthropic_api_key="sk-test")
+    argv = inv["exec"]["argv"]
+    assert argv[0] == "claude"
+    assert "--print" in argv
+    assert "--output-format=stream-json" in argv
+    assert "--verbose" in argv
+    # Model + effort flags carry the prompt_config values.
+    i = argv.index("--model")
+    assert argv[i + 1] == "opus"
+    i = argv.index("--effort")
+    assert argv[i + 1] == "medium"
+
+
+def test_exec_argv_model_effort_overrides_propagate() -> None:
+    inv = build_invocation(
+        mode="answer_question", context=_ctx(), model="sonnet", effort="high", anthropic_api_key="sk"
+    )
+    argv = inv["exec"]["argv"]
+    i = argv.index("--model")
+    assert argv[i + 1] == "sonnet"
+    i = argv.index("--effort")
+    assert argv[i + 1] == "high"
+
+
+def test_exec_stdin_contains_prompt_and_schema_appendix() -> None:
+    """The rendered prompt is the question template + the schema footer.
+    Don't assert on the full text (the templates are versioned files we
+    edit independently) — just check the two markers we know must be
+    present for the agent to respond correctly."""
+    inv = build_invocation(mode="answer_question", context=_ctx(), anthropic_api_key="sk")
+    stdin = inv["exec"]["stdin"]
+    # The schema-appendix STRICT footer is the agent's response contract.
+    assert "Output Format (STRICT)" in stdin
+    # The context's question gets rendered into the prompt.
+    assert "why?" in stdin
+
+
+def test_exec_env_carries_anthropic_api_key() -> None:
+    inv = build_invocation(mode="answer_question", context=_ctx(), anthropic_api_key="sk-secret-abc")
+    assert inv["exec"]["env"] == {"ANTHROPIC_API_KEY": "sk-secret-abc"}
+
+
+def test_exec_env_empty_when_no_key_supplied() -> None:
+    """In-process plugin callers can omit the key (they load it from
+    settings themselves). Remote-agent callers MUST supply it or the
+    spawned `claude` won't authenticate — that's a caller-side check."""
+    inv = build_invocation(mode="answer_question", context=_ctx())
+    assert inv["exec"]["env"] == {}
+
+
+def test_exec_answer_question_uses_leaner_allowed_tools() -> None:
+    """answer_question drops `Task` from allowed-tools — the parent
+    answers directly, no subagent dispatch."""
+    inv = build_invocation(mode="answer_question", context=_ctx(), anthropic_api_key="sk")
+    argv = inv["exec"]["argv"]
+    tool_flag = next(a for a in argv if a.startswith("--allowed-tools="))
+    assert "Task" not in tool_flag
+
+
+def test_exec_review_uses_full_allowed_tools() -> None:
+    """Full review keeps `Task` so the parent can dispatch yaaos-* subagents."""
+    pr = VCSPullRequest(
+        plugin_id="github",
+        external_id="acme/web#1",
+        repo_external_id="acme/web",
+        number=1,
+        title="t",
+        body="b",
+        author_login="dev",
+        author_type="user",
+        base_branch="main",
+        head_branch="feature",
+        base_sha="b",
+        head_sha="h",
+        is_draft=False,
+        is_fork=False,
+        state="open",
+        html_url="https://x",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    ctx = ReviewContext(pr=pr, diff=Diff(raw="", files=[]), lessons=[])
+    inv = build_invocation(mode="review", context=ctx, anthropic_api_key="sk")
+    tool_flag = next(a for a in inv["exec"]["argv"] if a.startswith("--allowed-tools="))
+    assert "Task" in tool_flag

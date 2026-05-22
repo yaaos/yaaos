@@ -23,7 +23,7 @@ from uuid import UUID
 import httpx
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -50,6 +50,36 @@ from app.domain.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
     register_coding_agent_plugin,
+)
+from app.domain.coding_agent.prompts import (
+    AnswerQuestionDto as _AnswerQuestionDto,
+)
+from app.domain.coding_agent.prompts import (
+    FindingDraftList as _FindingDraftList,
+)
+from app.domain.coding_agent.prompts import (
+    StaleCheckDto as _StaleCheckDto,
+)
+from app.domain.coding_agent.prompts import (
+    VerifyFixDto as _VerifyFixDto,
+)
+from app.domain.coding_agent.prompts import (
+    assemble_answer_question_prompt as _assemble_answer_question_prompt,
+)
+from app.domain.coding_agent.prompts import (
+    assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
+)
+from app.domain.coding_agent.prompts import (
+    assemble_review_prompt as _assemble_review_prompt,
+)
+from app.domain.coding_agent.prompts import (
+    assemble_stale_check_prompt as _assemble_stale_check_prompt,
+)
+from app.domain.coding_agent.prompts import (
+    assemble_verify_fix_prompt as _assemble_verify_fix_prompt,
+)
+from app.domain.coding_agent.prompts import (
+    schema_appendix as _schema_appendix,
 )
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
@@ -88,252 +118,6 @@ def _pick_versioned_model(*candidates: str | None) -> str | None:
         return None
     versioned = next((c for c in non_empty if "-" in c), None)
     return versioned or non_empty[0]
-
-
-# ── Plugin-internal response schemas ──────────────────────────────────────────
-# These describe the JSON shape we ask Claude Code to emit. They never leak out
-# of this plugin — the public Protocol returns `ReviewResult` carrying a list
-# of `FindingDraft` (plan §10.1 schema; vcs.Finding translation lives in the
-# reviewer module, post-admission).
-
-
-class _FindingDraftDto(BaseModel):
-    """Schema the agent emits for both full review and incremental review (plan §10.1)."""
-
-    severity: Literal["blocker", "major", "minor", "nit"]
-    rule_id: str
-    title: str
-    body: str
-    concrete_failure_scenario: str
-    confidence: int
-    rationale: str
-    file_path: str
-    line_start: int
-    line_end: int
-    duplicate_of_rule_ids: list[str] = []
-
-
-class _FindingDraftList(BaseModel):
-    findings: list[_FindingDraftDto]
-
-
-class _VerifyFixDto(BaseModel):
-    still_present: bool
-    confidence: float
-    reasoning: str
-    observed_line: int | None = None
-
-
-class _StaleCheckDto(BaseModel):
-    still_applies: bool
-    confidence: float
-    reasoning: str
-
-
-class _AnswerQuestionDto(BaseModel):
-    """Single text reply the parent agent commits to posting back to the developer."""
-
-    answer: str
-
-
-# ── Prompt assembly ───────────────────────────────────────────────────────────
-
-# Versioned prompt files live next to this module (plan §8.3): one .md per
-# coding-agent task mode. `_load_prompt(name)` reads + caches them at import
-# time so the prompt content is reviewable in PRs (the files), and runtime
-# code stays small (no embedded multi-page f-strings).
-_PROMPTS_DIR = __file__.rsplit("/", 1)[0] + "/prompts"
-
-
-def _load_prompt(name: str) -> str:
-    """Read `prompts/{name}.md`. Caller may pass `.format(**vars)` afterward
-    if the template includes placeholders. POC: no jinja2 (jinja lives in
-    `core/llm` for the reviewer's direct-LLM prompts); these are simple
-    %-or-format templates because claude_code shells out to a CLI, not a
-    LangChain runnable.
-    """
-    with open(f"{_PROMPTS_DIR}/{name}.md", encoding="utf-8") as f:
-        return f.read()
-
-
-# Parent dispatcher prompt content lives in prompts/full_review.md.
-# Loaded once at module import for cheap reuse and reviewability.
-_PARENT_PROMPT_HEADER = _load_prompt("full_review")
-
-
-_MCP_BROKEN_CREDS_ADDENDUM = (
-    "If an MCP tool returns `not_connected` or `broken_creds`, note the missing "
-    "context in your review and continue."
-)
-
-
-def _assemble_review_prompt(ctx: ReviewContext) -> str:
-    parts: list[str] = [_PARENT_PROMPT_HEADER, ""]
-    mcp = ctx.agent_config.get("mcp") if isinstance(ctx.agent_config, dict) else None
-    if mcp and mcp.get("servers"):
-        provider_names = sorted(s["provider"] for s in mcp["servers"])
-        parts.extend(
-            [
-                "## MCP context servers",
-                "The following MCP servers are connected for this review and may be "
-                f"called via the `mcp__<server>__<tool>` toolset: {', '.join(provider_names)}.",
-                _MCP_BROKEN_CREDS_ADDENDUM,
-                "",
-            ]
-        )
-    if ctx.language_hint:
-        parts.extend(
-            [
-                "## Repository language",
-                f"This repository is primarily {ctx.language_hint}.",
-                "",
-            ]
-        )
-    parts.extend(
-        [
-            "## Pull request",
-            f"### Title\n{ctx.pr.title}",
-            f"### Description\n{ctx.pr.body or '(no description)'}",
-            "",
-            "## Branch",
-            f"- Base: `{ctx.pr.base_branch}` at `{ctx.pr.base_sha}` (the branch this PR will merge into)",
-            f"- HEAD: `{ctx.pr.head_branch}` at `{ctx.pr.head_sha}` (currently checked out)",
-            "",
-            "## How to inspect the changes",
-            "Run git commands yourself — the diff is NOT inlined below. You have Bash access "
-            "restricted to read-only git commands (`git diff`, `git log`, `git show`, `git blame`, "
-            "`git ls-files`, `git rev-parse`, `git status`). Useful starting points:",
-            "",
-            f"- `git diff {ctx.pr.base_sha}..HEAD --name-only` — list of changed files",
-            f"- `git diff {ctx.pr.base_sha}..HEAD --stat` — change summary by file",
-            f"- `git diff {ctx.pr.base_sha}..HEAD -- <path>` — diff for one file or directory",
-            f"- `git diff {ctx.pr.base_sha}..HEAD` — full diff (use sparingly on large PRs)",
-            "",
-            "Pass these instructions through to each subagent in its Task brief so the subagent "
-            "can pull only the slice of the diff it needs to review.",
-        ]
-    )
-    if ctx.lessons:
-        parts.extend(
-            [
-                "",
-                "## Lessons learned from past reviews",
-                "Apply these when reviewing this PR. Pass them to each subagent in its task brief.",
-                "",
-            ]
-        )
-        for lesson in ctx.lessons:
-            parts.append(f"### {lesson.title}\n_lesson_id: {lesson.id}_\n{lesson.body}")
-    # NOTE: `ctx.prior_yaaos_comment_bodies` is intentionally NOT surfaced to
-    # the agent on full review. The aggregate's fingerprint dedup (plan
-    # §10.10) handles re-emission: the same finding from a prior review
-    # silently re-observes (bumping `last_observed_review_id` + appending a
-    # `FindingObservation`). Telling the agent to "not duplicate" was
-    # fighting the persistence layer and starved the re-observation signal.
-    return "\n".join(parts)
-
-
-# ── Incremental review / verify_fix / stale_check prompt assembly ────────────
-
-
-_INCREMENTAL_PROMPT_HEADER = _load_prompt("incremental_review")
-
-
-def _assemble_incremental_review_prompt(ctx: IncrementalReviewContext) -> str:
-    parts: list[str] = [
-        _INCREMENTAL_PROMPT_HEADER.format(prev_sha=ctx.prev_sha, head_sha=ctx.head_sha),
-        "",
-        "## Pull request",
-        f"### Title\n{ctx.pr.title}",
-        f"### Description\n{ctx.pr.body or '(no description)'}",
-        "",
-        "## Scope",
-        f"- prev_sha: `{ctx.prev_sha}`",
-        f"- head_sha: `{ctx.head_sha}`",
-        f"- base branch: `{ctx.pr.base_branch}`",
-        "",
-        "## How to inspect the changes",
-        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} --name-only`",
-        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} --stat`",
-        f"- `git diff {ctx.prev_sha}..{ctx.head_sha} -- <path>`",
-    ]
-    if ctx.language_hint:
-        parts.extend(["", "## Repository language", f"This repository is primarily {ctx.language_hint}."])
-    if ctx.prior_open_finding_summaries:
-        parts.extend(["", "## Prior OPEN findings (do not re-raise — aggregate dedups on fingerprint)"])
-        for s in ctx.prior_open_finding_summaries[:30]:
-            parts.append(f"- {s[:200]}")
-    if ctx.prior_acknowledged_finding_summaries:
-        parts.extend(["", "## Prior ACKNOWLEDGED findings (NEVER re-raise — developer explicitly accepted)"])
-        for s in ctx.prior_acknowledged_finding_summaries[:30]:
-            parts.append(f"- {s[:200]}")
-    if ctx.lessons:
-        parts.extend(["", "## Lessons learned from past reviews"])
-        for lesson in ctx.lessons[:20]:
-            parts.append(f"### {lesson.title}\n_lesson_id: {lesson.id}_\n{lesson.body}")
-    return "\n".join(parts)
-
-
-_VERIFY_FIX_PROMPT = _load_prompt("verify_fix")
-
-
-def _assemble_verify_fix_prompt(ctx: VerifyFixContext) -> str:
-    return _VERIFY_FIX_PROMPT.format(
-        rule_id=ctx.original_rule_id,
-        title=ctx.original_finding_title,
-        body=ctx.original_finding_body,
-        original_code=ctx.original_code_snippet,
-        current_code=ctx.current_code_snippet,
-        file_path=ctx.current_anchor.file_path,
-        line_start=ctx.current_anchor.line_start,
-        line_end=ctx.current_anchor.line_end,
-    )
-
-
-_STALE_CHECK_PROMPT = _load_prompt("stale_check")
-
-
-def _assemble_stale_check_prompt(ctx: StaleCheckContext) -> str:
-    return _STALE_CHECK_PROMPT.format(
-        rule_id=ctx.original_rule_id,
-        title=ctx.original_finding_title,
-        body=ctx.original_finding_body,
-        current_code=ctx.current_code_snippet,
-        diff_summary=ctx.diff_summary,
-    )
-
-
-_ANSWER_QUESTION_PROMPT = _load_prompt("answer_question")
-
-
-def _assemble_answer_question_prompt(ctx: AnswerQuestionContext) -> str:
-    if ctx.prior_messages:
-        prior_thread = "\n".join(f"- [{m.author_kind}] {m.body}" for m in ctx.prior_messages)
-    else:
-        prior_thread = "_(no prior messages — this is the first reply on the finding)_"
-    return _ANSWER_QUESTION_PROMPT.format(
-        rule_id=ctx.original_rule_id,
-        title=ctx.original_finding_title,
-        body=ctx.original_finding_body,
-        file_path=ctx.current_anchor.file_path,
-        line_start=ctx.current_anchor.line_start,
-        line_end=ctx.current_anchor.line_end,
-        code_snippet=ctx.code_snippet,
-        prior_thread=prior_thread,
-        question=ctx.question,
-        base_sha=ctx.base_sha or "(unknown)",
-        head_sha=ctx.head_sha or "(unknown)",
-        language_hint=ctx.language_hint or "(unspecified)",
-    )
-
-
-def _schema_appendix(response_model: type[BaseModel]) -> str:
-    return (
-        "\n\n## Output Format (STRICT)\n\n"
-        "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
-        "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
-        f"{json.dumps(response_model.model_json_schema(), indent=2)}\n"
-    )
 
 
 # ── Stream-json parsing + per-event logging ───────────────────────────────────

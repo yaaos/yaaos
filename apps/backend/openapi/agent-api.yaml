@@ -439,10 +439,50 @@ components:
             invocation:
               type: object
               description: |
-                Claude-Code-specific payload — model, effort, prompt block,
-                subagent definitions, env vars. Schema owned by
-                `domain/coding_agent` and intentionally permissive at the
-                wire layer.
+                Claude-Code-specific payload owned by `domain/coding_agent`.
+                Carries the cross-language contract (mode + context +
+                prompt_config) plus an `exec` block with the literal
+                argv + stdin + env the Go agent feeds to
+                `workspace.RunStreaming`. The agent reads `exec` and
+                ignores the contract-surface fields — they're there for
+                observability + future Pydantic-codegen.
+              properties:
+                mode:
+                  type: string
+                  enum: [review, incremental_review, verify_fix, stale_check, answer_question]
+                context:
+                  type: object
+                  description: The mode-specific Pydantic context dumped as JSON.
+                prompt_config:
+                  type: object
+                  properties:
+                    model:
+                      type: string
+                    effort:
+                      type: string
+                exec:
+                  type: object
+                  required: [argv, stdin, env]
+                  properties:
+                    argv:
+                      type: array
+                      items: { type: string }
+                      description: |
+                        Full command + flags. argv[0] is the binary name
+                        (`claude`) — resolved via PATH in the Go agent's
+                        runtime image.
+                    stdin:
+                      type: string
+                      description: |
+                        Fully-rendered prompt body (incl. the schema
+                        appendix that constrains the agent's response
+                        to a strict JSON shape).
+                    env:
+                      type: object
+                      additionalProperties: { type: string }
+                      description: |
+                        Secrets the agent merges into the subprocess
+                        environment (e.g. ANTHROPIC_API_KEY).
             mcp_servers:
               type: array
               items:
