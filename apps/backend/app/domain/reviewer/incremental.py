@@ -23,7 +23,6 @@ from sqlalchemy import desc, select, update
 
 from app.core.audit_log import Actor
 from app.core.database import session as db_session
-from app.core.events import publish
 from app.core.observability import spawn
 from app.core.workspace import (
     NetworkPolicy,
@@ -64,17 +63,9 @@ from app.domain.reviewer.diff_utils import (
 from app.domain.reviewer.diff_utils import (
     ticket_skip_reason as _ticket_skip_reason,
 )
-from app.domain.reviewer.legacy_runner import _utcnow
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import ReviewRow
-from app.domain.reviewer.queue_events import (
-    ReviewJobActivity,
-    ReviewJobStatusChanged,
-)
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
-from app.domain.reviewer.review_job_transitions import (
-    set_step as _set_step,
-)
 from app.domain.reviewer.service import apply_stale_check_result, dispatch_audits, dispatch_events
 from app.domain.reviewer.trigger import (
     Debounce,
@@ -92,6 +83,27 @@ log = structlog.get_logger("reviewer.incremental")
 
 
 _DEBOUNCE_WINDOW_SECONDS = 30
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+async def _set_step(job_id: UUID, step: str, *, pr_id: UUID) -> None:
+    """Update `current_step` + heartbeat on the legacy `review_jobs` row.
+
+    Inlined from the now-deleted `review_job_transitions.set_step` (slice 60).
+    The `ReviewJobStepProgress` publish that used to fire here had zero
+    subscribers in production, so it was dropped with the queue.py dismantle.
+    """
+    del pr_id  # kept in the signature for callsite symmetry; not used now
+    async with db_session() as s:
+        await s.execute(
+            update(ReviewRow)
+            .where(ReviewRow.id == job_id)
+            .values(current_step=step, last_heartbeat_at=_utcnow())
+        )
+        await s.commit()
 
 
 async def handle_push(
@@ -236,7 +248,6 @@ async def _create_incremental_review(*, pr_id: UUID, org_id: UUID, prev_sha: str
             )
         )
         await s.commit()
-    await publish(ReviewJobStatusChanged(pr_id=pr_id, review_job_id=new_id, status="queued"))
     return new_id
 
 
@@ -268,7 +279,6 @@ async def _run_incremental_review(
                 .values(status="running", started_at=_utcnow(), current_step="resolving_entities")
             )
             await s.commit()
-        await publish(ReviewJobStatusChanged(pr_id=pr.id, review_job_id=review_id, status="running"))
 
         skip_reason = _ticket_skip_reason(pr, diff)
         if skip_reason is not None:
@@ -321,11 +331,13 @@ async def _run_incremental_review(
             await _set_step(review_id, "invoking_agent", pr_id=pr.id)
 
             async def _on_activity(event: Any) -> None:
-                await publish(
-                    ReviewJobActivity(
-                        pr_id=pr.id, review_job_id=review_id, event=event.model_dump(mode="json")
-                    )
-                )
+                # Activity-stream fan-out is handled by the M05 engine path
+                # (ActivityEvent → core/sse_pubsub, see commands/__init__.py).
+                # The legacy `ReviewJobActivity` event had no subscribers and
+                # was removed with the queue.py dismantle (slice 60). When
+                # incremental review moves to the engine path, it will inherit
+                # the SSE fan-out automatically.
+                del event
 
             result = await coding_agent.incremental_review(
                 plugin_id=_CODING_AGENT_PLUGIN_ID,
@@ -526,8 +538,6 @@ async def _run_incremental_review(
                 )
             )
             await s.commit()
-
-        await publish(ReviewJobStatusChanged(pr_id=pr.id, review_job_id=review_id, status="posted"))
 
         # Trigger-policy step 4: if pending_replay was set while we were
         # running, re-evaluate the trigger so a queued push gets picked up.

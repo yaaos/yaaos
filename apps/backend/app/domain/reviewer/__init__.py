@@ -52,26 +52,12 @@ from app.domain.reviewer.models import (
     FindingRow,
     ReviewRow,
 )
-from app.domain.reviewer.queue import (
-    cancel_pending,
-    schedule_review,
-    startup_recovery,
-)
-from app.domain.reviewer.queue_events import (
-    ReviewJobStatusChanged,
-)
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
 from app.domain.reviewer.review_job import (
     ReviewJob,
     ReviewJobInput,
-)
-from app.domain.reviewer.review_job_queries import (
-    get_review_job,
-    list_in_flight,
-    list_review_jobs_for_pr,
-    metrics_summary,
 )
 from app.domain.reviewer.service import (
     VERIFY_ACT_THRESHOLD,
@@ -172,7 +158,6 @@ __all__ = [
     "ReviewFailed",
     "ReviewJob",
     "ReviewJobInput",
-    "ReviewJobStatusChanged",
     "ReviewRequested",
     "ReviewRow",
     "ReviewScope",
@@ -196,14 +181,13 @@ __all__ = [
     "apply_classified_reply",
     "apply_stale_check_result",
     "apply_verify_fix_result",
-    "cancel_pending",
+    "cancel_workflows_for_ticket",
     "classify_reply",
     "compute_acceptance_rate",
     "compute_resolved_without_edit_rate",
     "decide_trigger",
     "dispatch_events",
     "get_review",
-    "get_review_job",
     "get_thread",
     "handle_developer_reply",
     "handle_push",
@@ -212,14 +196,9 @@ __all__ = [
     "is_yaaos_command",
     "list_findings_for_pr",
     "list_findings_view",
-    "list_in_flight",
-    "list_review_jobs_for_pr",
     "list_reviews_for_pr",
-    "metrics_summary",
     "review_summary",
-    "schedule_review",
     "start_pr_review",
-    "startup_recovery",
 ]
 
 
@@ -232,6 +211,46 @@ class _TicketWorkflowContextProvider:
         from app.domain.tickets.service import get_workspace_ticket_context  # noqa: PLC0415
 
         return await get_workspace_ticket_context(ticket_id)
+
+
+async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]
+    """Cancel any non-terminal `workflow_executions` rows for this ticket.
+
+    Replaces the legacy `cancel_pending` (which flipped `review_jobs` rows
+    + interrupted in-process asyncio tasks). The engine transitions each
+    affected workflow to `cancelled` at its next step boundary.
+
+    Returns the number of workflow rows that were transitioned to
+    `cancelled` (or had `cancel_requested` set, depending on engine state).
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.core.workflow import (  # noqa: PLC0415
+        TERMINAL_STATES,
+        WorkflowExecutionRow,
+        WorkflowState,
+        request_cancel,
+    )
+
+    cancelled = 0
+    async with db_session() as s:
+        rows = (
+            await s.execute(
+                select(WorkflowExecutionRow.id, WorkflowExecutionRow.state).where(
+                    WorkflowExecutionRow.ticket_id == ticket_id,
+                    WorkflowExecutionRow.state.notin_([st.value for st in TERMINAL_STATES]),
+                )
+            )
+        ).all()
+        for wfx_id, state in rows:
+            if WorkflowState(state) in TERMINAL_STATES:
+                continue
+            if await request_cancel(str(wfx_id), session=s):
+                cancelled += 1
+        if cancelled:
+            await s.commit()
+    return cancelled
 
 
 async def start_pr_review(

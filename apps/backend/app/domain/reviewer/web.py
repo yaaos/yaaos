@@ -8,21 +8,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.audit_log import Actor
 from app.core.auth import public_route
 from app.core.database import session
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
-from app.domain.reviewer.queue import (
-    cancel_pending,
-    startup_recovery,
-)
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.review_job import ReviewJob
-from app.domain.reviewer.review_job_queries import (
-    list_review_jobs_for_pr,
-    metrics_summary,
-)
 from app.domain.reviewer.service import (
     all_conversations_view,
     list_findings_view,
@@ -89,65 +80,32 @@ async def rereview_ticket(req: RereviewRequest) -> dict[str, Any]:
 
 @router.post("/cancel")
 async def cancel_jobs(ticket_id: UUID) -> dict[str, int]:
-    """Cancel queued/running review jobs AND any non-terminal workflow_executions
-    for this ticket.
+    """Cancel any non-terminal workflow_executions for this ticket.
 
-    Dual-write during the M05 transition: the legacy `cancel_pending` path
-    flips `review_jobs` rows and cancels in-process asyncio tasks; the new
-    `workflow.request_cancel` path sets the `cancel_requested` flag on
-    `workflow_executions` so the engine transitions the workflow to
-    `cancelled` at its next step boundary. Once the legacy review_jobs path
-    is retired this collapses to the engine call only.
+    The legacy `review_jobs` cancel path was retired with the queue.py
+    dismantle (slice 60); now `workflow.request_cancel` is the single
+    source of truth. The engine transitions the workflow to `cancelled`
+    at its next step boundary.
     """
     try:
         await tickets.get(ticket_id, org_id=M01_ORG_ID)
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-    n = await cancel_pending(ticket_id, actor=Actor.system(), org_id=M01_ORG_ID, reason="ui_cancel")
 
-    # Cancel any non-terminal workflow executions for the same ticket.
-    from sqlalchemy import select  # noqa: PLC0415
+    from app.domain.reviewer import cancel_workflows_for_ticket  # noqa: PLC0415
 
-    from app.core.workflow import (  # noqa: PLC0415
-        TERMINAL_STATES,
-        WorkflowExecutionRow,
-        WorkflowState,
-        request_cancel,
-    )
-
-    workflow_cancelled = 0
-    async with session() as s:
-        rows = (
-            await s.execute(
-                select(WorkflowExecutionRow.id, WorkflowExecutionRow.state).where(
-                    WorkflowExecutionRow.ticket_id == ticket_id,
-                    WorkflowExecutionRow.state.notin_([st.value for st in TERMINAL_STATES]),
-                )
-            )
-        ).all()
-        for wfx_id, state in rows:
-            if WorkflowState(state) in TERMINAL_STATES:
-                continue
-            if await request_cancel(str(wfx_id), session=s):
-                workflow_cancelled += 1
-        if workflow_cancelled:
-            await s.commit()
-
-    return {"cancelled_count": n + workflow_cancelled}
+    cancelled = await cancel_workflows_for_ticket(ticket_id)
+    return {"cancelled_count": cancelled}
 
 
 @router.get("/jobs/by-ticket/{ticket_id}")
 async def jobs_by_ticket(ticket_id: UUID) -> list[ReviewJob]:
     """Per-ticket review history.
 
-    During the queue.py dismantle (slices 40-50), merges two sources:
-    - Legacy `review_jobs` rows for the ticket's PR (any older runs
-      created before the M05 cut-over).
-    - `workflow_executions` rows for this ticket, projected into the
-      `ReviewJob` shape via `workflow_review_view`.
-
-    Newest first. Once migration 019 drops `review_jobs`, the first
-    source returns empty and only the workflow projection survives.
+    Reads from `workflow_executions` for this ticket, projected into the
+    `ReviewJob` shape via `workflow_review_view`. Newest first. The
+    legacy `review_jobs` merge was dropped with the queue.py dismantle
+    (slice 60) — that table is no longer written by any code path.
     """
     from app.domain.reviewer.workflow_review_view import (  # noqa: PLC0415
         list_review_jobs_for_ticket as list_workflow_jobs,
@@ -158,38 +116,27 @@ async def jobs_by_ticket(ticket_id: UUID) -> list[ReviewJob]:
     except tickets.TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
 
-    legacy: list[ReviewJob] = []
-    if t.pr_id is not None:
-        legacy = await list_review_jobs_for_pr(t.pr_id, org_id=M01_ORG_ID)
-
     # Workflow projection needs a PR id to populate `pr_id`. Use the
     # ticket's pr_id if present; otherwise zero-UUID (SPA tolerates).
     pr_id_for_projection = t.pr_id or UUID(int=0)
-    workflow = await list_workflow_jobs(ticket_id, pr_id=pr_id_for_projection, org_id=M01_ORG_ID)
-
-    # Merge + sort newest first by scheduled_at.
-    merged = legacy + workflow
-    merged.sort(key=lambda j: j.scheduled_at, reverse=True)
-    return merged
+    rows = await list_workflow_jobs(ticket_id, pr_id=pr_id_for_projection, org_id=M01_ORG_ID)
+    rows.sort(key=lambda j: j.scheduled_at, reverse=True)
+    return rows
 
 
 @router.get("/metrics")
 async def metrics() -> dict[str, Any]:
-    """Aggregate review counters. Sums both the legacy `review_jobs`
-    table + projected `workflow_executions` so the UI shows the full
-    picture during the dismantle window."""
+    """Aggregate review counters, sourced from `workflow_executions` via
+    the workflow_review_view projection. The legacy `review_jobs` source
+    was dropped with the queue.py dismantle (slice 60)."""
     from app.domain.reviewer.workflow_review_view import (  # noqa: PLC0415
         workflow_metrics_summary,
     )
 
-    legacy = await metrics_summary(org_id=M01_ORG_ID)
     workflow = await workflow_metrics_summary(org_id=M01_ORG_ID)
-
-    by_status: dict[str, int] = dict(legacy.get("review_jobs_by_status") or {})
-    for k, v in (workflow.get("review_jobs_by_status") or {}).items():
-        by_status[k] = by_status.get(k, 0) + v
-    posted = (legacy.get("total_reviews_posted") or 0) + (workflow.get("total_reviews_posted") or 0)
-    failed = (legacy.get("failure_count") or 0) + (workflow.get("failure_count") or 0)
+    by_status: dict[str, int] = dict(workflow.get("review_jobs_by_status") or {})
+    posted = workflow.get("total_reviews_posted") or 0
+    failed = workflow.get("failure_count") or 0
     return {
         "review_jobs_by_status": by_status,
         "total_reviews_posted": posted,
@@ -390,6 +337,5 @@ register_routes(
     RouteSpec(
         module_name="reviewer",
         router=router,
-        on_startup=[startup_recovery],
     )
 )

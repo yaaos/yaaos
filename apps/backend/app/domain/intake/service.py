@@ -199,7 +199,7 @@ async def _handle_pr_closed(event: PullRequestClosed, *, org_id: UUID) -> None:
         await tickets.complete(ticket.id, org_id=org_id)
         from app.domain import reviewer  # noqa: PLC0415
 
-        await reviewer.cancel_pending(ticket.id, actor=Actor.system(), org_id=org_id)
+        await reviewer.cancel_workflows_for_ticket(ticket.id)
 
 
 async def _handle_pr_reopened(event: PullRequestReopened, *, org_id: UUID) -> None:
@@ -242,12 +242,7 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
             )
             await s.commit()
         if cmd == "cancel":
-            await reviewer.cancel_pending(
-                ticket.id,
-                actor=Actor.github_user(event.author_login),
-                org_id=org_id,
-                reason="user_cancel_command",
-            )
+            await reviewer.cancel_workflows_for_ticket(ticket.id)
         elif cmd == "full review":
             # M05: engine path via start_pr_review (slice 59).
             await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
