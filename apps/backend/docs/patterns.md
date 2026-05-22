@@ -138,13 +138,33 @@ Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has r
 
 Task bodies must be idempotent — a drain crash between dispatch and `dispatched_at` stamp can redispatch. Bodies look up state from DB (don't carry "do this once" semantics in the args).
 
-## WorkflowCommand interface (M05 Phase 1+)
+## WorkflowCommand discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed data structures registered at startup; commands fall into three categories — Workspace, Local, HITL — with a single `execute()` returning a typed `Outcome`. See [plan/milestones/M05-workspace-agent/architecture.md § Workflow + WorkflowCommand model](../../../plan/milestones/M05-workspace-agent/architecture.md#workflow--workflowcommand-model) for the full design. Phase 0b ships the empty module skeleton; this section expands when Phase 1 lands.
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories with a single `execute(inputs, ctx) -> Outcome` shape:
 
-## WorkspaceProvider contract (M05 Phase 3+)
+- **Workspace** — issues one or more AgentCommands. `start_step` dispatches and parks the workflow in `awaiting_agent`; `handle_agent_event` resumes when the terminal event arrives. Worker never blocks on the agent.
+- **Local** — runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
+- **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 
-[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; two implementations ship in M05: `InMemoryWorkspaceProvider` (existing plugin, evolves) and `RemoteAgentWorkspaceProvider` (dispatches via [`core/agent_gateway`](core_agent_gateway.md)). The Protocol is the single seam between control plane and provider — both implementations enforce the same invariants (single-flight per workspace, failure-report-precedes-disposal, recovery policies). Phase 3 expands this section.
+Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
+
+### Single-flight per workspace
+
+The workspace state machine accepts one in-flight AgentCommand at a time. [`core/workspace.try_claim`](core_workspace.md) is an atomic conditional UPDATE that succeeds iff `current_command_id IS NULL` AND `status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off. Pair every claim with `release_claim(workspace_id, command_id=…)` once the terminal event has been observed.
+
+### Failure-report-precedes-disposal invariant
+
+`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal AgentEvent must arrive before the workspace row is disposed. This means reconciliation lookups can always resolve `command_id → workspace → current_holder_workflow_id → workflow_execution` — even after the workspace is being torn down.
+
+### Recovery policy registry
+
+AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workspace.register_recovery_policy`. The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original.
+
+## WorkspaceProvider contract
+
+[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; two implementations ship in M05: `InMemoryWorkspaceProvider` (existing in-process plugin) and `RemoteAgentWorkspaceProvider` (dispatches via [`core/agent_gateway`](core_agent_gateway.md)). The Protocol is the single seam between control plane and provider — both implementations enforce the same invariants (single-flight, failure-report-precedes-disposal, recovery). Per-org selection lives on `orgs.workspace_provider`.
+
+The Protocol's `run_coding_agent_cli` is synchronous-shaped — natural for the in-process provider, awkward for the remote provider. `RemoteAgentWorkspaceProvider` raises on those methods; the Phase 4 Workspace WorkflowCommands enqueue AgentCommands directly and the engine handles awaits through `handle_agent_event`. The Protocol shape is preserved for compatibility with the M01 callers that still rely on the in-process path.
 
 ## Audit log discipline
 

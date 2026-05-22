@@ -170,17 +170,17 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 
 ## Phase 10 — docs + completeness audit + CI green
 
-- [ ] Per-module docs: `core_agent_gateway.md`, `core_workflow.md`, `domain_ticket.md`, `domain_intake.md`. Updates to `core_workspace.md`, `domain_reviewer.md`, `domain_coding_agent.md`.
-- [ ] `docs/system-architecture.md` workspace-agent section added.
-- [ ] **`docs/system-security.md` written — only what's shipped in M05** (sections: trust boundaries, control plane security, agent + workspace security, wire protocol security, data at rest, threat model, cross-references). Every section's content is backed by a real code path; no aspirational content.
-- [ ] **`plan/notes/security-posture.md` slimmed**: split items into "shipped → moved to docs/" vs "still future → stays in note". Note retains only the unfinished security agenda; not deleted.
-- [ ] `docs/glossary.md` entries: Intake, Ticket, Workflow, WorkflowCommand, AgentCommand, Workspace, Agent.
-- [ ] `apps/backend/docs/patterns.md`: workflow-command discipline, single-flight pattern, failure-report-precedes-disposal invariant.
-- [ ] Completeness audit: walk every section of `requirements.md`; prove each requirement shipped.
-- [ ] Provider parity audit: same E2E suite passes against both providers.
-- [ ] Trace-linkage audit: trace ID continuous from webhook to PR comment.
-- [ ] Cleanup-failsafes audit: fault-injection tests for each of the 7 failsafes.
-- [ ] Full CI green: `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/agent/bin/ci`, `apps/e2e/bin/ci` all exit 0 on fresh checkout.
+- [x] Per-module docs: `core_agent_gateway.md`, `core_workflow.md`, `domain_ticket.md`, `domain_intake.md`. Updates to `core_workspace.md`, `domain_reviewer.md`, `domain_coding_agent.md`. _(`core_agent_gateway.md`, `core_workflow.md`, `core_sse_pubsub.md`, `core_tasks.md`, `core_outbox.md`, `core_observability.md` shipped; `core_workspace.md`, `domain_reviewer.md`, `domain_intake.md`, `domain_tickets.md` updated. `domain_coding_agent.md` not touched — its M05 changes are part of the Phase 4 follow-on command-body wiring.)_
+- [x] `docs/system-architecture.md` workspace-agent section added.
+- [x] **`docs/system-security.md` written — only what's shipped in M05** (sections: trust boundaries, control plane security, agent + workspace security, wire protocol security, data at rest, threat model, cross-references). Every section's content is backed by a real code path; no aspirational content.
+- [ ] **`plan/notes/security-posture.md` slimmed**: split items into "shipped → moved to docs/" vs "still future → stays in note". Note retains only the unfinished security agenda; not deleted. _(Deferred to milestone-close follow-on alongside the integration work; `docs/system-security.md` is the shipped half today.)_
+- [x] `docs/glossary.md` entries: Intake, Ticket, Workflow, WorkflowCommand, AgentCommand, Workspace, Agent.
+- [x] `apps/backend/docs/patterns.md`: workflow-command discipline, single-flight pattern, failure-report-precedes-disposal invariant.
+- [ ] Completeness audit: walk every section of `requirements.md`; prove each requirement shipped. _(Foundations across every phase shipped + every phase has its deferral annotations. Full requirements-row-by-row walk + concrete-proof-in-commit-messages audit rides on the integration follow-on closure.)_
+- [ ] Provider parity audit: same E2E suite passes against both providers. _(Both providers exist; reviewer command bodies stubbed and the Go workspace subcommand body is the Phase 6 follow-on, so the E2E suite that would run against both has nothing concrete to assert today.)_
+- [ ] Trace-linkage audit: trace ID continuous from webhook to PR comment. _(Helpers + unit tests verify in-process continuity. End-to-end through to PR comment rides on the reviewer command bodies + Go workspace subprocess that emit spans in the wire path.)_
+- [ ] Cleanup-failsafes audit: fault-injection tests for each of the 7 failsafes. _(TTL sweep + idle-timeout sweep + release-claim ordering shipped + tested. Fault-injection coverage of all seven failsafes lands with the integration follow-on, when there's an end-to-end pipeline to inject faults into.)_
+- [ ] Full CI green: `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/agent/bin/ci`, `apps/e2e/bin/ci` all exit 0 on fresh checkout. _(`apps/backend/bin/ci` exits 0 with 638 tests; web + e2e weren't touched by M05 foundations so they remain green from M04. `apps/agent/bin/ci` runs `go vet/build/test` and verifies in the RWX CI image (Go not in the dev shell).)_
 
 ## Handoff
 
