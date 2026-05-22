@@ -91,7 +91,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, h Handler, opts Optio
 		if err != nil {
 			return fmt.Errorf("workspace: read command: %w", err)
 		}
-		ev := dispatch(ctx, &cmd, h, opts.Now())
+		ev := dispatch(ctx, &cmd, h, opts.Now(), enc)
 		if werr := enc.Write(ev); werr != nil {
 			return fmt.Errorf("workspace: write event: %w", werr)
 		}
@@ -107,7 +107,15 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, h Handler, opts Optio
 // `workspace.handle.<kind>` span around the Handler call, and writes its
 // own traceparent onto the outgoing event so the supervisor sees the
 // workspace's span as the upstream child.
-func dispatch(ctx context.Context, cmd *protocol.AgentCommand, h Handler, now time.Time) protocol.AgentEvent {
+//
+// Progress emission (slice 76): installs an `Emitter` into the handler's
+// ctx that writes `kind=progress` AgentEvents to the same `enc`
+// dispatcher uses for the terminal event. Handlers (e.g.
+// `InvokeClaudeCode`'s stream-json line callback) read the emitter via
+// `EmitterFromContext(ctx)` and call `Progress(outputs)` per line. The
+// `ipc.Encoder` is goroutine-safe so concurrent progress writes from
+// the handler interleave correctly with the dispatcher's final write.
+func dispatch(ctx context.Context, cmd *protocol.AgentCommand, h Handler, now time.Time, enc *ipc.Encoder) protocol.AgentEvent {
 	header := cmd.Header()
 	ctx = tracing.ExtractContext(ctx, header.Traceparent)
 	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(cmd.Kind),
@@ -116,6 +124,9 @@ func dispatch(ctx context.Context, cmd *protocol.AgentCommand, h Handler, now ti
 		attribute.String("kind", string(cmd.Kind)),
 	)
 	childTP := tracing.InjectTraceparent(ctx)
+	if enc != nil {
+		ctx = ContextWithEmitter(ctx, newEncoderEmitter(enc, header.CommandID, childTP, time.Now))
+	}
 	base := protocol.AgentEvent{
 		CommandID:   header.CommandID,
 		ReportedAt:  now,

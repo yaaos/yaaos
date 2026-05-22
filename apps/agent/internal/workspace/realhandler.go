@@ -33,6 +33,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -302,18 +303,39 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 	// enforced one level up in `supervisor.Pool.Dispatch` (slice 68) via
 	// `context.WithTimeout`. Here we just inherit that ctx — the
 	// subprocess is killed via SIGTERM/SIGKILL on ctx cancel.
+	//
+	// Live streaming (slice 76): pull the Emitter `workspace.Run`
+	// installed into ctx; forward each stream-json line as a progress
+	// AgentEvent so the supervisor (and ultimately the SPA's activity
+	// view) sees Claude Code's work as it happens, not just at the end.
+	// We also accumulate the lines into `accumulated` so the terminal
+	// event still carries the full stdout — the backend's CodeReview
+	// step parses the final JSON response out of stdout, not the
+	// progress events. `RunStreaming`'s stdout buffer is bypassed when
+	// `OnStdoutLine` is set, so this local accumulation is the only
+	// place the bytes are retained for the success path.
+	emitter := EmitterFromContext(ctx)
+	var accumulated bytes.Buffer
 	res, err := RunStreaming(ctx, RunStreamingOptions{
 		Argv:  inv.Exec.Argv,
 		Stdin: []byte(inv.Exec.Stdin),
 		Env:   env,
 		Dir:   slot.path,
-		// OnStdoutLine left nil → buffer the full stdout. Live streaming
-		// of Claude Code's stream-json events back to the supervisor as
-		// progress AgentEvents lands when `workspace.Run` learns to emit
-		// multiple events per command (today's dispatch loop emits one
-		// terminal event). The captured stdout is enough for the
-		// workflow engine's CodeReview step to admit findings.
+		OnStdoutLine: func(line []byte) {
+			accumulated.Write(line)
+			accumulated.WriteByte('\n')
+			emitter.Progress(map[string]any{
+				"workspace_id": cmd.WorkspaceID,
+				"stream_line":  string(line),
+			})
+		},
 	})
+	if res != nil {
+		// RunStreaming leaves res.Stdout empty when a callback is set;
+		// we replace it with the accumulated bytes so downstream code
+		// that reads res.Stdout sees the full output.
+		res.Stdout = accumulated.Bytes()
+	}
 	if err != nil {
 		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
 		// res still populated; we surface stderr + exit code via the

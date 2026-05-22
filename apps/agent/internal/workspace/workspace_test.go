@@ -140,7 +140,7 @@ func TestRun_UnknownKind_DispatchEmitsFailure(t *testing.T) {
 	// so to exercise the dispatch-level fallback we call dispatch() directly
 	// with a hand-built unknown kind.
 	cmd := &protocol.AgentCommand{Kind: protocol.CommandKind("Phantom")}
-	ev := dispatch(context.Background(), cmd, StubHandler{}, fixedNow())
+	ev := dispatch(context.Background(), cmd, StubHandler{}, fixedNow(), nil)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("want completed_failure, got %q", ev.Kind)
 	}

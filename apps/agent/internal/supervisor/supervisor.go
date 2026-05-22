@@ -302,7 +302,24 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd *protocol.AgentComman
 		setHeaderTraceparent(cmd, childTP)
 	}
 
-	event := s.pool.Dispatch(ctx, cmd)
+	// Progress-event forwarder (slice 76): each in-flight progress
+	// AgentEvent the workspace process emits gets posted directly to
+	// the control plane via the same endpoint as the terminal event.
+	// The backend's `record_agent_event` handles kind=progress without
+	// triggering workflow-engine resumption (only completed_* events
+	// resume). Activity batching over the WebSocket is a follow-on —
+	// for now each progress event is its own POST. PostCommandEvent
+	// failures are logged and dropped; missing progress events aren't
+	// a correctness issue (the terminal event still carries the
+	// outcome).
+	progressForwarder := func(pev protocol.AgentEvent) {
+		if perr := s.client.PostCommandEvent(ctx, header.CommandID, pev); perr != nil {
+			s.log.Warn("supervisor.progress_post_failed",
+				"command_id", header.CommandID, "err", perr.Error())
+		}
+	}
+
+	event := s.pool.Dispatch(ctx, cmd, progressForwarder)
 	// The pool's failureEvent / runner-relayed events keep whatever
 	// traceparent the dispatcher saw. Make sure the supervisor's span is
 	// what the backend correlates against.

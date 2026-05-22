@@ -275,7 +275,11 @@ func TestRealHandler_InvokeClaudeCode_HappyPath_EchoesStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
-	if out["stdout"] != "hello from the test" {
+	// Slice 76 streams via OnStdoutLine; the per-line accumulator
+	// appends a newline after each scanner.Scan() line. cat's stdin
+	// had no trailing newline so the accumulated stdout gains one.
+	// Strip-and-compare keeps the test robust to that.
+	if strings.TrimRight(out["stdout"].(string), "\n") != "hello from the test" {
 		t.Errorf("stdout: want 'hello from the test' got %q", out["stdout"])
 	}
 	if out["exit_code"] != 0 {

@@ -30,14 +30,22 @@ import (
 	"github.com/yaaos/agent/internal/workspace"
 )
 
-// WorkspaceRunner represents one running workspace process. `Send` writes a
-// command on the parent → child pipe and blocks until the child writes one
-// event back on the child → parent pipe. Concurrent `Send` calls to the
-// same runner are NOT safe — the pool serializes them. `Close` tears the
-// runner down (signal/grace/kill for an OS process, pipe-close for
-// in-process).
+// WorkspaceRunner represents one running workspace process. `Send` writes
+// a command on the parent → child pipe and reads events back on the child
+// → parent pipe in a loop. Progress events (`kind=progress`) fire the
+// `onProgress` callback synchronously and the loop continues; the first
+// `kind=completed_*` event ends the loop and is returned.
+//
+// `onProgress` may be nil; in that case progress events are silently
+// dropped. The callback runs on the same goroutine that's reading the
+// pipe, so a slow callback backpressures the workspace subprocess —
+// callers should keep it cheap (push-to-queue is the canonical shape).
+//
+// Concurrent `Send` calls to the same runner are NOT safe — the pool
+// serializes them. `Close` tears the runner down (signal/grace/kill for
+// an OS process, pipe-close for in-process).
 type WorkspaceRunner interface {
-	Send(ctx context.Context, cmd *protocol.AgentCommand) (protocol.AgentEvent, error)
+	Send(ctx context.Context, cmd *protocol.AgentCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error)
 	Close(ctx context.Context) error
 }
 
@@ -154,9 +162,13 @@ func NewPoolWithTimeouts(spawn SpawnFunc, log Logger, timeouts PoolTimeouts) *Po
 // workspace is a protocol violation — Dispatch returns a synthetic
 // `completed_failure` event so the supervisor can still ack the command.
 //
+// Progress events (kind=progress) emitted by the runner are forwarded
+// to `onProgress` synchronously and the dispatch continues waiting for
+// the terminal event. Pass nil to drop progress events.
+//
 // After a `CleanupWorkspace` command the runner is closed + removed from
 // the pool regardless of whether the runner reported success or failure.
-func (p *Pool) Dispatch(ctx context.Context, cmd *protocol.AgentCommand) protocol.AgentEvent {
+func (p *Pool) Dispatch(ctx context.Context, cmd *protocol.AgentCommand, onProgress func(protocol.AgentEvent)) protocol.AgentEvent {
 	header := cmd.Header()
 	workspaceID := header.WorkspaceID
 	if workspaceID == "" {
@@ -192,7 +204,7 @@ func (p *Pool) Dispatch(ctx context.Context, cmd *protocol.AgentCommand) protoco
 	sendCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ev, err := slot.runner.Send(sendCtx, cmd)
+	ev, err := slot.runner.Send(sendCtx, cmd, onProgress)
 	if err != nil {
 		// IO failure / runner died / outer context cancel / per-command
 		// timeout. Drop the slot so a subsequent CreateWorkspace can
@@ -307,7 +319,7 @@ func InProcessSpawn(handler workspace.Handler) SpawnFunc {
 	}
 }
 
-func (r *inProcessRunner) Send(ctx context.Context, cmd *protocol.AgentCommand) (protocol.AgentEvent, error) {
+func (r *inProcessRunner) Send(ctx context.Context, cmd *protocol.AgentCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error) {
 	wireCmd, err := encodeCommand(cmd)
 	if err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("encode command: %w", err)
@@ -315,13 +327,30 @@ func (r *inProcessRunner) Send(ctx context.Context, cmd *protocol.AgentCommand) 
 	if err := r.enc.Write(wireCmd); err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("write command: %w", err)
 	}
-	// Honour ctx by racing the read against ctx.Done. Closing the event
-	// pipe wakes a blocked Scan; we close on context cancel below.
+	// Read events in a loop: progress events fire `onProgress` + the
+	// loop continues; the first non-progress event ends the loop and
+	// is returned to the caller. The supervisor's `routeCommand`
+	// expects the terminal event back from this function.
+	//
+	// ctx.Done is honoured by closing the read pipe — wakes a blocked
+	// Scan.
 	resultCh := make(chan readResult, 1)
 	go func() {
-		var ev protocol.AgentEvent
-		err := r.dec.Read(&ev)
-		resultCh <- readResult{ev: ev, err: err}
+		for {
+			var ev protocol.AgentEvent
+			if err := r.dec.Read(&ev); err != nil {
+				resultCh <- readResult{err: err}
+				return
+			}
+			if ev.Kind == protocol.EventProgress {
+				if onProgress != nil {
+					onProgress(ev)
+				}
+				continue
+			}
+			resultCh <- readResult{ev: ev}
+			return
+		}
 	}()
 	select {
 	case <-ctx.Done():

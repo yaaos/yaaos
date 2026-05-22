@@ -99,7 +99,7 @@ type execRunner struct {
 	closeOnce sync.Once
 }
 
-func (r *execRunner) Send(ctx context.Context, cmd *protocol.AgentCommand) (protocol.AgentEvent, error) {
+func (r *execRunner) Send(ctx context.Context, cmd *protocol.AgentCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error) {
 	wireCmd, err := encodeCommand(cmd)
 	if err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("encode command: %w", err)
@@ -107,11 +107,28 @@ func (r *execRunner) Send(ctx context.Context, cmd *protocol.AgentCommand) (prot
 	if err := r.enc.Write(wireCmd); err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("write command: %w", err)
 	}
+	// Read events in a loop — see `inProcessRunner.Send` for the
+	// rationale. The workspace subprocess emits progress events while
+	// running (Claude Code stream-json output) followed by exactly one
+	// terminal event; we forward each progress event to onProgress and
+	// return the terminal event to the caller.
 	resultCh := make(chan readResult, 1)
 	go func() {
-		var ev protocol.AgentEvent
-		err := r.dec.Read(&ev)
-		resultCh <- readResult{ev: ev, err: err}
+		for {
+			var ev protocol.AgentEvent
+			if err := r.dec.Read(&ev); err != nil {
+				resultCh <- readResult{err: err}
+				return
+			}
+			if ev.Kind == protocol.EventProgress {
+				if onProgress != nil {
+					onProgress(ev)
+				}
+				continue
+			}
+			resultCh <- readResult{ev: ev}
+			return
+		}
 	}()
 	select {
 	case <-ctx.Done():
