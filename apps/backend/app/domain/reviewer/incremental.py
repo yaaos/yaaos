@@ -46,19 +46,29 @@ from app.domain.reviewer.admission import (
 )
 from app.domain.reviewer.aggregate import PRReviewAggregate as _Aggregate
 from app.domain.reviewer.anchor import resolve_anchor
+from app.domain.reviewer.constants import (
+    CODING_AGENT_PLUGIN_ID as _CODING_AGENT_PLUGIN_ID,
+)
+from app.domain.reviewer.constants import (
+    DEFAULT_EFFORT as _DEFAULT_EFFORT,
+)
+from app.domain.reviewer.constants import (
+    DEFAULT_MODEL as _DEFAULT_MODEL,
+)
+from app.domain.reviewer.constants import (
+    REVIEWER_TAG as _REVIEWER_TAG,
+)
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.queue import (
-    _CODING_AGENT_PLUGIN_ID,
-    _DEFAULT_EFFORT,
-    _DEFAULT_MODEL,
-    _REVIEWER_TAG,
-    ReviewJobActivity,
-    ReviewJobStatusChanged,
     _detect_language,
     _set_step,
     _ticket_skip_reason,
     _utcnow,
+)
+from app.domain.reviewer.queue_events import (
+    ReviewJobActivity,
+    ReviewJobStatusChanged,
 )
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import apply_stale_check_result, dispatch_audits, dispatch_events

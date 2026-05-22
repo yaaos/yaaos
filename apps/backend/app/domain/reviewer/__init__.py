@@ -55,7 +55,6 @@ from app.domain.reviewer.models import (
 from app.domain.reviewer.queue import (
     ReviewJob,
     ReviewJobInput,
-    ReviewJobStatusChanged,
     cancel_pending,
     get_review_job,
     list_in_flight,
@@ -63,6 +62,9 @@ from app.domain.reviewer.queue import (
     metrics_summary,
     schedule_review,
     startup_recovery,
+)
+from app.domain.reviewer.queue_events import (
+    ReviewJobStatusChanged,
 )
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository

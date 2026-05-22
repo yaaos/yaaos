@@ -16,7 +16,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -27,7 +27,7 @@ from sqlalchemy import select, update
 from app.core.audit_log import Actor, audit_for_review_job
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.events import Event, publish
+from app.core.events import publish
 from app.core.observability import spawn
 from app.core.workspace import (
     NetworkPolicy,
@@ -45,12 +45,32 @@ from app.domain import (
 )
 from app.domain.coding_agent import ActivityEvent, FindingDraft, InvocationStatus, ReviewContext
 from app.domain.reviewer.aggregate import RawFinding
+from app.domain.reviewer.constants import (
+    CODING_AGENT_PLUGIN_ID as _CODING_AGENT_PLUGIN_ID,
+)
+from app.domain.reviewer.constants import (
+    DEFAULT_EFFORT as _DEFAULT_EFFORT,
+)
+from app.domain.reviewer.constants import (
+    DEFAULT_MODEL as _DEFAULT_MODEL,
+)
+from app.domain.reviewer.constants import (
+    M01_ORG_ID,
+)
+from app.domain.reviewer.constants import (
+    REVIEWER_TAG as _REVIEWER_TAG,
+)
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
 )
 from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer.queue_events import (
+    ReviewJobActivity,
+    ReviewJobStatusChanged,
+    ReviewJobStepProgress,
+)
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
 from app.domain.reviewer.service import dispatch_audits, dispatch_events
@@ -60,23 +80,6 @@ from app.domain.vcs import (
 )
 
 log = structlog.get_logger("reviewer")
-
-
-M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
-
-# Hard-coded reviewer identity. There's only one reviewer (the parent agent
-# that dispatches subagents); we use this tag on the top-level GitHub review
-# body. Per-comment prefixes come from each finding's `source_agent` field.
-_REVIEWER_TAG = "yaaos"
-_CODING_AGENT_PLUGIN_ID = "claude_code"
-
-# Recorded onto every review_jobs row at insert time. Mirrors the constants
-# in `plugins/claude_code` (`_MODEL`, `_EFFORT`). Duplicated to keep the
-# Tach layering clean — `domain/reviewer` cannot import from `plugins/*`.
-# Future UI configuration replaces both copies with a settings row.
-_DEFAULT_MODEL = "opus"
-_DEFAULT_EFFORT = "medium"
-
 
 # In-flight task registry, keyed by review_job_id. Used by `cancel_pending`
 # to interrupt the running coro mid-CLI: flipping the DB row to cancelled
@@ -93,42 +96,6 @@ _inflight_tasks: dict[UUID, asyncio.Task[None]] = {}
 def _register_inflight(job_id: UUID, task: asyncio.Task[None]) -> None:
     _inflight_tasks[job_id] = task
     task.add_done_callback(lambda _t: _inflight_tasks.pop(job_id, None))
-
-
-# Events
-
-
-class ReviewJobStatusChanged(Event):
-    kind: Literal["review_job_status_changed"] = "review_job_status_changed"
-    source_module: Literal["reviewer"] = "reviewer"
-    pr_id: UUID
-    review_job_id: UUID
-    status: str
-
-
-class ReviewJobStepProgress(Event):
-    """In-place row update — not an audit entry. Drives the running-state UI."""
-
-    kind: Literal["review_job_step_progress"] = "review_job_step_progress"
-    source_module: Literal["reviewer"] = "reviewer"
-    pr_id: UUID
-    review_job_id: UUID
-    current_step: str
-
-
-class ReviewJobActivity(Event):
-    """One captured stream event from the coding-agent CLI.
-
-    High-frequency (~50-100 per review). Not persisted as an audit entry —
-    the per-row `activity_log` JSONB column carries the durable copy. SSE
-    consumers push events into a local store keyed by review_job_id.
-    """
-
-    kind: Literal["review_job_activity"] = "review_job_activity"
-    source_module: Literal["reviewer"] = "reviewer"
-    pr_id: UUID
-    review_job_id: UUID
-    event: dict[str, Any]
 
 
 # Audit payloads
