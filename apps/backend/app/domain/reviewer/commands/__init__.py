@@ -493,6 +493,102 @@ def _decide_skip(payload: dict[str, Any]) -> str | None:
     return None
 
 
+class SecretsScan:
+    """Pre-flight secrets gate. Fetches the PR diff via the VCS plugin and
+    runs `secrets_detection.detect_secrets`. If any known secret pattern is
+    matched in `+`-prefixed (added) lines:
+
+    - Returns `Outcome.success(label="skip", outputs={"reason": "secrets_detected", "rule_id": <id>})`
+      so the workflow's `skip` transition terminates the run (per
+      `pr_review_v1`).
+    - Posts a `secrets_warning_review` to the PR via the registered VCS
+      plugin so the human sees yaaos's refusal in-band.
+
+    Matches the legacy `_run_review_job_inner` behavior (slice 46) — the
+    legacy path is the existing production owner of secrets detection;
+    the M05 workflow needs the same gate or it's a regression.
+
+    No `pr_id`? The workflow can't fetch the diff yet; treat as no-op
+    success (CheckShouldReview already handled the ticket-payload skip
+    signals upstream). Same for VCS errors: best-effort, log + advance.
+    """
+
+    kind = "SecretsScan"
+    category = CommandCategory.LOCAL
+    restart_safe = True
+
+    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+        del inputs
+
+        provider = get_workflow_context_provider()
+        if provider is None:
+            return Outcome.failure(reason="no workflow_context provider registered")
+        try:
+            ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
+        except Exception as exc:
+            log.exception(
+                "secrets_scan.context_fetch_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+        if ticket_ctx is None or ticket_ctx.pr_id is None:
+            log.info(
+                "secrets_scan.no_pr_link",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.success(outputs={"rule_id": None})
+
+        # Deferred imports — keep the commands module-import cheap.
+        from app.domain.reviewer.secrets_detection import (  # noqa: PLC0415
+            detect_secrets,
+            secrets_warning_review,
+        )
+        from app.domain.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
+
+        try:
+            vcs_plugin = get_vcs_plugin(ticket_ctx.plugin_id)
+            pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
+            if not pr_external_id:
+                return Outcome.success(outputs={"rule_id": None})
+            diff = await vcs_plugin.fetch_diff(pr_external_id)
+        except Exception as exc:
+            # Best-effort — diff fetch shouldn't block reviews. Logged for
+            # ops visibility but the workflow advances to ProvisionWorkspace.
+            log.warning(
+                "secrets_scan.diff_fetch_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return Outcome.success(outputs={"rule_id": None})
+
+        rule_id = detect_secrets(diff)
+        if rule_id is None:
+            return Outcome.success(outputs={"rule_id": None})
+
+        # Best-effort post the warning Review; if it fails we still skip.
+        try:
+            await vcs_plugin.post_review(pr_external_id, secrets_warning_review(rule_id))
+        except Exception:
+            log.exception(
+                "secrets_scan.post_warning_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                rule_id=rule_id,
+            )
+
+        log.info(
+            "secrets_scan.detected",
+            workflow_execution_id=ctx.workflow_execution_id,
+            ticket_id=ctx.ticket_id,
+            rule_id=rule_id,
+        )
+        return Outcome.success(
+            label="skip",
+            outputs={"reason": "secrets_detected", "rule_id": rule_id},
+        )
+
+
 class PostFindings(_LocalReviewCommand):
     """Persist coding-agent findings through the admission pipeline.
 
@@ -1016,6 +1112,7 @@ ALL_WORKSPACE_COMMANDS: tuple[_WorkspaceReviewCommand, ...] = (
 
 ALL_LOCAL_COMMANDS: tuple[object, ...] = (
     CheckShouldReview(),
+    SecretsScan(),
     PostFindings(),
     ResolveFinding(),
     ArchiveStaleFindings(),
@@ -1034,6 +1131,7 @@ __all__ = [
     "PostFindings",
     "PostReply",
     "ResolveFinding",
+    "SecretsScan",
     "StaleCheck",
     "VerifyFix",
 ]

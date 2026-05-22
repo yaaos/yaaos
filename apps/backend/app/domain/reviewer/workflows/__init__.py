@@ -27,7 +27,7 @@ from __future__ import annotations
 from app.core.workflow import RetryPolicy, Step, TerminalAction, Workflow
 
 # pr_review_v1: full-PR review.
-# CheckShouldReview → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace
+# CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace
 pr_review_v1 = Workflow(
     name="pr_review_v1",
     version=1,
@@ -35,6 +35,16 @@ pr_review_v1 = Workflow(
         Step(
             id="check",
             command_kind="CheckShouldReview",
+            transitions={
+                "skip": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+        ),
+        Step(
+            # Pre-flight secrets gate. Posts a warning Review and terminates
+            # the workflow if the diff contains a known secret pattern.
+            id="secrets",
+            command_kind="SecretsScan",
             transitions={
                 "skip": TerminalAction.COMPLETE_WORKFLOW,
                 "failure": TerminalAction.FAIL_WORKFLOW,
@@ -81,6 +91,14 @@ incremental_review_v1 = Workflow(
         Step(
             id="check",
             command_kind="CheckShouldReview",
+            transitions={
+                "skip": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+        ),
+        Step(
+            id="secrets",
+            command_kind="SecretsScan",
             transitions={
                 "skip": TerminalAction.COMPLETE_WORKFLOW,
                 "failure": TerminalAction.FAIL_WORKFLOW,

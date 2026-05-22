@@ -77,7 +77,7 @@ Five typed `Workflow` definitions live in `domain/reviewer/workflows/` and regis
 Ten matching `WorkflowCommand`s ship with real bodies in `domain/reviewer/commands/`:
 
 - Workspace category (5): `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion` — each wraps a `domain/coding_agent` invocation against the resolved workspace.
-- Local category (5): `CheckShouldReview` (admission gate before provisioning), `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply`.
+- Local category (6): `CheckShouldReview` (admission gate before provisioning), `SecretsScan` (pre-flight secrets gate), `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply`.
 
 The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`) ship in [`core/workspace.commands`](core_workspace.md) and register through the reviewer bootstrap so any workflow can reference them.
 
