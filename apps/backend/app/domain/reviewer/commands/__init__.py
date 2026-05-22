@@ -137,7 +137,103 @@ class PostFindings(_LocalReviewCommand):
 
 
 class ResolveFinding(_LocalReviewCommand):
+    """Apply a verify-fix verdict to a single finding. Receives `verdict`
+    from inputs (sourced from the prior `VerifyFix` Workspace step via
+    `$verify.verdict`). The verdict shape mirrors `coding_agent.VerifyFixResult`:
+
+        {"finding_id": "<uuid>", "still_present": <bool>, "confidence": <float>}
+
+    Calls `aggregate.record_fix_verification(...)` which transitions the
+    finding to `RESOLVED_CONFIRMED` iff `still_present=False` AND
+    `confidence ≥ threshold` (default 0.80). Lower-confidence verdicts and
+    `still_present=True` are no-ops — the finding stays open and the
+    workflow ends cleanly.
+
+    Defensive: empty/missing verdict → success-no-op. Missing pr_id link →
+    success-no-op. Unknown finding_id → skipped, not failed.
+
+    Outputs:
+    - `transitioned_to`: the new state (string) if a transition fired, else None
+    """
+
     kind = "ResolveFinding"
+
+    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+        verdict = inputs.get("verdict") or {}
+        if not isinstance(verdict, dict) or not verdict:
+            return Outcome.success(outputs={"transitioned_to": None})
+
+        finding_id_raw = verdict.get("finding_id")
+        if not finding_id_raw:
+            return Outcome.success(outputs={"transitioned_to": None})
+        try:
+            finding_id = UUID(str(finding_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid finding_id: {finding_id_raw!r}")
+
+        still_present = bool(verdict.get("still_present", True))
+        try:
+            confidence = float(verdict.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid confidence: {verdict.get('confidence')!r}")
+
+        provider = get_workflow_context_provider()
+        if provider is None:
+            return Outcome.failure(reason="no workflow_context provider registered")
+
+        try:
+            ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
+        except Exception as exc:
+            log.exception(
+                "resolve_finding.context_fetch_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        if ticket_ctx is None or ticket_ctx.pr_id is None:
+            log.info(
+                "resolve_finding.no_pr_link",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.success(outputs={"transitioned_to": None})
+
+        from app.domain.reviewer.repository import (  # noqa: PLC0415
+            SqlAlchemyAggregateRepository,
+        )
+
+        async with db_session() as s:
+            repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await repo.load(pr_id=ticket_ctx.pr_id, org_id=ticket_ctx.org_id)
+            known_ids = {f.id for f in aggregate.findings}
+            if finding_id not in known_ids:
+                log.info(
+                    "resolve_finding.unknown_finding",
+                    workflow_execution_id=ctx.workflow_execution_id,
+                    finding_id=str(finding_id),
+                )
+                return Outcome.success(outputs={"transitioned_to": None})
+
+            new_state = aggregate.record_fix_verification(
+                finding_id=finding_id,
+                still_present=still_present,
+                confidence=confidence,
+            )
+            await repo.save(aggregate)
+            await s.commit()
+
+        log.info(
+            "resolve_finding.done",
+            workflow_execution_id=ctx.workflow_execution_id,
+            finding_id=str(finding_id),
+            still_present=still_present,
+            confidence=confidence,
+            transitioned_to=(new_state.value if new_state is not None else None),
+        )
+        return Outcome.success(
+            outputs={"transitioned_to": new_state.value if new_state is not None else None}
+        )
 
 
 class ArchiveStaleFindings(_LocalReviewCommand):

@@ -63,8 +63,9 @@ The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`
 
 - `CheckShouldReview` reads `is_draft` / `is_fork` / `labels` / `author_login` from the ticket payload and returns `Outcome.success(label="skip", outputs={"reason": ...})` on any first-match signal (`draft`, `fork`, `label:<name>`, `bot_author`). Skip labels: `yaaos-skip`, `no-review`, `wip` (case-insensitive). The bot-author check matches `*[bot]` / `*-bot` suffixes.
 - `ArchiveStaleFindings` consumes `stale_finding_ids: list[str]` from inputs (sourced from the prior `StaleCheck` step), loads the reviewer aggregate by `pr_id` via the registered `WorkflowContextProvider`, and transitions each finding to `STALE` via `aggregate.record_stale_detection(still_applies=False, confidence=1.0)`. Defensive on missing pr_id (no-op-success), unknown finding ids (skipped, not failed), invalid uuids (skipped). Outputs `archived_count` and `skipped_count`.
+- `ResolveFinding` consumes `verdict: dict` from inputs (sourced from the prior `VerifyFix` step). Parses `finding_id`, `still_present`, `confidence`; loads the aggregate by `pr_id`; calls `aggregate.record_fix_verification(...)` which transitions to `RESOLVED_CONFIRMED` only when `still_present=False` AND `confidence ≥ threshold` (default 0.80). Lower-confidence verdicts and `still_present=True` are no-ops — the finding stays open. Outputs `transitioned_to` (state value or None). Defensive on empty/missing verdict, invalid finding_id, invalid confidence, missing pr_id, unknown finding.
 
-Other Local + Workspace bodies remain stubs until the `queue.py` dismantle wires them to `domain/coding_agent` + admission and drops the `review_jobs` table.
+`PostFindings`, `PostReply`, and the five Workspace bodies remain stubs until the `queue.py` dismantle wires them to `domain/coding_agent` + admission and drops the `review_jobs` table.
 
 ### Entities
 
