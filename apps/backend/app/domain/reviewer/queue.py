@@ -49,8 +49,6 @@ from app.domain import (
 )
 from app.domain.coding_agent import ActivityEvent, FindingDraft, InvocationStatus, ReviewContext
 from app.domain.reviewer.aggregate import RawFinding
-from app.domain.reviewer.anchor import make_anchor
-from app.domain.reviewer.fingerprint import compute_fingerprint
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
@@ -1125,64 +1123,19 @@ def _findingdrafts_to_raw(
     read_file: Callable[[str], list[str] | None],
     source_agent: str = "coding_agent",
 ) -> list[RawFinding]:
-    """Convert §10.1 `FindingDraft`s from the agent into `RawFinding`s.
+    """Thin shim — the real implementation now lives in
+    `domain/reviewer/admission.findingdrafts_to_raw`. Kept here so legacy
+    queue + incremental callsites keep working until they migrate; the
+    M05 `PostFindings` WorkflowCommand should import from `admission`
+    directly."""
+    from app.domain.reviewer.admission import findingdrafts_to_raw  # noqa: PLC0415
 
-    Plan §2.3: anchor + fingerprint hashes use real file content at the
-    anchored line range — never the body text. Two findings at the same
-    file:line with different body phrasings must produce IDENTICAL
-    fingerprints so the aggregate deduplicates re-observations across
-    reviews. Drafts whose file we can't read are dropped — no stable
-    fingerprint without real content.
-
-    Shared between full review (queue.py) and incremental review
-    (incremental.py); both go through the same admission pipeline.
-    """
-    out: list[RawFinding] = []
-    for d in drafts:
-        file_lines = read_file(d.anchor.file_path)
-        # `None` = file missing; `[]` = file present but empty. Both fail the
-        # same way — no stable anchor / fingerprint without real content.
-        if not file_lines:
-            log.info(
-                "review.findingdraft_dropped_no_file",
-                file=d.anchor.file_path,
-                rule_id=d.rule_id,
-            )
-            continue
-        # Defensive clamp — plan §10.1 enforces a valid range on the agent
-        # but we don't want make_anchor to raise on off-by-one drafts.
-        ls = max(1, min(d.anchor.line_start, len(file_lines)))
-        le = max(ls, min(d.anchor.line_end, len(file_lines)))
-        anchor = make_anchor(
-            file_path=d.anchor.file_path,
-            file_lines=file_lines,
-            line_start=ls,
-            line_end=le,
-            commit_sha=commit_sha,
-        )
-        anchored_lines = file_lines[ls - 1 : le]
-        fingerprint = compute_fingerprint(
-            file_path=d.anchor.file_path,
-            rule_id=d.rule_id,
-            anchored_lines=anchored_lines,
-            title=d.title,
-        )
-        out.append(
-            RawFinding(
-                fingerprint=fingerprint,
-                rule_id=d.rule_id,
-                title=d.title,
-                body=d.body,
-                rationale=d.rationale,
-                concrete_failure_scenario=d.concrete_failure_scenario,
-                confidence=d.confidence,
-                severity=d.severity,
-                anchor=anchor,
-                source_agent=source_agent,
-                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
-            )
-        )
-    return out
+    return findingdrafts_to_raw(
+        drafts,
+        commit_sha=commit_sha,
+        read_file=read_file,
+        source_agent=source_agent,
+    )
 
 
 def _raw_to_vcs_findings(raw: list[RawFinding], new_findings: list[Any]) -> list[Any]:
