@@ -147,12 +147,9 @@ async def _handle_pr_ready_for_review(event: PullRequestReadyForReview, *, org_i
     ticket = await tickets.get_by_pr(pr.id, org_id=org_id)
     if ticket is None:
         return
-    await reviewer.schedule_review(
-        ticket_id=ticket.id,
-        trigger_reason="pr_ready",
-        actor=Actor.system(),
-        org_id=org_id,
-    )
+    # M05: route through the workflow engine via `start_pr_review`.
+    # The legacy `schedule_review`/queue.py path is retired (slice 59).
+    await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="pr_ready")
 
 
 async def _handle_pr_synchronized(event: PullRequestSynchronized, *, org_id: UUID) -> None:
@@ -252,12 +249,8 @@ async def _handle_comment_created(event: CommentCreated, *, org_id: UUID) -> Non
                 reason="user_cancel_command",
             )
         elif cmd == "full review":
-            await reviewer.schedule_review(
-                ticket_id=ticket.id,
-                trigger_reason="manual_full",
-                actor=Actor.github_user(event.author_login),
-                org_id=org_id,
-            )
+            # M05: engine path via start_pr_review (slice 59).
+            await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
         elif cmd == "review":
             await reviewer.handle_push(pr.id, new_head_sha=pr.head_sha, prev_head_sha=None, org_id=org_id)
         return
