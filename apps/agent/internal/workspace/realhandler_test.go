@@ -4,12 +4,31 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/yaaos/agent/internal/protocol"
 )
+
+// noopClone is a CloneFunc that succeeds without touching the network.
+// Tests use this for everything except the real-git tests at the bottom
+// of the file so the existing tempdir/WriteFiles/cleanup assertions
+// don't depend on git being present in the test container.
+func noopClone(context.Context, string, protocol.RepoRef, protocol.AuthBlock, int) error {
+	return nil
+}
+
+// realHandlerWithNoopClone is the test default — drop-in for the slice-65
+// constructor calls that pre-dated CloneFunc.
+func realHandlerWithNoopClone(t *testing.T) *RealHandler {
+	t.Helper()
+	return NewRealHandler(RealHandlerConfig{
+		Root:      t.TempDir(),
+		CloneFunc: noopClone,
+	})
+}
 
 func newCreate(workspaceID string) *protocol.CreateWorkspaceCommand {
 	return &protocol.CreateWorkspaceCommand{
@@ -29,7 +48,7 @@ func newCreate(workspaceID string) *protocol.CreateWorkspaceCommand {
 }
 
 func TestRealHandler_CreateWorkspace_AllocatesTempDir(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	out, err := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -41,16 +60,39 @@ func TestRealHandler_CreateWorkspace_AllocatesTempDir(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("tempdir not created: %v", err)
 	}
-	if out["clone_pending"] != true {
-		t.Errorf("want clone_pending=true, got %v", out["clone_pending"])
-	}
 	if out["repo"] != "acme/web" {
 		t.Errorf("repo: want acme/web got %v", out["repo"])
 	}
 }
 
+func TestRealHandler_CreateWorkspace_CloneFailureTearsDownTempDir(t *testing.T) {
+	root := t.TempDir()
+	failClone := func(context.Context, string, protocol.RepoRef, protocol.AuthBlock, int) error {
+		return errors.New("network exploded")
+	}
+	h := NewRealHandler(RealHandlerConfig{Root: root, CloneFunc: failClone})
+	_, err := h.CreateWorkspace(context.Background(), newCreate("ws-fail"))
+	if err == nil {
+		t.Fatal("want error on clone failure")
+	}
+	if !strings.Contains(err.Error(), "git clone") {
+		t.Errorf("err should prefix with 'git clone', got %q", err.Error())
+	}
+	// No surviving tempdir under root.
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "yaaos-ws-") {
+			t.Errorf("leaked tempdir on clone failure: %s", e.Name())
+		}
+	}
+	// Slot not registered.
+	if _, ok := h.slots["ws-fail"]; ok {
+		t.Errorf("slot registered despite clone failure")
+	}
+}
+
 func TestRealHandler_CreateWorkspace_IdempotentOnSecondCall(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	out1, err := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	if err != nil {
 		t.Fatalf("create #1: %v", err)
@@ -68,7 +110,7 @@ func TestRealHandler_CreateWorkspace_IdempotentOnSecondCall(t *testing.T) {
 }
 
 func TestRealHandler_WriteFiles_WritesEntries(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	out, _ := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	wsPath := out["path"].(string)
 
@@ -102,7 +144,7 @@ func TestRealHandler_WriteFiles_WritesEntries(t *testing.T) {
 }
 
 func TestRealHandler_WriteFiles_UnknownWorkspace_Errors(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	_, err := h.WriteFiles(context.Background(), &protocol.WriteFilesCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "missing"},
 		Files:         []protocol.WriteFilesEntry{{Path: "f", Content: "x"}},
@@ -113,7 +155,7 @@ func TestRealHandler_WriteFiles_UnknownWorkspace_Errors(t *testing.T) {
 }
 
 func TestRealHandler_WriteFiles_RejectsPathEscape(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 
 	cases := []string{
@@ -134,7 +176,7 @@ func TestRealHandler_WriteFiles_RejectsPathEscape(t *testing.T) {
 }
 
 func TestRealHandler_RefreshWorkspaceAuth_UpdatesToken(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	if h.slots["ws-1"].authTok != "tok-abc" {
 		t.Fatalf("initial token wrong: %q", h.slots["ws-1"].authTok)
@@ -153,7 +195,7 @@ func TestRealHandler_RefreshWorkspaceAuth_UpdatesToken(t *testing.T) {
 }
 
 func TestRealHandler_RefreshWorkspaceAuth_UnknownWorkspace_Errors(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	_, err := h.RefreshWorkspaceAuth(context.Background(), &protocol.RefreshWorkspaceAuthCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "missing"},
 		NewToken:      "x",
@@ -164,7 +206,7 @@ func TestRealHandler_RefreshWorkspaceAuth_UnknownWorkspace_Errors(t *testing.T) 
 }
 
 func TestRealHandler_CleanupWorkspace_RemovesTempDirAndSlot(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	out, _ := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	wsPath := out["path"].(string)
 
@@ -186,7 +228,7 @@ func TestRealHandler_CleanupWorkspace_RemovesTempDirAndSlot(t *testing.T) {
 }
 
 func TestRealHandler_CleanupWorkspace_UnknownWorkspace_IdempotentSuccess(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	res, err := h.CleanupWorkspace(context.Background(), &protocol.CleanupWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ghost"},
 	})
@@ -199,7 +241,7 @@ func TestRealHandler_CleanupWorkspace_UnknownWorkspace_IdempotentSuccess(t *test
 }
 
 func TestRealHandler_InvokeClaudeCode_NotImplemented(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	_, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
@@ -213,7 +255,7 @@ func TestRealHandler_InvokeClaudeCode_NotImplemented(t *testing.T) {
 }
 
 func TestRealHandler_InvokeClaudeCode_UnknownWorkspace_Errors(t *testing.T) {
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	_, err := h.InvokeClaudeCode(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "missing"},
 	})
@@ -225,7 +267,7 @@ func TestRealHandler_InvokeClaudeCode_UnknownWorkspace_Errors(t *testing.T) {
 func TestRealHandler_FullLifecycle_CreateWriteCleanup(t *testing.T) {
 	// End-to-end: drive a fresh workspace through Create → WriteFiles →
 	// Cleanup and assert the file lands then disappears.
-	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	h := realHandlerWithNoopClone(t)
 	cr, _ := h.CreateWorkspace(context.Background(), newCreate("ws-1"))
 	wsPath := cr["path"].(string)
 	h.WriteFiles(context.Background(), &protocol.WriteFilesCommand{
@@ -283,5 +325,133 @@ func TestSanitizeID(t *testing.T) {
 		if got := sanitizeID(c.in); got != c.want {
 			t.Errorf("sanitizeID(%q): want %q got %q", c.in, c.want, got)
 		}
+	}
+}
+
+// ── injectAuth + redactToken unit tests ─────────────────────────────────
+
+func TestInjectAuth_HTTPSGetsToken(t *testing.T) {
+	out, err := injectAuth("https://github.com/acme/web.git",
+		protocol.AuthBlock{Kind: "github_installation", Token: "ghs_abc"})
+	if err != nil {
+		t.Fatalf("injectAuth: %v", err)
+	}
+	if !strings.HasPrefix(out, "https://x-access-token:ghs_abc@") {
+		t.Errorf("want x-access-token prefix, got %q", out)
+	}
+}
+
+func TestInjectAuth_EmptyTokenPreserved(t *testing.T) {
+	out, _ := injectAuth("https://github.com/acme/web.git", protocol.AuthBlock{})
+	if out != "https://github.com/acme/web.git" {
+		t.Errorf("empty token should pass through, got %q", out)
+	}
+}
+
+func TestInjectAuth_NonHTTPSPassthrough(t *testing.T) {
+	// file:// URLs (used in our local-bare-repo tests) MUST NOT get
+	// HTTPS basic auth — git rejects it.
+	out, _ := injectAuth("file:///tmp/bare", protocol.AuthBlock{Token: "x"})
+	if out != "file:///tmp/bare" {
+		t.Errorf("file:// should pass through, got %q", out)
+	}
+}
+
+func TestRedactToken_RemovesCredentials(t *testing.T) {
+	in := "fatal: could not read Username for 'https://x-access-token:ghs_super_secret@github.com': blah"
+	out := redactToken(in)
+	if strings.Contains(out, "ghs_super_secret") {
+		t.Errorf("redact failed: %q", out)
+	}
+	if !strings.Contains(out, "REDACTED") {
+		t.Errorf("redact didn't insert REDACTED marker: %q", out)
+	}
+}
+
+func TestRedactToken_NoMatch_Identity(t *testing.T) {
+	in := "ordinary string"
+	if redactToken(in) != in {
+		t.Error("redactToken altered a string with no credentials")
+	}
+}
+
+// ── Real-git integration: clone from a local bare repo ──────────────────
+
+// localBareRepo creates a fresh bare git repo with a single commit
+// containing one file. Returns the file:// URL pointing at it and the
+// HEAD commit SHA.
+//
+// Skips the calling test when `git` isn't on PATH (the agent's Dockerfile
+// installs it for production; locally + in the alpine test image we
+// apk add it before running CI).
+func localBareRepo(t *testing.T) (cloneURL, headSHA string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH; install with `apk add git` to exercise real-clone tests")
+	}
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir work: %v", err)
+	}
+	bareDir := filepath.Join(tmp, "bare.git")
+
+	mustRun := func(cwd string, args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=yaaos",
+			"GIT_AUTHOR_EMAIL=yaaos@test",
+			"GIT_COMMITTER_NAME=yaaos",
+			"GIT_COMMITTER_EMAIL=yaaos@test",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, cwd, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	mustRun(workDir, "init", "--initial-branch=main")
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	mustRun(workDir, "add", ".")
+	mustRun(workDir, "commit", "-m", "init")
+	mustRun(workDir, "clone", "--bare", workDir, bareDir)
+	sha := mustRun(workDir, "rev-parse", "HEAD")
+	return "file://" + bareDir, sha
+}
+
+func TestRealHandler_CreateWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) {
+	cloneURL, headSHA := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newCreate("ws-real")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	// File URLs aren't authenticated — empty token to skip auth injection.
+	cmd.Auth = protocol.AuthBlock{}
+
+	out, err := h.CreateWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("real clone: %v", err)
+	}
+	path := out["path"].(string)
+	if _, err := os.Stat(filepath.Join(path, "README.md")); err != nil {
+		t.Errorf("cloned tree missing README.md: %v", err)
+	}
+
+	// HEAD now points at the expected SHA in detached state.
+	cmdHead := exec.Command("git", "rev-parse", "HEAD")
+	cmdHead.Dir = path
+	gotSHA, err := cmdHead.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if strings.TrimSpace(string(gotSHA)) != headSHA {
+		t.Errorf("HEAD: want %s got %s", headSHA, strings.TrimSpace(string(gotSHA)))
 	}
 }

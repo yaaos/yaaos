@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # Agent CI: go vet + go build + go test.
+#
+# Real-clone tests (workspace package, slice 69) call `git` against a
+# local bare repo. The test skips when git isn't on PATH, but the CI
+# environment SHOULD have it so the test actually runs. Alpine: `apk
+# add git`. Debian/Ubuntu: `apt-get install -y git`. macOS dev: comes
+# with Xcode CLI tools.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+if ! command -v git >/dev/null 2>&1; then
+    echo "WARN: git not on PATH — real-clone tests will skip" >&2
+fi
 
 echo "==> go vet"
 go vet ./...

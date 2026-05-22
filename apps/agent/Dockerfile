@@ -1,12 +1,15 @@
 # yaaos WorkspaceAgent — customer-deployed Go binary.
 #
 # Two-stage build: golang:1.22-alpine compiles the static binary; the
-# runtime stage is `gcr.io/distroless/static-debian12:nonroot` so the
-# image has no shell, no package manager, no setuid root binaries.
+# runtime stage is `debian:bookworm-slim` because the agent shells out
+# to `git` for repo clone (and, later, hands off to the Claude Code CLI
+# which also expects `git` + a real userspace). Distroless/static was the
+# original target — see DECISIONS.md slice 69 for the trade-off
+# (security posture of "no shell, no pkg manager" vs. needing git).
 #
-# Image is ~25 MB. The agent is the only PID 1 in the container; SIGTERM
-# from ECS reaches it directly so graceful shutdown works without an
-# init wrapper.
+# Image is ~80 MB (was ~25 MB on distroless/static). The agent is still
+# PID 1; SIGTERM from ECS reaches it directly so graceful shutdown works
+# without an init wrapper.
 #
 # Build:
 #   docker build -f apps/agent/Dockerfile -t yaaos-agent:dev apps/agent
@@ -38,9 +41,10 @@ RUN if [ -f go.sum ]; then go mod download; fi
 COPY cmd cmd
 COPY internal internal
 
-# Static binary. CGO_ENABLED=0 + the distroless runtime means glibc /
-# musl differences don't bite. -trimpath removes local build paths from
-# the binary so customers don't see /home/<runner>/... in stack traces.
+# Static binary. CGO_ENABLED=0 keeps the binary glibc/musl-agnostic so it
+# runs cleanly on the Debian runtime stage. -trimpath removes local build
+# paths from the binary so customers don't see /home/<runner>/... in
+# stack traces.
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags '-s -w' \
@@ -48,25 +52,35 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/agent
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM debian:bookworm-slim
 
-# Distroless's `nonroot` user is UID 65532 — the agent runs without
-# privileges. ECS task definitions should NOT override this user.
-WORKDIR /
+# `git` is required: the agent shells out to it for CreateWorkspace
+# (HTTPS clone with installation-token auth), and the Claude Code CLI
+# the agent later spawns also depends on it. `ca-certificates` lets the
+# clone reach GitHub over HTTPS. We don't install curl, ssh, less, or
+# any other userland — the surface area stays small.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy CA bundle so HTTPS to the control plane works out of the box.
-# (Distroless images already include this, but the COPY makes the dep
-# explicit and survives a future base swap.)
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# Run as a non-root user (UID 65532, matching the distroless `nonroot`
+# convention we used before — same UID so existing ECS task definitions
+# don't need to change). The user owns /var/agent so the agent can
+# create workspaces under it.
+RUN groupadd --system --gid 65532 nonroot \
+ && useradd --system --uid 65532 --gid nonroot --home-dir /home/nonroot \
+            --create-home --shell /usr/sbin/nologin nonroot \
+ && mkdir -p /var/agent/workspaces \
+ && chown -R nonroot:nonroot /var/agent
+USER 65532:65532
+WORKDIR /home/nonroot
 
 # The binary itself.
-COPY --from=builder /out/agent /usr/local/bin/agent
+COPY --from=builder --chown=nonroot:nonroot /out/agent /usr/local/bin/agent
 
-# The agent expects to find the working directory the supervisor uses
-# to clone workspaces — defaults to /var/agent/workspaces (real path
-# wires alongside the workspace subcommand body in the Phase 6 follow-on).
-# Distroless can't create dirs at runtime — the ECS task definition
-# mounts a tmpfs / EBS volume at this path.
+# Default workspace root — overridable via YAAOS_WORKSPACE_ROOT env. The
+# ECS task definition mounts a tmpfs or EBS volume here in production.
+ENV YAAOS_WORKSPACE_ROOT=/var/agent/workspaces
 
 ENTRYPOINT ["/usr/local/bin/agent"]
 CMD ["supervisor"]
