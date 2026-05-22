@@ -52,11 +52,22 @@ class FakeCodingAgentPlugin:
         self.stale_still_applies: bool = True
         self.stale_confidence: float = 0.95
         self.answer_text: str = "fake answer"
+        # ActivityEvents to emit on each invocation. Tests that want to
+        # exercise the activity-stream fan-out path set this attribute,
+        # and every coding-agent method invokes `on_activity` for each
+        # event in turn before returning the result.
+        self.activity_events: list = []
         # Captures of last calls for assertions.
         self.last_review_context: ReviewContext | None = None
         self.last_verify_fix_context: VerifyFixContext | None = None
         self.last_stale_context: StaleCheckContext | None = None
         self.last_answer_context: AnswerQuestionContext | None = None
+
+    async def _emit_activity(self, on_activity):  # type: ignore[no-untyped-def]
+        if on_activity is None:
+            return
+        for event in self.activity_events:
+            await on_activity(event)
 
     def install_url(self, org_id: UUID) -> str | None:
         del org_id
@@ -71,8 +82,9 @@ class FakeCodingAgentPlugin:
         context: ReviewContext,
         on_activity: OnActivity | None = None,
     ) -> ReviewResult:
-        del workspace, on_activity
+        del workspace
         self.last_review_context = context
+        await self._emit_activity(on_activity)
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=list(self.review_findings),
@@ -87,7 +99,8 @@ class FakeCodingAgentPlugin:
         context: IncrementalReviewContext,
         on_activity: OnActivity | None = None,
     ) -> IncrementalReviewResult:
-        del workspace, context, on_activity
+        del workspace, context
+        await self._emit_activity(on_activity)
         return IncrementalReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=list(self.incremental_findings),
@@ -100,8 +113,9 @@ class FakeCodingAgentPlugin:
         context: VerifyFixContext,
         on_activity: OnActivity | None = None,
     ) -> VerifyFixResult:
-        del workspace, on_activity
+        del workspace
         self.last_verify_fix_context = context
+        await self._emit_activity(on_activity)
         return VerifyFixResult(
             status=InvocationStatus.SUCCESS,
             still_present=self.verify_fix_still_present,
@@ -116,8 +130,9 @@ class FakeCodingAgentPlugin:
         context: StaleCheckContext,
         on_activity: OnActivity | None = None,
     ) -> StaleCheckResult:
-        del workspace, on_activity
+        del workspace
         self.last_stale_context = context
+        await self._emit_activity(on_activity)
         return StaleCheckResult(
             status=InvocationStatus.SUCCESS,
             still_applies=self.stale_still_applies,
@@ -132,8 +147,9 @@ class FakeCodingAgentPlugin:
         context: AnswerQuestionContext,
         on_activity: OnActivity | None = None,
     ) -> AnswerQuestionResult:
-        del workspace, on_activity
+        del workspace
         self.last_answer_context = context
+        await self._emit_activity(on_activity)
         return AnswerQuestionResult(
             status=InvocationStatus.SUCCESS,
             answer=self.answer_text,
