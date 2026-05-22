@@ -31,7 +31,11 @@ import structlog
 
 from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
-from app.core.workspace import get_workflow_context_provider
+from app.core.workspace import (
+    Workspace,
+    get_workflow_context_provider,
+    get_workspace,
+)
 from app.domain.tickets import get_payload as get_ticket_payload
 
 log = structlog.get_logger("domain.reviewer.commands")
@@ -44,14 +48,53 @@ SKIP_LABELS: frozenset[str] = frozenset({"yaaos-skip", "no-review", "wip"})
 
 
 class _WorkspaceReviewCommand:
-    """Workspace-category reviewer command. Each wraps a `domain/coding_agent`
-    invocation in the full implementation."""
+    """Workspace-category reviewer command. The base does two things on every
+    invocation:
+
+    1. Reads `workspace_id` from inputs and resolves it to a live `Workspace`
+       handle via `core/workspace.get_workspace()`. Missing or unresolved →
+       `Outcome.failure` (the upstream `ProvisionWorkspace` step would have
+       failed to write `workspace_id` into outputs, or the row was destroyed
+       between provision and review).
+    2. Hands the live `workspace` + raw `inputs` + `ctx` to the subclass via
+       `_run_in_workspace(workspace, inputs, ctx)`.
+
+    Subclass bodies (`CodeReview`, `IncrementalReview`, `VerifyFix`,
+    `StaleCheck`, `AnswerQuestion`) override `_run_in_workspace` to build
+    their `domain/coding_agent` context and invoke the matching agent
+    method. Phase 4 ships the substrate; the per-command bodies land
+    incrementally as their `<Foo>Context` builders are extracted from
+    `queue.py`.
+    """
 
     category = CommandCategory.WORKSPACE
     restart_safe = True
 
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+        ws_id_raw = inputs.get("workspace_id")
+        if not ws_id_raw:
+            return Outcome.failure(reason="missing workspace_id input")
+        try:
+            ws_id = UUID(str(ws_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid workspace_id: {ws_id_raw!r}")
+
+        workspace = await get_workspace(ws_id)
+        if workspace is None:
+            return Outcome.failure(reason=f"workspace {ws_id} not resolvable")
+
+        return await self._run_in_workspace(workspace, inputs, ctx)
+
+    async def _run_in_workspace(
+        self,
+        workspace: Workspace,
+        inputs: dict[str, Any],
+        ctx: CommandContext,
+    ) -> Outcome:
+        """Override in subclasses to invoke the relevant `domain/coding_agent`
+        method against the live workspace. Default body is success — keeps
+        the engine workflow draining cleanly until each real body lands."""
+        del workspace, inputs, ctx
         return Outcome.success()
 
 
