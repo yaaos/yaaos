@@ -60,9 +60,45 @@ class SubscriberRegistry:
     # ── Senders (WebSocket lifecycle) ──────────────────────────────────
 
     async def register_sender(self, agent_id: UUID, sender: Sender) -> None:
+        """Register the sender callable for an agent's live WebSocket.
+        Called by the WS endpoint after upgrade succeeds.
+
+        Reconnect handling (PHASES item 185): if there are already active
+        routes whose `agent_id` matches, re-emit `subscribe` messages on
+        the new sender so the agent's reconstructed SubscriptionSet
+        picks up where the old connection left off. Without this,
+        progress events for already-watching UIs would drop until each
+        UI detached + re-attached.
+        """
+        replay: list[dict[str, Any]] = []
         async with self._lock:
             self._senders[agent_id] = sender
-            log.info("subscribers.sender_registered", agent_id=str(agent_id))
+            for wfx_id, (workspace_id, route_agent) in self._routes.items():
+                if route_agent != agent_id:
+                    continue
+                replay.append(
+                    {
+                        "type": "subscribe",
+                        "workspace_id": str(workspace_id),
+                        "workflow_execution_id": str(wfx_id),
+                    }
+                )
+            log.info(
+                "subscribers.sender_registered",
+                agent_id=str(agent_id),
+                resubscribed_count=len(replay),
+            )
+        # Send outside the lock so a slow agent can't block other registry ops.
+        for message in replay:
+            try:
+                await sender(message)
+            except Exception as exc:
+                log.warning(
+                    "subscribers.resubscribe_send_failed",
+                    agent_id=str(agent_id),
+                    workspace_id=message["workspace_id"],
+                    err=str(exc),
+                )
 
     async def unregister_sender(self, agent_id: UUID) -> None:
         async with self._lock:
