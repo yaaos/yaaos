@@ -241,9 +241,95 @@ def raw_to_vcs_findings(
     return out
 
 
+async def post_admitted_findings_to_vcs(
+    *,
+    pr_id: UUID,
+    org_id: UUID,
+    pr_external_id: str,
+    vcs_plugin_id: str,
+    admitted,  # type: ignore[no-untyped-def]
+    raw: list[RawFinding],
+    summary_body: str | None,
+    state: str = "COMMENT",
+    agent_tag: str = "yaaos",
+    session: AsyncSession,
+):  # type: ignore[no-untyped-def]
+    """Post admitted findings to the VCS plugin AND attach yaaos
+    `CommentMessage`s to each finding's thread using the returned
+    external_comment_ids.
+
+    Args:
+    - `pr_id`, `org_id`: the aggregate scope.
+    - `pr_external_id`: the GitHub PR id (or other VCS-side id) the plugin
+      posts the review against.
+    - `vcs_plugin_id`: which plugin to dispatch to (typically `"github"`).
+      Tests register a `StubVCSPlugin` under the same id.
+    - `admitted`: the list of admitted `Finding` rows from `admit_raw_findings`.
+      Used to determine which findings need threads.
+    - `raw`: the original `RawFinding` list — needed by `raw_to_vcs_findings`
+      to translate admitted fingerprints back to `vcs.Finding` payloads.
+    - `summary_body`: top-level review body. May be None.
+    - `state`, `agent_tag`: vcs.Review fields. Defaults match the legacy
+      queue.py shape.
+
+    Returns the `ReviewPostResult` from the VCS plugin so callers can
+    record metrics (tokens, latency, external_id).
+
+    NOT idempotent — calling twice will post twice. The aggregate's thread
+    machinery prevents duplicate yaaos messages on the same external_comment_id
+    but the GitHub side has no dedup. Callers must ensure single-flight.
+    """
+    from app.domain.reviewer.repository import (  # noqa: PLC0415
+        SqlAlchemyAggregateRepository,
+    )
+    from app.domain.vcs import Review as VcsReview  # noqa: PLC0415
+    from app.domain.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
+
+    plugin = get_vcs_plugin(vcs_plugin_id)
+    posted_vcs_findings = raw_to_vcs_findings(raw, admitted)
+
+    review_obj = VcsReview(
+        agent_tag=agent_tag,
+        state=state,  # type: ignore[arg-type]
+        summary_body=summary_body,
+        findings=posted_vcs_findings,
+    )
+    post_result = await plugin.post_review(pr_external_id, review_obj)
+
+    # Attach yaaos messages to each finding's thread using the returned
+    # external_comment_ids. Map back by index — the plugin's mapping is
+    # keyed by vcs.Finding index (which matches `admitted` order since
+    # raw_to_vcs_findings preserves order).
+    repo = SqlAlchemyAggregateRepository(session)
+    aggregate = await repo.load(pr_id=pr_id, org_id=org_id)
+    external_ids = list(post_result.finding_to_comment_external_id.values())
+    for idx, f in enumerate(admitted):
+        external_id = external_ids[idx] if idx < len(external_ids) else f"local-{f.id}"
+        thread = aggregate.open_thread_for_finding(f.id)
+        aggregate.append_message(
+            thread_id=thread.id,
+            author_kind="yaaos",
+            author_external_id=agent_tag,
+            external_comment_id=external_id,
+            body=f.body,
+        )
+    await repo.save(aggregate)
+
+    log.info(
+        "vcs_post.done",
+        pr_id=str(pr_id),
+        org_id=str(org_id),
+        pr_external_id=pr_external_id,
+        review_external_id=post_result.review_external_id,
+        findings_posted=len(posted_vcs_findings),
+    )
+    return post_result
+
+
 __all__ = [
     "AdmissionResult",
     "admit_raw_findings",
     "findingdrafts_to_raw",
+    "post_admitted_findings_to_vcs",
     "raw_to_vcs_findings",
 ]
