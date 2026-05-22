@@ -11,7 +11,7 @@ finding body.
 from __future__ import annotations
 
 from app.domain.coding_agent import FindingAnchor, FindingDraft
-from app.domain.reviewer.incremental import _findingdrafts_to_raw
+from app.domain.reviewer.admission import findingdrafts_to_raw as _findingdrafts_to_raw
 
 
 def _draft(body: str) -> FindingDraft:

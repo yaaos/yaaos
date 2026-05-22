@@ -38,6 +38,12 @@ from app.domain.coding_agent import (
     InvocationStatus,
     StaleCheckContext,
 )
+from app.domain.reviewer.admission import (
+    findingdrafts_to_raw as _findingdrafts_to_raw,
+)
+from app.domain.reviewer.admission import (
+    raw_to_vcs_findings as _raw_to_vcs_findings,
+)
 from app.domain.reviewer.aggregate import PRReviewAggregate as _Aggregate
 from app.domain.reviewer.anchor import resolve_anchor
 from app.domain.reviewer.lock import acquire_pr_lock
@@ -50,8 +56,6 @@ from app.domain.reviewer.queue import (
     ReviewJobActivity,
     ReviewJobStatusChanged,
     _detect_language,
-    _findingdrafts_to_raw,
-    _raw_to_vcs_findings,
     _set_step,
     _ticket_skip_reason,
     _utcnow,

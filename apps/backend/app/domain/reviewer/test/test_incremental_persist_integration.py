@@ -29,7 +29,12 @@ from sqlalchemy import text
 
 from app.core.audit_log import Actor
 from app.domain.coding_agent import FindingAnchor, FindingDraft
-from app.domain.reviewer.queue import _findingdrafts_to_raw, _raw_to_vcs_findings
+from app.domain.reviewer.admission import (
+    findingdrafts_to_raw as _findingdrafts_to_raw,
+)
+from app.domain.reviewer.admission import (
+    raw_to_vcs_findings as _raw_to_vcs_findings,
+)
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import dispatch_audits, dispatch_events
 
