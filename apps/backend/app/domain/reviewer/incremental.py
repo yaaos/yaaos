@@ -58,13 +58,15 @@ from app.domain.reviewer.constants import (
 from app.domain.reviewer.constants import (
     REVIEWER_TAG as _REVIEWER_TAG,
 )
+from app.domain.reviewer.diff_utils import (
+    detect_language as _detect_language,
+)
+from app.domain.reviewer.diff_utils import (
+    ticket_skip_reason as _ticket_skip_reason,
+)
+from app.domain.reviewer.legacy_runner import _utcnow
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.models import ReviewRow
-from app.domain.reviewer.queue import (
-    _detect_language,
-    _ticket_skip_reason,
-    _utcnow,
-)
 from app.domain.reviewer.queue_events import (
     ReviewJobActivity,
     ReviewJobStatusChanged,
