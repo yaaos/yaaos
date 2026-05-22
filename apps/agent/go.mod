@@ -3,6 +3,7 @@ module github.com/yaaos/agent
 go 1.22
 
 require (
+	github.com/coder/websocket v1.8.13
 	go.opentelemetry.io/otel v1.30.0
 	go.opentelemetry.io/otel/sdk v1.30.0
 	go.opentelemetry.io/otel/trace v1.30.0
