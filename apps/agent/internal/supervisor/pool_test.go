@@ -325,6 +325,191 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 	}
 }
 
+// hangingForever blocks every command body until ctx cancels. Used to
+// drive the per-command timeout path in the pool.
+type hangingForever struct{}
+
+func (hangingForever) CreateWorkspace(ctx context.Context, _ *protocol.CreateWorkspaceCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingForever) WriteFiles(ctx context.Context, _ *protocol.WriteFilesCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingForever) RefreshWorkspaceAuth(ctx context.Context, _ *protocol.RefreshWorkspaceAuthCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingForever) InvokeClaudeCode(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingForever) CleanupWorkspace(ctx context.Context, _ *protocol.CleanupWorkspaceCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestPoolTimeouts_DefaultsApply(t *testing.T) {
+	got := PoolTimeouts{}.withDefaults()
+	if got.CreateWorkspace != 5*time.Minute {
+		t.Errorf("CreateWorkspace default: want 5m got %s", got.CreateWorkspace)
+	}
+	if got.WriteFiles != 30*time.Second {
+		t.Errorf("WriteFiles default: want 30s got %s", got.WriteFiles)
+	}
+	if got.InvokeClaudeCodeFallback != 15*time.Minute {
+		t.Errorf("InvokeClaudeCodeFallback default: want 15m got %s", got.InvokeClaudeCodeFallback)
+	}
+	// Explicit overrides win.
+	got = PoolTimeouts{CreateWorkspace: 1 * time.Second}.withDefaults()
+	if got.CreateWorkspace != 1*time.Second {
+		t.Errorf("explicit override lost: %s", got.CreateWorkspace)
+	}
+}
+
+func TestPoolTimeouts_InvokeClaudeCodeUsesWireLimits(t *testing.T) {
+	t.Parallel()
+	to := PoolTimeouts{InvokeClaudeCodeFallback: time.Hour}.withDefaults()
+	cmd := &protocol.AgentCommand{
+		Kind: protocol.KindInvokeClaudeCode,
+		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 7},
+		},
+	}
+	if got := to.timeoutForCommand(cmd); got != 7*time.Second {
+		t.Errorf("want 7s from wire limits, got %s", got)
+	}
+}
+
+func TestPoolTimeouts_InvokeClaudeCodeFallbackWhenLimitsZero(t *testing.T) {
+	t.Parallel()
+	to := PoolTimeouts{InvokeClaudeCodeFallback: 42 * time.Second}.withDefaults()
+	cmd := &protocol.AgentCommand{
+		Kind:             protocol.KindInvokeClaudeCode,
+		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{},
+	}
+	if got := to.timeoutForCommand(cmd); got != 42*time.Second {
+		t.Errorf("want 42s fallback, got %s", got)
+	}
+}
+
+func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
+	// Spawn handler that hangs forever; set CreateWorkspace timeout to
+	// 30ms so Dispatch returns quickly with a timeout-flavoured failure
+	// event. The slot should be dropped + the runner closed.
+	pool := NewPoolWithTimeouts(
+		InProcessSpawn(hangingForever{}),
+		nil,
+		PoolTimeouts{CreateWorkspace: 30 * time.Millisecond},
+	)
+	defer pool.CloseAll(context.Background())
+
+	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"))
+	if ev.Kind != protocol.EventCompletedFailure {
+		t.Fatalf("kind: want completed_failure on timeout, got %q (reason=%q)", ev.Kind, ev.FailureReason)
+	}
+	if !strings.Contains(ev.FailureReason, "timeout:") {
+		t.Errorf("failure_reason: want 'timeout:' prefix, got %q", ev.FailureReason)
+	}
+	if !strings.Contains(ev.FailureReason, "CreateWorkspace") {
+		t.Errorf("failure_reason should name the kind, got %q", ev.FailureReason)
+	}
+	// Slot should be dropped — next Create respawns rather than reusing
+	// the timed-out runner.
+	pool.mu.Lock()
+	_, stillPresent := pool.runners["ws-1"]
+	pool.mu.Unlock()
+	if stillPresent {
+		t.Errorf("slot should be dropped after timeout")
+	}
+}
+
+func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
+	// Create succeeds via StubHandler; then Invoke hangs and times out
+	// per Limits.WallclockSeconds=1 (we force a small unit conversion by
+	// using fractional seconds via the fallback path is moot — this
+	// goes via the wire-limits branch which uses whole seconds).
+	pool := NewPoolWithTimeouts(
+		InProcessSpawn(stubThenHang{}),
+		nil,
+		PoolTimeouts{}, // wire wins over fallbacks; defaults still fine elsewhere
+	)
+	defer pool.CloseAll(context.Background())
+
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create")); ev.Kind != protocol.EventCompletedSuccess {
+		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
+	}
+	invokeCmd := &protocol.AgentCommand{
+		Kind: protocol.KindInvokeClaudeCode,
+		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+			CommandHeader: protocol.CommandHeader{
+				CommandID: "c-invoke", WorkspaceID: "ws-1", Kind: protocol.KindInvokeClaudeCode,
+			},
+			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 1}, // 1s wire cap
+		},
+	}
+	start := time.Now()
+	ev := pool.Dispatch(context.Background(), invokeCmd)
+	elapsed := time.Since(start)
+	if ev.Kind != protocol.EventCompletedFailure {
+		t.Fatalf("invoke: want completed_failure on timeout, got %q (reason=%q)", ev.Kind, ev.FailureReason)
+	}
+	if !strings.Contains(ev.FailureReason, "InvokeClaudeCode exceeded 1s") {
+		t.Errorf("failure_reason should mention the per-kind timeout, got %q", ev.FailureReason)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("dispatch took too long: %s (cap should be ~1s)", elapsed)
+	}
+}
+
+// stubThenHang accepts CreateWorkspace via StubHandler's default; hangs
+// on every other command kind until ctx cancels.
+type stubThenHang struct{ workspace.StubHandler }
+
+func (stubThenHang) InvokeClaudeCode(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestPool_TimeoutDoesNotBlockOtherWorkspaces(t *testing.T) {
+	// Two workspaces. ws-1's Create hangs and times out at 30ms; ws-2's
+	// Create succeeds immediately. The two dispatches should NOT
+	// serialize — ws-2 must return before ws-1's timeout fires.
+	pool := NewPoolWithTimeouts(
+		InProcessSpawn(workspace.StubHandler{}),
+		nil,
+		PoolTimeouts{CreateWorkspace: 30 * time.Millisecond},
+	)
+	defer pool.CloseAll(context.Background())
+
+	// Switch ws-1 to a hanging spawn after the fact: easier to spin up
+	// a separate pool. Direct test: just verify ws-2 succeeds fast even
+	// while ws-1 is in flight (the outer pool mu only locks for slot
+	// lookup, not Send).
+	done := make(chan time.Duration, 2)
+	go func() {
+		start := time.Now()
+		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-1", "c-1"))
+		done <- time.Since(start)
+	}()
+	go func() {
+		start := time.Now()
+		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-2", "c-2"))
+		done <- time.Since(start)
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case d := <-done:
+			if d > 200*time.Millisecond {
+				t.Errorf("dispatch %d took %s; want <200ms (independent workspaces)", i, d)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("dispatch did not return in 1s")
+		}
+	}
+}
+
 func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
 	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
 	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"))

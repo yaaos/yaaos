@@ -48,11 +48,73 @@ type SpawnFunc func(ctx context.Context, workspaceID string) (WorkspaceRunner, e
 // Pool tracks one runner per workspace_id, serializes commands per
 // workspace, and reaps the runner after `CleanupWorkspace`.
 type Pool struct {
-	spawn SpawnFunc
-	log   Logger
+	spawn    SpawnFunc
+	log      Logger
+	timeouts PoolTimeouts
 
 	mu      sync.Mutex
 	runners map[string]*workspaceSlot
+}
+
+// PoolTimeouts caps how long each command kind can sit inside the
+// workspace process before the pool gives up + emits completed_failure.
+// InvokeClaudeCode reads `Limits.WallclockSeconds` off the wire when
+// present (the control plane owns that knob per CLAUDE.md "every
+// threshold/timeout comes from the control plane via payload"); the
+// other kinds use these Go-side defaults until they grow per-command
+// wire fields of their own. Zero values pick conservative defaults.
+type PoolTimeouts struct {
+	CreateWorkspace      time.Duration // default 5m (git clone may be slow)
+	WriteFiles           time.Duration // default 30s
+	RefreshWorkspaceAuth time.Duration // default 30s
+	CleanupWorkspace     time.Duration // default 30s
+	// InvokeClaudeCodeFallback applies when the command omits
+	// Limits.WallclockSeconds (shouldn't happen in production — the
+	// backend always sets it — but defensive defaults beat hangs).
+	// Default: 15m.
+	InvokeClaudeCodeFallback time.Duration
+}
+
+func (t PoolTimeouts) withDefaults() PoolTimeouts {
+	if t.CreateWorkspace == 0 {
+		t.CreateWorkspace = 5 * time.Minute
+	}
+	if t.WriteFiles == 0 {
+		t.WriteFiles = 30 * time.Second
+	}
+	if t.RefreshWorkspaceAuth == 0 {
+		t.RefreshWorkspaceAuth = 30 * time.Second
+	}
+	if t.CleanupWorkspace == 0 {
+		t.CleanupWorkspace = 30 * time.Second
+	}
+	if t.InvokeClaudeCodeFallback == 0 {
+		t.InvokeClaudeCodeFallback = 15 * time.Minute
+	}
+	return t
+}
+
+// timeoutForCommand returns the per-command deadline duration. For
+// InvokeClaudeCode, prefers the wire-supplied Limits.WallclockSeconds;
+// otherwise falls back to the per-kind default.
+func (t PoolTimeouts) timeoutForCommand(cmd *protocol.AgentCommand) time.Duration {
+	switch cmd.Kind {
+	case protocol.KindCreateWorkspace:
+		return t.CreateWorkspace
+	case protocol.KindWriteFiles:
+		return t.WriteFiles
+	case protocol.KindRefreshWorkspaceAuth:
+		return t.RefreshWorkspaceAuth
+	case protocol.KindCleanupWorkspace:
+		return t.CleanupWorkspace
+	case protocol.KindInvokeClaudeCode:
+		if cmd.InvokeClaudeCode != nil && cmd.InvokeClaudeCode.Limits.WallclockSeconds > 0 {
+			return time.Duration(cmd.InvokeClaudeCode.Limits.WallclockSeconds) * time.Second
+		}
+		return t.InvokeClaudeCodeFallback
+	default:
+		return t.InvokeClaudeCodeFallback
+	}
 }
 
 // workspaceSlot pairs a runner with a per-workspace mutex. The pool grabs
@@ -65,12 +127,25 @@ type workspaceSlot struct {
 }
 
 // NewPool constructs an empty pool. `spawn` is invoked on the first
-// command for a previously unseen workspace_id.
+// command for a previously unseen workspace_id. Uses default
+// PoolTimeouts; call `NewPoolWithTimeouts` to override.
 func NewPool(spawn SpawnFunc, log Logger) *Pool {
+	return NewPoolWithTimeouts(spawn, log, PoolTimeouts{})
+}
+
+// NewPoolWithTimeouts constructs a pool with custom per-kind timeouts.
+// Zero-value fields in `timeouts` get conservative defaults; explicit
+// values win.
+func NewPoolWithTimeouts(spawn SpawnFunc, log Logger, timeouts PoolTimeouts) *Pool {
 	if log == nil {
 		log = nullLogger{}
 	}
-	return &Pool{spawn: spawn, log: log, runners: make(map[string]*workspaceSlot)}
+	return &Pool{
+		spawn:    spawn,
+		log:      log,
+		timeouts: timeouts.withDefaults(),
+		runners:  make(map[string]*workspaceSlot),
+	}
 }
 
 // Dispatch routes one command to the right runner and returns the event
@@ -110,14 +185,30 @@ func (p *Pool) Dispatch(ctx context.Context, cmd *protocol.AgentCommand) protoco
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
 
-	ev, err := slot.runner.Send(ctx, cmd)
+	// Per-command wall-clock cap. InvokeClaudeCode honours the wire's
+	// Limits.WallclockSeconds; other kinds use the pool's Go-side
+	// defaults (overridable via NewPoolWithTimeouts).
+	timeout := p.timeouts.timeoutForCommand(cmd)
+	sendCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ev, err := slot.runner.Send(sendCtx, cmd)
 	if err != nil {
-		// IO failure / runner died / context cancel. Drop the slot so a
-		// subsequent CreateWorkspace can respawn; emit completed_failure.
+		// IO failure / runner died / outer context cancel / per-command
+		// timeout. Drop the slot so a subsequent CreateWorkspace can
+		// respawn; emit completed_failure with a kind-specific reason so
+		// the backend's audit log can tell timeouts apart from outer
+		// cancellation or runner crashes. The distinguishing signal: a
+		// per-command timeout fires when sendCtx hits DeadlineExceeded
+		// while the outer ctx is still alive; outer cancel cancels both.
+		reason := "runner: " + err.Error()
+		if errors.Is(sendCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			reason = fmt.Sprintf("timeout: %s exceeded %s wall-clock", cmd.Kind, timeout)
+		}
 		p.dropSlot(workspaceID)
 		_ = slot.runner.Close(context.Background())
-		p.log.Warn("pool.send_failed", "workspace_id", workspaceID, "err", err.Error())
-		return failureEvent(header, "runner: "+err.Error())
+		p.log.Warn("pool.send_failed", "workspace_id", workspaceID, "kind", string(cmd.Kind), "err", err.Error())
+		return failureEvent(header, reason)
 	}
 	if cmd.Kind == protocol.KindCleanupWorkspace {
 		// Contract: CleanupWorkspace is always terminal — reap the runner.
