@@ -112,7 +112,7 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [x] Workspace records + lifecycle state machine in `core/workspace`. _(Existing state machine extended with M05 claim/holder columns.)_
 - [x] Single-flight enforcement via atomic `current_command_id` claim.
 - [x] Recovery policy registry (initial: `auth_expired → RefreshWorkspaceAuth`).
-- [ ] Workspace-lifecycle WorkflowCommands: `CreateWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`. _(Command bodies land in Phase 4 alongside the reviewer commands; the registry that consumes them is shipped.)_
+- [x] Workspace-lifecycle WorkflowCommands: `ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`. All three have real in-memory bodies (slices 3/4/6 of Phase 4 follow-on). `ProvisionWorkspace` reads ticket context via the registered `WorkflowContextProvider`; `CleanupWorkspace` flips the row to expired; `RefreshWorkspaceAuth` is a no-op-success for the in-memory provider (no stored creds to refresh).
 - [ ] `InMemoryWorkspaceProvider` implementation: spawns subprocesses for git + Claude Code in-process; enforces all invariants. _(Provider exists as `plugins/in_memory_workspace`; M05-specific invariant enforcement (claim + failure-report-precedes-disposal) routes through the new `core/workspace.dispatch` API in Phase 4.)_
 - [x] Workspace-to-workflow binding via `current_holder_workflow_id`.
 - [x] Cleanup failsafes: TTL sweep, idle timeout, reconciliation hooks. _(TTL + idle-timeout sweeps shipped in the reaper; reconciliation hooks (cross-checking control-plane state against agent inventory) land with `core/agent_gateway` in Phase 5.)_
@@ -125,12 +125,12 @@ Pure plumbing change. No behavior change. Lands before any new M05 modules so th
 - [ ] `domain/coding_agent` builds the `invocation` block of `InvokeClaudeCode` AgentCommand payloads; per-mode prompt configuration. _(Methods already exist; the wiring through Workspace command bodies lands in the follow-on Phase 4 iteration.)_
 - [ ] `domain/reviewer/admission.py` — extract gate logic from `queue.py:769-834` + `aggregate.py:post_process_raw_findings` into a single pure function. _(Follow-on iteration; admission still flows through `queue.py` until the dismantle.)_
 - [ ] **Workspace WorkflowCommands (5):** `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion`. Each invokes the matching coding_agent method. _(Stub classes registered in `domain/reviewer/commands/`; bodies wired in the follow-on iteration.)_
-- [ ] **Local WorkflowCommands:** `CheckShouldReview`, `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply`. _(Stub classes registered; bodies wired in the follow-on iteration.)_
+- [ ] **Local WorkflowCommands (1/5 real):** `CheckShouldReview` ✓ (slice 1: admission gate on draft/fork/skip-label/bot-author from ticket payload). `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply` still stubs — bodies wired in the follow-on iteration.
 - [x] **Five workflow definitions in `domain/reviewer/workflows/`:** `pr_review_v1`, `incremental_review_v1`, `verify_fix_v1`, `stale_check_v1`, `answer_question_v1`.
 - [x] All workflows + commands register with `core/workflow` at startup.
 - [ ] **`domain/reviewer/queue.py` dismantled:** `schedule_review`, `_run_review_job_inner`, `_inflight_tasks`, `cancel_pending`, inline admission filters — all removed. File deleted at end of phase. No spawn()-based reviewer code remains. _(Follow-on iteration; queue.py still drives reviews until the new command bodies are wired.)_
 - [ ] `review_jobs` table dropped (per Topic 2 lock). _(Drops alongside the queue.py dismantle.)_
-- [ ] Tests: E2E for each of the 5 workflows against `InMemoryWorkspaceProvider`. Span linkage assertion. Admission gates tested. Cross-review fingerprint dedup test. _(5 registration tests shipped (workflows registered, every step's command_kind resolves, lifecycle + Workspace + Local commands present). E2E rides on the command-body wiring.)_
+- [ ] Tests: E2E for each of the 5 workflows against `InMemoryWorkspaceProvider`. Span linkage assertion. Admission gates tested. Cross-review fingerprint dedup test. _(5 registration tests + 11 CheckShouldReview tests + 8 lifecycle-command tests + `test_pr_review_v1_e2e_service.py` composition proof shipped. Per-workflow E2E for the remaining 4 workflows (incremental/verify_fix/stale_check/answer_question) rides on the Workspace reviewer command bodies.)_
 - [ ] Reflection — verify requirements, architecture conformance, testing, observability, security, docs-sync per the ritual at the top of this file. Surface gaps as new follow-on items before ticking this.
 
 ## Phase 5 — `core/agent_gateway` + wire protocol
