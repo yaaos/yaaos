@@ -78,6 +78,7 @@ from app.domain.reviewer.queue_events import (
     ReviewJobStepProgress,
 )
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.review_job import ReviewJob, ReviewJobInput
 from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
 from app.domain.reviewer.secrets_detection import (
     secrets_warning_review as _secrets_warning_review,
@@ -158,11 +159,8 @@ class _AdmissionDropsPayload(BaseModel):
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-class ReviewJobInput(BaseModel):
-    review_job_id: UUID
-    ticket_id: UUID
-    org_id: UUID
-    debounce_seconds: int
+# `ReviewJob` + `ReviewJobInput` moved to `domain/reviewer/review_job.py`
+# (slice 43). Re-imported at the top of the file under the same names.
 
 
 async def schedule_review(
@@ -324,58 +322,7 @@ async def cancel_pending(
 # ── Read API ──────────────────────────────────────────────────────────────────
 
 
-class ReviewJob(BaseModel):
-    id: UUID
-    org_id: UUID
-    pr_id: UUID
-    status: str
-    trigger_reason: str
-    destination: str
-    skip_reason: str | None
-    scheduled_at: datetime
-    started_at: datetime | None
-    completed_at: datetime | None
-    last_heartbeat_at: datetime | None
-    current_step: str | None
-    prompt_hash: str | None
-    lessons_applied: list[UUID] | None
-    tokens_in: int | None
-    tokens_out: int | None
-    duration_s: int | None
-    error_message: str | None
-    review_external_id: str | None
-    findings: list[dict[str, Any]] | None
-    activity_log: list[dict[str, Any]]
-    model: str | None
-    effort: str | None
-
-    @classmethod
-    def from_row(cls, row: ReviewRow) -> ReviewJob:
-        return cls(
-            id=row.id,
-            org_id=row.org_id,
-            pr_id=row.pr_id,
-            status=row.status,
-            trigger_reason=row.trigger_reason,
-            destination=row.destination,
-            skip_reason=row.skip_reason,
-            scheduled_at=row.scheduled_at,
-            started_at=row.started_at,
-            completed_at=row.completed_at,
-            last_heartbeat_at=row.last_heartbeat_at,
-            current_step=row.current_step,
-            prompt_hash=row.prompt_hash,
-            lessons_applied=row.lessons_applied,
-            tokens_in=row.tokens_in,
-            tokens_out=row.tokens_out,
-            duration_s=row.duration_s,
-            error_message=row.error_message,
-            review_external_id=row.review_external_id,
-            findings=row.findings,
-            activity_log=row.activity_log or [],
-            model=row.model,
-            effort=row.effort,
-        )
+# See top-of-file: `ReviewJob` is imported from `domain/reviewer/review_job.py`.
 
 
 async def get_review_job(review_job_id: UUID, *, org_id: UUID) -> ReviewJob:

@@ -14,13 +14,13 @@ from app.core.database import session
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
 from app.domain.reviewer.queue import (
-    ReviewJob,
     cancel_pending,
     list_review_jobs_for_pr,
     metrics_summary,
     startup_recovery,
 )
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
+from app.domain.reviewer.review_job import ReviewJob
 from app.domain.reviewer.service import (
     all_conversations_view,
     list_findings_view,

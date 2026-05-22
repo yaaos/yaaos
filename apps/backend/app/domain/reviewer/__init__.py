@@ -53,8 +53,6 @@ from app.domain.reviewer.models import (
     ReviewRow,
 )
 from app.domain.reviewer.queue import (
-    ReviewJob,
-    ReviewJobInput,
     cancel_pending,
     get_review_job,
     list_in_flight,
@@ -69,6 +67,10 @@ from app.domain.reviewer.queue_events import (
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
+from app.domain.reviewer.review_job import (
+    ReviewJob,
+    ReviewJobInput,
+)
 from app.domain.reviewer.service import (
     VERIFY_ACT_THRESHOLD,
     VERIFY_OBSERVE_THRESHOLD,
