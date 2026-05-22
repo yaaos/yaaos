@@ -16,14 +16,16 @@ Five **Local** commands handle the control-plane side:
 - `ArchiveStaleFindings` — mark stale findings archived.
 - `PostReply` — post a reply on a finding's thread.
 
-`CheckShouldReview` ships with a real body that reads admission signals
-(is_draft / is_fork / labels) from the ticket payload. The other four Local
-commands and all five Workspace commands ship as stubs pending the queue.py
-dismantle that wires the existing reviewer pipeline through them.
+All 10 commands ship with real bodies. Local-category bodies persist via
+the reviewer aggregate + post via the registered VCS plugin; Workspace
+bodies resolve their workspace + ticket context, then call the matching
+`domain/coding_agent.<method>`. See [`domain_reviewer.md`](../../../docs/domain_reviewer.md)
+for per-command output shapes.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -68,9 +70,7 @@ class _WorkspaceReviewCommand:
     Subclass bodies (`CodeReview`, `IncrementalReview`, `VerifyFix`,
     `StaleCheck`, `AnswerQuestion`) override `_run_in_workspace` to build
     their `domain/coding_agent` context and invoke the matching agent
-    method. Phase 4 ships the substrate; the per-command bodies land
-    incrementally as their `<Foo>Context` builders are extracted from
-    `queue.py`.
+    method.
     """
 
     category = CommandCategory.WORKSPACE
@@ -122,24 +122,318 @@ class _WorkspaceReviewCommand:
         return Outcome.success()
 
 
+async def _load_finding_by_id(pr_id: UUID, org_id: UUID, finding_id: UUID):  # type: ignore[no-untyped-def]
+    """Helper for the three Workspace bodies that operate on a single finding
+    (VerifyFix, StaleCheck, AnswerQuestion). Loads the reviewer aggregate
+    and returns the named Finding, or None if not present."""
+    from app.domain.reviewer.repository import SqlAlchemyAggregateRepository  # noqa: PLC0415
+
+    async with db_session() as s:
+        repo = SqlAlchemyAggregateRepository(s)
+        aggregate = await repo.load(pr_id=pr_id, org_id=org_id)
+    for finding in aggregate.findings:
+        if finding.id == finding_id:
+            return finding
+    return None
+
+
+async def _read_code_snippet_at_anchor(
+    workspace: Workspace, file_path: str, line_start: int, line_end: int
+) -> str:
+    """Read the code lines at the anchor. Empty string if the file is gone."""
+    text = await workspace.read_text(file_path)
+    if not text:
+        return ""
+    lines = text.splitlines()
+    start = max(0, line_start - 1)
+    end = min(len(lines), line_end)
+    return "\n".join(lines[start:end])
+
+
 class CodeReview(_WorkspaceReviewCommand):
+    """Full-PR review. Invokes `coding_agent.review` against the workspace
+    with a `ReviewContext` built from the ticket payload + PR row + diff.
+
+    NOT included in the in-memory fast path: building the full ReviewContext
+    requires `pr` (VCSPullRequest) and `diff` (Diff) — both heavy and
+    typically fetched from the vcs plugin. For the POC in-memory path, this
+    body builds a minimal `ReviewContext` from the ticket payload + repo
+    info and lets the coding-agent plugin handle the rest. Tests can
+    register a stub coding-agent plugin to assert the wiring.
+
+    Outputs `draft_findings: list[dict]` for downstream PostFindings.
+    """
+
     kind = "CodeReview"
+
+    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
+        del inputs
+        from app.domain import coding_agent  # noqa: PLC0415
+        from app.domain.coding_agent import ReviewContext  # noqa: PLC0415
+        from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
+
+        # Minimal PR + diff for the POC in-memory path. Real production code
+        # would fetch via vcs.get_pr / vcs.get_diff; that wiring lands with
+        # the Phase 6 Go subprocess body which has the real VCS side.
+        head_sha = str(ticket_ctx.payload.get("head_sha") or "")
+        base_sha = str(ticket_ctx.payload.get("base_sha") or "")
+        pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
+        now = datetime.now(UTC)
+        author_type_raw = str(ticket_ctx.payload.get("author_type") or "user")
+        author_type: Any = author_type_raw if author_type_raw in ("user", "bot") else "user"
+        state_raw = str(ticket_ctx.payload.get("state") or "open")
+        state: Any = state_raw if state_raw in ("open", "closed", "merged") else "open"
+        try:
+            pr = VCSPullRequest(
+                plugin_id=ticket_ctx.plugin_id,
+                external_id=pr_external_id,
+                repo_external_id=ticket_ctx.repo_external_id,
+                number=int(ticket_ctx.payload.get("pr_number") or 0),
+                title=str(ticket_ctx.payload.get("title") or ""),
+                body=str(ticket_ctx.payload.get("body") or ""),
+                author_login=str(ticket_ctx.payload.get("author_login") or ""),
+                author_type=author_type,
+                base_branch=str(ticket_ctx.payload.get("base_branch") or "main"),
+                head_branch=str(ticket_ctx.payload.get("head_branch") or ""),
+                base_sha=base_sha,
+                head_sha=head_sha,
+                is_draft=bool(ticket_ctx.payload.get("is_draft", False)),
+                is_fork=bool(ticket_ctx.payload.get("is_fork", False)),
+                state=state,
+                html_url=str(ticket_ctx.payload.get("html_url") or ""),
+                created_at=now,
+                updated_at=now,
+            )
+        except Exception as exc:
+            return Outcome.failure(reason=f"could not build VCSPullRequest: {exc}")
+        diff = Diff(raw="", files=[])
+
+        review_ctx = ReviewContext(pr=pr, diff=diff, language_hint=None)
+        try:
+            result = await coding_agent.review("claude_code", workspace, review_ctx)
+        except Exception as exc:
+            log.exception(
+                "code_review.coding_agent_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        return Outcome.success(
+            outputs={
+                "draft_findings": [f.model_dump(mode="json") for f in result.findings],
+                "summary_body": result.summary_body or "",
+                "state": result.state or "COMMENT",
+            }
+        )
 
 
 class IncrementalReview(_WorkspaceReviewCommand):
+    """Push-driven incremental review against `prev_sha..head_sha`. Same
+    shape as CodeReview but routes to `coding_agent.incremental_review`."""
+
     kind = "IncrementalReview"
+
+    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
+        del inputs
+        from app.domain import coding_agent  # noqa: PLC0415
+        from app.domain.coding_agent import IncrementalReviewContext  # noqa: PLC0415
+        from app.domain.vcs import Diff  # noqa: PLC0415
+
+        head_sha = str(ticket_ctx.payload.get("head_sha") or "")
+        base_sha = str(ticket_ctx.payload.get("base_sha") or head_sha)
+        review_ctx = IncrementalReviewContext(
+            prev_sha=base_sha,
+            head_sha=head_sha,
+            diff=Diff(raw="", files=[]),
+        )
+        try:
+            result = await coding_agent.incremental_review("claude_code", workspace, review_ctx)
+        except Exception as exc:
+            log.exception(
+                "incremental_review.coding_agent_failed",
+                workflow_execution_id=ctx.workflow_execution_id,
+                ticket_id=ctx.ticket_id,
+            )
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        return Outcome.success(
+            outputs={
+                "draft_findings": [f.model_dump(mode="json") for f in result.findings],
+            }
+        )
 
 
 class VerifyFix(_WorkspaceReviewCommand):
+    """Verify whether a previously-raised finding is still present at HEAD.
+    Loads the finding by `finding_id`, reads the current code at its anchor,
+    invokes `coding_agent.verify_fix`. Output is a `verdict` dict that
+    `ResolveFinding` consumes."""
+
     kind = "VerifyFix"
+
+    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
+        del ctx
+        finding_id_raw = inputs.get("finding_id")
+        if not finding_id_raw:
+            return Outcome.failure(reason="missing finding_id input")
+        try:
+            finding_id = UUID(str(finding_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid finding_id: {finding_id_raw!r}")
+        if ticket_ctx.pr_id is None:
+            return Outcome.failure(reason="ticket has no pr_id")
+        finding = await _load_finding_by_id(ticket_ctx.pr_id, ticket_ctx.org_id, finding_id)
+        if finding is None:
+            return Outcome.success(outputs={"verdict": {"finding_id": str(finding_id), "skipped": "unknown"}})
+
+        from app.domain import coding_agent  # noqa: PLC0415
+        from app.domain.coding_agent import FindingAnchor, VerifyFixContext  # noqa: PLC0415
+
+        current_code = await _read_code_snippet_at_anchor(
+            workspace,
+            finding.current_anchor.file_path,
+            finding.current_anchor.line_start,
+            finding.current_anchor.line_end,
+        )
+        original_code = "\n".join(finding.current_anchor.original_lines or [])
+
+        vctx = VerifyFixContext(
+            original_finding_title=finding.title,
+            original_finding_body=finding.body,
+            original_rule_id=finding.rule_id,
+            original_code_snippet=original_code,
+            current_code_snippet=current_code,
+            current_anchor=FindingAnchor(
+                file_path=finding.current_anchor.file_path,
+                line_start=finding.current_anchor.line_start,
+                line_end=finding.current_anchor.line_end,
+            ),
+        )
+        try:
+            result = await coding_agent.verify_fix("claude_code", workspace, vctx)
+        except Exception as exc:
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        return Outcome.success(
+            outputs={
+                "verdict": {
+                    "finding_id": str(finding_id),
+                    "still_present": result.still_present,
+                    "confidence": result.confidence,
+                    "reasoning": result.reasoning,
+                }
+            }
+        )
 
 
 class StaleCheck(_WorkspaceReviewCommand):
+    """Check whether each finding in `finding_ids` still meaningfully applies
+    after code changes. Loops over the input list and accumulates ids whose
+    `still_applies=False` verdicts pass the confidence threshold (≥ 0.80)
+    — those go to `ArchiveStaleFindings` via `stale_finding_ids` output."""
+
     kind = "StaleCheck"
+
+    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
+        del ctx
+        ids_raw = inputs.get("finding_ids") or []
+        if not ids_raw or ticket_ctx.pr_id is None:
+            return Outcome.success(outputs={"stale_finding_ids": []})
+
+        from app.domain import coding_agent  # noqa: PLC0415
+        from app.domain.coding_agent import StaleCheckContext  # noqa: PLC0415
+
+        stale_ids: list[str] = []
+        for raw in ids_raw:
+            try:
+                fid = UUID(str(raw))
+            except (TypeError, ValueError):
+                continue
+            finding = await _load_finding_by_id(ticket_ctx.pr_id, ticket_ctx.org_id, fid)
+            if finding is None:
+                continue
+            current_code = await _read_code_snippet_at_anchor(
+                workspace,
+                finding.current_anchor.file_path,
+                finding.current_anchor.line_start,
+                finding.current_anchor.line_end,
+            )
+            sctx = StaleCheckContext(
+                original_finding_title=finding.title,
+                original_finding_body=finding.body,
+                original_rule_id=finding.rule_id,
+                current_code_snippet=current_code,
+                diff_summary="",
+            )
+            try:
+                result = await coding_agent.stale_check("claude_code", workspace, sctx)
+            except Exception:
+                log.exception("stale_check.coding_agent_failed", finding_id=str(fid))
+                continue
+            if not result.still_applies and result.confidence >= 0.80:
+                stale_ids.append(str(fid))
+
+        return Outcome.success(outputs={"stale_finding_ids": stale_ids})
 
 
 class AnswerQuestion(_WorkspaceReviewCommand):
+    """Answer a developer @yaaos-mention question on a finding. Loads the
+    finding, reads code at its anchor, invokes `coding_agent.answer_question`,
+    returns the reply body for downstream `PostReply`."""
+
     kind = "AnswerQuestion"
+
+    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
+        del ctx
+        finding_id_raw = inputs.get("finding_id")
+        question = inputs.get("question_body") or ""
+        if not finding_id_raw or not question:
+            return Outcome.success(outputs={"reply_body": "", "finding_id": None})
+        try:
+            finding_id = UUID(str(finding_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid finding_id: {finding_id_raw!r}")
+        if ticket_ctx.pr_id is None:
+            return Outcome.success(outputs={"reply_body": "", "finding_id": str(finding_id)})
+        finding = await _load_finding_by_id(ticket_ctx.pr_id, ticket_ctx.org_id, finding_id)
+        if finding is None:
+            return Outcome.success(outputs={"reply_body": "", "finding_id": str(finding_id)})
+
+        from app.domain import coding_agent  # noqa: PLC0415
+        from app.domain.coding_agent import AnswerQuestionContext, FindingAnchor  # noqa: PLC0415
+
+        code_snippet = await _read_code_snippet_at_anchor(
+            workspace,
+            finding.current_anchor.file_path,
+            finding.current_anchor.line_start,
+            finding.current_anchor.line_end,
+        )
+        actx = AnswerQuestionContext(
+            original_finding_title=finding.title,
+            original_finding_body=finding.body,
+            original_rule_id=finding.rule_id,
+            code_snippet=code_snippet,
+            current_anchor=FindingAnchor(
+                file_path=finding.current_anchor.file_path,
+                line_start=finding.current_anchor.line_start,
+                line_end=finding.current_anchor.line_end,
+            ),
+            question=str(question),
+            base_sha=str(ticket_ctx.payload.get("base_sha") or ""),
+            head_sha=str(ticket_ctx.payload.get("head_sha") or ""),
+        )
+        try:
+            result = await coding_agent.answer_question("claude_code", workspace, actx)
+        except Exception as exc:
+            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        return Outcome.success(
+            outputs={
+                "reply_body": result.answer,
+                "finding_id": str(finding_id),
+            }
+        )
 
 
 # ── Local commands (5) ──────────────────────────────────────────────────

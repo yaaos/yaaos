@@ -52,14 +52,14 @@ Five typed `Workflow` definitions live in `domain/reviewer/workflows/` and regis
 - `stale_check_v1` — `ProvisionWorkspace → StaleCheck → ArchiveStaleFindings → CleanupWorkspace`.
 - `answer_question_v1` — `ProvisionWorkspace → AnswerQuestion → PostReply → CleanupWorkspace`.
 
-Ten matching `WorkflowCommand`s ship as stubs in `domain/reviewer/commands/`:
+Ten matching `WorkflowCommand`s ship with real bodies in `domain/reviewer/commands/`:
 
-- Workspace category (5): `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion` — each wraps a `domain/coding_agent` invocation in the full implementation.
+- Workspace category (5): `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion` — each wraps a `domain/coding_agent` invocation against the resolved workspace.
 - Local category (5): `CheckShouldReview` (admission gate before provisioning), `PostFindings`, `ResolveFinding`, `ArchiveStaleFindings`, `PostReply`.
 
 The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`) ship in [`core/workspace.commands`](core_workspace.md) and register through the reviewer bootstrap so any workflow can reference them.
 
-**Phase 4 boundary:** Two Local bodies are real today.
+**Phase 4 follow-on:** All 10 reviewer command bodies (5 Workspace + 5 Local) ship real implementations.
 
 - `CheckShouldReview` reads `is_draft` / `is_fork` / `labels` / `author_login` from the ticket payload and returns `Outcome.success(label="skip", outputs={"reason": ...})` on any first-match signal (`draft`, `fork`, `label:<name>`, `bot_author`). Skip labels: `yaaos-skip`, `no-review`, `wip` (case-insensitive). The bot-author check matches `*[bot]` / `*-bot` suffixes.
 - `ArchiveStaleFindings` consumes `stale_finding_ids: list[str]` from inputs (sourced from the prior `StaleCheck` step), loads the reviewer aggregate by `pr_id` via the registered `WorkflowContextProvider`, and transitions each finding to `STALE` via `aggregate.record_stale_detection(still_applies=False, confidence=1.0)`. Defensive on missing pr_id (no-op-success), unknown finding ids (skipped, not failed), invalid uuids (skipped). Outputs `archived_count` and `skipped_count`.
@@ -67,15 +67,21 @@ The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`
 - `PostFindings` consumes `draft_findings: list[dict]` (FindingDraft-shaped) + `workspace_id` from inputs. Resolves the workspace and ticket context, deserializes the drafts via `FindingDraft.model_validate`, pre-fetches anchor-file contents via `workspace.read_text`, calls `findingdrafts_to_raw` → `admit_raw_findings` → `post_admitted_findings_to_vcs`. Outputs `admitted_count`, `dropped_count`, `posted`. Empty drafts → success-no-op. Admitted findings persist via admission AND post to the registered VCS plugin (typically GitHub) with thread/yaaos-message attachment in a single workflow step.
 - `PostReply` consumes `reply_body` + `finding_id`. Loads the aggregate by `pr_id`, finds the thread, locates the first yaaos message's `external_comment_id` as the parent comment, loads `PullRequestRow` for the PR's external id, and calls `vcs.post_comment_reply(pr_external_id, parent_external_id, body)`. The returned external_comment_id is persisted on the new CommentMessage. When no real parent exists yet (e.g. PostFindings hadn't run for this finding) or no PR row, falls back to `local-reply-<uuid>` placeholder — same behavior as the pre-slice-32 state.
 
-The five Workspace bodies remain stubs until the `queue.py` dismantle finishes wiring them to `domain/coding_agent`. With slice 20, all 5 Local bodies have real persistence — only the GitHub side (post_review + post_comment_reply) is pending.
-
 The five Workspace reviewer commands (`CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion`) share a base `_WorkspaceReviewCommand` that on every invocation:
 
 1. Resolves `workspace_id` from inputs → live `Workspace` handle (failure on missing/invalid/unresolvable).
 2. Fetches the ticket's `WorkspaceTicketContext` (org_id, plugin_id, repo, payload, pr_id) via the registered provider (failure on missing provider / missing ticket).
 3. Forwards `(workspace, ticket_ctx, inputs, ctx)` to subclass `_run_in_workspace`.
 
-Subclass bodies just override `_run_in_workspace` and call the matching `domain/coding_agent.<method>` — they don't repeat the resolution boilerplate.
+Subclass bodies override `_run_in_workspace` to call the matching `domain/coding_agent.<method>`:
+
+- `CodeReview` builds a minimal `VCSPullRequest` + empty `Diff` from `ticket_ctx.payload` and invokes `coding_agent.review`. Outputs `draft_findings` (FindingDraft-shaped dicts) + `summary_body` + `state` for `PostFindings`. The heavy PR/diff fetch path lands with the Phase 6 Go subprocess body which owns the real VCS side.
+- `IncrementalReview` invokes `coding_agent.incremental_review` with `prev_sha = base_sha` (defaulting to `head_sha`).
+- `VerifyFix` loads the finding by id via `SqlAlchemyAggregateRepository`, reads the current code snippet at the anchor via `workspace.read_text`, invokes `coding_agent.verify_fix`. Outputs `verdict` for `ResolveFinding`. Unknown finding → success with `skipped="unknown"` (not a workflow failure).
+- `StaleCheck` loops over `finding_ids`, reads each anchor's current snippet, invokes `coding_agent.stale_check`, accumulates ids whose verdict is `still_applies=False AND confidence ≥ 0.80`. Outputs `stale_finding_ids` for `ArchiveStaleFindings`. Per-finding failures are logged and skipped, not propagated.
+- `AnswerQuestion` loads the finding, reads its anchor snippet, invokes `coding_agent.answer_question`, outputs `reply_body` + `finding_id` for `PostReply`. Empty/unknown inputs → success-no-op.
+
+Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_coding_agent.md) (standalone, doesn't wrap a real plugin) under `plugin_id="claude_code"` — the bodies hardcode that id matching the legacy queue.py pipeline.
 
 ### Entities
 

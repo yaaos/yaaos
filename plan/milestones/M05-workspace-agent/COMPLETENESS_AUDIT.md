@@ -167,7 +167,7 @@ The 8-step flow:
 **Shipped: substrate for the architectural vision + the in_memory provider's complete end-to-end pipeline.** Backend tests (730 passing) prove the new path works through admission, GitHub posting, and cleanup. Phase 4 reflection ticked with all six axes walked.
 
 **Deferred (with explicit owner phase / slice):**
-- 5 Workspace reviewer command bodies' real `coding_agent` invocation (Phase 4 follow-on — needs `stub_coding_agent` test integration)
+- ~~5 Workspace reviewer command bodies' real `coding_agent` invocation~~ — **shipped (Phase 4 follow-on slice 33).** Each of `CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion` now invokes the matching `coding_agent.<method>` against the resolved workspace; `testing/fake_coding_agent` provides a standalone `FakeCodingAgentPlugin` for service tests that register a coding agent on the fly.
 - `queue.py` file deletion + `review_jobs` table drop (annotated; needs legacy-test migration + legacy-SPA-endpoint rewire)
 - Phase 6 Go workspace subprocess body + OTel SDK + secret redaction
 - Phase 7 STS verifier + Org Settings UI + provisioning policy

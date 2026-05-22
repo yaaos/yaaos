@@ -43,6 +43,7 @@ from app.domain.reviewer.commands import (
 )
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create as create_ticket
+from app.testing.fake_coding_agent import register_fake_coding_agent
 
 
 class _StubWorkspaceProvider:
@@ -183,18 +184,21 @@ async def test_pr_review_v1_runs_end_to_end_in_memory(db_session, _registered_en
         )
     )
     # 3. Kick off pr_review_v1 with workspace_provider=in_memory so the
-    #    engine routes Workspace commands inline.
-    wfx_id = await _registered_engine.start(
-        workflow_name="pr_review_v1",
-        ticket_id=str(ticket_id),
-        workspace_provider="in_memory",
-        session=db_session,
-    )
-    await db_session.commit()
+    #    engine routes Workspace commands inline. Register a fake
+    #    coding_agent so CodeReview's real body (slice 38) has a plugin
+    #    to call. Fake returns 0 findings → PostFindings is a no-op.
+    with register_fake_coding_agent():
+        wfx_id = await _registered_engine.start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(ticket_id),
+            workspace_provider="in_memory",
+            session=db_session,
+        )
+        await db_session.commit()
 
-    # 4. Drain the outbox; each iteration of start_step + route_workflow
-    #    delivers via the dispatcher.
-    await _drain_workflow_outbox(db_session)
+        # 4. Drain the outbox; each iteration of start_step + route_workflow
+        #    delivers via the dispatcher.
+        await _drain_workflow_outbox(db_session)
 
     # 5. Workflow terminal — done.
     wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))

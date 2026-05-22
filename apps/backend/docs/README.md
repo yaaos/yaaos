@@ -62,6 +62,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | Module | Responsibility |
 |---|---|
 | [testing_stub_coding_agent](testing_stub_coding_agent.md) | Wraps every `CodingAgentPlugin` with deterministic responses. |
+| [testing_fake_coding_agent](testing_fake_coding_agent.md) | Standalone `CodingAgentPlugin` fake for tests that register a plugin on the fly. |
 | [testing_stub_workspace](testing_stub_workspace.md) | Wraps every `WorkspaceProvider` with no-op tempdir. |
 | [testing_e2e_setup](testing_e2e_setup.md) | `POST /api/testing/reset` + `seed/*` for Playwright. |
 
