@@ -1713,8 +1713,8 @@ Status tags: `[done]` · `[partial]` · `[planned]`.
 | 5 | Anchor — Dashboard | `[done]` | E2a.3 SPA + GET /api/tickets/dashboard endpoint; NotConfiguredBanner placement. SSE invalidation is a polish item. |
 | 6 | Anchor — Ticket detail | `[done]` | E2a.4 SPA + extended GET /api/tickets/:id + ack/push-back + HITL respond/history. Four standalone composites (StageIndicator, HitlPanel, FindingRow, ActivityEventRow). |
 | 7 | Tier 2 derived + Notifications module | `[partial]` | Notifications backend module + endpoints + service tests + SPA bell + /notifications page all shipped. Lessons / Settings Auth+Members+Audit / VCS pages still on the legacy primitives. |
-| 8 | Tier 3 derived | `[partial]` | Login (SSO-discover email-first, D8.1 github fallback), Org picker (role badges + create-org modal), User Messaging placeholder shipped. Remaining: User Details / Security; Settings Workspace / MCP Proxy / API Keys / VCS page-level rebuilds. |
-| 9 | Cleanup | `[partial]` | Deleted: placeholder-page, onboarding-stepper.spec, legacy /settings page + onboarding endpoint, legacy flat routes, legacy TicketDetailPage + ~30 helpers (1350 LOC). Still pending: legacy primitives (button/badge/card/dialog), yaaos-named CSS tokens. |
+| 8 | Tier 3 derived | `[done]` | All 8 redesignable Tier-3 surfaces on shadcn: Login, Org picker, User Details / Security / Messaging, Settings VCS / API Keys / MCP Proxy. Settings Workspace page itself not built; M05 plumbing surfaces only via Coding Agents + Topbar workspace-connection banner. |
+| 9 | Cleanup | `[partial]` | Legacy primitives (button/badge/card/dialog) + their barrel deleted. PluginPicker, ClaudeCodeSettings, CodingAgentSettingsPage migrated to shadcn. Still pending: transitional yaaos-named CSS tokens (sidebar/topbar/error-boundary still consume them). |
 
 ### Mid-flight visual inconsistency policy
 

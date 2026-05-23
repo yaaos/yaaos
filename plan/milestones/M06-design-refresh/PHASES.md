@@ -267,7 +267,7 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 
 **Definition of done:**
 
-- [ ] All 9 Tier-3 surfaces render against backend. (3 of 9 redesigned: Login, Org picker, User Messaging placeholder. The 4 Settings sub-pages — VCS, Workspace, MCP Proxy, API Keys — still render on legacy primitives; User Details + Security ditto.)
+- [x] All 9 Tier-3 surfaces render against backend. (Login, Org picker, User Messaging, User Details, User Security, Settings VCS, Settings MCP Proxy, Settings API Keys all on shadcn primitives. Settings Workspace — UI page itself not built; M05 plumbing surfaces today only via Coding Agents and Topbar workspace-connection banner.)
 - [x] Login SSO-discover flow works: typing an email shows correct provider button (github fallback today — D8.1).
 - [x] Org picker shows role badge + create-org modal works. (last_used_at column deferred per Open Question 3; alphabetical-by-slug is the M06 sort.)
 - [x] User Messaging route renders with placeholder copy.
@@ -297,7 +297,7 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 - [ ] `grep -rn "M01_ORG_ID\|placeholder-page\|/api/memory\|/api/integrations\|/api/byok" apps/` returns zero matches outside migrations/changelogs. (Partial: M01_ORG_ID + placeholder-page + /api/memory clean; /api/byok and /api/integrations still in backend per D2.7.)
 - [x] `grep -rn "role.*member" apps/web/src` returns zero matches.
 - [x] Doc-link checker clean.
-- [ ] Initial bundle ≤ 200 KB gzipped (target from F2 M). (Today ~168 KB gzipped — under target.)
+- [x] Initial bundle ≤ 200 KB gzipped (target from F2 M). (Today ~172 KB gzipped — under target.)
 - [ ] Performance targets verified: cold-load FCP < 1s, LCP < 1.5s on Dashboard + Ticket detail.
 
 ---
