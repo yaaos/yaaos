@@ -109,6 +109,10 @@ class SsoConfigRow(Base):
     idp_metadata_xml: Mapped[str] = mapped_column(Text, nullable=False)
     jit_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Email-domain claims (lowercase, no `@`). When an org claims `acme.com`,
+    # any user typing `*@acme.com` on the Login page gets routed to this
+    # org's SSO. JSONB array; empty list = no claims.
+    email_domains: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     exempt_owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

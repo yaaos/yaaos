@@ -147,6 +147,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("021_create_notifications", "create_notifications"),
     ("022_lessons_created_by", "lessons_created_by"),
     ("023_collapse_ticket_status", "collapse_ticket_status"),
+    ("024_sso_email_domains", "sso_email_domains"),
 )
 
 
@@ -551,6 +552,21 @@ async def _apply_collapse_ticket_status(conn) -> None:  # type: ignore[no-untype
         await conn.execute(text(stmt))
 
 
+async def _apply_sso_email_domains(conn) -> None:  # type: ignore[no-untyped-def]
+    """M06 audit follow-up — add `sso_configs.email_domains` JSONB column.
+
+    Drives the real `/api/auth/sso/discover` lookup: when a user types
+    `*@acme.com` on the Login page, we look up the matching SSO config
+    and return its provider. Existing rows backfill to `[]` (no claims).
+    Idempotent.
+    """
+    await conn.execute(
+        text(
+            "ALTER TABLE sso_configs ADD COLUMN IF NOT EXISTS email_domains JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+    )
+
+
 async def _apply_create_workspace_agents(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 7 — `workspace_agents` table: per-pod identity rows.
 
@@ -713,6 +729,8 @@ async def migrate() -> None:
                 await _apply_lessons_created_by(conn)
             elif kind == "collapse_ticket_status":
                 await _apply_collapse_ticket_status(conn)
+            elif kind == "sso_email_domains":
+                await _apply_sso_email_domains(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

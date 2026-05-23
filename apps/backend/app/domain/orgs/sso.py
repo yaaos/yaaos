@@ -28,6 +28,30 @@ class ExemptOwnerWithoutTotpError(SsoConfigError):
     """Tried to set an exempt-Owner who hasn't enrolled + verified TOTP."""
 
 
+def _normalize_email_domains(raw: list[str] | None) -> list[str]:
+    """Lowercase + strip + dedupe + reject empty/`@`-prefixed entries.
+
+    Domain claims are the routing key for `/api/auth/sso/discover`; bad
+    data here turns into login-page bugs. Reject anything containing a
+    glob, `@`, or whitespace; allow ASCII-letter / digit / dot / dash.
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for d in raw:
+        cleaned = (d or "").strip().lower()
+        if not cleaned:
+            continue
+        if any(ch in cleaned for ch in " \t\n@*"):
+            raise SsoConfigError(f"invalid email domain: {d!r}")
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
+
+
 async def upsert_config(
     session: AsyncSession,
     *,
@@ -36,11 +60,14 @@ async def upsert_config(
     jit_enabled: bool = False,
     enabled: bool = False,
     exempt_owner_user_id: UUID | None = None,
+    email_domains: list[str] | None = None,
 ) -> SsoConfigRow:
     """Insert or update the per-org SSO config. Caller must have checked
     `can_be_sso_exempt_owner` for `exempt_owner_user_id` if non-None."""
     if not idp_metadata_xml or "<" not in idp_metadata_xml:
         raise SsoConfigError("idp_metadata_xml must be non-empty XML")
+
+    domains = _normalize_email_domains(email_domains)
 
     from sqlalchemy import select  # noqa: PLC0415
 
@@ -57,6 +84,7 @@ async def upsert_config(
             exempt_owner_user_id=exempt_owner_user_id,
             sp_private_key_encrypted=encrypted_key,
             sp_certificate=cert,
+            email_domains=domains,
         )
         session.add(row)
         await session.flush()
@@ -65,6 +93,7 @@ async def upsert_config(
     existing.jit_enabled = jit_enabled
     existing.enabled = enabled
     existing.exempt_owner_user_id = exempt_owner_user_id
+    existing.email_domains = domains
     existing.updated_at = datetime.now(UTC)
     await session.flush()
     return existing

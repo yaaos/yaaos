@@ -401,21 +401,45 @@ async def sso_discover(request: Request, email: str) -> dict[str, Any]:
     """M06 Phase 8: find the SSO IdP (if any) matching the email's domain.
 
     Drives the Login page's provider-button rendering per E2a.18:
-    `{provider: "github" | "saml", saml_org_slug?: str, saml_idp_name?: str}`.
-    Email-domain → SSO mapping is not configurable on `sso_configs` today
-    (the SsoConfigRow has no domain field); for POC the endpoint always
-    falls back to `provider: "github"`. Once an `email_domains: list[str]`
-    column or a domain-claims table lands, this handler grows the lookup
-    without changing the SPA contract.
+    `{provider: "github" | "saml", saml_org_slug?: str}`.
 
-    `email` is required but only the format is validated — the substantive
-    answer is "no SAML match" today, so we don't leak whether a given
-    address actually exists in the user table.
+    Looks up `sso_configs.email_domains` (JSONB array) for a row whose
+    `enabled = true` claims the address's domain. First match wins
+    (domain claims must be unique in practice; Owner-level admin UI is
+    the gate). No SAML match → `{provider: "github"}` so existing
+    GitHub-only orgs keep working.
+
+    `email` is required but only the format is validated — we never
+    confirm or deny that a given address belongs to a user.
     """
     del request  # rate-limit-only; FastAPI requires the kwarg
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail={"error": "invalid_email"})
-    return {"provider": "github"}
+    domain = email.split("@", 1)[1].strip().lower()
+    if not domain:
+        raise HTTPException(status_code=422, detail={"error": "invalid_email"})
+
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.orgs.models import OrgRow, SsoConfigRow  # noqa: PLC0415
+
+    async with db_session() as s:
+        # JSONB `?` operator: array contains string. Filter to enabled
+        # rows only — disabled configs shouldn't route logins.
+        row = (
+            await s.execute(
+                select(SsoConfigRow, OrgRow)
+                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
+                .where(SsoConfigRow.enabled.is_(True))
+                .where(SsoConfigRow.email_domains.op("?")(domain))
+                .limit(1)
+            )
+        ).first()
+    if row is None:
+        return {"provider": "github"}
+    _, org = row
+    return {"provider": "saml", "saml_org_slug": org.slug}
 
 
 # ── M02 Phase 11 — TOTP enroll + verify ──────────────────────────────────

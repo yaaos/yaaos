@@ -12,6 +12,7 @@ interface SsoConfig {
   enabled: boolean;
   jit_enabled: boolean;
   exempt_owner_user_id: string | null;
+  email_domains: string[];
   updated_at?: string | null;
 }
 
@@ -30,6 +31,7 @@ function useUpsertSsoConfig() {
       jit_enabled: boolean;
       enabled: boolean;
       exempt_owner_user_id: string | null;
+      email_domains: string[];
     }) =>
       apiFetch<SsoConfig>("/api/sso/config", {
         method: "PUT",
@@ -53,6 +55,9 @@ export function SsoConfigPage() {
   const [jit, setJit] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [exemptOwnerId, setExemptOwnerId] = useState("");
+  // Comma- or newline-separated free-text editor; we normalize to a list
+  // on submit. Pre-populated from server state once it loads.
+  const [domainsRaw, setDomainsRaw] = useState<string>((data?.email_domains ?? []).join(", "));
 
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
@@ -89,11 +94,16 @@ export function SsoConfigPage() {
             className="flex flex-col gap-3"
             onSubmit={(e) => {
               e.preventDefault();
+              const email_domains = domainsRaw
+                .split(/[,\n]/)
+                .map((d) => d.trim().toLowerCase())
+                .filter(Boolean);
               upsert.mutate({
                 idp_metadata_xml: metadata,
                 jit_enabled: jit,
                 enabled,
                 exempt_owner_user_id: exemptOwnerId || null,
+                email_domains,
               });
             }}
           >
@@ -130,6 +140,22 @@ export function SsoConfigPage() {
                 className="font-mono text-xs"
                 placeholder="(none)"
               />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sso-domains">Email domain claims (comma or newline separated)</Label>
+              <Textarea
+                id="sso-domains"
+                data-testid="sso-domains"
+                value={domainsRaw}
+                onChange={(e) => setDomainsRaw(e.target.value)}
+                className="font-mono text-xs"
+                rows={2}
+                placeholder="acme.com, partner.example.com"
+              />
+              <p className="text-muted-foreground text-xs">
+                Logging in with an email matching one of these domains routes the user through this
+                org's SSO. Lowercase, no `@`, no globs.
+              </p>
             </div>
             <div>
               <Button type="submit" disabled={upsert.isPending} data-testid="sso-save">

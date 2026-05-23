@@ -39,6 +39,9 @@ class _SsoConfigBody(BaseModel):
     jit_enabled: bool = False
     enabled: bool = False
     exempt_owner_user_id: UUID | None = None
+    # Owner-maintained list of email domain claims (e.g. ["acme.com"]).
+    # Drives /api/auth/sso/discover. Empty list = no SSO routing.
+    email_domains: list[str] = []
 
 
 class _AssertionBody(BaseModel):
@@ -211,11 +214,17 @@ async def get_org_sso_config() -> dict:
     async with db_session() as s:
         cfg = await get_config(s, org_id=org_id)
     if cfg is None:
-        return {"enabled": False, "jit_enabled": False, "exempt_owner_user_id": None}
+        return {
+            "enabled": False,
+            "jit_enabled": False,
+            "exempt_owner_user_id": None,
+            "email_domains": [],
+        }
     return {
         "enabled": cfg.enabled,
         "jit_enabled": cfg.jit_enabled,
         "exempt_owner_user_id": str(cfg.exempt_owner_user_id) if cfg.exempt_owner_user_id else None,
+        "email_domains": list(cfg.email_domains or []),
         "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
     }
 
@@ -259,6 +268,7 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
                 jit_enabled=body.jit_enabled,
                 enabled=body.enabled,
                 exempt_owner_user_id=body.exempt_owner_user_id,
+                email_domains=body.email_domains,
             )
         except SsoConfigError as exc:
             raise _err(400, str(exc))
@@ -278,6 +288,7 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
         "enabled": cfg.enabled,
         "jit_enabled": cfg.jit_enabled,
         "exempt_owner_user_id": (str(cfg.exempt_owner_user_id) if cfg.exempt_owner_user_id else None),
+        "email_domains": list(cfg.email_domains or []),
         "updated_at": datetime.now(UTC).isoformat(),
     }
 
