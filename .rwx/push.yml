@@ -86,6 +86,33 @@ tasks:
             language: JavaScript
             framework: Vitest
 
+  - key: agent-ci
+    use: [code]
+    docker: true
+    # Go agent CI — `go vet` + `go build` + `go test`. The agent's prod
+    # Dockerfile (apps/agent/Dockerfile) builds a static binary in a
+    # `golang:1.22-alpine` builder stage; we use the same upstream image
+    # directly so the CI environment matches what the prod build runs in,
+    # without adding a CI-specific stage to the agent Dockerfile.
+    #
+    # `git` is installed inside the container for the real-clone tests
+    # (slice 69 — workspace package shells out to `git clone` against a
+    # local bare repo; the test skips silently when git isn't on PATH,
+    # which is exactly the silent-pass-on-stale-CI failure mode we just
+    # found elsewhere — so install git so the test actually runs).
+    run: |
+      docker run --rm \
+        -v "$(pwd)/apps/agent:/repo/apps/agent" \
+        -v "$(pwd)/apps/backend/openapi:/repo/apps/backend/openapi:ro" \
+        -w /repo/apps/agent \
+        golang:1.22-alpine \
+        sh -c "apk add --no-cache git bash && bin/ci"
+    # The openapi drift tests resolve `../../../backend/openapi/agent-api.yaml`
+    # from `apps/agent/internal/protocol/` — the spec lives in `apps/backend/`,
+    # so we mount it read-only alongside the agent source. This is the same
+    # cross-app dep the docs-link checker has; both are paid in test-only
+    # mounts rather than by bloating the prod image.
+
   - key: web-security
     use: [code]
     docker: true
