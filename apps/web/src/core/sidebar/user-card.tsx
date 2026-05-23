@@ -1,17 +1,26 @@
-import { useCurrentUser, useLogoutAll } from "@domain/auth";
+import { useCurrentUser, useLogout } from "@domain/auth";
 import { cn } from "@shared/utils/cn";
-import { ChevronUp, Lock, LogOut, User as UserIcon } from "lucide-react";
+import { ChevronUp, Lock, LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toggleTheme } from "../layout/theme";
 
 /**
  * Bottom-of-sidebar user card. Shows the cookie-bearer's display name + their
  * `@handle` for the current org. Click opens a popover with `User > Details`,
- * `User > Security`, and `Log off` — the canonical M03 User section nav.
+ * `User > Security`, theme toggle, and `Log off` — the canonical M03 User
+ * section nav, now also hosting global chrome (theme) since the topbar was
+ * removed.
  */
 export function UserCard({ expanded }: { expanded: boolean }) {
   const { data } = useCurrentUser();
-  const logoutAll = useLogoutAll();
+  const logout = useLogout();
   const [open, setOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    typeof document !== "undefined" &&
+    document.documentElement.getAttribute("data-theme") === "light"
+      ? "light"
+      : "dark",
+  );
   const ref = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click.
@@ -35,11 +44,17 @@ export function UserCard({ expanded }: { expanded: boolean }) {
     .toUpperCase();
 
   const onLogoff = () => {
-    logoutAll.mutate(undefined, {
+    // Single-session sign-out; "Sign out of all sessions" lives on the
+    // Security page for the all-devices nuke.
+    logout.mutate(undefined, {
       onSettled: () => {
         window.location.href = "/login";
       },
     });
+  };
+
+  const onToggleTheme = () => {
+    setTheme(toggleTheme());
   };
 
   return (
@@ -90,6 +105,22 @@ export function UserCard({ expanded }: { expanded: boolean }) {
           >
             <Lock className="h-3.5 w-3.5" /> Security
           </a>
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            data-testid="user-nav-theme"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground hover:bg-accent hover:text-foreground"
+          >
+            {theme === "dark" ? (
+              <>
+                <Sun className="h-3.5 w-3.5" /> Light theme
+              </>
+            ) : (
+              <>
+                <Moon className="h-3.5 w-3.5" /> Dark theme
+              </>
+            )}
+          </button>
           <button
             type="button"
             onClick={onLogoff}

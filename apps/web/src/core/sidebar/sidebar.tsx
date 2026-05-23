@@ -136,25 +136,40 @@ export function Sidebar() {
       data-testid="sidebar"
       data-pinned={pinned}
     >
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-border h-[56px]">
-        <a href="/" className="flex items-center gap-2" aria-label="yaaos home">
+      <div
+        className={cn(
+          "flex items-center border-b border-border",
+          // Pinned: lockup spans full sidebar width edge-to-edge; height
+          // grows proportionally with the lockup's natural ~3:1 ratio.
+          // Collapsed: mark centered in the 56px rail.
+          pinned ? "px-3 py-3" : "justify-center h-[56px]",
+        )}
+      >
+        <a href="/" className={cn("block", pinned && "w-full")} aria-label="yaaos home">
           {pinned ? (
-            <img src="/logos/yaaos-lockup-dark.svg" alt="yaaos" className="h-5 dark:block hidden" />
-          ) : null}
-          {pinned ? (
-            <img
-              src="/logos/yaaos-lockup-light.svg"
-              alt="yaaos"
-              className="h-5 dark:hidden block"
-            />
-          ) : null}
-          {!pinned && (
             <>
-              <img src="/logos/yaaos-mark-dark.svg" alt="yaaos" className="h-5 dark:block hidden" />
+              <img
+                src="/logos/yaaos-lockup-dark.svg"
+                alt="yaaos"
+                className="w-full dark:block hidden"
+              />
+              <img
+                src="/logos/yaaos-lockup-light.svg"
+                alt="yaaos"
+                className="w-full dark:hidden block"
+              />
+            </>
+          ) : (
+            <>
+              <img
+                src="/logos/yaaos-mark-dark.svg"
+                alt="yaaos"
+                className="h-7 w-7 dark:block hidden"
+              />
               <img
                 src="/logos/yaaos-mark-light.svg"
                 alt="yaaos"
-                className="h-5 dark:hidden block"
+                className="h-7 w-7 dark:hidden block"
               />
             </>
           )}

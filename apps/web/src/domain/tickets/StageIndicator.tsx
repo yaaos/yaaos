@@ -77,7 +77,10 @@ export function StageIndicator({ stages }: { stages: TicketStage[] | undefined }
               {/* Icon carries the semantic-color hint; the label text uses
                   the default foreground so contrast stays >=4.5:1 against
                   bg-secondary even at the chip's small text size. */}
-              <Icon className={cn("w-3 h-3", meta.tone, spin && "animate-spin")} aria-hidden="true" />
+              <Icon
+                className={cn("w-3 h-3", meta.tone, spin && "animate-spin")}
+                aria-hidden="true"
+              />
               <span className="font-medium">{stage.name}</span>
               <span className="text-muted-foreground">·</span>
               <span>{meta.label}</span>

@@ -21,7 +21,7 @@ const currentUserMock = vi.fn();
 
 vi.mock("@domain/auth", () => ({
   useCurrentUser: () => currentUserMock(),
-  useLogoutAll: () => ({ mutate: vi.fn() }),
+  useLogout: () => ({ mutate: vi.fn() }),
 }));
 
 import { Sidebar } from "../sidebar";
