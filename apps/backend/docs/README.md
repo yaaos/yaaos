@@ -25,8 +25,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [core_plugin_meta](core_plugin_meta.md) | `PluginMeta` + `PluginType` — self-description every plugin exposes. |
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 | [core_auth](core_auth.md) | M02 default-deny middleware, contextvars, `Action` enum, `org_context()`. |
-| [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis (M05 scaffold). |
-| [core_outbox](core_outbox.md) | DB-atomic outbound message queue backing `core/tasks` (M05 scaffold). |
+| [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis; owns the outbox table and worker process. |
 | [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (M05 skeleton). |
 | [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (M05 skeleton). |
 | [core_sse_pubsub](core_sse_pubsub.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers (M05 skeleton). |

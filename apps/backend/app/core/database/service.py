@@ -517,7 +517,7 @@ async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped
     """
     import importlib  # noqa: PLC0415
 
-    importlib.import_module("app.core.outbox.models")
+    importlib.import_module("app.core.tasks.models")
     new_tables = [Base.metadata.tables["outbox_entries"]]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 

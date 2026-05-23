@@ -1,4 +1,13 @@
-"""SQLAlchemy model for `outbox_entries`."""
+"""SQLAlchemy model for `outbox_entries` — the pending-dispatch table.
+
+Folded in from the former `core/outbox` module. The table name stays
+`outbox_entries` since migration 014 already shipped under it; the row
+shape is generic (`kind` / `payload` / `attempt` / `dispatched_at`) so
+new kinds plug in via dispatchers without schema changes.
+
+Today the only `kind` is `taskiq_enqueue`. The row is a private detail
+of `core/tasks`; callers see only the `enqueue()` API.
+"""
 
 from __future__ import annotations
 

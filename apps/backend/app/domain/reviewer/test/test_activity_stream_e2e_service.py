@@ -21,8 +21,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.outbox import drain_once
-from app.core.outbox.models import OutboxEntryRow
 from app.core.plugin_meta import PluginMeta
 from app.core.sse_pubsub import (
     _reset_for_tests as _reset_pubsub,
@@ -31,6 +29,8 @@ from app.core.sse_pubsub import (
     channel_for,
     subscribe,
 )
+from app.core.tasks import drain_once
+from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
 from app.core.workspace import (
     WorkspaceTicketContext,

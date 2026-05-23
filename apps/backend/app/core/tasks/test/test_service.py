@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.core.outbox.models import OutboxEntryRow
 from app.core.tasks import TaskContext, enqueue, task
+from app.core.tasks.models import OutboxEntryRow
 from app.core.tasks.service import (
     _reset_for_tests,
     _restore_after_tests,

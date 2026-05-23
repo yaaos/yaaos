@@ -10,7 +10,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from app.core.outbox.models import OutboxEntryRow
+from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import (
     CommandCategory,
     CommandContext,

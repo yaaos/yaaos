@@ -79,13 +79,31 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8080
 
+# Default CMD lives on the per-role stages below (`web`, `worker`).
+# Building the bare `backend` target should never be done in production;
+# always target `web` or `worker`.
+
+# ────────────────────────────────────────────────────────────────────────
+# Stage 3a: yaaos-web — FastAPI/uvicorn HTTP + SSE process
+# ────────────────────────────────────────────────────────────────────────
+FROM backend AS web
+
 # `--ws-ping-interval=30 --ws-ping-timeout=10` keeps the WorkspaceAgent
 # activity WebSocket alive behind ALB/nginx idle-timeouts (typically 60s);
 # see docs/setup.md § Networking.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--app-dir", "apps/backend", "--ws-ping-interval=30", "--ws-ping-timeout=10"]
 
 # ────────────────────────────────────────────────────────────────────────
-# Stage 3: backend CI image
+# Stage 3b: yaaos-worker — taskiq consumer + outbox drain process
+# Same build as `web`; only CMD differs. Run as a separate container so
+# uvicorn worker count and taskiq concurrency can scale independently.
+# ────────────────────────────────────────────────────────────────────────
+FROM backend AS worker
+
+CMD ["python", "apps/backend/bin/worker"]
+
+# ────────────────────────────────────────────────────────────────────────
+# Stage 4: backend CI image
 # Adds dev extras (pytest, ruff, etc.) for running `apps/backend/bin/ci`.
 # Inherits everything from the prod `backend` stage, including the
 # non-root `yaaos` user.

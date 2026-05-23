@@ -1,12 +1,17 @@
-"""Outbox primitive + drain coverage."""
+"""Outbox/drain coverage — folded in from the old core/outbox tests.
+
+Drives `write()` + `drain_once()` directly with a stub dispatcher (no
+taskiq broker required). The broker-wired dispatcher is covered as part
+of the worker's e2e test path.
+"""
 
 from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
 
-from app.core.outbox import drain_once, write
-from app.core.outbox.models import OutboxEntryRow
+from app.core.tasks import drain_once, write
+from app.core.tasks.models import OutboxEntryRow
 
 
 @pytest.mark.asyncio

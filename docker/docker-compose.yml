@@ -18,9 +18,11 @@ services:
       retries: 30
 
   app:
+    image: yaaos-web
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      target: web
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
@@ -57,6 +59,35 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
+
+  worker:
+    image: yaaos-worker
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
+      YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
+      YAAOS_ENV: ${YAAOS_ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
+      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
+      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
+      YAAOS_OAUTH_GITHUB_CLIENT_ID: ${YAAOS_OAUTH_GITHUB_CLIENT_ID:-}
+      YAAOS_OAUTH_GITHUB_CLIENT_SECRET: ${YAAOS_OAUTH_GITHUB_CLIENT_SECRET:-}
+      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
+      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
+      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine

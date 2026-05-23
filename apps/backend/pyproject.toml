@@ -49,6 +49,9 @@ dependencies = [
     # M05 — Redis pub/sub backs core/sse_pubsub fanout; the same client is
     # reused by core/tasks Phase 1's taskiq broker.
     "redis>=5.0",
+    # core/tasks Phase 1 — taskiq broker (Redis Streams) + result backend.
+    "taskiq>=0.11",
+    "taskiq-redis>=1.0",
 ]
 
 [project.optional-dependencies]

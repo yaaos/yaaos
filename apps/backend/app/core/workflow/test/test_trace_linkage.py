@@ -26,8 +26,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy import select
 
-from app.core.outbox import drain_once
-from app.core.outbox.models import OutboxEntryRow
+from app.core.tasks import drain_once
+from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import (
     CommandCategory,
     Outcome,

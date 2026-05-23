@@ -22,7 +22,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.outbox import write as outbox_write
+from app.core.tasks.drain import write as outbox_write
 
 
 @dataclass(slots=True)

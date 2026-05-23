@@ -63,7 +63,7 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 
 ## Data owned
 
-None directly. Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup chain; writes via outbox ([`core/outbox`](core_outbox.md)). `workspace_agents` row writes land in Phase 7.
+None directly. Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup chain; writes via the outbox owned by [`core/tasks`](core_tasks.md). `workspace_agents` row writes land in Phase 7.
 
 ## How it's tested
 

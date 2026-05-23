@@ -24,9 +24,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.outbox import drain_once
-from app.core.outbox.models import OutboxEntryRow
 from app.core.plugin_meta import PluginMeta
+from app.core.tasks import drain_once
+from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
 from app.core.workspace import (
     WorkspaceTicketContext,

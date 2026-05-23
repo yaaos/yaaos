@@ -29,7 +29,7 @@ from app.core.agent_gateway import (
     record_heartbeat,
     record_workspace_event,
 )
-from app.core.outbox.models import OutboxEntryRow
+from app.core.tasks.models import OutboxEntryRow
 from app.core.workspace.models import WorkspaceRow
 
 
