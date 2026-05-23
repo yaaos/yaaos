@@ -1,9 +1,18 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 /**
- * Tailwind config — design tokens ported from plan/design/app/yaaos.css.
- * oklch values preserved; light + dark themes live as CSS variables, this
- * file maps them onto Tailwind utilities.
+ * Tailwind config.
+ *
+ * Two token vocabularies share the same oklch CSS variables (see `src/styles.css`):
+ *   - yaaos-named (`bg`, `surface`, `text-2`, …) — legacy, removed in Phase 9.
+ *   - shadcn-named (`background`, `foreground`, `primary`, …) — what `src/shared/components/ui/*` consumes.
+ *
+ * Anything new should use the shadcn-named vocabulary.
+ *
+ * Note: shadcn's sidebar primitive expects `hsl(var(--sidebar-*))`; we store oklch in
+ * those vars and tailwind references them with `var(--sidebar-*)` directly. The
+ * primitive's class strings (`bg-sidebar`, etc.) resolve against the mappings below.
  */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
@@ -11,35 +20,91 @@ export default {
   theme: {
     extend: {
       colors: {
+        /* yaaos-named (transitional) */
         bg: "var(--bg)",
         "bg-2": "var(--bg-2)",
         surface: "var(--surface)",
         "surface-2": "var(--surface-2)",
         "surface-3": "var(--surface-3)",
         hover: "var(--hover)",
-        border: "var(--border)",
         "border-soft": "var(--border-soft)",
         "border-hard": "var(--border-hard)",
         text: "var(--text)",
         "text-2": "var(--text-2)",
         "text-3": "var(--text-3)",
         "text-4": "var(--text-4)",
-        accent: "var(--accent)",
         "accent-2": "var(--accent-2)",
         "accent-dim": "var(--accent-dim)",
         "accent-bg": "var(--accent-bg)",
         "accent-border": "var(--accent-border)",
-        success: "var(--success)",
         danger: "var(--danger)",
-        warning: "var(--warning)",
-        info: "var(--info)",
+
+        /* shadcn-named semantic roles */
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
+        card: {
+          DEFAULT: "var(--card)",
+          foreground: "var(--card-foreground)",
+        },
+        popover: {
+          DEFAULT: "var(--popover)",
+          foreground: "var(--popover-foreground)",
+        },
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
+        accent: {
+          DEFAULT: "var(--accent)",
+          foreground: "var(--accent-foreground)",
+        },
+        destructive: {
+          DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
+        },
+        success: {
+          DEFAULT: "var(--success)",
+          foreground: "var(--success-foreground)",
+        },
+        warning: {
+          DEFAULT: "var(--warning)",
+          foreground: "var(--warning-foreground)",
+        },
+        info: {
+          DEFAULT: "var(--info)",
+          foreground: "var(--info-foreground)",
+        },
+        sidebar: {
+          DEFAULT: "var(--sidebar-background)",
+          foreground: "var(--sidebar-foreground)",
+          primary: "var(--sidebar-primary)",
+          "primary-foreground": "var(--sidebar-primary-foreground)",
+          accent: "var(--sidebar-accent)",
+          "accent-foreground": "var(--sidebar-accent-foreground)",
+          border: "var(--sidebar-border)",
+          ring: "var(--sidebar-ring)",
+        },
       },
       fontFamily: {
         sans: ['"Geist"', "system-ui", "sans-serif"],
         mono: ['"Geist Mono"', "ui-monospace", "monospace"],
       },
       borderRadius: {
-        DEFAULT: "6px",
+        lg: "calc(var(--radius) + 4px)",
+        md: "calc(var(--radius) + 2px)",
+        DEFAULT: "var(--radius)",
+        sm: "calc(var(--radius) - 2px)",
         card: "10px",
         chip: "4px",
         pill: "999px",
@@ -50,7 +115,21 @@ export default {
         lg: "0 20px 60px oklch(0 0 0 / 0.5)",
         glow: "0 0 0 1px var(--accent-border), 0 0 24px oklch(0.50 0.16 295 / 0.35)",
       },
+      keyframes: {
+        "accordion-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
+      },
+      animation: {
+        "accordion-down": "accordion-down 200ms ease-out",
+        "accordion-up": "accordion-up 200ms ease-out",
+      },
     },
   },
-  plugins: [],
+  plugins: [tailwindcssAnimate],
 } satisfies Config;

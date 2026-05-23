@@ -3,21 +3,25 @@
 @tailwind utilities;
 
 /*
- * Design tokens — ported from plan/design/app/yaaos.css.
- * oklch values preserved verbatim. Light + dark themes are swapped via
- * [data-theme="..."] on <html>.
+ * Design tokens.
+ *
+ * Two layers, same oklch values:
+ *   - yaaos-named (`--bg`, `--text-2`, `--accent`, …) — M01–M05 legacy. Phase 9 removes.
+ *   - shadcn-named (`--background`, `--foreground`, `--primary`, …) — what shadcn/ui primitives consume.
+ *
+ * Light + dark themes swap via [data-theme="…"] on <html>.
  */
 
 @layer base {
   :root,
   [data-theme="dark"] {
+    /* yaaos-named (transitional — removed in Phase 9) */
     --bg: oklch(0.165 0.012 285);
     --bg-2: oklch(0.195 0.013 285);
     --surface: oklch(0.215 0.013 285);
     --surface-2: oklch(0.248 0.014 285);
     --surface-3: oklch(0.282 0.014 285);
     --hover: oklch(0.265 0.016 285);
-    --border: oklch(0.305 0.014 285);
     --border-soft: oklch(0.25 0.013 285);
     --border-hard: oklch(0.385 0.018 285);
 
@@ -26,17 +30,63 @@
     --text-3: oklch(0.575 0.014 285);
     --text-4: oklch(0.46 0.014 285);
 
-    --accent: oklch(0.72 0.19 295);
     --accent-2: oklch(0.8 0.16 295);
     --accent-dim: oklch(0.46 0.14 295);
     --accent-bg: oklch(0.3 0.1 295 / 0.3);
     --accent-bg-2: oklch(0.3 0.1 295 / 0.14);
     --accent-border: oklch(0.5 0.16 295 / 0.55);
 
-    --success: oklch(0.74 0.17 150);
     --danger: oklch(0.7 0.2 25);
+
+    /* shadcn-named (semantic role tokens — primitives reference these) */
+    --background: oklch(0.165 0.012 285);
+    --foreground: oklch(0.965 0.005 285);
+
+    --card: oklch(0.215 0.013 285);
+    --card-foreground: oklch(0.965 0.005 285);
+
+    --popover: oklch(0.215 0.013 285);
+    --popover-foreground: oklch(0.965 0.005 285);
+
+    --primary: oklch(0.72 0.19 295);
+    --primary-foreground: oklch(0.99 0.01 285);
+
+    --secondary: oklch(0.248 0.014 285);
+    --secondary-foreground: oklch(0.965 0.005 285);
+
+    --muted: oklch(0.248 0.014 285);
+    --muted-foreground: oklch(0.77 0.012 285);
+
+    --accent: oklch(0.72 0.19 295);
+    --accent-foreground: oklch(0.99 0.01 285);
+
+    --destructive: oklch(0.7 0.2 25);
+    --destructive-foreground: oklch(0.99 0.01 285);
+
+    --success: oklch(0.74 0.17 150);
+    --success-foreground: oklch(0.99 0.01 285);
+
     --warning: oklch(0.8 0.16 75);
+    --warning-foreground: oklch(0.18 0.02 75);
+
     --info: oklch(0.74 0.13 235);
+    --info-foreground: oklch(0.99 0.01 285);
+
+    --border: oklch(0.305 0.014 285);
+    --input: oklch(0.305 0.014 285);
+    --ring: oklch(0.72 0.19 295);
+
+    --radius: 6px;
+
+    /* sidebar-scoped tokens (shadcn `sidebar` primitive references these) */
+    --sidebar-background: oklch(0.195 0.013 285);
+    --sidebar-foreground: oklch(0.77 0.012 285);
+    --sidebar-primary: oklch(0.72 0.19 295);
+    --sidebar-primary-foreground: oklch(0.99 0.01 285);
+    --sidebar-accent: oklch(0.248 0.014 285);
+    --sidebar-accent-foreground: oklch(0.965 0.005 285);
+    --sidebar-border: oklch(0.305 0.014 285);
+    --sidebar-ring: oklch(0.72 0.19 295);
   }
 
   [data-theme="light"] {
@@ -46,7 +96,6 @@
     --surface-2: oklch(0.965 0.005 285);
     --surface-3: oklch(0.94 0.008 285);
     --hover: oklch(0.955 0.008 285);
-    --border: oklch(0.89 0.01 285);
     --border-soft: oklch(0.93 0.008 285);
     --border-hard: oklch(0.8 0.012 285);
 
@@ -55,17 +104,59 @@
     --text-3: oklch(0.515 0.014 285);
     --text-4: oklch(0.62 0.014 285);
 
-    --accent: oklch(0.55 0.2 295);
     --accent-2: oklch(0.48 0.2 295);
     --accent-dim: oklch(0.78 0.1 295);
     --accent-bg: oklch(0.75 0.12 295 / 0.2);
     --accent-bg-2: oklch(0.75 0.12 295 / 0.1);
     --accent-border: oklch(0.55 0.18 295 / 0.45);
 
-    --success: oklch(0.52 0.16 150);
     --danger: oklch(0.55 0.2 25);
+
+    --background: oklch(0.985 0.003 285);
+    --foreground: oklch(0.205 0.012 285);
+
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.205 0.012 285);
+
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.205 0.012 285);
+
+    --primary: oklch(0.55 0.2 295);
+    --primary-foreground: oklch(0.99 0.01 285);
+
+    --secondary: oklch(0.965 0.005 285);
+    --secondary-foreground: oklch(0.205 0.012 285);
+
+    --muted: oklch(0.965 0.005 285);
+    --muted-foreground: oklch(0.38 0.014 285);
+
+    --accent: oklch(0.55 0.2 295);
+    --accent-foreground: oklch(0.99 0.01 285);
+
+    --destructive: oklch(0.55 0.2 25);
+    --destructive-foreground: oklch(0.99 0.01 285);
+
+    --success: oklch(0.52 0.16 150);
+    --success-foreground: oklch(0.99 0.01 285);
+
     --warning: oklch(0.62 0.15 75);
+    --warning-foreground: oklch(0.18 0.02 75);
+
     --info: oklch(0.54 0.13 235);
+    --info-foreground: oklch(0.99 0.01 285);
+
+    --border: oklch(0.89 0.01 285);
+    --input: oklch(0.89 0.01 285);
+    --ring: oklch(0.55 0.2 295);
+
+    --sidebar-background: oklch(0.97 0.005 285);
+    --sidebar-foreground: oklch(0.38 0.014 285);
+    --sidebar-primary: oklch(0.55 0.2 295);
+    --sidebar-primary-foreground: oklch(0.99 0.01 285);
+    --sidebar-accent: oklch(0.94 0.008 285);
+    --sidebar-accent-foreground: oklch(0.205 0.012 285);
+    --sidebar-border: oklch(0.89 0.01 285);
+    --sidebar-ring: oklch(0.55 0.2 295);
   }
 
   html {
@@ -73,8 +164,8 @@
   }
 
   body {
-    background-color: var(--bg);
-    color: var(--text);
+    background-color: var(--background);
+    color: var(--foreground);
     font-family: "Geist", system-ui, sans-serif;
     font-feature-settings: "ss01", "cv11";
     -webkit-font-smoothing: antialiased;
@@ -84,5 +175,11 @@
   .mono {
     font-family: "Geist Mono", ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus ring — D4 baseline. Every interactive primitive composes via this token. */
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
