@@ -134,3 +134,63 @@ async def test_history_returns_empty_for_ticket_with_no_hitl(seeded, db_session)
         )
     assert r.status_code == 200
     assert r.json() == []
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_respond_resolves_pending_decision_and_transitions_workflow(seeded, db_session) -> None:
+    """POST /hitl/respond stamps `pending_human_decisions.resolved_at` and
+    flips the workflow state out of `awaiting_human`."""
+    async with _client() as c:
+        r = await c.post(
+            f"/api/tickets/{seeded['ticket_id']}/hitl/respond",
+            json={"answer": "yes"},
+            **_auth(seeded["sess"], seeded["org"].slug),
+        )
+    assert r.status_code == 200, r.text
+
+    # The pending decision row now has resolved_at set.
+    decision_row = (
+        await db_session.execute(
+            text(
+                "SELECT resolved_at, resolution_payload FROM pending_human_decisions"
+                " WHERE workflow_execution_id = :wid"
+            ),
+            {"wid": seeded["wfx_id"]},
+        )
+    ).first()
+    assert decision_row is not None
+    assert decision_row[0] is not None
+    assert decision_row[1] == {"answer": "yes"}
+
+    # The workflow row is no longer awaiting_human.
+    wfx_state = (
+        await db_session.execute(
+            text("SELECT state FROM workflow_executions WHERE id = :wid"),
+            {"wid": seeded["wfx_id"]},
+        )
+    ).scalar_one()
+    assert wfx_state != "awaiting_human"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_respond_409_when_decision_already_resolved(seeded, db_session) -> None:
+    """The workflow is still awaiting_human but its decision row is already
+    resolved (race between two responders) — endpoint returns 409."""
+    await db_session.execute(
+        text(
+            "UPDATE pending_human_decisions SET resolved_at = NOW(),"
+            " resolution_payload = CAST('{}' AS jsonb)"
+            " WHERE workflow_execution_id = :wid"
+        ),
+        {"wid": seeded["wfx_id"]},
+    )
+    await db_session.commit()
+    async with _client() as c:
+        r = await c.post(
+            f"/api/tickets/{seeded['ticket_id']}/hitl/respond",
+            json={"answer": "yes"},
+            **_auth(seeded["sess"], seeded["org"].slug),
+        )
+    assert r.status_code == 409
