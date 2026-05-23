@@ -29,51 +29,53 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 - **State patterns** — `Skeleton` table on first load, `EmptyState` (Search icon) when filters bite, `EmptyState` (Ticket icon) when truly empty, `ErrorBanner` with Retry on fetch failure.
 - **Source of truth** — `useTickets()` → GET /api/tickets; the wire shape is `{items, next_cursor}` and the hook unwraps `items`.
 
-### Detail page
+### Detail page (M06)
 
-`TicketDetailPage`:
-- **Header** — `#PR · repo`, title, status + kind + draft chips, author byline. Buttons: **Cancel jobs** and **Re-review**.
-- **Tabs** — Review (default) and Audit log, each with live counts.
+`TicketDetailPage` (apps/web/src/domain/tickets/TicketDetailPage.tsx):
 
-### Review tab — `SummaryStrip`
+- **Header band** — repo · PR link (when present) · "updated <ago>"; title (h1); M06 status pill (running spins, others static-tinted via shared `M06_STATUS_META`); "by <builder.display_name>" or "by yaaos" when `builder_kind === "system"`. Right-aligned action buttons: **Cancel** (non-terminal status only, destructive `ConfirmModal`) and **Re-run** (cost-protective `ConfirmModal`).
+- **Stage indicator** — composes `StageIndicator` against `ticket.stages` from the extended `GET /api/tickets/:id` (Phase 6 backend slice). Hides itself when the field is absent.
+- **3-tab strip** — Findings (default) / Activity / HITL.
 
-Four-cell card: Findings (red if any blocker/major), Tokens (in + out), Latency (live-ticking `LiveLatency` while running; otherwise `duration_s`), Lessons applied. Findings counter sources from the durable findings table (`useFindingsForTicket`, `include_terminal=true`) so it counts unique findings across every review run; per-review JSONB caches would undercount on multi-review tickets. Tokens / Latency / Lessons aggregate across every `ReviewJob` for the ticket. Cost cell removed — backend no longer tracks cost.
+#### Findings tab
 
-### Review tab — `AgentCard`
+`useFindingsForTicket(ticketId, true)` (include terminals). Each row is the standalone `FindingRow` composite — severity pill, file:line, body excerpt, inline **Ack** + **Push back** for `state === "open"`. The row's callbacks wire to `useAckFinding(ticketId)` and `usePushBackFinding(ticketId)`; both invalidate the findings query key on success.
 
-One card representing the yaaos parent reviewer. Carries `data-testid="agent-card-yaaos"` and `data-state="<status>"`. The card header shows the job's `model` (alias requested, resolved name on completion) and `effort` next to the subtitle.
+#### Activity tab
 
-Body composition (applies to every status with a job — except `no-job` which renders an empty-state CTA):
-- **Status banner** (top) — one-line `Running · resolving_entities` / `Posted: 4 findings` / `Failed: <error_message>` / `Skipped: <skip_reason>` / `Cancelled (<skip_reason>)`. Running shows the indeterminate bar + tokens too.
-- **Activity feed** (`data-testid="activity-feed"`) — newest 10 events from the merged source: `job.activity_log` (hydrated history) ++ `useLiveActivity(job.id)` (live SSE tail), deduped by `ts+kind+message`, sorted newest-first. Format: `<formatTime(ts)> · <message>`.
-- **"All events (N)"** `<details>` — full event list, collapsible.
-- **Findings list** — only when `status === 'posted'` and findings exist; otherwise the banner alone covers the posted state.
+`useReviewJobsForTicket(ticketId)` — flattens every job's `activity_log[]` into one chronological stream. Each event renders via `ActivityEventRow` (lucide icon per the M06 kind taxonomy; long messages auto-collapse). `EmptyState` when the stream is empty.
 
-### Finding rows
+#### HITL tab
 
-Inside `findings-list`: severity dot + title + severity label + `file:line` + subagent tag from `source_agent`. Click expands → body, italic `rationale`, line-numbered snippet diff. Applied-lesson chip(s) link to `/lessons`. **"Teach yaaos…"** button opens the modal.
+`useHitlHistory(ticketId)` returns past + current exchanges. The first `resolved_at: null` row is the current prompt — rendered through `HitlPanel` (discriminated-union renderer for `kind: "choice" | "text" | "form"`, free-text fallback for unknown kinds). Resolved exchanges show in a "History" list below as JSON-pretty `resolution_payload`. `useHitlRespond(ticketId).mutate(response)` submits.
 
-### Teach-yaaos modal
+### Standalone composites
 
-Pre-fills title (empty), body (finding's body, editable, 1000-char cap), repo (the ticket's). Submit → `useCreateLesson` posts `/api/lessons`, invalidates `["lessons", repo]`, closes.
+All four pieces above are pure-render components in their own files with Vitest coverage:
 
-### Audit tab
+| File | Tests | Purpose |
+|---|---|---|
+| `StageIndicator.tsx` | `test/stage-indicator.test.tsx` | Renders stages array; single-stage chip + multi-stage chronological. |
+| `HitlPanel.tsx` | `test/hitl-panel.test.tsx` | Discriminated-union renderer + fallback. |
+| `FindingRow.tsx` | `test/finding-row.test.tsx` | Severity pill + inline ack/push-back UX (≥10-char reason gate). |
+| `ActivityEventRow.tsx` | `test/activity-event-row.test.tsx` | Kind → icon mapping; long-message collapse via `<details>`. |
 
-Renders `useTicketAudit(id)` as a vertical list: `formatTime(created_at)` · `kind` · `[actor.kind:actor.login]`. Click expands the full payload JSON.
-
-### Cancel / Re-review
-
-- **Re-review** — `useRereviewMutation` → `POST /api/reviewer/rereview`. Cancels in-flight jobs for the PR via supersede discipline, then schedules one new review.
-- **Cancel jobs** — `useCancelReviewerJobs` → `POST /api/reviewer/cancel?ticket_id=...`.
+Keeping each composite separately testable means the page-level rewrite stayed render-only — no per-composite logic re-tested by the page-level smoke.
 
 ### Live updates
 
-The SSE subscriber invalidates `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "jobs", id]`, and `["reviewer", "metrics"]` on the appropriate kinds (see [core_sse.md](core_sse.md)). 3s polling is the safety net.
+Each query carries a `refetchInterval`: tickets 3s, findings 5s, jobs 3s, hitl history default. SSE invalidation hooks (`workflow_state_changed`, `finding_*`, `hitl_*`) are wired in `core/sse` per kind; the poll is the safety net.
+
+### Cancel / Re-run
+
+`useCancelReviewerJobs.mutate(ticketId)` → `POST /api/reviewer/cancel?ticket_id=...`. `useRereviewMutation.mutate(ticketId)` → `POST /api/reviewer/rereview`. Both are routed through `ConfirmModal` so the destructive vs cost-protective copy lands per `D3` voice rules.
 
 ## Data owned
 
-None. State lives in `core/api` caches; mutations target endpoints owned by `domain/reviewer` and `domain/lessons`.
+None. State lives in `core/api` caches; mutations target endpoints owned by `domain/reviewer` and `domain/tickets`.
 
 ## How it's tested
 
-E2e specs in `apps/e2e/tests/` exercise the round-trip; assertions check for exactly one `agent-card-` per ticket. No Vitest — components are render-heavy.
+- `TicketsListPage`: `test/tickets-list.test.tsx` (M06 filter chips render, empty state).
+- Per-composite: 4 Vitest files (above).
+- The page-level composition is exercised end-to-end by the PR-review e2e — see `apps/e2e/tests/pr-review-end-to-end.spec.ts`.
