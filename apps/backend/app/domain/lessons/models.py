@@ -27,6 +27,9 @@ class LessonRow(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(String, nullable=False)
     source_pr_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Nullable: rows created before the M06 column add (and rows created by
+    # the workspace agent / system reviewer) have no user attribution.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

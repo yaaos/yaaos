@@ -337,7 +337,7 @@ export interface FindingThread {
 export function useThreadForFinding(finding_id: string | null) {
   return useQuery<FindingThread>({
     queryKey: ["reviewer", "thread", finding_id],
-    queryFn: () => apiFetch<FindingThread>(`/api/reviewer/threads/by-finding/${finding_id}`),
+    queryFn: () => apiFetch<FindingThread>(`/api/reviewer/findings/${finding_id}/thread`),
     enabled: !!finding_id,
     refetchInterval: 5_000,
   });

@@ -145,6 +145,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("019_orgs_workspace_provider", "orgs_workspace_provider"),
     ("020_rename_member_to_builder", "rename_member_to_builder"),
     ("021_create_notifications", "create_notifications"),
+    ("022_lessons_created_by", "lessons_created_by"),
 )
 
 
@@ -520,6 +521,16 @@ async def _apply_create_notifications(conn) -> None:  # type: ignore[no-untyped-
     await conn.run_sync(Base.metadata.create_all)
 
 
+async def _apply_lessons_created_by(conn) -> None:  # type: ignore[no-untyped-def]
+    """M06 audit follow-up — add `lessons.created_by` (nullable UUID).
+
+    Records the user who created the lesson when the SPA fired the
+    request; nullable because pre-M06 rows have no attribution and
+    system-created lessons (workspace agent, reviewer) stay anonymous.
+    """
+    await conn.execute(text("ALTER TABLE lessons ADD COLUMN IF NOT EXISTS created_by UUID"))
+
+
 async def _apply_create_workspace_agents(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 7 — `workspace_agents` table: per-pod identity rows.
 
@@ -678,6 +689,8 @@ async def migrate() -> None:
                 await _apply_rename_member_to_builder(conn)
             elif kind == "create_notifications":
                 await _apply_create_notifications(conn)
+            elif kind == "lessons_created_by":
+                await _apply_lessons_created_by(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

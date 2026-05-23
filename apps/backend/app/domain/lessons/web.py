@@ -3,6 +3,7 @@
 | Method | Path                  | Action          |
 |--------|-----------------------|-----------------|
 | GET    | `/api/lessons`        | `LESSONS_READ`  |
+| GET    | `/api/lessons/{id}`   | `LESSONS_READ`  |
 | POST   | `/api/lessons`        | `LESSONS_WRITE` |
 | PUT    | `/api/lessons/{id}`   | `LESSONS_WRITE` |
 | DELETE | `/api/lessons/{id}`   | `LESSONS_WRITE` |
@@ -68,6 +69,14 @@ async def list_(repo_external_id: str | None = None) -> list[Lesson]:
     if repo_external_id is not None:
         return await list_for_repo(repo_external_id, org_id=org_id)
     return await list_all(org_id=org_id)
+
+
+@router.get("/{lesson_id}", dependencies=[Depends(require(Action.LESSONS_READ))])
+async def get_lesson(lesson_id: UUID) -> Lesson:
+    try:
+        return await get(lesson_id, org_id=_org())
+    except LessonNotFoundError:
+        raise HTTPException(status_code=404, detail="lesson not found")
 
 
 @router.post("", dependencies=[Depends(require(Action.LESSONS_WRITE))])

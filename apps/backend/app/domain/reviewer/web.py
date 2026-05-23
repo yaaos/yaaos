@@ -341,7 +341,7 @@ async def reviews_by_ticket(ticket_id: UUID) -> list[dict[str, Any]]:
 
 
 @router.get(
-    "/threads/by-finding/{finding_id}",
+    "/findings/{finding_id}/thread",
     dependencies=[Depends(require(Action.REVIEWER_READ))],
 )
 async def thread_by_finding(finding_id: UUID) -> dict[str, Any]:

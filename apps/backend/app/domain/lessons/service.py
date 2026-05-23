@@ -23,6 +23,7 @@ class Lesson(BaseModel):
     title: str
     body: str
     source_pr_url: str | None
+    created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -36,6 +37,7 @@ class Lesson(BaseModel):
             title=row.title,
             body=row.body,
             source_pr_url=row.source_pr_url,
+            created_by=row.created_by,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -102,6 +104,9 @@ async def create(
             title=title,
             body=body,
             source_pr_url=source_pr_url,
+            # User-typed lessons get attribution; reviewer/agent-created
+            # lessons leave actor.user_id None and the column stays NULL.
+            created_by=actor.user_id,
         )
         s.add(row)
         await s.flush()
