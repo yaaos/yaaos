@@ -92,7 +92,7 @@ const NAV: NavConfig = {
 function _roleCovers(currentRole: NavRole | undefined, required: NavRole | undefined): boolean {
   if (!required) return true;
   if (!currentRole) return false;
-  const order: Record<NavRole, number> = { member: 0, admin: 1 };
+  const order: Record<NavRole, number> = { builder: 0, admin: 1 };
   return order[currentRole] >= order[required];
 }
 
@@ -105,12 +105,12 @@ export function Sidebar() {
   const { isCollapsed, toggle } = useCollapseState();
 
   const currentMembership = user?.orgs.find((o) => o.slug === user?.current_org_slug);
-  // Owner satisfies any admin-gated nav item (Owner > Admin > Member).
+  // Owner satisfies any admin-gated nav item (Owner > Admin > Builder).
   const effectiveRole: NavRole | undefined =
     currentMembership?.role === "owner" || currentMembership?.role === "admin"
       ? "admin"
-      : currentMembership?.role === "member"
-        ? "member"
+      : currentMembership?.role === "builder"
+        ? "builder"
         : undefined;
 
   const togglePin = () => {

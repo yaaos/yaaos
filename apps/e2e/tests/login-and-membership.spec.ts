@@ -41,7 +41,7 @@ test.describe("auth + members", () => {
     // Members page: invite a new member. M03+ re-homed it under settings.
     await page.goto(`${BASE}/orgs/acme/settings/members`);
     await page.locator('input[type="email"]').fill("bob@example.com");
-    await page.getByTestId("invite-role").selectOption("member");
+    await page.getByTestId("invite-role").selectOption("builder");
     await page.getByRole("button", { name: "Invite" }).click();
     // Wait for the network roundtrip (mutation + reload) before pulling the
     // test inbox, otherwise the invite-send may not have hit SMTP yet.

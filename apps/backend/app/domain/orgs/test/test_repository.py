@@ -35,23 +35,25 @@ async def test_unique_handle_per_org(db_session) -> None:
     b = await identity_repo.insert_user(db_session)
     await repo.insert_membership(db_session, user_id=a.id, org_id=org.id, role=Role.OWNER, handle="jack")
     with pytest.raises(IntegrityError):
-        await repo.insert_membership(db_session, user_id=b.id, org_id=org.id, role=Role.MEMBER, handle="jack")
+        await repo.insert_membership(
+            db_session, user_id=b.id, org_id=org.id, role=Role.BUILDER, handle="jack"
+        )
 
 
 @pytest.mark.asyncio
 async def test_role_covers_ordering() -> None:
-    assert Role.OWNER.covers(Role.MEMBER)
+    assert Role.OWNER.covers(Role.BUILDER)
     assert Role.OWNER.covers(Role.OWNER)
-    assert Role.ADMIN.covers(Role.MEMBER)
-    assert not Role.MEMBER.covers(Role.OWNER)
-    assert not Role.MEMBER.covers(Role.ADMIN)
+    assert Role.ADMIN.covers(Role.BUILDER)
+    assert not Role.BUILDER.covers(Role.OWNER)
+    assert not Role.BUILDER.covers(Role.ADMIN)
 
 
 @pytest.mark.asyncio
 async def test_update_role(db_session) -> None:
     org = await repo.insert_org(db_session, slug="role-change")
     user = await identity_repo.insert_user(db_session)
-    await repo.insert_membership(db_session, user_id=user.id, org_id=org.id, role=Role.MEMBER, handle="m")
+    await repo.insert_membership(db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="m")
     updated = await repo.update_role(db_session, user_id=user.id, org_id=org.id, role=Role.ADMIN)
     assert Role(updated.role) == Role.ADMIN
 
@@ -64,7 +66,7 @@ async def test_invitation_persisted_with_token_hash(db_session) -> None:
         db_session,
         org_id=org.id,
         email="invitee@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         token_hash=token_hash,
         expires_at=datetime.now(UTC) + timedelta(days=7),
         invited_by_user_id=None,

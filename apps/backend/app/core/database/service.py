@@ -143,6 +143,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("017_workspaces_m05_columns", "workspaces_m05_columns"),
     ("018_create_workspace_agents", "create_workspace_agents"),
     ("019_orgs_workspace_provider", "orgs_workspace_provider"),
+    ("020_rename_member_to_builder", "rename_member_to_builder"),
 )
 
 
@@ -495,6 +496,15 @@ async def _apply_orgs_workspace_provider(conn) -> None:  # type: ignore[no-untyp
         await conn.execute(text(stmt))
 
 
+async def _apply_rename_member_to_builder(conn) -> None:  # type: ignore[no-untyped-def]
+    """M06 Phase 2 — rename the `member` role to `builder`.
+
+    `memberships.role` is a `TEXT` column (no enum type), so a row-level UPDATE
+    is all the rename needs. Idempotent: re-running matches zero rows.
+    """
+    await conn.execute(text("UPDATE memberships SET role = 'builder' WHERE role = 'member'"))
+
+
 async def _apply_create_workspace_agents(conn) -> None:  # type: ignore[no-untyped-def]
     """M05 Phase 7 — `workspace_agents` table: per-pod identity rows.
 
@@ -649,6 +659,8 @@ async def migrate() -> None:
                 await _apply_create_workspace_agents(conn)
             elif kind == "orgs_workspace_provider":
                 await _apply_orgs_workspace_provider(conn)
+            elif kind == "rename_member_to_builder":
+                await _apply_rename_member_to_builder(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

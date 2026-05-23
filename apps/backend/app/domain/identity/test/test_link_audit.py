@@ -18,7 +18,7 @@ async def test_complete_oauth_link_audits_per_org(db_session) -> None:
     org_a = await orgs_repo.insert_org(db_session, slug="link-a")
     org_b = await orgs_repo.insert_org(db_session, slug="link-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.MEMBER, handle="l"
+        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="l"
     )
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org_b.id, role=Role.ADMIN, handle="l2"

@@ -5,12 +5,12 @@
  * are always links — single nesting depth.
  *
  * Role gate: a `role: "admin"` entry is hidden when the current membership
- * is "member". Owner sees everything (Owner > Admin > Member per M02).
+ * is "builder". Owner sees everything (Owner > Admin > Builder).
  */
 
 import type { LucideIcon } from "lucide-react";
 
-export type NavRole = "member" | "admin";
+export type NavRole = "builder" | "admin";
 
 export interface NavLink {
   kind: "link";

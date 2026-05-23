@@ -176,7 +176,7 @@ async def test_callback_invitation_creates_user(db_session) -> None:
             id=uuid4(),
             org_id=org.id,
             email="newbie@example.com",
-            role=Role.MEMBER.value,
+            role=Role.BUILDER.value,
             token_hash="z" * 64,
             expires_at=datetime.now(UTC) + timedelta(days=1),
             invited_by_user_id=None,

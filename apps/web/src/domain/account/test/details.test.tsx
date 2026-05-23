@@ -39,7 +39,7 @@ const baseData = {
       org_id: "00000000-0000-0000-0000-000000000002",
       slug: "beta",
       display_name: "Beta",
-      role: "member" as const,
+      role: "builder" as const,
       handle: "jdoe",
     },
   ],

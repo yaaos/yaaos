@@ -19,7 +19,7 @@ vi.mock("@domain/auth", () => ({
 
 import { Sidebar } from "../sidebar";
 
-function userResp(role: "owner" | "admin" | "member") {
+function userResp(role: "owner" | "admin" | "builder") {
   return {
     data: {
       user: {
@@ -58,7 +58,7 @@ describe("Sidebar", () => {
   });
 
   it("members see the Org Settings group but only the Members sub-item", () => {
-    currentUserMock.mockReturnValue(userResp("member"));
+    currentUserMock.mockReturnValue(userResp("builder"));
     render(<Sidebar />);
     expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
     expect(screen.getByTestId("nav-tickets")).toBeInTheDocument();

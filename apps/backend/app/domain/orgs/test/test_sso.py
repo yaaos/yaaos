@@ -51,7 +51,7 @@ async def sso_org(db_session):
     await identity_repo.add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
     org = await orgs_repo.insert_org(db_session, slug="sso-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.MEMBER, handle="sso"
+        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="sso"
     )
     await upsert_config(
         db_session,

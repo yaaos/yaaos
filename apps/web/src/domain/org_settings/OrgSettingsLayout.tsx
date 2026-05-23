@@ -12,7 +12,7 @@ interface SettingsTab {
   id: string;
   label: string;
   path: string;
-  role?: "member" | "admin";
+  role?: "builder" | "admin";
 }
 
 const TABS: SettingsTab[] = [

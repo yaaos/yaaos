@@ -46,7 +46,7 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
         db_session, user_id=owner_user.id, org_id=org.id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member_user.id, org_id=org.id, role=Role.MEMBER, handle="mem"
+        db_session, user_id=member_user.id, org_id=org.id, role=Role.BUILDER, handle="mem"
     )
 
     owner_session = await session_lifecycle.create(db_session, user_id=owner_user.id, workspace_id=None)
@@ -68,7 +68,7 @@ async def test_invite_happy_path_sends_email(seeded) -> None:
     async with _client() as c:
         resp = await c.post(
             "/api/memberships/invite",
-            json={"email": "new@example.com", "role": "member"},
+            json={"email": "new@example.com", "role": "builder"},
             cookies={
                 "yaaos_session": owner_session.raw_token,
                 "yaaos_csrf": owner_session.csrf_token,
@@ -78,7 +78,7 @@ async def test_invite_happy_path_sends_email(seeded) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["email"] == "new@example.com"
-    assert body["role"] == "member"
+    assert body["role"] == "builder"
     inbox = get_test_inbox()
     assert any(m.to == "new@example.com" for m in inbox)
 
@@ -90,7 +90,7 @@ async def test_invite_member_role_rejected(seeded) -> None:
     async with _client() as c:
         resp = await c.post(
             "/api/memberships/invite",
-            json={"email": "x@example.com", "role": "member"},
+            json={"email": "x@example.com", "role": "builder"},
             cookies={
                 "yaaos_session": member_session.raw_token,
                 "yaaos_csrf": member_session.csrf_token,
@@ -108,7 +108,7 @@ async def test_accept_invitation_happy_path(seeded, db_session) -> None:
         db_session,
         org_id=org.id,
         email="alice@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
         actor=Actor.user(user_id=owner_user.id),
     )
@@ -124,7 +124,7 @@ async def test_accept_invitation_happy_path(seeded, db_session) -> None:
             cookies={"yaaos_session": alice_session.raw_token},
         )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["role"] == "member"
+    assert resp.json()["role"] == "builder"
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,7 @@ async def test_accept_expired_returns_410(seeded, db_session) -> None:
         db_session,
         org_id=org.id,
         email="ex@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
         actor=Actor.user(user_id=owner_user.id),
     )
@@ -170,7 +170,7 @@ async def test_accept_used_returns_410(seeded, db_session) -> None:
         db_session,
         org_id=org.id,
         email="used@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
         actor=Actor.user(user_id=owner_user.id),
     )
@@ -280,4 +280,4 @@ async def test_list_members_returns_org_roster(seeded) -> None:
     rows = resp.json()
     assert len(rows) >= 2
     roles = {r["role"] for r in rows}
-    assert "owner" in roles and "member" in roles
+    assert "owner" in roles and "builder" in roles

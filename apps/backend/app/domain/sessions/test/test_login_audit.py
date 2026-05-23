@@ -48,7 +48,7 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="audit-a")
     org_b = await orgs_repo.insert_org(db_session, slug="audit-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.MEMBER, handle="la"
+        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="la"
     )
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org_b.id, role=Role.ADMIN, handle="la2"

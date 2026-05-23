@@ -41,7 +41,7 @@ async def seeded(db_session):
     )
     org = await orgs_repo.insert_org(db_session, slug="acc-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.MEMBER, handle="acc"
+        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="acc"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -84,7 +84,7 @@ async def test_delete_last_verified_email_blocked(db_session) -> None:
     )
     org = await orgs_repo.insert_org(db_session, slug="one-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.MEMBER, handle="one"
+        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="one"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

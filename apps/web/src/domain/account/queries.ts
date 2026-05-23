@@ -5,7 +5,7 @@ export interface AccountOrg {
   org_id: string;
   slug: string;
   display_name: string;
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "builder";
   handle: string;
 }
 

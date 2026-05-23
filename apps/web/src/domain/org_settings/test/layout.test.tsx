@@ -13,7 +13,7 @@ vi.mock("@domain/auth", () => ({
 
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 
-function userResp(role: "owner" | "admin" | "member") {
+function userResp(role: "owner" | "admin" | "builder") {
   return {
     data: {
       orgs: [{ slug: "acme", role, handle: "x", display_name: "Acme" }],
@@ -36,7 +36,7 @@ describe("OrgSettingsLayout", () => {
   });
 
   it("member sees only the Members tab", () => {
-    currentUserMock.mockReturnValue(userResp("member"));
+    currentUserMock.mockReturnValue(userResp("builder"));
     render(<OrgSettingsLayout active="members">child</OrgSettingsLayout>);
     expect(screen.getByTestId("tab-members")).toBeInTheDocument();
     for (const id of ["auth", "vcs", "coding-agents", "byok", "audit"]) {

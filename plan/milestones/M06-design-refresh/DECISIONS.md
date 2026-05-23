@@ -59,3 +59,9 @@
 - **Picked:** run `npx svgo --multipass` on the logos already in `apps/web/public/logos/` (saved 22–35%).
 - **Rejected:** copy SVGs verbatim and defer SVGO.
 - **Why:** plan calls for an SVGO pass and the tool runs through npx without local install.
+
+### D2.5 — `member` → `builder` migration shape
+
+- **Picked:** add a row-UPDATE migration (`UPDATE memberships SET role='builder' WHERE role='member'`) as `020_rename_member_to_builder` in `apps/backend/app/core/database/service.py`. No enum-type ALTER needed (the column is plain TEXT). Renamed `Role.MEMBER` → `Role.BUILDER` in `types.py`; bulk-replaced all usages via sed.
+- **Rejected:** keep `MEMBER` as an alias of `BUILDER` for backward-compat.
+- **Why:** CLAUDE.md is explicit ("no backward-compat shims"). The repo is small enough that mechanical rename + reformat is the right move; tests caught the one frontend `RANK` literal that was missed.

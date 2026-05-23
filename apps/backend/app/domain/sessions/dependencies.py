@@ -31,17 +31,17 @@ from app.domain.orgs.types import Role
 # overrides are explicit — write `Depends(require(Action.X))` with the
 # action whose row in this map is what you want enforced.
 _REQUIRED_ROLE: dict[Action, Role] = {
-    Action.IDENTITY_READ_SELF: Role.MEMBER,
-    Action.ORG_READ: Role.MEMBER,
-    Action.MEMBERS_READ: Role.MEMBER,
+    Action.IDENTITY_READ_SELF: Role.BUILDER,
+    Action.ORG_READ: Role.BUILDER,
+    Action.MEMBERS_READ: Role.BUILDER,
     Action.AUDIT_READ: Role.ADMIN,
-    Action.ACCOUNT_UPDATE_SELF: Role.MEMBER,
+    Action.ACCOUNT_UPDATE_SELF: Role.BUILDER,
     Action.MEMBERS_INVITE: Role.ADMIN,
     Action.MEMBERS_REMOVE: Role.ADMIN,
     Action.MEMBERS_CHANGE_ROLE: Role.ADMIN,
     Action.SSO_CONFIGURE: Role.OWNER,
     Action.GITHUB_APP_LINK: Role.OWNER,
-    Action.REVIEW_TRIGGER: Role.MEMBER,
+    Action.REVIEW_TRIGGER: Role.BUILDER,
     Action.VCS_READ: Role.ADMIN,
     Action.VCS_WRITE: Role.ADMIN,
     Action.CODING_AGENT_READ: Role.ADMIN,

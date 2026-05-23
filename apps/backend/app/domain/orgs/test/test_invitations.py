@@ -45,12 +45,12 @@ async def test_invite_happy_path(db_session) -> None:
         db_session,
         org_id=org.id,
         email="Newbie@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner.id,
         actor=Actor.user(user_id=owner.id),
     )
     assert invitation.email == "newbie@example.com"
-    assert invitation.role == Role.MEMBER
+    assert invitation.role == Role.BUILDER
     assert raw  # raw signed token returned to caller (tests + email body)
     inbox = get_test_inbox()
     assert len(inbox) == 1
@@ -88,7 +88,7 @@ async def test_accept_used_invitation_raises_used(db_session) -> None:
         db_session,
         org_id=org.id,
         email="c@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner.id,
         actor=Actor.user(user_id=owner.id),
     )
@@ -106,7 +106,7 @@ async def test_accept_expired_invitation_raises_expired(db_session) -> None:
         db_session,
         org_id=org.id,
         email="d@example.com",
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         invited_by_user_id=owner.id,
         actor=Actor.user(user_id=owner.id),
     )
@@ -142,7 +142,7 @@ async def test_remove_member_revokes_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await identity_repo.insert_user(db_session)
     await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.id, role=Role.MEMBER, handle="t"
+        db_session, user_id=target.id, org_id=org.id, role=Role.BUILDER, handle="t"
     )
     s1 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
     s2 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
@@ -159,7 +159,7 @@ async def test_change_role_rotates_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await identity_repo.insert_user(db_session)
     await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.id, role=Role.MEMBER, handle="t2"
+        db_session, user_id=target.id, org_id=org.id, role=Role.BUILDER, handle="t2"
     )
     s1 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
 

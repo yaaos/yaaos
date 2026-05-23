@@ -107,7 +107,7 @@ async def seeded(db_session):
         db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.MEMBER, handle="mem"
+        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)

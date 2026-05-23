@@ -116,7 +116,7 @@ async def test_me_exposes_broken_integrations_for_admins(db_session) -> None:
         db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.MEMBER, handle="mem"
+        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
     )
     db_session.add(
         McpCredentialRow(

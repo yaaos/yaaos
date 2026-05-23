@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { useCurrentUser } from "./queries";
 
-type Role = "owner" | "admin" | "member";
+type Role = "owner" | "admin" | "builder";
 
-const RANK: Record<Role, number> = { member: 0, admin: 1, owner: 2 };
+const RANK: Record<Role, number> = { builder: 0, admin: 1, owner: 2 };
 
 /**
  * Renders `children` only when the current user has at least `role` in

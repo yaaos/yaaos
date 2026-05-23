@@ -66,7 +66,7 @@ async def test_pending_invitation_creates_user_and_membership(db_session) -> Non
             id=uuid4(),
             org_id=org.id,
             email="user@example.com",
-            role=Role.MEMBER.value,
+            role=Role.BUILDER.value,
             token_hash="x" * 64,
             expires_at=datetime.now(UTC) + timedelta(days=1),
             invited_by_user_id=inviter.id,
@@ -79,7 +79,7 @@ async def test_pending_invitation_creates_user_and_membership(db_session) -> Non
 
     membership = await orgs_repo.get_membership(db_session, user_id=result.user.id, org_id=org.id)
     assert membership is not None
-    assert membership.role == Role.MEMBER.value
+    assert membership.role == Role.BUILDER.value
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_expired_invitation_hard_rejects(db_session) -> None:
             id=uuid4(),
             org_id=org.id,
             email="user@example.com",
-            role=Role.MEMBER.value,
+            role=Role.BUILDER.value,
             token_hash="y" * 64,
             expires_at=datetime.now(UTC) - timedelta(days=1),
             invited_by_user_id=None,

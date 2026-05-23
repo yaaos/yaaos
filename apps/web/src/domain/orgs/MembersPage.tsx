@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useState } from "react";
 
-type Role = "owner" | "admin" | "member";
+type Role = "owner" | "admin" | "builder";
 
 interface Member {
   user_id: string;
@@ -14,7 +14,7 @@ interface Member {
   primary_email: string | null;
 }
 
-const ROLES: Role[] = ["owner", "admin", "member"];
+const ROLES: Role[] = ["owner", "admin", "builder"];
 
 function useMembers(orgSlug: string | null) {
   return useQuery<Member[]>({
@@ -87,7 +87,7 @@ export function MembersPage(props: { orgSlug?: string }) {
   const remove = useRemoveMember(orgSlug);
 
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("member");
+  const [role, setRole] = useState<Role>("builder");
 
   if (!orgSlug) {
     return (

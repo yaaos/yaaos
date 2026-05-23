@@ -130,7 +130,7 @@ async def sso_acs(
                 s,
                 user_id=user_row.id,
                 org_id=org.id,
-                role=Role.MEMBER,
+                role=Role.BUILDER,
                 handle=email.split("@")[0][:64].lower(),
             )
             jit_created = True

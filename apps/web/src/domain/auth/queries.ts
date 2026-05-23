@@ -9,7 +9,7 @@ export interface BrokenIntegration {
 export interface MembershipSummary {
   slug: string;
   display_name: string;
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "builder";
   handle: string;
   broken_integrations: BrokenIntegration[];
 }

@@ -42,10 +42,10 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="org-a")
     org_b = await orgs_repo.insert_org(db_session, slug="org-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.MEMBER, handle="alpha"
+        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="alpha"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.MEMBER, handle="beta"
+        db_session, user_id=user.id, org_id=org_b.id, role=Role.BUILDER, handle="beta"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -264,7 +264,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
         db_session,
         user_id=other.id,
         org_id=seeded["org_a"].id,
-        role=Role.MEMBER,
+        role=Role.BUILDER,
         handle="taken",
     )
     await db_session.commit()
