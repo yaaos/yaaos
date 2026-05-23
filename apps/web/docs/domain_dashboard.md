@@ -1,50 +1,48 @@
 # domain/dashboard
 
-> Two-state landing page — onboarding stepper before the system is ready; metric tiles + live agents-in-flight once it is.
+> Landing page for an org-scoped session — 4 stat cards + "In flight" band + "Needs attention" band. The "not configured" gate banner mounts above the stat cards when the org isn't ready.
 
 ## Purpose
 
-The `/dashboard` route. Picks state from `useOnboarding()`: when `github_app_installed` and `anthropic_key_set` are both true the operator sees populated metrics + in-flight reviews; otherwise a step-by-step setup card. Read-only.
+The `/orgs/:slug/dashboard` route. Single round-trip projection via `useDashboard()` → `GET /api/tickets/dashboard`. The `NotConfiguredBanner` composite reads `/api/orgs/config-status` and renders separately above the stat cards when the org is missing prerequisites.
 
 ## Public interface
 
-- `DashboardPage` — mounted by `core/routing` at `/dashboard`. Subcomponents (`DashboardOnboarding`, `DashboardPopulated`, `MetricTile`, `InFlightRow`) are private to the same file.
+- `DashboardPage` — mounted by `core/routing` at `/orgs/$slug/dashboard`. Subcomponents (`StatCard`, `BandHeader`, `RowList`, `InFlightRow`, `NeedsAttentionRow`) are private to the same file.
 
 ## Module architecture
 
 ### File shape
 
-Single `index.tsx` (~230 LOC) holding `DashboardPage` (state dispatcher), `DashboardOnboarding`, `DashboardPopulated`, `MetricTile`, `InFlightRow`.
+Single `apps/web/src/domain/dashboard/index.tsx` (~220 LOC). Composes the M06 layout primitives (`PageHeader`, `EmptyState`, `NotConfiguredBanner`) + shadcn primitives (`Skeleton`).
 
-### State dispatch
+### Stat cards (4)
 
-`DashboardPage` renders `DashboardPopulated` when both onboarding flags are true, otherwise `DashboardOnboarding`. `anthropic_key_set` is authoritative from the backend — true only when the key actually authenticates (or when `YAAOS_CODING_AGENT_STUB=1` short-circuits the probe). A saved-but-invalid key keeps the stepper visible.
+Each `StatCard` carries a label, a numeric value, a lucide icon, and a tone (`info` / `warning` / `success` / `destructive`). The `in_flight` icon spins (`animate-spin`) when the count is > 0. Cards stay visible at 0 — per E2a.3 the empty surface is part of the UX, not hidden.
 
-### Onboarding state
+| Card | Source field | Tone |
+|---|---|---|
+| In flight | `stats.in_flight` | info (Loader2, spins when > 0) |
+| HITL pending | `stats.hitl_pending` | warning (Bell) |
+| Completed today | `stats.completed_today` | success (CheckCircle2) |
+| Failed today | `stats.failed_today` | destructive (XCircle) |
 
-Single card with two stepper rows (Install GitHub App / Add Anthropic key). Each row: 28px circular avatar (green check when done, numbered grey otherwise), title + subtitle (line-through + muted when done; success-bg tint when done), right side carries a "Done" badge or a primary `<Button>` linking to `/settings`. An aux "Then…" card describes post-onboarding behavior.
+### "In flight" band
 
-### Populated state
+Up to 10 ticket rows. Each row: spinning `Loader2`, ticket title, repo (mono), `ago(updated_at)`. Click → ticket detail. Empty-state when the band is empty (running tickets feed it).
 
-Header reads "Overview" (one org in M01).
+### "Needs attention" band
 
-**Metrics row — 3 tiles** from `useMetricsSummary()` + `useTickets()`:
-1. Reviews posted (`total_reviews_posted`, "all-time").
-2. Open tickets (count where `status === "in_review"`).
-3. Failure rate (`failure_rate * 100`, with `failure_count` failed subtitle).
+Up to 5 ticket rows whose computed `m06_status === "done"` AND have at least one medium/high finding. Severity-tinted `AlertCircle` (destructive for high, warning for medium, info for low), title, findings count, repo. Click → ticket detail.
 
-Cost is not surfaced — CLI pricing data is not authoritative, so the backend doesn't track it.
+### Not-configured gate
 
-Sparklines and 24h delta indicators are deferred — `/api/reviewer/metrics` returns lifetime aggregates only.
-
-**Live · in flight panel** — full-width card listing tickets where `status === "in_review"`. Each row is a `<Link to="/tickets/$ticketId">` with PR number + repo + truncated title, updated-ago, and one `yaaos` status badge sourced from the latest review job via `useReviewJobsForTicket(ticket.id)`.
-
-The per-row hook is N+1; TanStack Query dedupes shared keys and the cost is negligible at POC scale. A future `GET /api/dashboard/in-flight` would consolidate. The activity feed from the original design is deferred — `GET /api/dashboard/activity` isn't built.
+`NotConfiguredBanner` mounts above the stat cards when `useConfigStatus()` reports `configured: false`. Admins see the missing-piece list ("Connect a VCS provider, Configure a coding agent, ..."); Builders see "Ask [admin display name] to finish setup." The Dashboard's own band states still render below — a partially-configured org may still have historical tickets.
 
 ### Live updates
 
-- `useOnboarding` polls every 5s (no SSE invalidation).
-- `useMetricsSummary`, `useTickets`, `useReviewJobsForTicket` invalidate on `review_job_status_changed` and `ticket_status_changed` (see [core_sse.md](core_sse.md)).
+- `useDashboard` polls every 5s.
+- SSE invalidation (`workflow_state_changed` → invalidate `["tickets", "dashboard"]`) is deferred until the dashboard kinds populate consistently; the 5s poll is the M06 floor.
 
 ## Data owned
 
@@ -52,5 +50,5 @@ None. State lives in `core/api` query caches.
 
 ## How it's tested
 
-- `apps/web/src/domain/dashboard/test/dashboard.test.tsx` — Vitest covering state-dispatch with mock `useOnboarding`.
-- `apps/e2e/tests/onboarding-stepper.spec.ts` — fresh DB → stepper at 0/2 → paste credentials + dispatch install webhook + save Anthropic key → dashboard flips to populated.
+- `apps/web/src/domain/dashboard/test/dashboard.test.tsx` — Vitest smoke-test asserting the loading skeleton renders before the dashboard query resolves.
+- E2E coverage of the populated state is deferred — the band logic depends on real ticket data, which is exercised by the PR-review end-to-end spec rather than a per-page dashboard spec.

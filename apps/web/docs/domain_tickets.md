@@ -16,17 +16,18 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 
 ## Module architecture
 
-`apps/web/src/domain/tickets/index.tsx` is a single file holding both pages plus inner components. Pieces are tightly coupled (shared types/helpers/idiom). Split into `list/` + `detail/` + `_shared.tsx` when the file passes ~1500 LOC.
+- `apps/web/src/domain/tickets/TicketsListPage.tsx` — the M06 list page (E2a.1).
+- `apps/web/src/domain/tickets/index.tsx` — re-exports `TicketsListPage as TicketsPage` and still holds the legacy `TicketDetailPage` until the Phase 6 rewrite lands.
 
-### List page
+### List page (M06)
 
-`TicketsPage`:
-- **Filter chips (status)** — All / Review / Done with live counts from `useTickets()`.
-- **Filter dropdowns** — `repo`, `kind` (hardcoded to `feature`), `author`.
-- **Group-by toggle** — None / Status. Status mode renders sub-tables per status.
-- **Row layout (CSS grid)** — status badge · `#PR · repo` + title · kind chip · verdict dot · source icon · author avatar+login · tokens · updated-ago.
-- **Verdict dot** — lazy per-row via `useReviewJobsForTicket(id)`. Colors: posted-no-findings green, posted-with-must-fix red, posted-other grey, running pulsing accent, queued grey square, failed red, absent empty.
-- **Tokens cell** — read from the latest review job. Cost is not shown — CLI pricing data is not authoritative, so the backend doesn't track it.
+`TicketsListPage`:
+- **Status chips (multi-select)** — running / hitl / done / failed / cancelled, M06 vocab from `m06_status` on each row. Default active: running + hitl.
+- **Filters** — free-text search over title (`q`), repo single-select (`Select` primitive), "My tickets" toggle filtering by `t.author_login === user.primary_email`.
+- **Table columns** — Status (icon + label) · Title · Repo (mono) · Stage · Findings (count + severity dot when `max_severity` set) · Updated (ago) · Builder (display name, or "yaaos" badge when `builder_kind === "system"`).
+- **Load-more pagination** — reveals 50 more rows per click; no infinite scroll, no numbered pagination.
+- **State patterns** — `Skeleton` table on first load, `EmptyState` (Search icon) when filters bite, `EmptyState` (Ticket icon) when truly empty, `ErrorBanner` with Retry on fetch failure.
+- **Source of truth** — `useTickets()` → GET /api/tickets; the wire shape is `{items, next_cursor}` and the hook unwraps `items`.
 
 ### Detail page
 
