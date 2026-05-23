@@ -1053,7 +1053,7 @@ def bootstrap() -> None:
 
     register_coding_agent_plugin(_plugin)
     register_onboarding_contributor("anthropic_key_set", _onboarding_anthropic_key_set)
-    # M03 BYOK: the `/api/byok/anthropic/validate` endpoint dispatches to this
+    # M03 BYOK: the `/api/api-keys/anthropic/validate` endpoint dispatches to this
     # callable so core/byok stays free of provider-specific HTTP.
     _byok_register_validator("anthropic", validate_anthropic_key)
     # Install yaaos-* subagent definitions so the parent reviewer can dispatch

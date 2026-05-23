@@ -1,4 +1,4 @@
-"""HTTP coverage for /api/byok — list, set, validate, delete with role gating."""
+"""HTTP coverage for /api/api-keys — list, set, validate, delete with role gating."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ async def seeded(db_session):
 @pytest.mark.asyncio
 async def test_list_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/byok", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/api-keys", headers={"X-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -67,7 +67,7 @@ async def test_list_unauthenticated_401(seeded) -> None:
 async def test_list_member_forbidden(seeded) -> None:
     async with _client() as c:
         r = await c.get(
-            "/api/byok",
+            "/api/api-keys",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
         )
@@ -78,7 +78,7 @@ async def test_list_member_forbidden(seeded) -> None:
 async def test_list_admin_sees_not_set_initially(seeded) -> None:
     async with _client() as c:
         r = await c.get(
-            "/api/byok",
+            "/api/api-keys",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
         )
@@ -96,7 +96,7 @@ async def test_set_validate_clear_round_trip(seeded) -> None:
     async with _client() as c:
         # Set.
         r = await c.post(
-            "/api/byok/anthropic",
+            "/api/api-keys/anthropic",
             json={"value": "sk-test"},
             cookies=cookies,
             headers=headers,
@@ -106,7 +106,7 @@ async def test_set_validate_clear_round_trip(seeded) -> None:
 
         # Validate (stub returns True).
         r = await c.post(
-            "/api/byok/anthropic/validate",
+            "/api/api-keys/anthropic/validate",
             cookies=cookies,
             headers=headers,
         )
@@ -115,7 +115,7 @@ async def test_set_validate_clear_round_trip(seeded) -> None:
 
         # Clear.
         r = await c.delete(
-            "/api/byok/anthropic",
+            "/api/api-keys/anthropic",
             cookies=cookies,
             headers=headers,
         )
@@ -128,7 +128,7 @@ async def test_set_rejects_empty(seeded) -> None:
     sess = seeded["admin_sess"]
     async with _client() as c:
         r = await c.post(
-            "/api/byok/anthropic",
+            "/api/api-keys/anthropic",
             json={"value": ""},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -141,7 +141,7 @@ async def test_unknown_provider_404(seeded) -> None:
     sess = seeded["admin_sess"]
     async with _client() as c:
         r = await c.post(
-            "/api/byok/ghost",
+            "/api/api-keys/ghost",
             json={"value": "x"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},

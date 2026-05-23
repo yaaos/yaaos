@@ -15,7 +15,7 @@ export interface IntegrationStatus {
 export function useIntegrations() {
   return useQuery<IntegrationStatus[]>({
     queryKey: ["integrations"],
-    queryFn: () => apiFetch<IntegrationStatus[]>("/api/integrations"),
+    queryFn: () => apiFetch<IntegrationStatus[]>("/api/mcp-proxy"),
     staleTime: 10_000,
   });
 }
@@ -29,7 +29,7 @@ export function usePatchIntegration() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ provider, body }: { provider: string; body: PatchIntegrationRequest }) =>
-      apiFetch<IntegrationStatus>(`/api/integrations/${provider}`, {
+      apiFetch<IntegrationStatus>(`/api/mcp-proxy/${provider}`, {
         method: "PATCH",
         body: JSON.stringify(body),
       }),
@@ -41,7 +41,7 @@ export function useDeleteIntegration() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (provider: string) =>
-      apiFetch<{ removed: boolean }>(`/api/integrations/${provider}`, { method: "DELETE" }),
+      apiFetch<{ removed: boolean }>(`/api/mcp-proxy/${provider}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["integrations"] }),
   });
 }
@@ -50,7 +50,7 @@ export function useValidateIntegration() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (provider: string) =>
-      apiFetch<{ valid: boolean }>(`/api/integrations/${provider}/validate`, { method: "POST" }),
+      apiFetch<{ valid: boolean }>(`/api/mcp-proxy/${provider}/validate`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["integrations"] }),
   });
 }

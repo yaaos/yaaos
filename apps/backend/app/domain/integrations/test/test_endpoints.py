@@ -1,4 +1,4 @@
-"""HTTP coverage for /api/integrations — list, connect, validate, patch, delete.
+"""HTTP coverage for /api/mcp-proxy — list, connect, validate, patch, delete.
 
 The endpoint tests use a stub IntegrationProvider so the OAuth + validate
 paths don't touch the network. The dedicated connect_callback round-trip
@@ -123,7 +123,7 @@ async def seeded(db_session):
 @pytest.mark.asyncio
 async def test_list_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/integrations", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/mcp-proxy", headers={"X-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -131,7 +131,7 @@ async def test_list_unauthenticated_401(seeded) -> None:
 async def test_list_member_forbidden(seeded) -> None:
     async with _client() as c:
         r = await c.get(
-            "/api/integrations",
+            "/api/mcp-proxy",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
         )
@@ -143,7 +143,7 @@ async def test_list_admin_sees_registered_providers_with_not_set(seeded, stub_pr
     del stub_provider
     async with _client() as c:
         r = await c.get(
-            "/api/integrations",
+            "/api/mcp-proxy",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
         )
@@ -157,7 +157,7 @@ async def test_connect_start_redirects_to_provider_with_signed_state(seeded, stu
     del stub_provider
     async with _client() as c:
         r = await c.get(
-            "/api/integrations/stub/connect",
+            "/api/mcp-proxy/stub/connect",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
             follow_redirects=False,
@@ -172,7 +172,7 @@ async def test_connect_start_redirects_to_provider_with_signed_state(seeded, stu
 async def test_connect_start_unknown_provider_404(seeded) -> None:
     async with _client() as c:
         r = await c.get(
-            "/api/integrations/ghost/connect",
+            "/api/mcp-proxy/ghost/connect",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
             headers={"X-Org-Slug": seeded["org"].slug},
             follow_redirects=False,
@@ -197,7 +197,7 @@ async def test_callback_round_trip_persists_credential(
     )
     async with _client() as c:
         r = await c.get(
-            "/api/integrations/stub/callback",
+            "/api/mcp-proxy/stub/callback",
             params={"code": "abc", "state": state},
             follow_redirects=False,
         )
@@ -223,7 +223,7 @@ async def test_callback_round_trip_persists_credential(
 async def test_callback_rejects_tampered_state(seeded) -> None:
     async with _client() as c:
         r = await c.get(
-            "/api/integrations/stub/callback",
+            "/api/mcp-proxy/stub/callback",
             params={"code": "abc", "state": "tampered.state.value"},
             follow_redirects=False,
         )
@@ -245,7 +245,7 @@ async def test_callback_rejects_wrong_provider_in_state(seeded, stub_provider) -
     async with _client() as c:
         # State says "stub", URL path says "other" → mismatch.
         r = await c.get(
-            "/api/integrations/other/callback",
+            "/api/mcp-proxy/other/callback",
             params={"code": "abc", "state": state},
             follow_redirects=False,
         )
@@ -268,12 +268,12 @@ async def test_delete_endpoint_clears_row(seeded, stub_provider, stub_exchange, 
     sess = seeded["admin_sess"]
     async with _client() as c:
         await c.get(
-            "/api/integrations/stub/callback",
+            "/api/mcp-proxy/stub/callback",
             params={"code": "abc", "state": state},
             follow_redirects=False,
         )
         r = await c.delete(
-            "/api/integrations/stub",
+            "/api/mcp-proxy/stub",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
@@ -298,12 +298,12 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
     sess = seeded["admin_sess"]
     async with _client() as c:
         await c.get(
-            "/api/integrations/stub/callback",
+            "/api/mcp-proxy/stub/callback",
             params={"code": "abc", "state": state},
             follow_redirects=False,
         )
         r = await c.patch(
-            "/api/integrations/stub",
+            "/api/mcp-proxy/stub",
             json={"allowed_tools": ["update_thing"], "enabled": False},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -343,13 +343,13 @@ async def test_validate_endpoint_returns_provider_result(seeded, stub_provider, 
     sess = seeded["admin_sess"]
     async with _client() as c:
         await c.get(
-            "/api/integrations/stub/callback",
+            "/api/mcp-proxy/stub/callback",
             params={"code": "abc", "state": state},
             follow_redirects=False,
         )
         stub_provider.validate_returns = True
         r_ok = await c.post(
-            "/api/integrations/stub/validate",
+            "/api/mcp-proxy/stub/validate",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
@@ -357,7 +357,7 @@ async def test_validate_endpoint_returns_provider_result(seeded, stub_provider, 
 
         stub_provider.validate_returns = False
         r_bad = await c.post(
-            "/api/integrations/stub/validate",
+            "/api/mcp-proxy/stub/validate",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
@@ -370,7 +370,7 @@ async def test_validate_endpoint_404_when_not_connected(seeded, stub_provider) -
     sess = seeded["admin_sess"]
     async with _client() as c:
         r = await c.post(
-            "/api/integrations/stub/validate",
+            "/api/mcp-proxy/stub/validate",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )

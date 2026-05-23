@@ -12,7 +12,7 @@ export interface ByokProviderStatus {
 export function useByokProviders() {
   return useQuery<ByokProviderStatus[]>({
     queryKey: ["byok"],
-    queryFn: () => apiFetch<ByokProviderStatus[]>("/api/byok"),
+    queryFn: () => apiFetch<ByokProviderStatus[]>("/api/api-keys"),
     staleTime: 10_000,
   });
 }
@@ -21,7 +21,7 @@ export function useSetByok() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ provider, value }: { provider: string; value: string }) =>
-      apiFetch<{ status: string }>(`/api/byok/${encodeURIComponent(provider)}`, {
+      apiFetch<{ status: string }>(`/api/api-keys/${encodeURIComponent(provider)}`, {
         method: "POST",
         body: JSON.stringify({ value }),
       }),
@@ -33,7 +33,7 @@ export function useValidateByok() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (provider: string) =>
-      apiFetch<{ valid: boolean }>(`/api/byok/${encodeURIComponent(provider)}/validate`, {
+      apiFetch<{ valid: boolean }>(`/api/api-keys/${encodeURIComponent(provider)}/validate`, {
         method: "POST",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),
@@ -44,7 +44,7 @@ export function useClearByok() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (provider: string) =>
-      apiFetch<{ removed: boolean }>(`/api/byok/${encodeURIComponent(provider)}`, {
+      apiFetch<{ removed: boolean }>(`/api/api-keys/${encodeURIComponent(provider)}`, {
         method: "DELETE",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),

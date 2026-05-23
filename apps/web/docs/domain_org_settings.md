@@ -54,7 +54,7 @@ Toggling the checkbox back to default clears any stale `system_prompt` override 
 
 ## Data owned
 
-None. Each page reads through `core/api` query hooks; mutations target the existing org-settings endpoints (`/api/coding-agents`, `/api/byok`, `/api/integrations`, `/api/orgs`, `/api/memberships`, `/api/audit`).
+None. Each page reads through `core/api` query hooks; mutations target the existing org-settings endpoints (`/api/coding-agents`, `/api/api-keys`, `/api/mcp-proxy`, `/api/orgs`, `/api/memberships`, `/api/audit`).
 
 ## How it's tested
 

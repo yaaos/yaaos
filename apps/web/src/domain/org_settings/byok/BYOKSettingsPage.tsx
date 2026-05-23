@@ -18,7 +18,7 @@ import {
  * a card with reveal/test/save/clear and read-only last-validated /
  * last-used timestamps. The same `byok_keys` row is also surfaced on the
  * Claude Code settings page — both UIs round-trip through
- * `/api/byok/{provider}`.
+ * `/api/api-keys/{provider}`.
  */
 export function BYOKSettingsPage() {
   const providers = useByokProviders();

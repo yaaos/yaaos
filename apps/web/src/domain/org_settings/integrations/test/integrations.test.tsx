@@ -73,7 +73,7 @@ describe("IntegrationsSettingsPage", () => {
     render(<IntegrationsSettingsPage />);
     expect(screen.getByTestId("badge-linear-disconnected")).toBeTruthy();
     const link = screen.getByTestId("connect-linear") as HTMLAnchorElement;
-    expect(link.href).toContain("/api/integrations/linear/connect");
+    expect(link.href).toContain("/api/mcp-proxy/linear/connect");
   });
 
   it("renders connected provider with allowlist + Disconnect confirm flow", () => {

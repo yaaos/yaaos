@@ -42,7 +42,7 @@ export function useByokAnthropicStatus() {
   return useQuery<ByokProviderStatus | null>({
     queryKey: ["byok", "anthropic"],
     queryFn: async () => {
-      const rows = await apiFetch<ByokProviderStatus[]>("/api/byok");
+      const rows = await apiFetch<ByokProviderStatus[]>("/api/api-keys");
       return rows.find((r) => r.provider === "anthropic") ?? null;
     },
     staleTime: 10_000,
@@ -53,7 +53,7 @@ export function useSetByokAnthropic() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (value: string) =>
-      apiFetch<{ status: string }>("/api/byok/anthropic", {
+      apiFetch<{ status: string }>("/api/api-keys/anthropic", {
         method: "POST",
         body: JSON.stringify({ value }),
       }),
@@ -64,14 +64,15 @@ export function useSetByokAnthropic() {
 export function useValidateByokAnthropic() {
   return useMutation({
     mutationFn: () =>
-      apiFetch<{ valid: boolean }>("/api/byok/anthropic/validate", { method: "POST" }),
+      apiFetch<{ valid: boolean }>("/api/api-keys/anthropic/validate", { method: "POST" }),
   });
 }
 
 export function useClearByokAnthropic() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch<{ removed: boolean }>("/api/byok/anthropic", { method: "DELETE" }),
+    mutationFn: () =>
+      apiFetch<{ removed: boolean }>("/api/api-keys/anthropic", { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),
   });
 }

@@ -34,10 +34,10 @@ HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to brea
 | PATCH  | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — replace settings. |
 | DELETE | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — uninstall. |
 | PATCH  | `/api/orgs`                     | `ORG_SETTINGS_WRITE` — update top-level org settings (today: `session_timeout_override`). |
-| GET    | `/api/byok`                     | `BYOK_READ` — list providers with status (`configured` / `not_set`) + timestamps. |
-| POST   | `/api/byok/{provider}`          | `BYOK_WRITE` — set/update the encrypted key for a provider. |
-| POST   | `/api/byok/{provider}/validate` | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
-| DELETE | `/api/byok/{provider}`          | `BYOK_WRITE` — remove the row. |
+| GET    | `/api/api-keys`                     | `BYOK_READ` — list providers with status (`configured` / `not_set`) + timestamps. |
+| POST   | `/api/api-keys/{provider}`          | `BYOK_WRITE` — set/update the encrypted key for a provider. |
+| POST   | `/api/api-keys/{provider}/validate` | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
+| DELETE | `/api/api-keys/{provider}`          | `BYOK_WRITE` — remove the row. |
 
 SSO endpoints land in Phase 12.
 

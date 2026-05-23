@@ -2,10 +2,10 @@
 
 | Method | Path                              | Action       |
 |--------|-----------------------------------|--------------|
-| GET    | `/api/byok`                       | `BYOK_READ`  — list providers with status (configured / not_set) + timestamps. |
-| POST   | `/api/byok/{provider}`            | `BYOK_WRITE` — set/update the encrypted key. |
-| POST   | `/api/byok/{provider}/validate`   | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
-| DELETE | `/api/byok/{provider}`            | `BYOK_WRITE` — remove the row. |
+| GET    | `/api/api-keys`                       | `BYOK_READ`  — list providers with status (configured / not_set) + timestamps. |
+| POST   | `/api/api-keys/{provider}`            | `BYOK_WRITE` — set/update the encrypted key. |
+| POST   | `/api/api-keys/{provider}/validate`   | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
+| DELETE | `/api/api-keys/{provider}`            | `BYOK_WRITE` — remove the row. |
 
 Plaintext never crosses the API boundary except inbound on `POST {provider}`.
 GET returns "configured" / "not_set" only.
@@ -137,4 +137,4 @@ async def clear_key(provider: Annotated[str, Path()]) -> dict[str, bool]:
     return {"removed": removed}
 
 
-register_routes(RouteSpec(module_name="byok", router=router, url_prefix="/api/byok"))
+register_routes(RouteSpec(module_name="byok", router=router, url_prefix="/api/api-keys"))

@@ -21,11 +21,11 @@ Exported from `app/domain/integrations/__init__.py`:
 
 Refresh-on-expiry is deferred — see `plan/milestones/M04-mcp/DECISIONS.md`. The proxy returns `broken_creds` when the stored access token's `expires_at < now()`; Phase 3b's hourly health-check + email notification surfaces the breakage so operators reconnect.
 
-HTTP routes (mounted at `/api/integrations` with `X-Org-Slug` header):
+HTTP routes (mounted at `/api/mcp-proxy` with `X-Org-Slug` header):
 
 - `GET /` (`INTEGRATIONS_READ`) — list providers + status (`not_set` / `configured` / `broken`).
 - `GET /{provider}/connect` (`INTEGRATIONS_WRITE`) — 303 to the upstream authorize URL with signed `state` (10m TTL, `itsdangerous` over `yaaos_invitation_token_secret`).
-- `GET /{provider}/callback` (public_route) — exchange + persist. The OAuth callback path is the only `public_route` exception under `/api/integrations` because the upstream provider doesn't know our `X-Org-Slug` header — the signed `state` carries the org_id.
+- `GET /{provider}/callback` (public_route) — exchange + persist. The OAuth callback path is the only `public_route` exception under `/api/mcp-proxy` because the upstream provider doesn't know our `X-Org-Slug` header — the signed `state` carries the org_id.
 - `POST /{provider}/validate` (`INTEGRATIONS_WRITE`) — hit upstream with the stored token.
 - `PATCH /{provider}` (`INTEGRATIONS_WRITE`) — update `enabled` and/or `allowed_tools`.
 - `DELETE /{provider}` (`INTEGRATIONS_WRITE`) — clear.

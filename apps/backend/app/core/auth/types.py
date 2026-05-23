@@ -102,8 +102,8 @@ M02_PROTECTED_PREFIXES: tuple[str, ...] = (
     "/api/vcs",  # exact + prefix
     "/api/coding-agents",  # exact + prefix
     "/api/orgs",  # exact + prefix
-    "/api/byok",  # exact + prefix
-    "/api/integrations",  # exact + prefix
+    "/api/api-keys",  # exact + prefix
+    "/api/mcp-proxy",  # exact + prefix
     # M05 — workspace connection status + activity SSE stream.
     "/api/workspaces",  # exact + prefix
     # M06 — org-scope the three M01-era routers.
@@ -131,11 +131,11 @@ def is_public_path(path: str, method: str | None = None) -> bool:
         return True
     if any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
         return True
-    # M04 — OAuth callback URLs under /api/integrations/{provider}/callback.
+    # M04 — OAuth callback URLs under /api/mcp-proxy/{provider}/callback.
     # The upstream OAuth provider doesn't know about our X-Org-Slug header;
     # the signed `state` carries the org_id. Only the exact `/callback`
     # suffix is public — `/connect`, `/validate`, etc. stay protected.
-    if path.startswith("/api/integrations/") and path.endswith("/callback"):
+    if path.startswith("/api/mcp-proxy/") and path.endswith("/callback"):
         return True
     return False
 

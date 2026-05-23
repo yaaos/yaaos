@@ -51,7 +51,7 @@ function ProviderCard({ provider }: { provider: IntegrationStatus }) {
   const validate = useValidateIntegration();
   const [confirming, setConfirming] = useState(false);
 
-  const connectUrl = `/api/integrations/${provider.provider}/connect`;
+  const connectUrl = `/api/mcp-proxy/${provider.provider}/connect`;
 
   return (
     <section

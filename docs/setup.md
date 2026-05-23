@@ -45,9 +45,9 @@ The backend refuses to start in `prod` with any *required* secret unset; dev/tes
 
 M04 adds hosted-MCP integrations for Linear and Notion. The autonomous test suite runs against the in-tree `apps/fake-linear` and `apps/fake-notion` fakes — no real OAuth apps are required to ship M04 end-to-end. You only need to register real apps when you want to use yaaos against production Linear / Notion data.
 
-**Linear OAuth App** — register at <https://linear.app/settings/api> → OAuth applications. Scopes: `read`. Production callback at `https://<your-domain>/api/integrations/linear/callback`. Drop `client_id` + `client_secret` into `.env` as `YAAOS_OAUTH_LINEAR_CLIENT_ID` / `YAAOS_OAUTH_LINEAR_CLIENT_SECRET`.
+**Linear OAuth App** — register at <https://linear.app/settings/api> → OAuth applications. Scopes: `read`. Production callback at `https://<your-domain>/api/mcp-proxy/linear/callback`. Drop `client_id` + `client_secret` into `.env` as `YAAOS_OAUTH_LINEAR_CLIENT_ID` / `YAAOS_OAUTH_LINEAR_CLIENT_SECRET`.
 
-**Notion OAuth App** — register at <https://notion.so/my-integrations> as a **Public integration**. Capabilities: read content + read comments + read user info. Production callback at `https://<your-domain>/api/integrations/notion/callback`. Drop credentials into `.env` as `YAAOS_OAUTH_NOTION_CLIENT_ID` / `YAAOS_OAUTH_NOTION_CLIENT_SECRET`.
+**Notion OAuth App** — register at <https://notion.so/my-integrations> as a **Public integration**. Capabilities: read content + read comments + read user info. Production callback at `https://<your-domain>/api/mcp-proxy/notion/callback`. Drop credentials into `.env` as `YAAOS_OAUTH_NOTION_CLIENT_ID` / `YAAOS_OAUTH_NOTION_CLIENT_SECRET`.
 
 M04 also adds these provider URL env vars (defaults point at the real upstreams; test compose overrides to the fakes):
 

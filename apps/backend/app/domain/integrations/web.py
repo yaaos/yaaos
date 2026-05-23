@@ -2,12 +2,12 @@
 
 | Method | Path                                       | Action               |
 |--------|--------------------------------------------|----------------------|
-| GET    | `/api/integrations`                        | `INTEGRATIONS_READ`  — list providers + status |
-| GET    | `/api/integrations/{provider}/connect`     | `INTEGRATIONS_WRITE` — 303 to provider authorize URL with signed state |
-| GET    | `/api/integrations/{provider}/callback`    | public_route         — OAuth redirect target; validates signed state |
-| POST   | `/api/integrations/{provider}/validate`    | `INTEGRATIONS_WRITE` — hit upstream with stored token |
-| PATCH  | `/api/integrations/{provider}`             | `INTEGRATIONS_WRITE` — update `allowed_tools` + `enabled` |
-| DELETE | `/api/integrations/{provider}`             | `INTEGRATIONS_WRITE` — clear |
+| GET    | `/api/mcp-proxy`                        | `INTEGRATIONS_READ`  — list providers + status |
+| GET    | `/api/mcp-proxy/{provider}/connect`     | `INTEGRATIONS_WRITE` — 303 to provider authorize URL with signed state |
+| GET    | `/api/mcp-proxy/{provider}/callback`    | public_route         — OAuth redirect target; validates signed state |
+| POST   | `/api/mcp-proxy/{provider}/validate`    | `INTEGRATIONS_WRITE` — hit upstream with stored token |
+| PATCH  | `/api/mcp-proxy/{provider}`             | `INTEGRATIONS_WRITE` — update `allowed_tools` + `enabled` |
+| DELETE | `/api/mcp-proxy/{provider}`             | `INTEGRATIONS_WRITE` — clear |
 
 Architecture writes paths as `/api/orgs/{slug}/integrations/{provider}/...`
 for human readability; the working implementation mirrors other M03/M04
@@ -68,7 +68,7 @@ def _state_serializer() -> URLSafeTimedSerializer:
 
 
 def _redirect_uri(request: Request, provider: str) -> str:
-    return f"{request.url.scheme}://{request.url.netloc}/api/integrations/{provider}/callback"
+    return f"{request.url.scheme}://{request.url.netloc}/api/mcp-proxy/{provider}/callback"
 
 
 def _err(status: int, code: str) -> HTTPException:
@@ -279,7 +279,7 @@ register_routes(
     RouteSpec(
         module_name="integrations",
         router=router,
-        url_prefix="/api/integrations",
+        url_prefix="/api/mcp-proxy",
         on_startup=[_start_scheduler],
     )
 )
