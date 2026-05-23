@@ -1,4 +1,3 @@
-import { Card, CardContent } from "@shared/components";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import { getPluginSettingsComponent } from "./plugin_registry";
 
@@ -15,14 +14,12 @@ export function CodingAgentSettingsPage({ pluginId }: { pluginId: string }) {
         {Component ? (
           <Component pluginId={pluginId} />
         ) : (
-          <Card>
-            <CardContent>
-              <h2 className="text-[16px] font-semibold mb-2">{pluginId}</h2>
-              <p className="text-text-3 text-sm" data-testid="ca-settings-unavailable">
-                Settings UI not available for this plugin.
-              </p>
-            </CardContent>
-          </Card>
+          <section className="rounded-lg border border-border bg-card px-4 py-4">
+            <h2 className="text-base font-semibold mb-2">{pluginId}</h2>
+            <p className="text-muted-foreground text-sm" data-testid="ca-settings-unavailable">
+              Settings UI not available for this plugin.
+            </p>
+          </section>
         )}
       </div>
     </OrgSettingsLayout>

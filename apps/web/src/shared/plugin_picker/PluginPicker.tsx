@@ -1,4 +1,4 @@
-import { Button, Card, CardContent } from "@shared/components";
+import { Button } from "@shared/components/ui/button";
 import type { PluginMeta } from "./types";
 
 /**
@@ -28,21 +28,21 @@ export function PluginPicker({
 }: Props) {
   if (loading) {
     return (
-      <p className="text-text-3 p-4 text-sm" data-testid={`${testIdPrefix}-loading`}>
+      <p className="text-muted-foreground p-4 text-sm" data-testid={`${testIdPrefix}-loading`}>
         Loading available plugins…
       </p>
     );
   }
   if (error) {
     return (
-      <p className="p-4 text-sm text-red-500" data-testid={`${testIdPrefix}-error`}>
+      <p className="p-4 text-sm text-destructive" data-testid={`${testIdPrefix}-error`}>
         Failed to load plugins: {error.message}
       </p>
     );
   }
   if (plugins.length === 0) {
     return (
-      <p className="text-text-3 p-4 text-sm" data-testid={`${testIdPrefix}-empty`}>
+      <p className="text-muted-foreground p-4 text-sm" data-testid={`${testIdPrefix}-empty`}>
         No plugins available.
       </p>
     );
@@ -52,34 +52,39 @@ export function PluginPicker({
       {plugins.map((p) => {
         const installed = isInstalled?.(p) ?? false;
         return (
-          <Card key={p.id} data-testid={`${testIdPrefix}-card-${p.id}`}>
-            <CardContent>
-              <div className="flex items-start gap-3">
-                <div className="flex-1">
-                  <h3 className="text-[13.5px] font-semibold">{p.display_name}</h3>
-                  {p.description && <p className="text-text-3 mt-1 text-xs">{p.description}</p>}
-                  {p.docs_url && (
-                    <a
-                      href={p.docs_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-accent mt-2 inline-block text-xs hover:underline"
-                      data-testid={`${testIdPrefix}-docs-${p.id}`}
-                    >
-                      Docs ↗
-                    </a>
-                  )}
-                </div>
-                <Button
-                  data-testid={`${testIdPrefix}-add-${p.id}`}
-                  disabled={installed}
-                  onClick={() => onPick(p)}
-                >
-                  {installed ? "Installed" : "Add"}
-                </Button>
+          <div
+            key={p.id}
+            className="rounded-lg border border-border bg-card px-4 py-3"
+            data-testid={`${testIdPrefix}-card-${p.id}`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold">{p.display_name}</h3>
+                {p.description && (
+                  <p className="text-muted-foreground mt-1 text-xs">{p.description}</p>
+                )}
+                {p.docs_url && (
+                  <a
+                    href={p.docs_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary mt-2 inline-block text-xs hover:underline"
+                    data-testid={`${testIdPrefix}-docs-${p.id}`}
+                  >
+                    Docs ↗
+                  </a>
+                )}
               </div>
-            </CardContent>
-          </Card>
+              <Button
+                size="sm"
+                data-testid={`${testIdPrefix}-add-${p.id}`}
+                disabled={installed}
+                onClick={() => onPick(p)}
+              >
+                {installed ? "Installed" : "Add"}
+              </Button>
+            </div>
+          </div>
         );
       })}
     </div>

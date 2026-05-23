@@ -1,6 +1,7 @@
 import { useCurrentUser } from "@domain/auth";
-import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
 import { ConfirmModal } from "@shared/components/layout";
+import { Badge } from "@shared/components/ui/badge";
+import { Button } from "@shared/components/ui/button";
 import { useEffect, useState } from "react";
 import {
   type CodingAgentInstall,
@@ -38,21 +39,21 @@ export function ClaudeCodeSettings({ pluginId }: { pluginId: string }) {
   const install = (installs.data ?? []).find((i) => i.plugin_id === pluginId);
 
   if (installs.isLoading || defaults.isLoading) {
-    return <p className="text-text-3 p-4 text-sm">Loading…</p>;
+    return <p className="text-muted-foreground p-4 text-sm">Loading…</p>;
   }
   if (!install) {
     return (
-      <Card>
-        <CardContent>
-          <p className="text-text-3 text-sm" data-testid="cc-not-installed">
+      <section className="rounded-lg border border-border bg-card">
+        <div className="px-4 py-4">
+          <p className="text-muted-foreground text-sm" data-testid="cc-not-installed">
             Claude Code is not installed for this org. Install it from the Coding Agents page first.
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     );
   }
   if (!defaults.data) {
-    return <p className="text-text-3 p-4 text-sm">Could not load defaults.</p>;
+    return <p className="text-muted-foreground p-4 text-sm">Could not load defaults.</p>;
   }
 
   return <Editor install={install} defaults={defaults.data} update={update} />;
@@ -94,18 +95,18 @@ function Editor({
     <div className="flex flex-col gap-4">
       <BrokenIntegrationsNotice />
       <BuilderReadOnlyBanner />
-      <Card>
-        <CardHeader>
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
           <h2 className="text-[16px] font-semibold">Claude Code</h2>
-        </CardHeader>
-        <CardContent>
-          <p className="text-text-3 text-sm">
+        </header>
+        <div className="px-4 py-4">
+          <p className="text-muted-foreground text-sm">
             Claude Code runs as an orchestrator Claude session that delegates work to sub-agents via
             its Task tool. The orchestrator's prompt sets the overall task; each sub-agent's prompt
             sets a focused review pass run as its own Claude session.
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       <AnthropicKeyCard />
 
@@ -122,17 +123,17 @@ function Editor({
           {update.isPending ? "Saving…" : "Save"}
         </Button>
         {hasDuplicateNames && (
-          <span className="text-xs text-red-500" data-testid="cc-duplicate-err">
+          <span className="text-xs text-destructive" data-testid="cc-duplicate-err">
             Duplicate sub-agent names: {duplicateNames.join(", ")}
           </span>
         )}
         {update.isError && (
-          <span className="text-xs text-red-500" data-testid="cc-save-err">
+          <span className="text-xs text-destructive" data-testid="cc-save-err">
             {(update.error as Error)?.message || "Save failed"}
           </span>
         )}
         {update.isSuccess && (
-          <span className="text-xs text-success" data-testid="cc-save-ok">
+          <span className="text-xs text-emerald-600" data-testid="cc-save-ok">
             Saved.
           </span>
         )}
@@ -148,13 +149,13 @@ function DangerZone({ pluginId }: { pluginId: string }) {
   const [showConfirm, setShowConfirm] = useState(false);
   return (
     <>
-      <Card>
-        <CardHeader>
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
           <h3 className="text-[13.5px] font-semibold text-destructive">Danger zone</h3>
-        </CardHeader>
-        <CardContent>
+        </header>
+        <div className="px-4 py-4">
           <div className="flex items-start justify-between gap-4">
-            <p className="text-text-3 text-sm">
+            <p className="text-muted-foreground text-sm">
               Uninstall Claude Code from this org. Existing reviews keep their findings, but future
               PRs in this org won't be reviewed until a coding agent is reinstalled.
             </p>
@@ -168,8 +169,8 @@ function DangerZone({ pluginId }: { pluginId: string }) {
               Uninstall
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
       <ConfirmModal
         open={showConfirm}
         onOpenChange={setShowConfirm}
@@ -239,22 +240,22 @@ function AnthropicKeyCard() {
   const configured = status.data?.status === "configured";
 
   return (
-    <Card>
-      <CardHeader>
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="text-[13.5px] font-semibold">Anthropic API key</h3>
           {configured ? (
-            <Badge variant="success" data-testid="cc-key-configured">
+            <Badge variant="default" data-testid="cc-key-configured">
               configured
             </Badge>
           ) : (
-            <Badge variant="danger" data-testid="cc-key-not-set">
+            <Badge variant="destructive" data-testid="cc-key-not-set">
               not set
             </Badge>
           )}
         </div>
-      </CardHeader>
-      <CardContent>
+      </header>
+      <div className="px-4 py-4">
         <div className="flex items-center gap-2">
           <input
             value={value}
@@ -295,14 +296,14 @@ function AnthropicKeyCard() {
         </div>
         {validate.data && (
           <p
-            className={`mt-2 text-xs ${validate.data.valid ? "text-success" : "text-red-500"}`}
+            className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}
             data-testid="cc-key-test-result"
           >
             {validate.data.valid ? "Key looks good." : "Key rejected."}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -316,11 +317,11 @@ function OrchestratorCard({
   onChange: (a: AgentConfig) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
         <h3 className="text-[13.5px] font-semibold">Orchestrator</h3>
-      </CardHeader>
-      <CardContent>
+      </header>
+      <div className="px-4 py-4">
         <AgentEditor
           agent={orchestrator}
           baseline={defaults.orchestrator}
@@ -328,8 +329,8 @@ function OrchestratorCard({
           onChange={onChange}
           testIdPrefix="cc-orch"
         />
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -370,16 +371,16 @@ function SubAgentsCard({
   };
 
   return (
-    <Card>
-      <CardHeader>
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <h3 className="text-[13.5px] font-semibold">Sub-agents ({agents.length}/8)</h3>
           <Button data-testid="cc-add-agent" disabled={atCap} onClick={onAdd}>
             Add sub-agent
           </Button>
         </div>
-      </CardHeader>
-      <CardContent>
+      </header>
+      <div className="px-4 py-4">
         <div className="flex flex-col gap-3" data-testid="cc-agents-list">
           {agents.map((a, idx) => {
             const seededDefault = defaults.agents.find((d) => d.name === a.name);
@@ -410,8 +411,8 @@ function SubAgentsCard({
             );
           })}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -446,7 +447,7 @@ function AgentEditor({
   return (
     <div className="flex flex-col gap-2 text-sm">
       <div className="flex items-center gap-2">
-        <span className="text-text-3 w-20 text-xs">Name</span>
+        <span className="text-muted-foreground w-20 text-xs">Name</span>
         <input
           value={agent.name}
           disabled={!nameEditable}
@@ -457,7 +458,7 @@ function AgentEditor({
         />
         {isOverridden("name") && nameEditable && (
           <>
-            <Badge variant="accent">overridden</Badge>
+            <Badge variant="outline">overridden</Badge>
             <Button data-testid={`${testIdPrefix}-reset-name`} onClick={() => reset("name")}>
               Reset
             </Button>
@@ -465,14 +466,14 @@ function AgentEditor({
         )}
       </div>
       <div className="flex items-start gap-2">
-        <span className="text-text-3 w-20 pt-1.5 text-xs">Prompt</span>
+        <span className="text-muted-foreground w-20 pt-1.5 text-xs">Prompt</span>
         <div className="flex-1">
           {!expanded ? (
             <button
               type="button"
               onClick={() => setExpanded(true)}
               data-testid={`${testIdPrefix}-prompt-expand`}
-              className="text-text-3 w-full truncate rounded border border-border-soft bg-bg-2 px-2 py-1 text-left text-xs hover:bg-hover"
+              className="text-muted-foreground w-full truncate rounded border border-border-soft bg-bg-2 px-2 py-1 text-left text-xs hover:bg-hover"
             >
               {(agent.prompt || "").slice(0, 120) || "(empty)"}
             </button>
@@ -488,7 +489,7 @@ function AgentEditor({
         </div>
         {isOverridden("prompt") && (
           <div className="flex flex-col gap-1">
-            <Badge variant="accent">overridden</Badge>
+            <Badge variant="outline">overridden</Badge>
             <Button data-testid={`${testIdPrefix}-reset-prompt`} onClick={() => reset("prompt")}>
               Reset
             </Button>
@@ -499,7 +500,7 @@ function AgentEditor({
           custom textarea; when off, the plugin uses its built-in system
           prompt for this agent. */}
       <div className="flex items-start gap-2">
-        <span className="text-text-3 w-20 pt-1.5 text-xs">System prompt</span>
+        <span className="text-muted-foreground w-20 pt-1.5 text-xs">System prompt</span>
         <div className="flex-1 flex flex-col gap-2">
           <label className="flex items-center gap-2 text-xs">
             <input
@@ -530,7 +531,7 @@ function AgentEditor({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-text-3 w-20 text-xs">Model</span>
+        <span className="text-muted-foreground w-20 text-xs">Model</span>
         <select
           value={agent.model}
           onChange={(e) => onChange({ ...agent, model: e.target.value })}
@@ -543,7 +544,7 @@ function AgentEditor({
             </option>
           ))}
         </select>
-        <span className="text-text-3 text-xs">Version</span>
+        <span className="text-muted-foreground text-xs">Version</span>
         <select
           value={agent.version}
           onChange={(e) => onChange({ ...agent, version: e.target.value })}
@@ -556,7 +557,7 @@ function AgentEditor({
             </option>
           ))}
         </select>
-        <span className="text-text-3 text-xs">Effort</span>
+        <span className="text-muted-foreground text-xs">Effort</span>
         <select
           value={agent.effort}
           onChange={(e) => onChange({ ...agent, effort: e.target.value })}
@@ -570,7 +571,9 @@ function AgentEditor({
           ))}
         </select>
       </div>
-      {agent.updated_at && <p className="text-text-4 text-[10.5px]">Updated {agent.updated_at}</p>}
+      {agent.updated_at && (
+        <p className="text-muted-foreground text-[10.5px]">Updated {agent.updated_at}</p>
+      )}
     </div>
   );
 }
