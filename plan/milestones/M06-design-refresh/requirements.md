@@ -388,6 +388,14 @@ Subtle divider separates the org-scoped block from the user-scoped zone at the b
 - **Theme-aware:** light-theme variant on light background, dark-theme variant on dark background.
 - **Click target:** navigates to `/orgs/:slug/dashboard` (home for the current org).
 - **Assets** live at `plan/milestones/M06-design-refresh/design/assets/logo/` (SVG preferred, PNG @1x/@2x/@3x acceptable). Implementation copies to `apps/web/public/logos/` in Phase 2 of F1.
+- **`public/` subdirectory split is by asset category, not by feature:** `logos/`, `favicons/`, and `illustrations/` (if/when we add empty-state graphics). Feature-named folders (`tickets/`, `dashboard/`) tend to rot once assets get reused.
+- **File-naming rules** (apply to every asset under `apps/web/public/`):
+  - kebab-case, ASCII only. No spaces, uppercase, parens, dates, or versions in filenames — git tracks those.
+  - Project prefix first, then descriptor, then variant tokens ordered most-significant first. Theme tokens are explicit (`-light` / `-dark`) — never rely on an implicit default.
+  - Raster sizes go in the filename as a numeric suffix (e.g., `-256`). Pick one convention (`-256` vs `@2x`) and keep it consistent; current assets use `-256`.
+  - Examples (already shipped in the design folder): `yaaos-lockup-dark.svg`, `yaaos-mark-light.svg`, `yaaos-mark-light-bg-256.png`.
+- **SVGO pass on copy.** Phase 2 runs `npx svgo apps/web/public/logos/*.svg` after copying the SVGs from the design folder. Anthropic / design-tool exports typically include editor metadata that ~halves on optimization with zero visual change.
+- **Favicons — partial today, completion is a Phase 2 deliverable.** `apps/web/public/favicon.svg` already exists and is byte-identical to `yaaos-mark-light.svg` — keep as-is. Missing siblings to add in `apps/web/public/favicons/`: `favicon.ico` (multi-resolution: 16, 32, 48 — needed for iOS home-screen + older Safari + PWA install), `apple-touch-icon.png` (180×180), `icon-192.png`, `icon-512.png` (PWA-spec sizes; cheap insurance). Optional: `safari-pinned-tab.svg`. Source is the existing `favicon.svg`; generate via `realfavicongenerator.net` or equivalent and check in (not regenerated per build).
 
 ### Org switcher
 
@@ -1304,6 +1312,18 @@ Live SSE-streamed events from the running coding agent. Composes the Stream layo
 - **Order**: chronological ascending (oldest at top, newest at bottom).
 - **Auto-scroll**: page auto-scrolls to keep the newest event visible when ticket is in flight. User scrolling up disables auto-scroll for that session (sticky-scroll pattern).
 - **Per event**: timestamp, event-type icon, event content.
+
+  **Activity-event kind taxonomy (M06 baseline).** `ActivityEvent.kind` is plugin-defined and freeform; M06 ships icon mappings for the 6 kinds the `claude_code` plugin emits today (per `apps/backend/app/plugins/claude_code/service.py`). Unknown kinds fall back to a generic dot icon.
+
+  | Kind | Icon (lucide) | Notes |
+  |---|---|---|
+  | `session_start` | `Play` | Agent session began. |
+  | `subagent_dispatched` | `GitBranch` | Parent reviewer spawned a sub-agent. |
+  | `tool_call_started` | `Wrench` | Bash/Edit/Read/etc. invocation began. `detail.name` carries the tool name. |
+  | `tool_call_finished` | `CheckCircle2` / `XCircle` | Pick by `detail.exit_code === 0`. |
+  | `assistant_message` | `MessageSquare` | Model emitted a user-facing message; `message` already pre-rendered. |
+  | `result` | `Flag` | Run finished; `detail.status` carries the terminal outcome. |
+  | *anything else* | `Circle` | Fallback for future kinds from new plugins. |
 - **Collapse rule**: events with >3 lines collapsed by default. Latest event for in-flight tickets auto-expanded so live progress is visible without clicking.
 - **Connection state indicators** (per C2's live-stream patterns):
   - Connecting: skeleton activity rows or small "Connecting…" indicator.
@@ -1319,6 +1339,25 @@ Only present when at least one HITL has occurred on this ticket.
   - Prompt content (full, foregrounded).
   - Response interface — shape depends on prompt type (form / buttons / text input).
   - Submit response → calls backend; stage resumes; tab content updates.
+
+**HITL prompt taxonomy (M06 baseline).** The workflow engine stores `question_payload` as an opaque dict per `PendingHumanDecisionRow` — there is no enforced schema today, and no production callers of `Outcome.hitl_pending()` yet. M06 SPA renders against a **discriminated-union schema** that backend HITL commands populate as they ship:
+
+```
+question_payload = {
+  kind: "choice" | "text" | "form",       # discriminator
+  title: str,                              # short headline shown in banner + tab
+  body: str,                               # markdown description; can be multi-paragraph
+  # kind === "choice":
+  options?: [{value: str, label: str, variant?: "default"|"destructive"}],
+  # kind === "text":
+  placeholder?: str,
+  multiline?: bool,
+  # kind === "form":
+  fields?: [{name: str, label: str, type: "text"|"textarea"|"select", options?, required?: bool}]
+}
+```
+
+When `kind` is missing or unrecognized, the SPA renders a fallback: the raw `body` markdown plus a free-text response box. Backend commands written before M06 with raw payloads continue to work via the fallback.
 - **History** (when there have been prior HITL exchanges):
   - Compact list of past prompts + responses.
   - Chronological.
@@ -1438,6 +1477,15 @@ Three types. No "mention" or "assignment" (features don't exist yet).
 1. **HITL waiting** — a ticket I triggered has a HITL prompt awaiting.
 2. **Ticket completed** — a ticket I triggered finished.
 3. **Ticket failed** — a ticket I triggered failed.
+
+#### Fan-out rule
+
+A notification's recipient is **exactly the ticket's builder** — the user identified by `Ticket.builder.user_id`. One notification per event; no broadcast.
+
+- When `Ticket.builder.kind === "system"` (yaaos-triggered automated scan): no notification fires. Nothing to notify.
+- When `Ticket.builder.kind === "user"` but `builder.user_id` is null (PR triggered by a GitHub user with no yaaos account): no notification fires. The GitHub PR comment serves as their feedback channel.
+- Org admins do NOT get notified on Ticket failed by default in M06. Failure surveillance happens on the Dashboard's "Failed today" stat card. Admin-fan-out is a future-milestone concern.
+- Cross-org: a user receives notifications for tickets in any org where they're a member — the Notifications surface is user-scoped (`/notifications`), not org-scoped.
 
 #### Filters
 

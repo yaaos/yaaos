@@ -12,11 +12,18 @@ Unlike M03–M05, M06 is mostly a design exercise. The owner (Jack) is a backend
 
 ## Reading order
 
-1. **[process.md](process.md) — the meta plan.** What sections we're working through, in what order, and what each section produces. **Start here.**
-2. `requirements.md` *(stub — filled in section by section as process.md sections lock)*
-3. `architecture.md` *(not yet written — written after the structural sections of process.md are done)*
-4. `implementation-plan.md` *(not yet written — last)*
-5. `START_HERE.md`, `PHASES.md`, `DECISIONS.md` *(written once the milestone is ready for autonomous execution)*
+### For planning context (how we got here)
+
+1. **[process.md](process.md)** — the meta plan. What sections we worked through, in what order, and what each one produced.
+
+### For execution (what to ship)
+
+2. **[START_HERE.md](START_HERE.md)** — autonomous-execution entry point. Read first if you're picking M06 up cold.
+3. **[requirements.md](requirements.md)** — the locked product spec, A1 → F2. The source of truth.
+4. **[api-changes.md](api-changes.md)** — per-surface REST API diff. What's new, renamed, extended, deleted.
+5. **[PHASES.md](PHASES.md)** — the 9-phase implementation order with per-phase definition of done.
+
+`architecture.md` and `implementation-plan.md` are intentionally not written — between requirements.md, api-changes.md, and PHASES.md, the territory is fully covered. A separate `DECISIONS.md` is also unnecessary: every "why" is captured inline at the point of the decision.
 
 ## Drivers (why now)
 
