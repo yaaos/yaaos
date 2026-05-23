@@ -298,7 +298,8 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 - [x] `grep -rn "role.*member" apps/web/src` returns zero matches.
 - [x] Doc-link checker clean.
 - [x] Initial bundle ≤ 200 KB gzipped (target from F2 M). (Today ~172 KB gzipped — under target.)
-- [ ] Performance targets verified: cold-load FCP < 1s, LCP < 1.5s on Dashboard + Ticket detail.
+- [x] Legacy primitives + yaaos-named CSS tokens deleted.
+- [ ] Performance targets verified: cold-load FCP < 1s, LCP < 1.5s on Dashboard + Ticket detail. (Not exercised in cron environment.)
 
 ---
 
