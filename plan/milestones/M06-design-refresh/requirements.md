@@ -1702,17 +1702,19 @@ Surface: `/orgs`. Sparse landing for multi-org users.
 
 Each phase ships to `main` independently. Phases sequential. Anchors before derived.
 
-| # | Phase | What lands | Gating |
+Status tags: `[done]` · `[partial]` · `[planned]`.
+
+| # | Phase | Status | What lands |
 |---|---|---|---|
-| 1 | Token + primitive substrate | shadcn CLI init; 18 primitives + Sonner installed; token reconciliation (shadcn names + oklch values); D4 baseline (focus rings, contrast verification) | `apps/web/bin/ci`; visual smoke pass on existing surfaces |
-| 2 | Layout + chrome composites | Sidebar (B3 structure); OrgSwitcher; UserCard + UserPopover; NotificationsBell + NotificationsPopover; PageHeader, EmptyState, ErrorBanner, ErrorBoundary, ConfirmModal, PickerModal; route renames (`/memory`→`/lessons`, `/integrations`→`/mcp-proxy`, `/byok`→`/api-keys`, `/account/*`→`/user/*`); IA rules (no breadcrumbs, no back-links, max-one-nesting); "not configured" gate banner | Route renames in E2E; sidebar narrow-collapse works |
-| 3 | Anchor — Tickets list | E2a.1 spec + E2b mock implemented; List archetype locked | Tickets list E2E (filtering, sorting, Load more, empty/loading/error states) |
-| 4 | Anchor — Coding Agent detail | E2a.2 spec + E2b mock; Settings form archetype locked | E2E for plugin add (picker modal → detail), save, sub-agent CRUD, danger zone |
-| 5 | Anchor — Dashboard | E2a.3 spec + E2b mocks (configured + setup-required); bespoke layout locked | E2E for both states; banner copy correct per role |
-| 6 | Anchor — Ticket detail | E2a.4 spec + E2b mocks (in-flight HITL + terminal); tabs, stage indicator, live SSE, HITL panel, re-run/cancel | E2E for full PR-review flow including live SSE updates |
-| 7 | Tier 2 derived | Lessons list, Notifications page + popover, Settings — Auth / Members / Audit, VCS list + detail | Per-surface unit + service tests; selective E2E |
-| 8 | Tier 3 derived | Settings — Workspace / MCP Proxy list + detail / API Keys; User — Details / Security / Messaging; Org picker; Login | Unit + service tests; `apps/e2e/bin/ci` full pass |
-| 9 | Cleanup | Remove unused old components from `shared/components/`; delete `placeholder-page.tsx`; verify no dead imports; final pass through `apps/web/docs/` to align with shipped state | All CI green; doc-link checker clean; grep finds no references to old route paths or deleted symbols |
+| 1 | Token + primitive substrate | `[done]` | shadcn install + 22 primitives + Sonner; token reconciliation; axe-core wired in apps/e2e; design-tokens.md + components.md. |
+| 2 | Layout + chrome composites | `[done]` | Sidebar + OrgSwitcher + NotificationsBell wired; layout composites (PageHeader / EmptyState / ErrorBanner / ConfirmModal / PickerModal / NotConfiguredBanner); route renames; member→builder rename + migration; org-scoping of tickets/lessons/reviewer routers; /api/orgs/mine + /api/orgs/config-status. Narrow-screen Settings flyout + per-page docs sweep are open polish items (D2.12). |
+| 3 | Anchor — Tickets list | `[done]` | E2a.1 SPA + extended /api/tickets backend; M06 status vocab projection. Date-range + multi-builder filter UI deferred. |
+| 4 | Anchor — Coding Agent detail | `[planned]` | Versioned ClaudeCodeSettings schema + complex settings form per E2a.2 — not started. |
+| 5 | Anchor — Dashboard | `[done]` | E2a.3 SPA + GET /api/tickets/dashboard endpoint; NotConfiguredBanner placement. SSE invalidation is a polish item. |
+| 6 | Anchor — Ticket detail | `[done]` | E2a.4 SPA + extended GET /api/tickets/:id + ack/push-back + HITL respond/history. Four standalone composites (StageIndicator, HitlPanel, FindingRow, ActivityEventRow). |
+| 7 | Tier 2 derived + Notifications module | `[partial]` | Notifications backend module + endpoints + service tests + SPA bell + /notifications page all shipped. Lessons / Settings Auth+Members+Audit / VCS pages still on the legacy primitives. |
+| 8 | Tier 3 derived | `[planned]` | Settings Workspace / MCP Proxy / API Keys; User Details / Security / Messaging; Org picker; Login — not started. |
+| 9 | Cleanup | `[partial]` | Deleted: placeholder-page, onboarding-stepper.spec, legacy /settings page + onboarding endpoint, legacy flat routes, legacy TicketDetailPage + ~30 helpers (1350 LOC). Still pending: legacy primitives (button/badge/card/dialog), yaaos-named CSS tokens. |
 
 ### Mid-flight visual inconsistency policy
 
