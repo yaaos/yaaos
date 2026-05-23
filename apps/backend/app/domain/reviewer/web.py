@@ -102,6 +102,67 @@ async def cancel_jobs(ticket_id: UUID) -> dict[str, int]:
     return {"cancelled_count": cancelled}
 
 
+class _PushBackRequest(BaseModel):
+    reason: str
+
+
+@router.post(
+    "/findings/{finding_id}/ack",
+    dependencies=[Depends(require(Action.REVIEWER_WRITE))],
+)
+async def ack_finding(finding_id: UUID) -> dict[str, Any]:
+    """M06: SPA "Ack" button. Marks the finding as `intentional` —
+    Builder sees this and accepts it for future reviews."""
+    return await _record_ack(finding_id, kind="intentional", rationale="ack")
+
+
+@router.post(
+    "/findings/{finding_id}/push-back",
+    dependencies=[Depends(require(Action.REVIEWER_WRITE))],
+)
+async def push_back_finding(finding_id: UUID, req: _PushBackRequest) -> dict[str, Any]:
+    """M06: SPA "Push back" button. Marks the finding as `wontfix` and
+    records the Builder's reason in the audit trail."""
+    reason = req.reason.strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=422, detail="reason must be ≥10 chars")
+    return await _record_ack(finding_id, kind="wontfix", rationale=reason)
+
+
+async def _record_ack(finding_id: UUID, *, kind: str, rationale: str) -> dict[str, Any]:
+    """Shared body: load aggregate, transition the finding, save."""
+    from uuid import uuid4 as _uuid4  # noqa: PLC0415
+
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.core.auth.context import user_id_var  # noqa: PLC0415
+    from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
+
+    org_id = _org()
+    async with session() as s:
+        finding = (
+            await s.execute(_select(FindingRow).where(FindingRow.id == finding_id))
+        ).scalar_one_or_none()
+        if finding is None or finding.org_id != org_id:
+            raise HTTPException(status_code=404, detail="finding not found")
+        repo = SqlAlchemyAggregateRepository(s)
+        aggregate = await repo.load(pr_id=finding.pr_id, org_id=org_id)
+        actor_id = user_id_var.get()
+        try:
+            aggregate.acknowledge(
+                finding_id=finding_id,
+                kind=kind,  # type: ignore[arg-type]
+                rationale=rationale,
+                made_by_external_id=str(actor_id) if actor_id else "system",
+                made_by_message_id=_uuid4(),
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="finding not in aggregate")
+        await repo.save(aggregate)
+        await s.commit()
+    return {"finding_id": str(finding_id), "state": "acked" if kind == "intentional" else "pushed_back"}
+
+
 @router.get("/jobs/by-ticket/{ticket_id}", dependencies=[Depends(require(Action.REVIEWER_READ))])
 async def jobs_by_ticket(ticket_id: UUID) -> list[ReviewJob]:
     """Per-ticket review history."""
