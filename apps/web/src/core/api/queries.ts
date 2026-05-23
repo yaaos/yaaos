@@ -31,6 +31,38 @@ export function useOnboarding() {
   });
 }
 
+/** Aggregated readiness for the M06 "not configured" gate. */
+export interface ConfigStatus {
+  configured: boolean;
+  missing: Array<"vcs" | "coding_agent" | "api_key" | "workspace_provider">;
+  admins: Array<{ user_id: string; display_name: string; primary_email: string | null }>;
+}
+
+export function useConfigStatus() {
+  return useQuery<ConfigStatus>({
+    queryKey: ["config-status"],
+    queryFn: () => apiFetch<ConfigStatus>("/api/orgs/config-status"),
+    refetchInterval: 30_000,
+  });
+}
+
+/** Cross-org list of the cookie-bearer's memberships. Powers the org switcher
+ *  chip + the `/orgs` picker page. */
+export interface MineOrg {
+  id: string;
+  slug: string;
+  name: string;
+  role: "owner" | "admin" | "builder";
+  last_used_at: string | null;
+}
+
+export function useMyOrgs() {
+  return useQuery<MineOrg[]>({
+    queryKey: ["orgs", "mine"],
+    queryFn: () => apiFetch<MineOrg[]>("/api/orgs/mine"),
+  });
+}
+
 export function useTickets() {
   return useQuery<Ticket[]>({
     queryKey: ["tickets"],

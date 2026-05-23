@@ -72,6 +72,7 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 | `error-banner.tsx` | `ErrorBanner` — in-page error with optional Retry. Voice rule (D3): blames the system, not the user. |
 | `confirm-modal.tsx` | `ConfirmModal` — destructive + cost-protective variants share the shell; copy differs (D3). |
 | `picker-modal.tsx` | `PickerModal` — "Add X" flows (plugin type, integration provider). Lists `PickerOption[]`; caller wires the post-pick route push. |
+| `not-configured-banner.tsx` | `NotConfiguredBanner` — non-intrusive setup-required banner. Reads `useConfigStatus()`; shows the missing-piece list to Admins and "ask your admin" to Builders. Auto-hides when `configured: true`. |
 
 ## Hooks (`src/shared/hooks/`)
 

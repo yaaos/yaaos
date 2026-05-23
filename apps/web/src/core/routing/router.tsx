@@ -1,9 +1,11 @@
 import { setCurrentOrgSlug } from "@core/api";
 import { AppShell } from "@core/layout";
 import { DetailsPage, SecurityPage } from "@domain/account";
+import { MessagingPage } from "@domain/account/MessagingPage";
 import { LoginPage } from "@domain/auth";
 import { DashboardPage } from "@domain/dashboard";
 import { LessonsPage } from "@domain/lessons";
+import { NotificationsPage } from "@domain/notifications";
 import {
   AuditSettingsPage,
   AuthSettingsPage,
@@ -14,6 +16,7 @@ import {
   MembersSettingsPage,
   VcsSettingsPage,
 } from "@domain/org_settings";
+import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
 import { SettingsPage } from "@domain/settings";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
@@ -69,6 +72,29 @@ const accountSecurityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/user/security",
   component: SecurityPage,
+  beforeLoad: () => setCurrentOrgSlug(null),
+});
+
+// M06 — user-scoped placeholder routes: routing lands in Phase 2 so the
+// sidebar links don't 404; full implementations come later.
+const userMessagingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/user/messaging",
+  component: MessagingPage,
+  beforeLoad: () => setCurrentOrgSlug(null),
+});
+
+const notificationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/notifications",
+  component: NotificationsPage,
+  beforeLoad: () => setCurrentOrgSlug(null),
+});
+
+const orgsPickerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/orgs",
+  component: OrgPickerPage,
   beforeLoad: () => setCurrentOrgSlug(null),
 });
 
@@ -223,6 +249,9 @@ const routeTree = rootRoute.addChildren([
   accountRedirectRoute,
   accountDetailsRoute,
   accountSecurityRoute,
+  userMessagingRoute,
+  notificationsRoute,
+  orgsPickerRoute,
   legacyDashboardRoute,
   legacyTicketsRoute,
   legacyTicketDetailRoute,
