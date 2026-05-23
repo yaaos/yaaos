@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.domain.vcs import (
     Comment,
     Diff,

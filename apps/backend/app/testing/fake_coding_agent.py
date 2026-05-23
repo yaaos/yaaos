@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
     AnswerQuestionContext,

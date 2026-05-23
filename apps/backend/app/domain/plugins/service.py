@@ -6,7 +6,7 @@ Dispatches to the appropriate registry's `list_plugin_metas()` based on
 
 from __future__ import annotations
 
-from app.core.plugin_meta import PluginMeta, PluginType
+from app.core.plugin_kit import PluginMeta, PluginType
 from app.domain.coding_agent import list_plugin_metas as _coding_agent_metas
 from app.domain.vcs import list_plugin_metas as _vcs_metas
 

@@ -43,7 +43,7 @@ from app.core.agent_gateway import (
     enqueue_command,
 )
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
     CodingAgentCliResult,
     HealthStatus,

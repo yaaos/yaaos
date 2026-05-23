@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.core.workspace import (
     _reset_providers_for_tests,
     register_workspace_provider,

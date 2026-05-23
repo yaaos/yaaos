@@ -1,8 +1,8 @@
 """PluginMeta + PluginType — self-description every plugin exposes via `plugin.meta`.
 
-Single-file module: two tiny classes that need a stable home outside any
-specific plugin's `__init__.py`. Previously in `core/primitives`; relocated
-here in M04 Phase 6a so plugin discovery has a focused entry point.
+Lives in `core/plugin_kit` so plugin discovery has a focused home outside
+any specific plugin. Today this is just the two metadata types; future
+plugin-system primitives (registry, validation, discovery) land here too.
 """
 
 from __future__ import annotations

@@ -80,7 +80,7 @@ async def test_cleanup_unknown_workspace_succeeds_silently(db_session) -> None: 
 
 import pytest  # noqa: E402
 
-from app.core.plugin_meta import PluginMeta  # noqa: E402
+from app.core.plugin_kit import PluginMeta  # noqa: E402
 from app.core.workspace import (  # noqa: E402
     WorkspaceTicketContext,
     _reset_providers_for_tests,

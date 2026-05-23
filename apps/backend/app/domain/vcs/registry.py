@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.domain.vcs.types import PluginNotFoundError, VCSPlugin
 
 _PLUGINS: dict[str, VCSPlugin] = {}

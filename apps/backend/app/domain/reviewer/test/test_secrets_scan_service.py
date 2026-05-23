@@ -135,7 +135,7 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
     want a transient VCS hiccup to block reviews."""
 
     class _RaisingPlugin:
-        from app.core.plugin_meta import PluginMeta  # noqa: PLC0415
+        from app.core.plugin_kit import PluginMeta  # noqa: PLC0415
 
         meta = PluginMeta(id="github", type="vcs", display_name="raises")
 

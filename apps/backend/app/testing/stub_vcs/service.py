@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.domain.vcs.registry import _PLUGINS
 from app.domain.vcs.types import (
     Comment,

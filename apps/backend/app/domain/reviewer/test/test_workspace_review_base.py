@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext, Outcome
 from app.core.workspace import (
     WorkspaceTicketContext,

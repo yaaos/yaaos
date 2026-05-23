@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 
 
 class RepoRef(BaseModel):

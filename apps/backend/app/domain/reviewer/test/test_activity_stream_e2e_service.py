@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.plugin_meta import PluginMeta
+from app.core.plugin_kit import PluginMeta
 from app.core.sse_pubsub import (
     _reset_for_tests as _reset_pubsub,
 )
