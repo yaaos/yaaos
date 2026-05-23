@@ -1713,7 +1713,7 @@ Status tags: `[done]` · `[partial]` · `[planned]`.
 | 5 | Anchor — Dashboard | `[done]` | E2a.3 SPA + GET /api/tickets/dashboard endpoint; NotConfiguredBanner placement. SSE invalidation is a polish item. |
 | 6 | Anchor — Ticket detail | `[done]` | E2a.4 SPA + extended GET /api/tickets/:id + ack/push-back + HITL respond/history. Four standalone composites (StageIndicator, HitlPanel, FindingRow, ActivityEventRow). |
 | 7 | Tier 2 derived + Notifications module | `[partial]` | Notifications backend module + endpoints + service tests + SPA bell + /notifications page all shipped. Lessons / Settings Auth+Members+Audit / VCS pages still on the legacy primitives. |
-| 8 | Tier 3 derived | `[planned]` | Settings Workspace / MCP Proxy / API Keys; User Details / Security / Messaging; Org picker; Login — not started. |
+| 8 | Tier 3 derived | `[partial]` | Login (SSO-discover email-first, D8.1 github fallback), Org picker (role badges + create-org modal), User Messaging placeholder shipped. Remaining: User Details / Security; Settings Workspace / MCP Proxy / API Keys / VCS page-level rebuilds. |
 | 9 | Cleanup | `[partial]` | Deleted: placeholder-page, onboarding-stepper.spec, legacy /settings page + onboarding endpoint, legacy flat routes, legacy TicketDetailPage + ~30 helpers (1350 LOC). Still pending: legacy primitives (button/badge/card/dialog), yaaos-named CSS tokens. |
 
 ### Mid-flight visual inconsistency policy

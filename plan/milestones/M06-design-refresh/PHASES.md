@@ -267,13 +267,13 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 
 **Definition of done:**
 
-- [ ] All 9 Tier-3 surfaces render against backend.
-- [ ] Login SSO-discover flow works: typing an email shows correct provider button.
-- [ ] Org picker shows role badge + last-used time; create-org modal works.
-- [ ] User Messaging route renders with placeholder copy.
-- [ ] `apps/web/docs/` per-page docs updated for every new surface.
-- [ ] axe-core passes everywhere.
-- [ ] Full `apps/e2e/bin/ci` passes.
+- [ ] All 9 Tier-3 surfaces render against backend. (3 of 9 redesigned: Login, Org picker, User Messaging placeholder. The 4 Settings sub-pages — VCS, Workspace, MCP Proxy, API Keys — still render on legacy primitives; User Details + Security ditto.)
+- [x] Login SSO-discover flow works: typing an email shows correct provider button (github fallback today — D8.1).
+- [x] Org picker shows role badge + create-org modal works. (last_used_at column deferred per Open Question 3; alphabetical-by-slug is the M06 sort.)
+- [x] User Messaging route renders with placeholder copy.
+- [ ] `apps/web/docs/` per-page docs updated for every new surface. (Pending for Login + Org picker pages.)
+- [ ] axe-core passes everywhere. (Phase 1's existing spec covers the Dashboard; per-anchor axe deferred.)
+- [ ] Full `apps/e2e/bin/ci` passes. (Docker not available in the cron environment.)
 
 ---
 
