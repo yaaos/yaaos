@@ -9,8 +9,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
+from pydantic import BaseModel
 from sqlalchemy import func, select, update
 
+from app.core.audit_log.actor import Actor, ActorKind
+from app.core.audit_log.service import audit_for_workspace
 from app.core.database import session as get_session
 from app.core.observability import spawn
 from app.core.workspace.models import WorkspaceRow
@@ -27,6 +30,48 @@ from app.core.workspace.types import (
     WorkspaceSpec,
     WorkspaceStatus,
 )
+
+
+class _WorkspaceTransitionAudit(BaseModel):
+    """Audit payload for every `workspace.transitioned` row.
+
+    `reason` discriminates the transition cause so the org-settings security
+    feed can render meaningful one-liners ("Idle timeout", "Agent lost",
+    "Manually closed"). System-driven transitions use `ActorKind.SYSTEM`;
+    admin actions populate `actor_user_id`.
+    """
+
+    from_state: str
+    to_state: str
+    reason: str
+    error: str | None = None
+
+
+_SYSTEM_ACTOR = Actor(kind=ActorKind.SYSTEM)
+
+
+async def _audit_transition(
+    s: Any,
+    *,
+    workspace_id: UUID,
+    org_id: UUID,
+    from_state: str,
+    to_state: str,
+    reason: str,
+    error: str | None = None,
+    actor: Actor | None = None,
+) -> None:
+    """Write a `workspace.transitioned` audit row. Failsafe-7 coverage —
+    every state change in this module routes through here."""
+    await audit_for_workspace(
+        workspace_id,
+        "workspace.transitioned",
+        _WorkspaceTransitionAudit(from_state=from_state, to_state=to_state, reason=reason, error=error),
+        actor=actor or _SYSTEM_ACTOR,
+        org_id=org_id,
+        session=s,
+    )
+
 
 log = structlog.get_logger("workspace")
 
@@ -161,6 +206,15 @@ async def create_workspace(
                     last_destroy_error=f"provision failed: {e}",
                 )
             )
+            await _audit_transition(
+                s,
+                workspace_id=ws_id,
+                org_id=org_id,
+                from_state=WorkspaceStatus.CREATING.value,
+                to_state=WorkspaceStatus.DESTROY_FAILED.value,
+                reason="provision_failed",
+                error=str(e),
+            )
             await s.commit()
         raise WorkspaceProvisionError(str(e)) from e
 
@@ -174,6 +228,14 @@ async def create_workspace(
                 plugin_state=plugin_state,
             )
         )
+        await _audit_transition(
+            s,
+            workspace_id=ws_id,
+            org_id=org_id,
+            from_state=WorkspaceStatus.CREATING.value,
+            to_state=WorkspaceStatus.ACTIVE.value,
+            reason="provisioned",
+        )
         await s.commit()
 
     log.info("workspace.created", workspace_id=str(ws_id), provider_id=provider_id)
@@ -183,13 +245,29 @@ async def create_workspace(
 async def close_workspace(workspace_id: UUID) -> None:
     """Mark the workspace expired so the reaper picks it up. Idempotent."""
     async with get_session() as s:
+        row = (
+            await s.execute(
+                select(WorkspaceRow).where(
+                    WorkspaceRow.id == workspace_id,
+                    WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return
+        from_state = row.status
         await s.execute(
             update(WorkspaceRow)
-            .where(
-                WorkspaceRow.id == workspace_id,
-                WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
-            )
+            .where(WorkspaceRow.id == workspace_id)
             .values(status=WorkspaceStatus.EXPIRED.value)
+        )
+        await _audit_transition(
+            s,
+            workspace_id=workspace_id,
+            org_id=row.org_id,
+            from_state=from_state,
+            to_state=WorkspaceStatus.EXPIRED.value,
+            reason="closed",
         )
         await s.commit()
     log.info("workspace.closed", workspace_id=str(workspace_id))
@@ -246,51 +324,128 @@ async def get_workspace(workspace_id: UUID) -> Workspace | None:
     return _WorkspaceImpl(id=str(row.id), provider=provider, plugin_state=row.plugin_state)
 
 
-async def force_close_all(*, org_id: UUID) -> int:
-    """Flip every active/creating workspace for the org to expired. Returns count."""
+async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> int:
+    """Flip every active/creating workspace for the org to expired. Returns count.
+
+    Used by Org Settings Disconnect / mode-switch. `reason` propagates to
+    the audit row (`disconnect`, `mode_switch`, `arn_change`) so the
+    security feed can render meaningful one-liners.
+    """
     async with get_session() as s:
-        result = await s.execute(
-            update(WorkspaceRow)
-            .where(
-                WorkspaceRow.org_id == org_id,
-                WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+        rows = (
+            (
+                await s.execute(
+                    select(WorkspaceRow).where(
+                        WorkspaceRow.org_id == org_id,
+                        WorkspaceRow.status.in_(
+                            [WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]
+                        ),
+                    )
+                )
             )
-            .values(status=WorkspaceStatus.EXPIRED.value)
+            .scalars()
+            .all()
         )
+        for row in rows:
+            await s.execute(
+                update(WorkspaceRow)
+                .where(WorkspaceRow.id == row.id)
+                .values(status=WorkspaceStatus.EXPIRED.value)
+            )
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=org_id,
+                from_state=row.status,
+                to_state=WorkspaceStatus.EXPIRED.value,
+                reason=reason,
+            )
         await s.commit()
-        return result.rowcount or 0
+        return len(rows)
+
+
+# Failsafe 6 threshold: an agent with no heartbeat for this many seconds is
+# considered lost. Matches the 90s reachability cutoff used elsewhere.
+AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS = 90
 
 
 async def _reaper_sweep_once() -> None:
-    """One reaper pass — expire over-budget, idle-timeout, destroy expired,
-    mark stuck failed."""
+    """One reaper pass — expire over-budget (TTL), idle-timeout, agent-loss
+    (failsafe 6), then destroy expired rows + mark stuck destroys failed.
+
+    Each transition writes an audit row (failsafe 7) via
+    `_audit_transition` — selecting affected rows first instead of doing a
+    bulk UPDATE so we can audit per-id.
+    """
     now = _utcnow()
     async with get_session() as s:
-        # 1. Expire over-budget actives (TTL sweep).
-        await s.execute(
-            update(WorkspaceRow)
-            .where(
-                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                WorkspaceRow.expires_at < now,
+        # 1. TTL sweep — expire over-budget actives.
+        ttl_rows = (
+            (
+                await s.execute(
+                    select(WorkspaceRow).where(
+                        WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
+                        WorkspaceRow.expires_at < now,
+                    )
+                )
             )
-            .values(status=WorkspaceStatus.EXPIRED.value)
+            .scalars()
+            .all()
         )
-        # 1b. Idle-timeout sweep (M05 Phase 3): an `active` workspace with no
-        # current claim that's been activated longer than `max_idle_seconds`
-        # is considered abandoned. Marked expired so the destroy pass picks
-        # it up. Workspaces with a live claim are skipped — the engine owns
-        # them; cancellation flows through `workflow.request_cancel`.
-        await s.execute(
-            update(WorkspaceRow)
-            .where(
-                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                WorkspaceRow.current_command_id.is_(None),
-                WorkspaceRow.activated_at.is_not(None),
-                func.extract("epoch", now - WorkspaceRow.activated_at) > WorkspaceRow.max_idle_seconds,
+        for row in ttl_rows:
+            await s.execute(
+                update(WorkspaceRow)
+                .where(WorkspaceRow.id == row.id)
+                .values(status=WorkspaceStatus.EXPIRED.value)
             )
-            .values(status=WorkspaceStatus.EXPIRED.value)
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=row.org_id,
+                from_state=WorkspaceStatus.ACTIVE.value,
+                to_state=WorkspaceStatus.EXPIRED.value,
+                reason="ttl_expired",
+            )
+
+        # 1b. Idle sweep — active workspaces with no claim that have been
+        # activated longer than `max_idle_seconds` are abandoned.
+        idle_rows = (
+            (
+                await s.execute(
+                    select(WorkspaceRow).where(
+                        WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
+                        WorkspaceRow.current_command_id.is_(None),
+                        WorkspaceRow.activated_at.is_not(None),
+                        func.extract("epoch", now - WorkspaceRow.activated_at)
+                        > WorkspaceRow.max_idle_seconds,
+                    )
+                )
+            )
+            .scalars()
+            .all()
         )
-        # 2. Find rows to destroy
+        for row in idle_rows:
+            await s.execute(
+                update(WorkspaceRow)
+                .where(WorkspaceRow.id == row.id)
+                .values(status=WorkspaceStatus.EXPIRED.value)
+            )
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=row.org_id,
+                from_state=WorkspaceStatus.ACTIVE.value,
+                to_state=WorkspaceStatus.EXPIRED.value,
+                reason="idle_timeout",
+            )
+
+        # 1c. Agent-loss (failsafe 6) — orgs running remote agents where
+        # NO pod has heartbeated within the threshold have all their
+        # workspaces expired and bearers revoked. POC approximation: we
+        # match per-org (not per-pod) since WorkspaceRow has no agent_id.
+        await _failsafe_agent_loss(s, now)
+
+        # 2. Find rows to destroy.
         rows = (
             (
                 await s.execute(
@@ -313,6 +468,88 @@ async def _reaper_sweep_once() -> None:
         await _attempt_destroy(row)
 
 
+async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
+    """Mark workspaces EXPIRED + revoke bearers when their org's remote agents
+    have all gone stale beyond the heartbeat threshold (failsafe 6).
+
+    POC scope: per-org check rather than per-pod (workspaces don't carry
+    `agent_id` directly). An org with remote_agent provider whose every
+    `workspace_agents` row has a stale `last_heartbeat_at` (or none ever)
+    is considered to have lost its agent fleet. Workspaces in non-terminal
+    states transition to EXPIRED with reason `agent_loss`.
+
+    Bearer revocation goes through `core.agent_gateway.bearers` (lazy
+    import to keep the workspace module from importing the gateway at
+    init time).
+    """
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
+    # Find orgs in remote-agent mode where every workspace_agents row is
+    # stale (or there are none at all but a workspace exists in flight).
+    stale_orgs = (
+        await s.execute(
+            sa_text(
+                """
+                SELECT o.id
+                  FROM orgs o
+                 WHERE o.workspace_provider = 'remote_agent'
+                   AND EXISTS (
+                         SELECT 1 FROM workspaces w
+                          WHERE w.org_id = o.id
+                            AND w.status IN ('creating', 'active')
+                   )
+                   AND NOT EXISTS (
+                         SELECT 1 FROM workspace_agents a
+                          WHERE a.org_id = o.id
+                            AND a.last_heartbeat_at IS NOT NULL
+                            AND a.last_heartbeat_at >= :cutoff
+                   )
+                """
+            ),
+            {"cutoff": cutoff},
+        )
+    ).fetchall()
+    if not stale_orgs:
+        return
+
+    from app.core.agent_gateway import bearers  # noqa: PLC0415
+
+    for (org_id,) in stale_orgs:
+        rows = (
+            (
+                await s.execute(
+                    select(WorkspaceRow).where(
+                        WorkspaceRow.org_id == org_id,
+                        WorkspaceRow.status.in_(
+                            [WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            await s.execute(
+                update(WorkspaceRow)
+                .where(WorkspaceRow.id == row.id)
+                .values(status=WorkspaceStatus.EXPIRED.value)
+            )
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=org_id,
+                from_state=row.status,
+                to_state=WorkspaceStatus.EXPIRED.value,
+                reason="agent_loss",
+            )
+        # Revoke every active bearer for the org — agents will re-exchange
+        # when they come back online.
+        await bearers.revoke_all_for_org(org_id, "agent_loss", session=s)
+        log.warning("workspace.failsafe_agent_loss", org_id=str(org_id), expired_count=len(rows))
+
+
 async def _attempt_destroy(row: WorkspaceRow) -> None:
     provider = _PROVIDERS.get(row.provider_id)
     if provider is None:
@@ -326,6 +563,15 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
                     last_destroy_error=f"provider {row.provider_id} not registered",
                 )
             )
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=row.org_id,
+                from_state=row.status,
+                to_state=WorkspaceStatus.DESTROY_FAILED.value,
+                reason="provider_not_registered",
+                error=f"provider {row.provider_id} not registered",
+            )
             await s.commit()
         return
 
@@ -338,6 +584,14 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
                 destroy_attempts=row.destroy_attempts + 1,
                 last_destroy_attempt_at=_utcnow(),
             )
+        )
+        await _audit_transition(
+            s,
+            workspace_id=row.id,
+            org_id=row.org_id,
+            from_state=row.status,
+            to_state=WorkspaceStatus.DESTROYING.value,
+            reason="destroy_attempt",
         )
         await s.commit()
 
@@ -355,6 +609,15 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
                 .where(WorkspaceRow.id == row.id)
                 .values(status=new_status, last_destroy_error=str(e))
             )
+            await _audit_transition(
+                s,
+                workspace_id=row.id,
+                org_id=row.org_id,
+                from_state=WorkspaceStatus.DESTROYING.value,
+                to_state=new_status,
+                reason="destroy_failed",
+                error=str(e),
+            )
             await s.commit()
         return
 
@@ -367,6 +630,14 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
                 destroyed_at=_utcnow(),
                 last_destroy_error=None,
             )
+        )
+        await _audit_transition(
+            s,
+            workspace_id=row.id,
+            org_id=row.org_id,
+            from_state=WorkspaceStatus.DESTROYING.value,
+            to_state=WorkspaceStatus.DESTROYED.value,
+            reason="destroyed",
         )
         await s.commit()
     log.info("workspace.destroyed", workspace_id=str(row.id))

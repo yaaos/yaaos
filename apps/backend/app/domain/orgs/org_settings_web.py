@@ -67,6 +67,7 @@ class _OrgSettingsResponse(BaseModel):
     session_timeout_override: int | None
     workspace_provider: str | None = None
     registered_iam_arn: str | None = None
+    aws_region: str | None = None
 
 
 def _err(status: int, code: str) -> HTTPException:
@@ -150,6 +151,7 @@ async def get_org_settings() -> _OrgSettingsResponse:
         session_timeout_override=row.session_timeout_override,
         workspace_provider=row.workspace_provider,
         registered_iam_arn=row.registered_iam_arn,
+        aws_region=row.aws_region,
     )
 
 
@@ -180,6 +182,16 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise _err(422, "invalid_registered_iam_arn")
             row.registered_iam_arn = value
+        if "aws_region" in body:
+            value = body["aws_region"]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise _err(422, "invalid_aws_region")
+            row.aws_region = value
+        # Cross-field: `registered_iam_arn` and `aws_region` are both-or-neither
+        # (matches the DB check constraint `ck_orgs_arn_region_paired`). Fail at
+        # the application layer so the API returns a 422, not a 500 from the DB.
+        if (row.registered_iam_arn is None) != (row.aws_region is None):
+            raise _err(422, "arn_and_region_must_be_paired")
         # Cross-field: remote_agent provider requires an ARN.
         if row.workspace_provider == "remote_agent" and not row.registered_iam_arn:
             raise _err(422, "remote_agent_requires_iam_arn")
@@ -190,6 +202,7 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
         session_timeout_override=row.session_timeout_override,
         workspace_provider=row.workspace_provider,
         registered_iam_arn=row.registered_iam_arn,
+        aws_region=row.aws_region,
     )
 
 

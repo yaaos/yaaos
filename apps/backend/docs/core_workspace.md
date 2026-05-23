@@ -114,6 +114,18 @@ The bridge is registered from [`domain/reviewer/__init__.py`](domain_reviewer.md
 
 The reaper's second sweep marks any workspace that is `status='active'`, holds no claim, and has been activated longer than `max_idle_seconds` (default 600s) as `expired` so the destroy pass picks it up. Workspaces with a live claim are skipped — those are the engine's; cancellation goes through `workflow.request_cancel`. This is the cleanup-failsafe layer above the TTL sweep, catching workspaces that completed their work but whose cleanup workflow never ran.
 
+### Failsafe 6 — agent-loss recovery
+
+Third reaper sweep (`_failsafe_agent_loss`): every org in `workspace_provider='remote_agent'` mode whose `workspace_agents` rows all have stale `last_heartbeat_at` (>90s) — or none at all — gets every in-flight workspace transitioned to `expired` with reason `agent_loss`. The sweep also calls `bearers.revoke_all_for_org(org_id, 'agent_loss')` so the agent must re-exchange identity on reconnect. POC scope: per-org match (not per-pod) since `workspaces` has no `agent_id` column. M05 policy: no retry-on-different-agent — workflows referencing expired workspaces fail loud.
+
+### Failsafe 7 — audit row per transition
+
+Every state mutation in `service.py` routes through `_audit_transition`, which writes a `workspace.transitioned` row via `audit_for_workspace` ([`core/audit_log`](core_audit_log.md)). Payload: `from_state`, `to_state`, `reason`, optional `error`. Reasons include `provisioned`, `provision_failed`, `closed`, `force_close_all`, `ttl_expired`, `idle_timeout`, `agent_loss`, `destroy_attempt`, `destroyed`, `destroy_failed`, `provider_not_registered`. Powers the Workspace settings security feed.
+
+### Failsafe 5 — proactive disk sweep (Go agent side)
+
+Owned by `apps/agent/internal/supervisor` — not this module. Every 5 min the supervisor walks `YAAOS_WORKSPACE_ROOT`, reads `.workspace-id` manifests, and `os.RemoveAll`s any directory whose id isn't in its in-memory pool (or any dir with no manifest). Defence against orphans the backend's `forgotten_workspaces` response never names (agent crashed mid-create before reporting).
+
 ### POC limits
 
 - `in_memory_workspace` ignores `ResourceCaps` and `NetworkPolicy` — the CLI runs with the same permissions as the yaaos process.

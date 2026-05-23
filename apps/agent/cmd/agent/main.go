@@ -32,6 +32,11 @@ import (
 	"github.com/yaaos/agent/internal/workspace"
 )
 
+// Hardcoded production backend. Customers don't configure this — the
+// agent ships pre-pointed at app.yaaos.cloud. Overrideable via
+// `YAAOS_BACKEND_URL` for development and integration testing only.
+const defaultBackendURL = "https://app.yaaos.cloud"
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: agent <supervisor|workspace>")
@@ -54,7 +59,7 @@ func main() {
 
 func runSupervisor() error {
 	cfg := supervisor.Config{
-		BaseURL:          envOr("YAAOS_BACKEND_URL", "http://localhost:8080"),
+		BaseURL:          envOr("YAAOS_BACKEND_URL", defaultBackendURL),
 		AgentPodID:       envOr("YAAOS_AGENT_POD_ID", randomPodID()),
 		Version:          envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
 		SignedSTSRequest: envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-phase-7-wires-real-sts"),

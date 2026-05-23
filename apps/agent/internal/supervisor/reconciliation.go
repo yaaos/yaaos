@@ -92,6 +92,65 @@ func scanOrphanWorkspaces(root string, log Logger) ([]protocol.HeartbeatWorkspac
 	return out, paths
 }
 
+// sweepOrphanWorkspaceDirs is the failsafe-5 proactive disk sweep — it
+// walks `root` one level deep and `os.RemoveAll`s any directory whose
+// `.workspace-id` manifest names an id not in `known` (the supervisor's
+// pool). Directories with NO manifest are also removed (the only way
+// they exist is a crashed mid-create). Returns the count removed.
+//
+// Independent of the backend's `forgotten_workspaces` response — covers
+// the case where the backend never learned about a directory because
+// the agent crashed before reporting it.
+func sweepOrphanWorkspaceDirs(root string, known map[string]struct{}, log Logger) int {
+	if root == "" {
+		return 0
+	}
+	if log == nil {
+		log = nullLogger{}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Warn("disk_sweep.read_root_failed", "root", root, "err", err.Error())
+		}
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		manifestPath := filepath.Join(dir, WorkspaceManifestName)
+		idBytes, err := os.ReadFile(manifestPath)
+		var id string
+		if err == nil {
+			id = strings.TrimSpace(string(idBytes))
+		}
+		// Remove if: no manifest at all, OR manifest names a workspace
+		// not in the supervisor's in-memory pool.
+		if id == "" {
+			if rmErr := os.RemoveAll(dir); rmErr != nil {
+				log.Warn("disk_sweep.remove_failed", "path", dir, "err", rmErr.Error())
+				continue
+			}
+			log.Info("disk_sweep.removed_unmanifested", "path", dir)
+			removed++
+			continue
+		}
+		if _, ok := known[id]; ok {
+			continue
+		}
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			log.Warn("disk_sweep.remove_failed", "workspace_id", id, "path", dir, "err", rmErr.Error())
+			continue
+		}
+		log.Info("disk_sweep.removed_orphan", "workspace_id", id, "path", dir)
+		removed++
+	}
+	return removed
+}
+
 // cleanupForgottenWorkspaces removes the on-disk directories the backend
 // said it no longer tracks. `paths` is the workspace_id → path map the
 // supervisor built at scan time + augments with new CreateWorkspace

@@ -202,6 +202,16 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		defer wg.Done()
 		s.heartbeatLoop(ctx)
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.bearerRefreshLoop(ctx, resp.ExpiresAt)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.diskSweepLoop(ctx)
+	}()
 	wg.Wait()
 	// Tear down the activity WS first so the read-loop exits before the
 	// pool shuts down; otherwise a slow flush could race with ctx cancel.
@@ -251,6 +261,73 @@ func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityEx
 		Version:       s.cfg.Version,
 		SignedRequest: s.cfg.SignedSTSRequest,
 	})
+}
+
+// bearerRefreshLoop re-exchanges identity ~1 hour before the bearer
+// expires so the supervisor keeps running across the 24-hour bearer TTL.
+// On exchange failure it logs and retries every 60s — the existing
+// bearer remains valid until its own expiry.
+func (s *Supervisor) bearerRefreshLoop(ctx context.Context, expiresAt time.Time) {
+	const refreshLead = time.Hour
+	const retryInterval = 60 * time.Second
+	for {
+		wait := time.Until(expiresAt.Add(-refreshLead))
+		if wait < 0 {
+			wait = retryInterval
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		resp, err := s.exchangeIdentity(ctx)
+		if err != nil {
+			s.log.Warn("supervisor.bearer_refresh_failed", "err", err.Error())
+			expiresAt = time.Now().Add(retryInterval)
+			continue
+		}
+		s.client.SetBearer(resp.Bearer)
+		expiresAt = resp.ExpiresAt
+		s.log.Info("supervisor.bearer_refreshed", "expires_at", expiresAt.Format(time.RFC3339))
+	}
+}
+
+// diskSweepLoop is the proactive failsafe-5 pass — every 5 minutes it
+// walks the workspace root and `RemoveAll`s any directory that's not in
+// the supervisor's in-memory pool. Defence against orphans the backend's
+// `forgotten_workspaces` response never tells us about (e.g. agent
+// crashed mid-create before reporting).
+func (s *Supervisor) diskSweepLoop(ctx context.Context) {
+	const interval = 5 * time.Minute
+	if s.cfg.WorkspaceRoot == "" {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		removed := sweepOrphanWorkspaceDirs(s.cfg.WorkspaceRoot, s.knownWorkspaceIDs(), s.log)
+		if removed > 0 {
+			s.log.Info("supervisor.disk_sweep_removed", "count", removed)
+		}
+	}
+}
+
+// knownWorkspaceIDs returns a snapshot of workspace IDs currently in the
+// supervisor's pool — disk-sweep treats anything on disk and NOT in this
+// set as an orphan eligible for removal.
+func (s *Supervisor) knownWorkspaceIDs() map[string]struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]struct{}, len(s.workspacePaths))
+	for id := range s.workspacePaths {
+		out[id] = struct{}{}
+	}
+	return out
 }
 
 // claimLoop runs one long-poll worker. On a successful claim it dispatches

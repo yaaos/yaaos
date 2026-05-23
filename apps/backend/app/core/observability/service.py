@@ -20,6 +20,7 @@ single env-var flip.
 """
 
 import logging
+import re
 import sys
 from typing import Any
 
@@ -54,6 +55,7 @@ def configure() -> None:
     processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         _inject_trace_context,
+        _redact_secrets,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
@@ -70,6 +72,36 @@ def configure() -> None:
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
+
+
+# Keys whose values are secret-ish and must never be rendered raw. Match
+# is case-insensitive substring. `bearer` catches BearerContext field
+# names; `authorization` covers HTTP header dicts; `token_hash` is hashed
+# already but we don't want it in logs regardless; `signed_request` carries
+# AWS sigv4 secrets.
+_REDACT_KEY_RE = re.compile(r"(?i)(authorization|bearer|token|secret|password|api[_-]?key|signed_request)")
+_REDACT_MASK = "***"
+
+
+def _redact_secrets(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """structlog processor — mask values for any key matching the secrets
+    regex. Applies recursively into nested dicts/lists so wrapped error
+    payloads can't smuggle headers through. Tuples are preserved as tuples
+    (sometimes used in args); list-of-dicts get scanned per-element."""
+    return _scrub(event_dict)  # type: ignore[no-any-return]
+
+
+def _scrub(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: (_REDACT_MASK if isinstance(k, str) and _REDACT_KEY_RE.search(k) else _scrub(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub(v) for v in value)
+    return value
 
 
 def _inject_trace_context(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:

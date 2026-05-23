@@ -14,7 +14,7 @@ Phase 5 ships:
   STS-replay verifier lands in Phase 7.
 """
 
-from app.core.agent_gateway import web  # noqa: F401 — registers /v1/* routes
+from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
 from app.core.agent_gateway.service import (
     _reset_queues_for_tests,
     claim_next,

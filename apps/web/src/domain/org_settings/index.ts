@@ -16,3 +16,4 @@ export {
 export { MembersSettingsPage } from "./MembersSettingsPage";
 export { OrgSettingsLayout } from "./OrgSettingsLayout";
 export { VcsSettingsPage } from "./vcs/VcsSettingsPage";
+export { WorkspaceSettingsPage } from "./WorkspaceSettingsPage";

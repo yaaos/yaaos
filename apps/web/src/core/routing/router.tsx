@@ -15,6 +15,7 @@ import {
   IntegrationsSettingsPage,
   MembersSettingsPage,
   VcsSettingsPage,
+  WorkspaceSettingsPage,
 } from "@domain/org_settings";
 import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
@@ -208,6 +209,12 @@ const orgSettingsIntegrationsRoute = createRoute({
   component: IntegrationsSettingsPage,
 });
 
+const orgSettingsWorkspaceRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/workspace",
+  component: WorkspaceSettingsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -232,6 +239,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsCodingAgentDetailRoute,
     orgSettingsByokRoute,
     orgSettingsIntegrationsRoute,
+    orgSettingsWorkspaceRoute,
   ]),
 ]);
 

@@ -22,7 +22,7 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 
 | Method + Path | Auth | Purpose |
 |---|---|---|
-| `POST /api/v1/identity/exchange` | public | SigV4-signed STS → short-lived bearer. **Phase 5 ships a placeholder verifier** that accepts any non-empty `signed_request`; Phase 7 wires the real STS replay. |
+| `POST /api/v1/identity/exchange` | public | SigV4-signed STS → 24h bearer. Replays the signed request against AWS STS, canonicalizes assumed-role ARNs to role ARNs, looks up the org by `registered_iam_arn`, cross-checks the signed URL's region against `aws_region`. Rate-limited per source IP (10/min) and per `agent_pod_id` (100/hr). Issues a real bearer via `core/agent_gateway/bearers`. |
 | `POST /api/v1/agents/{id}/heartbeat` | bearer | Liveness + workspace inventory → reconciliation response. |
 | `POST /api/v1/agents/{id}/commands/claim` | bearer | Long-poll (up to `wait_seconds`, capped at 55s). 200 with one command or 204. |
 | `POST /api/v1/workspaces/{id}/events` | bearer | Workspace state transitions. Stale-claim → 410. |
@@ -41,10 +41,20 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 - `IdentityExchangeRequest/Response` — bearer issuance handshake.
 - `HeartbeatRequest/Response` — liveness + inventory; response carries `forgotten_workspaces` so the agent cleans up control-plane orphans.
 - `ClaimRequest` — `wait_seconds` long-poll horizon.
+- `BearerContext` — resolved identity from a verified bearer. `bearer_id`, `agent_id`, `org_id`.
+- `VerifiedIdentity` — STS verifier result. `canonical_arn` (IAM role), `raw_arn` (as STS returned it), `region`.
+- `FailureCategory` — typed STS verifier failure: `parse_error`, `endpoint_disallowed`, `body_mismatch`, `replay_detected`, `aws_rejected`, `clock_skew`.
 
 ### Core user flows
 
-1. **Identity exchange.** Agent pod boots, posts a SigV4-signed STS payload + its locally-generated `agent_pod_id`. Control plane verifies (Phase 7) and returns a bearer + the per-pod `agent_id`.
+1. **Identity exchange.** Agent pod boots, sigv4-signs an STS `GetCallerIdentity` request with its IAM credentials (IRSA / EC2 instance profile / ECS task role), posts the signed envelope + `agent_pod_id` to `/identity/exchange`. Control plane:
+   - Parses the envelope; rejects non-STS URLs (`endpoint_disallowed`), wrong body (`body_mismatch`).
+   - Replay-LRU dedupe on `Authorization || X-Amz-Date` (10 min window, rejects `replay_detected`).
+   - HTTPS POST to AWS STS via a TLS-1.3-pinned shared httpx client; on `RequestExpired` returns `clock_skew`, other non-2xx returns `aws_rejected`.
+   - Canonicalizes the returned ARN (`arn:aws:sts::ACCT:assumed-role/ROLE/SESSION` → `arn:aws:iam::ACCT:role/ROLE`) so the customer's registered IAM role ARN matches.
+   - Looks up the org by `orgs.registered_iam_arn` (UNIQUE) and checks the signed URL's region against `orgs.aws_region`.
+   - Issues a 24h bearer via `bearers.issue` (sha256 hash stored, plaintext returned once), upserts the `workspace_agents` row, captures source IP.
+   - Returns `{bearer, expires_at, agent_id}`.
 2. **Long-poll command claim.** Free agent slots each post `claim` with `wait_seconds=30`. Backend's per-agent FIFO returns the head, or 204 on timeout. Internally an `asyncio.Condition` per agent wakes the poll the moment `enqueue_command(agent_id, cmd)` runs.
 3. **Heartbeat reconciliation.** Every ~30s the agent posts its workspace inventory. Backend bumps liveness and reads back `forgotten_workspaces` — anything the agent reports that's destroyed or unknown control-plane-side.
 4. **Event ingestion.** Workspace-state and AgentCommand events flow through their respective endpoints. The single-flight claim columns set by [`core/workspace.try_claim`](core_workspace.md) gate every event: `command_id` not in any workspace's `current_command_id` → 410. Terminal AgentEvents enqueue `workflow.handle_agent_event` via the outbox in the same transaction; progress events republish to `activity:{workflow_execution_id}` via [`core/sse_pubsub`](core_sse_pubsub.md) — the same channel the Phase 8b WebSocket activity-batch path writes to, so HTTP-posted progress and WS-batched activity converge on one subscriber surface.
@@ -63,7 +73,10 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 
 ## Data owned
 
-None directly. Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup chain; writes via the outbox owned by [`core/tasks`](core_tasks.md). `workspace_agents` row writes land in Phase 7.
+- `workspace_agents` — per-pod identity rows (one per `(org_id, agent_pod_id)`). Bumped on every successful identity exchange + heartbeat.
+- `bearer_tokens` — issued-bearer ledger. `token_hash` (sha256), `issued_at`, `expires_at`, `revoked_at`, `revoked_reason`, `last_seen_at`, `source_ip`. Plaintext is returned exactly once from `bearers.issue` and never persisted. `verify` returns `None` for every failure (no oracle).
+
+Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup chain; writes to the outbox owned by [`core/tasks`](core_tasks.md). Bearer revocation cascades from Workspace settings actions (`arn_change` / `mode_switch` / `disconnect` / `manual_rotate`) and from failsafe-6 (`agent_loss`).
 
 ## How it's tested
 

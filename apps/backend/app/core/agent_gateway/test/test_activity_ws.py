@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -14,12 +14,31 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.agent_gateway import (
     _reset_subscriber_registry_for_tests,
+    bearers,
     get_subscriber_registry,
 )
 from app.core.sse_pubsub import _reset_for_tests as _reset_pubsub
 from app.core.sse_pubsub import channel_for, subscribe
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
+
+
+def _install_bearer_stub(agent_id: UUID) -> str:
+    """Install a `bearers.verify` stub that accepts a fixed plaintext +
+    returns a context bound to `agent_id`. Direct DB-backed bearer
+    coverage lives in `test_bearers.py`; here we test the WS protocol
+    without crossing event-loop boundaries between the test session and
+    TestClient's portal."""
+    expected = f"bearer-{uuid4().hex}"
+    org_id = uuid4()
+
+    async def _stub(token: str) -> bearers.BearerContext | None:
+        if token != expected:
+            return None
+        return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
+
+    bearers.set_verify_override(_stub)
+    return expected
 
 
 def _app() -> FastAPI:
@@ -38,6 +57,7 @@ def _isolate() -> None:
     yield
     _reset_subscriber_registry_for_tests()
     _reset_pubsub()
+    bearers.set_verify_override(None)
 
 
 def test_ws_close_4401_when_missing_bearer() -> None:
@@ -55,17 +75,34 @@ def test_ws_close_4401_when_missing_bearer() -> None:
 def test_ws_accepts_bearer_and_registers_sender() -> None:
     app = _app()
     agent_id = uuid4()
+    bearer = _install_bearer_stub(agent_id)
     with TestClient(app) as client:
         with client.websocket_connect(
             f"/api/v1/agents/{agent_id}/activity",
-            headers={"Authorization": "Bearer test"},
+            headers={"Authorization": f"Bearer {bearer}"},
         ):
             # While the WS is open, the registry has a sender for this agent.
             assert get_subscriber_registry().has_sender(agent_id)
         # After exit, the sender is unregistered.
-        # Give the server-side task a chance to clean up.
         # (TestClient is synchronous so the disconnect handler ran by now.)
         assert not get_subscriber_registry().has_sender(agent_id)
+
+
+def test_ws_rejects_when_bearer_agent_id_does_not_match_path() -> None:
+    """A bearer issued for pod A can't be used to upgrade the WS for pod B —
+    stolen-bearer-cross-pod attack defence. Closes with 4403."""
+    app = _app()
+    agent_id_in_bearer = uuid4()
+    different_path_agent = uuid4()
+    bearer = _install_bearer_stub(agent_id_in_bearer)
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect(
+                f"/api/v1/agents/{different_path_agent}/activity",
+                headers={"Authorization": f"Bearer {bearer}"},
+            ):
+                pass
+        assert exc_info.value.code == 4403
 
 
 @pytest.mark.asyncio
@@ -77,6 +114,7 @@ async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
     app = _app()
     agent_id = uuid4()
     workflow_id = uuid4()
+    bearer = _install_bearer_stub(agent_id)
     channel = channel_for(str(workflow_id))
 
     received: list[dict] = []
@@ -105,7 +143,7 @@ async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
         with TestClient(app) as client:
             with client.websocket_connect(
                 f"/api/v1/agents/{agent_id}/activity",
-                headers={"Authorization": "Bearer test"},
+                headers={"Authorization": f"Bearer {bearer}"},
             ) as ws:
                 ws.send_json(
                     {
@@ -142,12 +180,13 @@ async def test_publish_with_no_subscriber_drops_nothing_breaks_nothing() -> None
     app = _app()
     agent_id = uuid4()
     workflow_id = uuid4()
+    bearer = _install_bearer_stub(agent_id)
 
     def _send_batch() -> None:
         with TestClient(app) as client:
             with client.websocket_connect(
                 f"/api/v1/agents/{agent_id}/activity",
-                headers={"Authorization": "Bearer test"},
+                headers={"Authorization": f"Bearer {bearer}"},
             ) as ws:
                 ws.send_json(
                     {

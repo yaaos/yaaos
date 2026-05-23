@@ -42,11 +42,19 @@ class OrgRow(Base):
     vcs_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # M05 Phase 7: per-org workspace provider selection. `in_memory` (default)
     # runs workspaces in-process; `remote_agent` dispatches to a customer-
-    # deployed WorkspaceAgent via `core/agent_gateway`. `registered_iam_arn`
-    # is required when provider is `remote_agent` and is what the identity-
-    # exchange verifier matches against in Phase 7 follow-on.
+    # deployed WorkspaceAgent via `core/agent_gateway`. `registered_iam_arn` is
+    # the canonical IAM role ARN the customer registered; the identity-exchange
+    # verifier canonicalizes the assumed-role ARN it gets back from STS and
+    # matches against this column. `aws_region` pins the STS endpoint the
+    # signed request must target — defence against cross-region replay.
+    # registered_iam_arn and aws_region are both-or-neither (DB check
+    # constraint `ck_orgs_arn_region_paired`).
     workspace_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Uniqueness on `registered_iam_arn` is enforced by a partial unique index
+    # (`uq_orgs_registered_iam_arn`) created in migration 028, not by the model
+    # — so in-memory orgs (NULL ARN) don't collide and aren't capped at one row.
     registered_iam_arn: Mapped[str | None] = mapped_column(String, nullable=True)
+    aws_region: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

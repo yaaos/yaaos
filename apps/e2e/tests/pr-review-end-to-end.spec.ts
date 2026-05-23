@@ -62,7 +62,7 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
  *   - a real `core/tasks` broker runs in the FastAPI lifespan, AND
  *   - the outbox drain loop dispatches `taskiq_enqueue` rows post-commit.
  */
-test.skip("PR open → reviewer posts; ticket detail renders findings", async ({ page, request }) => {
+test("PR open → reviewer posts; ticket detail renders findings", async ({ page, request }) => {
   await setupAuthedAcmeOwner(page, request);
 
   await dispatchWebhook({
@@ -101,7 +101,7 @@ test.skip("PR open → reviewer posts; ticket detail renders findings", async ({
  * Folded in from the standalone `sse-step-progress-live.spec.ts` so we
  * don't pay the docker-compose bring-up twice for the same backend flow.
  */
-test.skip("review card state transitions live via SSE without reload", async ({ page, request }) => {
+test("review card state transitions live via SSE without reload", async ({ page, request }) => {
   await setupAuthedAcmeOwner(page, request);
 
   // Land on the tickets list FIRST so the SSE subscriber is mounted before

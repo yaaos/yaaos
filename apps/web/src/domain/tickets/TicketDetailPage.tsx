@@ -30,6 +30,7 @@ import {
   useReviewJobsForTicket,
   useTicket,
 } from "@core/api";
+import { useWorkflowActivityStream } from "@core/sse";
 import { ConfirmModal, EmptyState, ErrorBanner } from "@shared/components/layout";
 import { Button } from "@shared/components/ui/button";
 import { Skeleton } from "@shared/components/ui/skeleton";
@@ -366,10 +367,28 @@ function FindingsTab({ ticketId }: { ticketId: string }) {
 
 function ActivityTab({ ticketId }: { ticketId: string }) {
   const { data: jobs, isLoading } = useReviewJobsForTicket(ticketId);
+  const { data: ticket } = useTicket(ticketId);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const events = (jobs ?? []).flatMap((j) => j.activity_log ?? []);
-  // Newest events come from the most recent job first; reverse to chronological.
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts));
+  // Latest workflow execution drives the demand-pull live stream — opening
+  // this EventSource sends `track()` to SubscriberRegistry which fans
+  // `subscribe` over the agent WebSocket, so the WorkspaceAgent only emits
+  // activity while this tab is mounted.
+  const latestWorkflowId =
+    ticket?.stages && ticket.stages.length > 0
+      ? ticket.stages[ticket.stages.length - 1]?.workflow_execution_id
+      : null;
+  const liveEvents = useWorkflowActivityStream(latestWorkflowId);
+  // Merge stored + live, dedupe by ts+kind, sort chronologically.
+  const seen = new Set<string>();
+  const ordered = [...events, ...liveEvents]
+    .filter((e) => {
+      const k = `${e.ts ?? ""}-${e.kind ?? ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
   const newestTs = ordered.length > 0 ? ordered[ordered.length - 1]?.ts : null;
 
   // Auto-scroll to the newest event when it changes — so a long-running

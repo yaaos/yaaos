@@ -57,11 +57,15 @@ FROM debian:bookworm-slim
 # `git` is required: the agent shells out to it for CreateWorkspace
 # (HTTPS clone with installation-token auth), and the Claude Code CLI
 # the agent later spawns also depends on it. `ca-certificates` lets the
-# clone reach GitHub over HTTPS. We don't install curl, ssh, less, or
+# clone reach GitHub over HTTPS. `nodejs` + `npm` are required to install
+# the Claude Code CLI (`claude`) which the workspace subprocess execs for
+# every `InvokeClaudeCode` command. We don't install curl, ssh, less, or
 # any other userland — the surface area stays small.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends git ca-certificates nodejs npm \
+ && npm install -g @anthropic-ai/claude-code \
+ && apt-get purge -y --auto-remove npm \
+ && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Run as a non-root user (UID 65532, matching the distroless `nonroot`
 # convention we used before — same UID so existing ECS task definitions

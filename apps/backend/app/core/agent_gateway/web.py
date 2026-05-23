@@ -1,27 +1,30 @@
 """HTTP routes for the WorkspaceAgent wire protocol.
 
-Five endpoints mounted under `/v1/`. The implementation calls into
-`core.agent_gateway.service`; this module is the FastAPI shim.
+Five endpoints mounted under `/v1/` + one WebSocket. The implementation
+calls into `core.agent_gateway.service`; this module is the FastAPI shim.
 
-`/v1/identity/exchange` runs the real Vault-AWS-auth pattern via
+`/v1/identity/exchange` runs the Vault-AWS-auth pattern via
 `core.agent_gateway.sts_verifier`: the agent's sigv4-signed STS
-GetCallerIdentity is replayed against AWS, the returned ARN is matched
-against `orgs.registered_iam_arn`, and a `workspace_agents` row is
-persisted before a 24-hour bearer is issued. The remaining endpoints
-still use a placeholder bearer verifier (any non-empty token) pending
-the bearer-issuance ledger.
+GetCallerIdentity is replayed against AWS, the returned ARN is
+canonicalized (assumed-role → role) and matched against
+`orgs.registered_iam_arn`, the URL region is checked against
+`orgs.aws_region`, a `workspace_agents` row is persisted, and a 24-hour
+bearer is issued via `core.agent_gateway.bearers`. Every other gateway
+endpoint and the WebSocket upgrade authenticate by looking that bearer
+up in the ledger.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
+from app.core.agent_gateway import bearers
+from app.core.agent_gateway.rate_limit import RateLimitedError, check_identity_exchange
 from app.core.agent_gateway.service import (
     claim_next,
     record_agent_event,
@@ -51,22 +54,28 @@ log = structlog.get_logger("agent_gateway.web")
 router = APIRouter()
 
 
-# ── Placeholder bearer verifier ─────────────────────────────────────────
+# ── Bearer verifier (real ledger lookup) ────────────────────────────────
 
 
-def _verify_bearer(authorization: str | None) -> None:
-    """Phase 5 placeholder. Phase 7 wires the real verifier that validates
-    the bearer against the issuance log + checks expiry."""
+async def _verify_bearer(authorization: str | None) -> bearers.BearerContext:
+    """Hash the incoming bearer + look it up in `bearer_tokens`. Returns
+    the resolved `BearerContext`; raises `UnauthorizedError` on missing,
+    malformed, expired, or revoked tokens. Opaque rejection — no detail
+    distinguishing "expired" from "revoked" from "never existed"."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthorizedError("missing or malformed Authorization header")
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise UnauthorizedError("empty bearer")
+    ctx = await bearers.verify(token)
+    if ctx is None:
+        raise UnauthorizedError("invalid bearer")
+    return ctx
 
 
-def _bearer_dep(authorization: str | None = Header(default=None)) -> None:
+async def _bearer_dep(authorization: str | None = Header(default=None)) -> bearers.BearerContext:
     try:
-        _verify_bearer(authorization)
+        return await _verify_bearer(authorization)
     except UnauthorizedError as exc:
         raise HTTPException(status_code=401, detail={"error": "unauthorized", "detail": str(exc)}) from exc
 
@@ -75,23 +84,46 @@ def _bearer_dep(authorization: str | None = Header(default=None)) -> None:
 
 
 @router.post("/identity/exchange", dependencies=[Depends(public_route)])
-async def exchange_identity(request: IdentityExchangeRequest) -> IdentityExchangeResponse:
+async def exchange_identity(
+    request: IdentityExchangeRequest, http_request: Request
+) -> IdentityExchangeResponse:
     """Vault AWS-auth pattern: agent supplies a sigv4-signed STS
-    GetCallerIdentity request; control plane replays it against AWS;
-    extracted ARN must match an `orgs.registered_iam_arn` row. On
-    success persists/updates a `workspace_agents` row + returns a
-    24-hour bearer scoped to the resolved agent_id.
+    GetCallerIdentity request; control plane replays it against AWS,
+    canonicalizes the returned ARN, matches against
+    `orgs.registered_iam_arn`, checks the signed URL's region against
+    `orgs.aws_region`, persists/updates a `workspace_agents` row, and
+    issues a 24-hour bearer via `core.agent_gateway.bearers`.
 
     Failure modes:
-    - empty `signed_request` → 401 `unauthorized`
-    - parse / shape / non-STS-endpoint / wrong-body / replay-rejected
-      → 401 `unauthorized` with `sts_verification_failed` detail
-    - ARN doesn't match any registered org → 403 `forbidden_unregistered_arn`
+    - empty `signed_request` → 401 `unauthorized`, no audit row
+    - verifier failure (parse / shape / endpoint / body / replay /
+      aws-rejected / clock-skew) → 401, structlog warning categorized
+      by `FailureCategory`
+    - canonical ARN doesn't match any registered org → 403
+      `forbidden_unregistered_arn`
+    - signed URL's region != `orgs.aws_region` → 401
+      `sts_verification_failed` with category `region_mismatch`
     """
     if not request.signed_request:
         raise HTTPException(
             status_code=401,
             detail={"error": "unauthorized", "detail": "empty signed_request"},
+        )
+
+    source_ip = http_request.client.host if http_request.client is not None else None
+
+    try:
+        await check_identity_exchange(source_ip=source_ip, agent_pod_id=str(request.agent_pod_id))
+    except RateLimitedError as exc:
+        log.warning(
+            "identity_exchange.rate_limited",
+            axis=exc.axis,
+            limit=exc.limit,
+            source_ip=source_ip,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "rate_limited", "detail": exc.axis},
         )
 
     from app.core.agent_gateway.service import ensure_agent_row  # noqa: PLC0415
@@ -101,47 +133,75 @@ async def exchange_identity(request: IdentityExchangeRequest) -> IdentityExchang
     )
 
     try:
-        arn = await verify_identity(request.signed_request)
+        verified = await verify_identity(request.signed_request)
     except InvalidSignedRequestError as exc:
-        log.info("identity_exchange.verify_failed", error=str(exc))
+        log.warning(
+            "identity_exchange.verify_failed",
+            category=exc.category.value,
+            source_ip=source_ip,
+        )
         raise HTTPException(
             status_code=401,
             detail={"error": "unauthorized", "detail": "sts_verification_failed"},
         )
 
-    # Match the verified ARN against `orgs.registered_iam_arn`. The
-    # agent_gateway is core — we touch the orgs table directly rather
-    # than importing the domain (same pattern as the workspace_agents
-    # writes elsewhere in this module).
     from sqlalchemy import text as sa_text  # noqa: PLC0415
 
     async with db_session() as s:
         org_row = (
             await s.execute(
-                sa_text("SELECT id FROM orgs WHERE registered_iam_arn = :arn LIMIT 1"),
-                {"arn": arn},
+                sa_text("SELECT id, aws_region FROM orgs WHERE registered_iam_arn = :arn LIMIT 1"),
+                {"arn": verified.canonical_arn},
             )
         ).first()
         if org_row is None:
-            log.info("identity_exchange.arn_not_registered", arn=arn)
+            log.warning(
+                "identity_exchange.arn_not_registered",
+                canonical_arn=verified.canonical_arn,
+                source_ip=source_ip,
+            )
             raise HTTPException(
                 status_code=403,
                 detail={"error": "forbidden", "detail": "forbidden_unregistered_arn"},
             )
-        org_id = org_row[0]
+        org_id, org_region = org_row[0], org_row[1]
+
+        # Region pinning: the signed request must target the same AWS
+        # region the org has on file. Defeats cross-region replay of a
+        # signature stolen from a different STS endpoint.
+        if org_region and verified.region != org_region:
+            log.warning(
+                "identity_exchange.region_mismatch",
+                org_region=org_region,
+                attempted_region=verified.region,
+                source_ip=source_ip,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "detail": "sts_verification_failed"},
+            )
 
         agent_id = await ensure_agent_row(
             org_id=org_id,
             agent_pod_id=request.agent_pod_id,
-            iam_arn=arn,
+            iam_arn=verified.canonical_arn,
             version=request.version or "0.0.1",
             session=s,
         )
+        plaintext, record = await bearers.issue(
+            agent_id=agent_id, org_id=org_id, session=s, source_ip=source_ip
+        )
         await s.commit()
 
+    log.info(
+        "identity_exchange.success",
+        agent_id=str(agent_id),
+        org_id=str(org_id),
+        bearer_id=str(record.id),
+    )
     return IdentityExchangeResponse(
-        bearer=f"placeholder-{uuid4()}",
-        expires_at=datetime.now(UTC) + timedelta(hours=24),
+        bearer=plaintext,
+        expires_at=record.expires_at,
         agent_id=agent_id,
     )
 
@@ -233,15 +293,30 @@ async def activity_ws(websocket: WebSocket, agent_id: UUID = Path(...)) -> None:
         `workspace_id` it learned at subscribe time.
 
     Failure modes:
-      - Missing/empty `Authorization` header → close with 4401.
+      - Missing/malformed/expired/revoked bearer → close with 4401 on
+        upgrade, never accept the WebSocket. The bearer is validated
+        against `bearer_tokens` via `bearers.verify`; opaque rejection
+        (no oracle distinguishing expired from revoked from never-seen).
+      - Bearer is valid but `agent_id` in the path doesn't match the
+        bearer's resolved agent → 4403. Stops a stolen bearer from one
+        pod being used to impersonate another pod's WebSocket.
       - Disconnect at any time → registry unregisters the sender; SSE
         subscribers that arrive later won't reach this agent until it
-        reconnects (the reconnect handler in the follow-on re-derives
-        and re-sends `subscribe` for any still-active subscribers).
+        reconnects.
     """
     auth = websocket.headers.get("authorization", "")
-    if not auth.lower().startswith("bearer ") or not auth.split(" ", 1)[1].strip():
+    try:
+        ctx = await _verify_bearer(auth)
+    except UnauthorizedError:
         await websocket.close(code=4401)
+        return
+    if ctx.agent_id != agent_id:
+        log.warning(
+            "agent_gateway.ws.agent_mismatch",
+            bearer_agent_id=str(ctx.agent_id),
+            path_agent_id=str(agent_id),
+        )
+        await websocket.close(code=4403)
         return
     await websocket.accept()
 

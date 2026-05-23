@@ -160,6 +160,8 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("024_sso_email_domains", "sso_email_domains"),
     ("025_tickets_dedupe_external_id", "tickets_dedupe_external_id"),
     ("026_drop_github_poller_state", "drop_github_poller_state"),
+    ("027_create_bearer_tokens", "create_bearer_tokens"),
+    ("028_orgs_aws_region_and_arn_uniqueness", "orgs_aws_region_and_arn_uniqueness"),
 )
 
 
@@ -591,6 +593,63 @@ async def _apply_drop_github_poller_state(conn) -> None:  # type: ignore[no-unty
     await conn.execute(text("DROP TABLE IF EXISTS github_poller_state"))
 
 
+async def _apply_create_bearer_tokens(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 close-out — bearer-token ledger table.
+
+    Backs the real `/identity/exchange` issuance (replaces the
+    `placeholder-{uuid4()}` returned by the Phase 7 stub) and the bearer
+    verifier on every other gateway endpoint. `token_hash` is sha256 of the
+    plaintext; plaintext is returned to the caller exactly once. Idempotent.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.agent_gateway.models")
+    new_tables = [Base.metadata.tables["bearer_tokens"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+    # Partial index for fast "active bearer for this agent" lookups. Declared
+    # here rather than on the model — SQLAlchemy renders partial indexes
+    # differently across dialects.
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_bearer_tokens_agent_active "
+            "ON bearer_tokens (agent_id, expires_at) WHERE revoked_at IS NULL"
+        )
+    )
+
+
+async def _apply_orgs_aws_region_and_arn_uniqueness(conn) -> None:  # type: ignore[no-untyped-def]
+    """M05 close-out — finalize org-level AWS-IAM config.
+
+    Adds `orgs.aws_region` (the STS region the org's agent runs in — used to
+    pin the signed-request endpoint and defend against cross-region replay).
+    Adds a UNIQUE index on `orgs.registered_iam_arn` so the same role ARN
+    can't be claimed by two orgs (a unique index — not a constraint — so
+    NULLs continue to be allowed for orgs in in-memory mode). Adds a CHECK
+    constraint enforcing that `registered_iam_arn` and `aws_region` are
+    both-or-neither. Idempotent.
+    """
+    statements: list[str] = [
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS aws_region TEXT",
+        # Pre-migration `registered_iam_arn` values landed in 019 without a
+        # paired region (the column didn't exist yet). The new check constraint
+        # requires both-or-neither, so clear any orphan ARNs before the check
+        # is enforced. POC-safe: any test-configured ARN must be re-registered
+        # through the new Workspace settings page.
+        "UPDATE orgs SET registered_iam_arn = NULL "
+        "WHERE registered_iam_arn IS NOT NULL AND aws_region IS NULL",
+        # Postgres treats NULLs as distinct in unique indexes by default —
+        # multiple in-memory orgs with NULL ARN don't collide.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_registered_iam_arn "
+        "ON orgs (registered_iam_arn) WHERE registered_iam_arn IS NOT NULL",
+        "ALTER TABLE orgs DROP CONSTRAINT IF EXISTS ck_orgs_arn_region_paired",
+        "ALTER TABLE orgs ADD CONSTRAINT ck_orgs_arn_region_paired "
+        "CHECK ((registered_iam_arn IS NULL) = (aws_region IS NULL))",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 async def _apply_tickets_dedupe_external_id(conn) -> None:  # type: ignore[no-untyped-def]
     """Add `(org_id, source, source_external_id)` UNIQUE on `tickets`.
 
@@ -836,6 +895,10 @@ async def migrate() -> None:
                 await _apply_tickets_dedupe_external_id(conn)
             elif kind == "drop_github_poller_state":
                 await _apply_drop_github_poller_state(conn)
+            elif kind == "create_bearer_tokens":
+                await _apply_create_bearer_tokens(conn)
+            elif kind == "orgs_aws_region_and_arn_uniqueness":
+                await _apply_orgs_aws_region_and_arn_uniqueness(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},
