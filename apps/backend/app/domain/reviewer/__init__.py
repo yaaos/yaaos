@@ -47,7 +47,7 @@ from app.domain.reviewer.events import (
     ReviewStarted,
     ReviewSuperseded,
 )
-from app.domain.reviewer.incremental import handle_push, start_incremental_review
+from app.domain.reviewer.incremental_trigger import handle_push, start_incremental_review
 from app.domain.reviewer.llm import (
     ClassifyReplyInput,
     ClassifyReplyOutput,

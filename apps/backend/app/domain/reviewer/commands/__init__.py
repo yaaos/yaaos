@@ -30,6 +30,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
+from sqlalchemy import select, update
 
 from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
@@ -263,27 +264,166 @@ class CodeReview(_WorkspaceReviewCommand):
 
 
 class IncrementalReview(_WorkspaceReviewCommand):
-    """Push-driven incremental review against `prev_sha..head_sha`. Same
-    shape as CodeReview but routes to `coding_agent.incremental_review`."""
+    """Push-driven incremental review against `prev_sha..head_sha`.
+
+    Full body — provisions nothing (the prior `ProvisionWorkspace` step
+    owns the workspace), but does everything else `run_incremental_review`
+    used to do in the legacy `incremental.py`: fetches the real diff +
+    lessons + prior-finding summaries, builds the IncrementalReviewContext,
+    invokes `coding_agent.incremental_review`, runs the deterministic
+    anchor pass + LLM stale-check on touched-file open findings, posts the
+    new findings + stale-check replies via the VCS plugin, persists via
+    the aggregate, and updates the legacy `ReviewRow` for the SPA's
+    per-PR history view. On `pending_replay`, re-triggers via
+    `start_incremental_review`.
+
+    Inputs: `workspace_id` (from ProvisionWorkspace). Reads from the
+    ticket payload (set by `start_incremental_review`): `review_id`,
+    `prev_sha`, `head_sha`, `pr_external_id`.
+
+    Outputs: `review_id`, `admitted_count`, `dropped_count`,
+    `anchor_moved`, `anchor_gone`, `stale_marked`. PostFindings runs as a
+    no-op (we already posted inline — atomic with the anchor/stale
+    aggregate mutations).
+    """
 
     kind = "IncrementalReview"
 
     async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
         del inputs
-        from app.domain import coding_agent  # noqa: PLC0415
-        from app.domain.coding_agent import IncrementalReviewContext  # noqa: PLC0415
-        from app.domain.vcs import Diff  # noqa: PLC0415
-
-        head_sha = str(ticket_ctx.payload.get("head_sha") or "")
-        base_sha = str(ticket_ctx.payload.get("base_sha") or head_sha)
-        review_ctx = IncrementalReviewContext(
-            prev_sha=base_sha,
-            head_sha=head_sha,
-            diff=Diff(raw="", files=[]),
+        from app.core.audit_log import Actor  # noqa: PLC0415
+        from app.core.database import session as db_session  # noqa: PLC0415
+        from app.domain import coding_agent, lessons, pull_requests  # noqa: PLC0415
+        from app.domain.coding_agent import (  # noqa: PLC0415
+            IncrementalReviewContext,
+            InvocationStatus,
         )
+        from app.domain.reviewer.admission import (  # noqa: PLC0415
+            findingdrafts_to_raw,
+            raw_to_vcs_findings,
+        )
+        from app.domain.reviewer.constants import (  # noqa: PLC0415
+            CODING_AGENT_PLUGIN_ID,
+            REVIEWER_TAG,
+        )
+        from app.domain.reviewer.diff_utils import (  # noqa: PLC0415
+            detect_language,
+            ticket_skip_reason,
+        )
+        from app.domain.reviewer.incremental_anchor import (  # noqa: PLC0415
+            resolve_open_anchors,
+            stale_check_context_for,
+        )
+        from app.domain.reviewer.incremental_trigger import (  # noqa: PLC0415
+            fail_review,
+            set_review_step,
+            skip_review,
+            start_incremental_review,
+        )
+        from app.domain.reviewer.lock import acquire_pr_lock  # noqa: PLC0415
+        from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
+        from app.domain.reviewer.repository import (  # noqa: PLC0415
+            SqlAlchemyAggregateRepository,
+        )
+        from app.domain.reviewer.service import (  # noqa: PLC0415
+            apply_stale_check_result,
+            dispatch_audits,
+            dispatch_events,
+        )
+        from app.domain.reviewer.types import FindingState  # noqa: PLC0415
+        from app.domain.vcs import Review  # noqa: PLC0415
+        from app.domain.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
+
+        payload = ticket_ctx.payload or {}
+        review_id_raw = payload.get("review_id")
+        if not review_id_raw:
+            return Outcome.failure(reason="missing review_id in ticket payload")
+        try:
+            review_id = UUID(str(review_id_raw))
+        except (TypeError, ValueError):
+            return Outcome.failure(reason=f"invalid review_id: {review_id_raw!r}")
+
+        prev_sha = str(payload.get("prev_sha") or payload.get("base_sha") or "")
+        head_sha = str(payload.get("head_sha") or "")
+        if not head_sha:
+            await fail_review(review_id, "missing head_sha")
+            return Outcome.failure(reason="missing head_sha in payload")
+
+        if ticket_ctx.pr_id is None:
+            await fail_review(review_id, "ticket has no PR")
+            return Outcome.failure(reason="ticket has no PR")
+
+        org_id = ticket_ctx.org_id
+        try:
+            pr = await pull_requests.get(ticket_ctx.pr_id, org_id=org_id)
+        except Exception as exc:
+            await fail_review(review_id, f"pr_fetch_failed: {exc}")
+            return Outcome.failure(reason=f"pr fetch failed: {exc}")
+
+        vcs_plugin = get_vcs_plugin(pr.plugin_id)
+        try:
+            vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
+            diff = await vcs_plugin.fetch_diff(pr.external_id)
+        except Exception as exc:
+            await fail_review(review_id, f"vcs_fetch_failed: {exc}")
+            return Outcome.failure(reason=f"vcs fetch failed: {exc}")
+
+        lesson_rows = await lessons.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
+        language = detect_language(diff)
+
+        async with db_session() as s:
+            from datetime import UTC, datetime  # noqa: PLC0415
+
+            await s.execute(
+                update(ReviewRow)
+                .where(ReviewRow.id == review_id)
+                .values(
+                    status="running",
+                    started_at=datetime.now(UTC),
+                    current_step="resolving_entities",
+                )
+            )
+            await s.commit()
+
+        skip_reason = ticket_skip_reason(pr, diff)
+        if skip_reason is not None:
+            await skip_review(review_id, skip_reason)
+            return Outcome.success(label="skip", outputs={"reason": skip_reason})
+
+        # Prior findings for the prompt.
+        async with db_session() as s:
+            agg_repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await agg_repo.load(pr_id=pr.id, org_id=org_id)
+        prior_open = [
+            f"{f.title} ({f.current_anchor.file_path}:{f.current_anchor.line_start})"
+            for f in aggregate.findings
+            if f.state == FindingState.OPEN
+        ]
+        prior_ack = [
+            f"{f.title} ({f.current_anchor.file_path}:{f.current_anchor.line_start})"
+            for f in aggregate.findings
+            if f.state == FindingState.ACKNOWLEDGED
+        ]
+
+        await set_review_step(review_id, "invoking_agent")
+        review_ctx = IncrementalReviewContext(
+            pr=vcs_pr,
+            diff=diff,
+            prev_sha=prev_sha,
+            head_sha=head_sha,
+            lessons=lesson_rows,
+            language_hint=language,
+            prior_open_finding_summaries=prior_open,
+            prior_acknowledged_finding_summaries=prior_ack,
+            agent_config={},
+        )
+
         try:
             result = await coding_agent.incremental_review(
-                "claude_code", workspace, review_ctx, on_activity=_activity_publisher_for(ctx)
+                plugin_id=CODING_AGENT_PLUGIN_ID,
+                workspace=workspace,
+                context=review_ctx,
+                on_activity=_activity_publisher_for(ctx),
             )
         except Exception as exc:
             log.exception(
@@ -291,11 +431,211 @@ class IncrementalReview(_WorkspaceReviewCommand):
                 workflow_execution_id=ctx.workflow_execution_id,
                 ticket_id=ctx.ticket_id,
             )
+            await fail_review(review_id, f"{type(exc).__name__}: {exc}")
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
+        # Anchor pass + stale check while the workspace is still mounted.
+        touched_files = {f.path for f in diff.files} if diff.files else set()
+        stale_results: list[tuple[UUID, Any]] = []
+        anchor_moved_finding_ids: set[UUID] = set()
+        anchor_gone_finding_ids: set[UUID] = set()
+        anchor_moved_snapshots: dict[UUID, Any] = {}
+
+        if touched_files:
+            async with db_session() as snapshot_s:
+                snapshot_repo = SqlAlchemyAggregateRepository(snapshot_s)
+                snapshot_agg = await snapshot_repo.load(pr_id=pr.id, org_id=org_id)
+
+            files_needed = {
+                f.current_anchor.file_path for f in snapshot_agg.open_findings_in_files(touched_files)
+            }
+            contents: dict[str, list[str] | None] = {}
+            for fp in files_needed:
+                text = await workspace.read_text(fp)
+                contents[fp] = None if text is None else text.splitlines()
+            anchor_result = resolve_open_anchors(
+                snapshot_agg,
+                touched_files=touched_files,
+                read_file=contents.get,
+                new_commit_sha=head_sha,
+            )
+            anchor_moved_finding_ids = set(anchor_result.moved)
+            anchor_gone_finding_ids = set(anchor_result.gone)
+            anchor_moved_snapshots = {
+                f.id: f for f in snapshot_agg.findings if f.id in anchor_moved_finding_ids
+            }
+
+            for finding in snapshot_agg.open_findings_in_files(touched_files):
+                if finding.id in anchor_result.gone:
+                    continue
+                stale_ctx = stale_check_context_for(finding, diff)
+                stale_result = await coding_agent.stale_check(
+                    plugin_id=CODING_AGENT_PLUGIN_ID,
+                    workspace=workspace,
+                    context=stale_ctx,
+                )
+                if stale_result.status == InvocationStatus.SUCCESS:
+                    stale_results.append((finding.id, stale_result))
+                else:
+                    log.info(
+                        "incremental.stale_check_failed",
+                        finding_id=str(finding.id),
+                        status=str(stale_result.status),
+                    )
+
+        # Read file contents for new draft anchors before workspace teardown.
+        new_finding_contents: dict[str, list[str] | None] = {}
+        for draft in result.findings or []:
+            fp = draft.anchor.file_path
+            if fp in new_finding_contents:
+                continue
+            text = await workspace.read_text(fp)
+            new_finding_contents[fp] = None if text is None else text.splitlines()
+
+        if result.status != InvocationStatus.SUCCESS:
+            await fail_review(review_id, result.error_message or f"agent status={result.status}")
+            return Outcome.failure(reason=result.error_message or f"agent status={result.status}")
+
+        await set_review_step(review_id, "posting_review")
+
+        stale_marked = 0
+        async with db_session() as s:
+            await acquire_pr_lock(s, pr.id)
+            agg_repo = SqlAlchemyAggregateRepository(s)
+            aggregate = await agg_repo.load(pr_id=pr.id, org_id=org_id)
+
+            live_finding_ids = {f.id for f in aggregate.findings}
+            for moved_id, snap in anchor_moved_snapshots.items():
+                if moved_id in live_finding_ids:
+                    aggregate.update_anchor(moved_id, snap.current_anchor)
+            for gone_id in anchor_gone_finding_ids:
+                if gone_id in live_finding_ids:
+                    aggregate.mark_unverified_resolution(gone_id)
+
+            raw = findingdrafts_to_raw(
+                result.findings,
+                commit_sha=head_sha,
+                read_file=new_finding_contents.get,
+            )
+            new_findings, _obs, drops = aggregate.post_process_raw_findings(
+                review_id, raw, diff_files=touched_files
+            )
+
+            if new_findings:
+                review_obj = Review(
+                    agent_tag=REVIEWER_TAG,
+                    state="COMMENT",
+                    summary_body=None,
+                    findings=raw_to_vcs_findings(raw, new_findings),
+                )
+                post_result = await vcs_plugin.post_review(pr.external_id, review_obj)
+                external_ids = list(post_result.finding_to_comment_external_id.values())
+                for idx, f in enumerate(new_findings):
+                    external_id = external_ids[idx] if idx < len(external_ids) else f"local-{f.id}"
+                    thread = aggregate.open_thread_for_finding(f.id)
+                    aggregate.append_message(
+                        thread_id=thread.id,
+                        author_kind="yaaos",
+                        author_external_id=REVIEWER_TAG,
+                        external_comment_id=external_id,
+                        body=f.body,
+                    )
+
+            for finding_id, sr in stale_results:
+                action = apply_stale_check_result(
+                    aggregate,
+                    finding_id=finding_id,
+                    still_applies=sr.still_applies,
+                    confidence=sr.confidence,
+                )
+                if action.kind == "stale_marked" and action.reply_body:
+                    stale_marked += 1
+                    thread = aggregate.thread_for_finding(finding_id)
+                    if thread is None:
+                        continue
+                    parent_external = next(
+                        (
+                            m.external_comment_id
+                            for m in reversed(aggregate.messages)
+                            if m.thread_id == thread.id
+                        ),
+                        None,
+                    )
+                    if parent_external is None:
+                        continue
+                    try:
+                        yaaos_comment_id = await vcs_plugin.post_comment_reply(
+                            pr.external_id, parent_external, action.reply_body
+                        )
+                    except Exception:
+                        log.exception("incremental.stale_post_reply_failed", finding_id=str(finding_id))
+                        yaaos_comment_id = f"local-stale-{finding_id}"
+                    aggregate.append_message(
+                        thread_id=thread.id,
+                        author_kind="yaaos",
+                        author_external_id=REVIEWER_TAG,
+                        external_comment_id=yaaos_comment_id,
+                        body=action.reply_body,
+                        in_reply_to_external_id=parent_external,
+                    )
+
+            aggregate.complete_review(review_id, [f.id for f in new_findings])
+            await agg_repo.save(aggregate)
+            await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            await dispatch_events(aggregate)
+
+            if drops:
+                log.info(
+                    "incremental.admission_drops",
+                    review_id=str(review_id),
+                    drops=[
+                        {
+                            "rule_id": d.rule_id,
+                            "reason": d.reason,
+                            "severity": d.severity,
+                            "confidence": d.confidence,
+                        }
+                        for d in drops
+                    ],
+                )
+
+            from datetime import UTC, datetime  # noqa: PLC0415
+
+            await s.execute(
+                update(ReviewRow)
+                .where(ReviewRow.id == review_id)
+                .values(
+                    status="posted",
+                    completed_at=datetime.now(UTC),
+                    current_step="posted",
+                    tokens_in=result.telemetry.tokens_in,
+                    tokens_out=result.telemetry.tokens_out,
+                )
+            )
+            await s.commit()
+
+        # Trigger-policy §7 rule 4: re-evaluate if pending_replay was set.
+        async with db_session() as s:
+            current = (
+                await s.execute(select(ReviewRow).where(ReviewRow.id == review_id))
+            ).scalar_one_or_none()
+        if current and current.pending_replay:
+            await start_incremental_review(
+                pr.id, new_head_sha=head_sha, prev_head_sha=prev_sha, org_id=org_id
+            )
+
+        # Returns empty draft_findings so the downstream PostFindings step
+        # is a no-op (posting + admission already happened atomically with
+        # the aggregate persist above — preserves the anchor/post invariant).
         return Outcome.success(
             outputs={
-                "draft_findings": [f.model_dump(mode="json") for f in result.findings],
+                "review_id": str(review_id),
+                "draft_findings": [],
+                "admitted_count": len(new_findings),
+                "dropped_count": len(drops),
+                "anchor_moved": len(anchor_moved_finding_ids),
+                "anchor_gone": len(anchor_gone_finding_ids),
+                "stale_marked": stale_marked,
             }
         )
 
@@ -1141,69 +1481,6 @@ class PostReply(_LocalReviewCommand):
         )
 
 
-class IncrementalReviewLegacy:
-    """Engine-shaped wrapper around `domain/reviewer/incremental.run_incremental_review`.
-
-    The full push-driven incremental review (workspace + LLM + anchor pass +
-    stale check + post + persist + replay) lives in `incremental.py`; this
-    command makes it visible to `core/workflow` so every incremental review
-    gets a `workflow_executions` row. Single-step workflow:
-    `incremental_review_legacy_v1`.
-
-    Inputs come from the ticket_payload set by `start_incremental_review`:
-    `review_id`, `prev_sha`, `head_sha`. Failures bubble as
-    `Outcome.failure`; the legacy body's own `ReviewRow` status update
-    (queued/running/posted/failed/skipped) continues to drive the per-PR
-    review history UI in parallel.
-    """
-
-    kind = "IncrementalReviewLegacy"
-    category = CommandCategory.LOCAL
-    restart_safe = False  # spawns workspace + LLM work — not safe to restart
-
-    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
-        del inputs
-        from app.domain.reviewer.incremental import (  # noqa: PLC0415
-            run_incremental_review,
-        )
-
-        provider = get_workflow_context_provider()
-        if provider is None:
-            return Outcome.failure(reason="no workflow_context provider registered")
-        ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
-        if ticket_ctx is None:
-            return Outcome.failure(reason="ticket context not found")
-
-        payload = ticket_ctx.payload or {}
-        review_id_raw = payload.get("review_id")
-        prev_sha = payload.get("prev_sha")
-        head_sha = payload.get("head_sha")
-        if not review_id_raw or not prev_sha or not head_sha:
-            return Outcome.failure(reason="incremental_review_legacy: missing review_id/prev_sha/head_sha")
-
-        try:
-            review_id = UUID(str(review_id_raw))
-        except (TypeError, ValueError):
-            return Outcome.failure(reason=f"invalid review_id: {review_id_raw!r}")
-
-        try:
-            await run_incremental_review(
-                review_id=review_id,
-                ticket_id=UUID(ctx.ticket_id),
-                org_id=ticket_ctx.org_id,
-                prev_sha=str(prev_sha),
-                head_sha=str(head_sha),
-            )
-        except Exception as exc:
-            log.exception(
-                "incremental_review_legacy.failed",
-                workflow_execution_id=ctx.workflow_execution_id,
-                ticket_id=ctx.ticket_id,
-            )
-            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
-        return Outcome.success(outputs={"review_id": str(review_id)})
-
-
 ALL_WORKSPACE_COMMANDS: tuple[_WorkspaceReviewCommand, ...] = (
     CodeReview(),
     IncrementalReview(),
@@ -1219,7 +1496,6 @@ ALL_LOCAL_COMMANDS: tuple[object, ...] = (
     ResolveFinding(),
     ArchiveStaleFindings(),
     PostReply(),
-    IncrementalReviewLegacy(),
 )
 
 
@@ -1231,7 +1507,6 @@ __all__ = [
     "CheckShouldReview",
     "CodeReview",
     "IncrementalReview",
-    "IncrementalReviewLegacy",
     "PostFindings",
     "PostReply",
     "ResolveFinding",

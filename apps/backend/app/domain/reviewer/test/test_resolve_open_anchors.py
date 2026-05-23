@@ -10,8 +10,8 @@ check each open finding in touched files. Three outcomes:
   aggregate, finding stays OPEN, the caller is told to run verify_fix on it.
 - **unchanged** → no-op (same lines, just stamps new commit_sha).
 
-This file tests the pure helper. Wiring into `_run_incremental_review` is
-covered indirectly by the end-to-end push tests.
+This file tests the pure helper. Wiring into the `IncrementalReview`
+engine command is covered indirectly by the end-to-end push tests.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from app.domain.reviewer.aggregate import PRReviewAggregate
 from app.domain.reviewer.anchor import make_anchor
-from app.domain.reviewer.incremental import resolve_open_anchors
+from app.domain.reviewer.incremental_anchor import resolve_open_anchors
 from app.domain.reviewer.types import (
     Finding,
     FindingFingerprint,

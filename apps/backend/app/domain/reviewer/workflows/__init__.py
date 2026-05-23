@@ -247,33 +247,9 @@ answer_question_v1 = Workflow(
 )
 
 
-# incremental_review_legacy_v1: single-step wrapper around the existing
-# `domain/reviewer/incremental.run_incremental_review` body. The full
-# orchestration (workspace + LLM + anchor pass + stale check + post +
-# persist + replay) lives in incremental.py and is too intertwined with
-# its helpers to safely split across the 6-step `incremental_review_v1`
-# shape today. This workflow makes the engine the source of truth for
-# every push-driven review (workflow_executions row per run) while
-# preserving the legacy body. The 6-step `incremental_review_v1` stays
-# registered for the future port that splits the body across engine steps.
-incremental_review_legacy_v1 = Workflow(
-    name="incremental_review_legacy_v1",
-    version=1,
-    steps=(
-        Step(
-            id="run",
-            command_kind="IncrementalReviewLegacy",
-            transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-        ),
-    ),
-    entry_step_id="run",
-)
-
-
 ALL_WORKFLOWS: tuple[Workflow, ...] = (
     pr_review_v1,
     incremental_review_v1,
-    incremental_review_legacy_v1,
     verify_fix_v1,
     stale_check_v1,
     answer_question_v1,
@@ -283,7 +259,6 @@ ALL_WORKFLOWS: tuple[Workflow, ...] = (
 __all__ = [
     "ALL_WORKFLOWS",
     "answer_question_v1",
-    "incremental_review_legacy_v1",
     "incremental_review_v1",
     "pr_review_v1",
     "stale_check_v1",
