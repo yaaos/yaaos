@@ -45,20 +45,30 @@ def set_test_session_override(s: AsyncSession | None) -> None:
     _test_session_override.set(s)
 
 
+def _engine_kwargs(settings) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    """Build create_async_engine kwargs from settings.
+
+    Dev/test → NullPool (avoids cross-event-loop contamination in TestClient
+    tests where each test brings up a fresh loop). Prod → QueuePool sized
+    from settings, with pool_pre_ping to weed stale connections.
+    """
+    kwargs: dict[str, object] = {"future": True}
+    if settings.is_non_prod:
+        from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = settings.db_pool_size
+        kwargs["max_overflow"] = settings.db_max_overflow
+    return kwargs
+
+
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = get_settings()
-        kwargs: dict[str, object] = {"pool_pre_ping": True, "future": True}
-        # In dev/test we use NullPool — avoids cross-event-loop contamination
-        # in TestClient-driven integration tests where each test brings up a
-        # fresh loop. Prod uses the default pool.
-        if settings.is_non_prod:
-            from sqlalchemy.pool import NullPool  # noqa: PLC0415
-
-            kwargs["poolclass"] = NullPool
-            kwargs.pop("pool_pre_ping", None)
-        _engine = create_async_engine(settings.database_url, **kwargs)  # type: ignore[arg-type]
+        _engine = create_async_engine(settings.database_url, **_engine_kwargs(settings))  # type: ignore[arg-type]
     return _engine
 
 

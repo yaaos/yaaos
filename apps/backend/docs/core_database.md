@@ -23,7 +23,13 @@ No HTTP routes.
 
 ### Engine lifecycle
 
-`get_engine()` lazily constructs `AsyncEngine` from `settings.database_url`. In `dev`, uses `NullPool` to avoid cross-event-loop contamination in `TestClient` tests (each test brings up a fresh loop). In `prod`, default pool with `pool_pre_ping=True`. `get_sessionmaker()` produces sessions with `expire_on_commit=False`.
+`get_engine()` lazily constructs `AsyncEngine` from `settings.database_url`. In `dev`/`test`, uses `NullPool` to avoid cross-event-loop contamination in `TestClient` tests (each test brings up a fresh loop). In `prod`, uses `QueuePool` sized via `db_pool_size` + `db_max_overflow` settings with `pool_pre_ping=True`. `get_sessionmaker()` produces sessions with `expire_on_commit=False`.
+
+### Pool sizing
+
+Pool size tracks **concurrent in-flight queries**, not event loops. A single asyncio loop can hold many connections at once: a Postgres connection is single-threaded at the protocol level (one query per connection in flight), so N coroutines `await`ing DB queries simultaneously need N connections. Defaults (`db_pool_size=10`, `db_max_overflow=5`) suit dev for both web and worker processes.
+
+Worker rule of thumb: `db_pool_size >= WORKER_CONCURRENCY + 2` (one for the outbox drain, one headroom). Bump together when scaling worker concurrency. Web sizing tracks expected peak concurrent DB-touching requests. Production tunes both via env at deploy time.
 
 ### `ping()`
 

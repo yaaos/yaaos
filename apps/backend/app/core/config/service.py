@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # Optional
     yaaos_env: Literal["dev", "test", "prod"] = "prod"
     yaaos_port: int = 8080
+
+    # SQLAlchemy QueuePool sizing for the prod-path engine. NullPool is used
+    # in dev/test (see `core/database`), so these only affect prod-mode
+    # processes. Pool size tracks concurrent in-flight queries, not event
+    # loops — a single asyncio loop can hold many connections at once when
+    # multiple coroutines `await` on queries simultaneously. Worker rule of
+    # thumb: db_pool_size >= worker_concurrency + 2 (drain + headroom).
+    db_pool_size: int = 10
+    db_max_overflow: int = 5
     yaaos_cors_origins: str | None = None  # comma-separated; only honored in non-dev
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "yaaos"

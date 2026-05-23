@@ -21,9 +21,10 @@ Required (construction fails if unset):
 - `yaaos_encryption_key` — Fernet key (32-byte URL-safe base64) for credential encryption.
 
 Optional, with defaults:
-- `yaaos_env: Literal["dev", "prod"]` (default `prod`).
+- `yaaos_env: Literal["dev", "test", "prod"]` (default `prod`).
 - `yaaos_port` (8080).
 - `yaaos_cors_origins` — comma-separated; honored only when env is not `dev`.
+- `db_pool_size` (10), `db_max_overflow` (5) — SQLAlchemy QueuePool sizing for the prod-path engine (see [core/database](core_database.md) § Pool sizing).
 - `otel_exporter_otlp_endpoint`, `otel_service_name` (`yaaos`).
 - `log_level` (`INFO`).
 - `github_api_base_url` (`https://api.github.com`; overridden by e2e stack to `apps/fake-github`).
