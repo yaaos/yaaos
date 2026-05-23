@@ -22,7 +22,7 @@ Exported from `app/core/sse_pubsub/__init__.py`:
 
 ### Backend
 
-Redis-only. `settings.redis_url` is required at boot (see [core/config](core_config.md)). Client construction is lazy — importing the module or grabbing the singleton doesn't touch Redis, so tests that don't publish/subscribe don't need Redis to be reachable.
+Layered on [`core/redis`](core_redis.md). This module owns the channel naming convention (`activity:{workflow_execution_id}`) + JSON encode/decode of the event dict; `core/redis` owns connection management and the per-loop client cache. Client construction is lazy — importing the module or grabbing the singleton doesn't touch Redis, so tests that don't publish/subscribe don't need Redis to be reachable.
 
 ### Channel naming
 

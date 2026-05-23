@@ -68,7 +68,7 @@ Cloudflare honors these standard headers; no CDN-specific config required.
 
 ### `/api/health` carve-out
 
-Owned by `core/webserver/health.py` directly — not via `RouteSpec`. Returns `{status: "ok"|"degraded", db_ok: bool, version: str}`. Kept out of the registry so it survives even if no module registers anything.
+Owned by `core/webserver/health.py` directly — not via `RouteSpec`. Returns `{status: "ok"|"degraded", db_ok: bool, redis_ok: bool, version: str}`. Pings both [`core/database`](core_database.md) and [`core/redis`](core_redis.md); status is `degraded` if either is unreachable. Kept out of the registry so it survives even if no module registers anything.
 
 ## Data owned
 

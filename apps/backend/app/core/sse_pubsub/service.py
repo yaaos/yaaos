@@ -1,55 +1,44 @@
-"""Redis-backed pub/sub for ActivityEvent fanout.
+"""ActivityEvent fanout — channel naming + JSON encode/decode over `core/redis`.
 
 Publishers call `publish(channel, event)` with `channel =
 activity:{workflow_execution_id}`; subscribers iterate `async for event in
-subscribe(channel)`. Backed by Redis `PUBLISH` / `SUBSCRIBE` so a publish
-from the worker process reaches an SSE subscriber attached to a different
-web process. Fire-and-forget per Redis semantics — slow consumers do not
-backpressure publishers.
+subscribe(channel)`. Backed by Redis `PUBLISH` / `SUBSCRIBE` via
+[`core/redis`](../redis/__init__.py) so a publish from the worker process
+reaches an SSE subscriber on the web process. Fire-and-forget per Redis
+semantics — slow consumers do not backpressure publishers.
 
-Channel naming convention: `activity:{workflow_execution_id}`. The caller
-is responsible for forming the key via `channel_for()`. The SSE handler in
-`web.py` subscribes per workflow execution; `core/agent_gateway` (and the
-reviewer's direct activity publisher) publish.
+Channel naming convention: `activity:{workflow_execution_id}`. Caller
+forms the key via `channel_for()`. The SSE handler in `web.py` subscribes
+per workflow execution; `core/agent_gateway` (and the reviewer's direct
+activity publisher) publish.
 
 The Pydantic-encoded payload crosses the seam as a `dict[str, Any]`
-serialized to JSON on Redis; the channel name discriminates routing. No
-per-event ack; activity is fire-and-forget per architecture.
+serialized to JSON; this module owns the encode/decode. `core/redis`
+handles connection management — there's no Redis client construction
+here anymore.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
-from redis.asyncio import from_url
 
-from app.core.config import get_settings
+from app.core import redis as redis_client
 
 log = structlog.get_logger("core.sse_pubsub")
 
 
 class RedisPubsub:
-    """Redis pub/sub wrapper that matches the in-process API the rest of
-    the app depends on.
-
-    `subscriber_count` is **local-process** — Redis's `PUBSUB NUMSUB`
-    returns the cluster-wide count, which is the right answer for "is
-    anyone listening anywhere?" but not for the demand-pull diagnostics
-    callers want. The local count is enough for tests asserting register/
-    unregister bookkeeping.
-
-    Client construction is lazy so importing the module (or constructing
-    the singleton) doesn't require a live Redis — useful for tests that
-    don't touch SSE.
+    """ActivityEvent pub/sub. Channel naming + JSON encode/decode on top
+    of `core/redis`. `subscriber_count` is local-process — Redis's
+    `PUBSUB NUMSUB` is cluster-wide and not what callers want.
     """
 
-    def __init__(self, url: str) -> None:
-        self._url = url
+    def __init__(self) -> None:
         self._local_counts: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
@@ -57,48 +46,20 @@ class RedisPubsub:
         self._local_counts.clear()
 
     async def publish(self, channel: str, event: dict[str, Any]) -> int:
-        """Publish to `channel`. Returns the number of clients Redis
-        delivered to cluster-wide. Returns 0 when nobody is listening.
-
-        Creates a fresh client per call: redis-py's async client binds
-        its connection pool to the event loop where the first call ran,
-        so cross-loop reuse (web handler in one loop, drain in another,
-        tests via TestClient's portal loop) breaks. POC-acceptable cost;
-        swap to a per-loop pool if publish QPS becomes a hot path.
-        """
-        client = from_url(self._url, decode_responses=True)
-        try:
-            payload = json.dumps(event)
-            n = await client.publish(channel, payload)
-            return int(n)
-        finally:
-            with contextlib.suppress(Exception):
-                await client.aclose()
+        """Publish `event` (JSON-serialized) on `channel`. Returns the
+        cluster-wide delivery count. Returns 0 when nobody is listening."""
+        payload = json.dumps(event).encode()
+        return await redis_client.publish(channel, payload)
 
     async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
-        """Async iterator over events on `channel`. Registers a Redis
-        subscription on first iteration; unregisters on iterator close
-        (consumer cancellation, exhaustion, or context exit).
-
-        Filters out Redis's own subscribe/unsubscribe confirmation
-        messages — callers only see `message` payloads. Creates a fresh
-        client per iterator so the connection pool stays bound to the
-        consumer's loop.
-        """
-        client = from_url(self._url, decode_responses=True)
-        pubsub = client.pubsub()
-        await pubsub.subscribe(channel)
+        """Async iterator over events on `channel`. Local subscriber count
+        is incremented on entry, decremented on iterator close."""
         async with self._lock:
             self._local_counts[channel] = self._local_counts.get(channel, 0) + 1
         try:
-            async for msg in pubsub.listen():
-                if msg.get("type") != "message":
-                    continue
-                data = msg.get("data")
-                if not isinstance(data, str):
-                    continue
+            async for payload in redis_client.subscribe(channel):
                 try:
-                    yield json.loads(data)
+                    yield json.loads(payload.decode())
                 except json.JSONDecodeError:
                     log.warning("sse_pubsub.malformed_payload", channel=channel)
                     continue
@@ -109,12 +70,6 @@ class RedisPubsub:
                     self._local_counts.pop(channel, None)
                 else:
                     self._local_counts[channel] = cur - 1
-            with contextlib.suppress(Exception):
-                await pubsub.unsubscribe(channel)
-            with contextlib.suppress(Exception):
-                await pubsub.aclose()
-            with contextlib.suppress(Exception):
-                await client.aclose()
 
     def subscriber_count(self, channel: str) -> int:
         """Local-process subscriber count for diagnostics / tests."""
@@ -125,22 +80,16 @@ _singleton: RedisPubsub | None = None
 
 
 def get_pubsub() -> RedisPubsub:
-    """Process-singleton pub/sub. Constructed lazily from
-    `settings.redis_url` — required at boot, see [core/config](
-    core_config.md).
-    """
+    """Process-singleton pub/sub."""
     global _singleton
     if _singleton is None:
-        _singleton = RedisPubsub(get_settings().redis_url)
+        _singleton = RedisPubsub()
     return _singleton
 
 
 def _reset_for_tests() -> None:
     """Drop the singleton. Tests call this in setup/teardown to keep
-    state from leaking between cases. Per-call/per-iterator Redis
-    clients are owned by their callers, so resetting the singleton has
-    no lingering connections to clean up.
-    """
+    state from leaking between cases."""
     global _singleton
     _singleton = None
 

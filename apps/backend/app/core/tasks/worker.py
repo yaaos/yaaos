@@ -18,6 +18,7 @@ import signal
 import structlog
 
 from app.core import database
+from app.core import redis as redis_client
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_loop
 
@@ -68,5 +69,7 @@ async def run() -> None:
             await t
     with contextlib.suppress(Exception):
         await broker.shutdown()
+    with contextlib.suppress(Exception):
+        await redis_client.aclose()
     await database.dispose()
     log.info("tasks.worker.stopped")

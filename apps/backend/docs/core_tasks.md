@@ -31,6 +31,8 @@ Exports `task`, `enqueue`, `TaskContext`, `TaskRef`, plus `OutboxEntryRow`, `dra
 - `drain_loop(broker)` — Postgres → Redis pump (lives in `drain.py`). Sleeps ~100ms between empty polls; immediately re-polls when a batch had work. Per-batch transaction so a crash mid-batch redispatches at-most a batch's worth of rows on restart.
 - `broker.listen()` — taskiq's consumer loop. Pops tasks from Redis, invokes the registered body.
 
+The broker URL comes from [`core/redis.get_url()`](core_redis.md) — taskiq-redis takes a URL (not a client) so this is a thin accessor on top of `settings.redis_url`. Shutdown order: `broker.shutdown()` → `redis.aclose()` → `database.dispose()`.
+
 Single-process POC. If the workload demands it, the two coroutines split into separate compose services (same image, different `CMD` args) so taskiq concurrency and drain throughput scale independently.
 
 ### Outbox table (private)

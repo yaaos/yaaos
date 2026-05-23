@@ -49,20 +49,21 @@ def test_health_endpoint_responds_200() -> None:
         r = client.get("/api/health")
     assert r.status_code == 200
     body = r.json()
-    assert set(body.keys()) == {"status", "db_ok", "version"}
+    assert set(body.keys()) == {"status", "db_ok", "redis_ok", "version"}
     assert body["status"] in {"ok", "degraded"}
     assert isinstance(body["db_ok"], bool)
+    assert isinstance(body["redis_ok"], bool)
     assert body["version"]
 
 
-def test_health_endpoint_status_matches_db_ok() -> None:
+def test_health_endpoint_status_matches_db_and_redis() -> None:
     # lazy: import after the fixture has set env vars
     from app.main import app  # noqa: PLC0415
 
     with TestClient(app) as client:
         r = client.get("/api/health")
     body = r.json()
-    if body["db_ok"]:
+    if body["db_ok"] and body["redis_ok"]:
         assert body["status"] == "ok"
     else:
         assert body["status"] == "degraded"
