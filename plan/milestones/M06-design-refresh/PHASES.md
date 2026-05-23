@@ -294,7 +294,7 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 **Definition of done:**
 
 - [x] `apps/web/bin/ci` + `apps/backend/bin/ci` green; `apps/e2e/bin/ci` + RWX `web-security` not run in the cron environment.
-- [ ] `grep -rn "M01_ORG_ID\|placeholder-page\|/api/memory\|/api/integrations\|/api/byok" apps/` returns zero matches outside migrations/changelogs. (Partial: M01_ORG_ID + placeholder-page + /api/memory clean; /api/byok and /api/integrations still in backend per D2.7.)
+- [x] `grep -rn "M01_ORG_ID\|placeholder-page\|/api/memory\|/api/integrations\|/api/byok" apps/` returns zero matches outside migrations/changelogs. (D2.7 reversed in audit follow-up A1 — backend `/api/byok` → `/api/api-keys`, `/api/integrations` → `/api/mcp-proxy`.)
 - [x] `grep -rn "role.*member" apps/web/src` returns zero matches.
 - [x] Doc-link checker clean.
 - [x] Initial bundle ≤ 200 KB gzipped (target from F2 M). (Today ~172 KB gzipped — under target.)

@@ -2,6 +2,41 @@
 
 > Recorded as M06 executes autonomously. Each entry: the question, the option picked, alternatives rejected, one sentence why.
 
+## Audit follow-up (post-Phase 9)
+
+The comprehensive audit surfaced four prior deferrals worth revisiting. The user-approved resolutions:
+
+### A1 — D2.7 reversed: backend `/api/byok` + `/api/integrations` renamed
+- **Original (D2.7):** kept backend paths unchanged to avoid breaking Linear/Notion OAuth callback registrations.
+- **Audit fix:** renamed `/api/byok` → `/api/api-keys` and `/api/integrations` → `/api/mcp-proxy` (including the OAuth callback). User is updating Linear/Notion OAuth app config to point at the new `/api/mcp-proxy/{provider}/callback` URL.
+- **Why:** F2 § G grep target "zero matches for byok / integrations" was unachievable while backend paths persisted.
+
+### A2 — D8.1 reversed: real email-domain SSO discover
+- **Original (D8.1):** `/api/auth/sso/discover` returned `{provider: "github"}` for every email — a stub honoring the SPA contract but not the routing logic.
+- **Audit fix:** added `sso_configs.email_domains: list[str]` (migration 024). The endpoint now JSONB-lookups enabled SSO configs by the email's domain (case-insensitive) and returns `{provider: "saml", saml_org_slug}` on hit. Owner-only admin UI on `/orgs/$slug/settings/auth` maintains the claim list.
+- **Why:** the stub left the login page broken for any future SAML customer; building the column + lookup is straightforward and unblocks real SSO onboarding.
+
+### A3 — D3.1 reversed: `Ticket.status` collapsed into M06 5-state vocab
+- **Original (D3.1):** dual representation — `Ticket.status` carried the legacy 4-state lifecycle (`open|in_review|complete|abandoned`) and a separate `m06_status` computed field projected it to the 5-state UI vocab.
+- **Audit fix:** rewrote `tickets.status` rows one-shot via migration 023 to the 5-state vocab (`running|hitl|done|failed|cancelled`). Removed `m06_status` field, deleted `m06_status.py`, swept every caller. `hitl` and `failed` are reserved for the workflow-state projection to populate.
+- **Why:** the dual-vocabulary forced every future caller to know which to read; the collapse is the long-promised cleanup.
+
+### A4 — D4.1 reaffirmed: keep `agents` field name (no rename to `sub_agents`)
+- **Original (D4.1):** kept the `agents` JSONB field name; added optional fields additively.
+- **Audit re-decision:** **don't rename.** No functional reason — Claude Code has an orchestrator + N "sub-agents" semantically, but the field name `agents` is in the JSONB stored shape and renaming requires a JSONB migration + sweep of every test fixture + plugin default. Zero value for POC; the orchestrator is a separate field so there's no ambiguity at the call site.
+- **Why:** spec-letter compliance only; the user explicitly questioned the rename and the call was right.
+
+### A5 — Notifications subscribers wired (new)
+- **Question:** the notifications module read side was wired end-to-end (inbox page + popover) but no writer existed. Build it.
+- **Picked:** `domain/notifications/subscribers.py` — a long-running task that subscribes to `core/events` (`kinds=["ticket_status_changed"]`) and writes one row per org member on transitions into `hitl`, `done`, `failed`. Idempotent on `(user_id, type, ticket_id)`. Spawned via the existing `RouteSpec.on_startup` hook.
+- **Rejected:** narrower targeting (only the triggering user + admins). Per POC principles, every member of the org sees the row; the cross-org inbox page already filters by `read_state` and `org_id` so over-inclusive writes are harmless.
+
+### A6 — F1 ledger Phase 9 stays `[partial]` until perf/axe verified
+- **Original closeout:** marked Phase 9 `[done]` despite F2 § M (perf), F2 § D (axe), F2 § H (`apps/e2e/bin/ci`), F2 § L (browser support) being unverified.
+- **Audit fix:** F1 ledger Phase 9 stays `[partial]` until those four items are verified in a real-browser environment. The cron environment has no Docker / Chrome; closing them is a user-driven follow-up.
+
+---
+
 ## Phase 1 — Token + primitive substrate
 
 ### D1.1 — shadcn install method: manual scaffold vs interactive CLI

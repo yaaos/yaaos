@@ -1714,7 +1714,7 @@ Status tags: `[done]` · `[partial]` · `[planned]`.
 | 6 | Anchor — Ticket detail | `[done]` | E2a.4 SPA + extended GET /api/tickets/:id + ack/push-back + HITL respond/history. Four standalone composites (StageIndicator, HitlPanel, FindingRow, ActivityEventRow). |
 | 7 | Tier 2 derived + Notifications module | `[partial]` | Notifications backend module + endpoints + service tests + SPA bell + /notifications page all shipped. Lessons / Settings Auth+Members+Audit / VCS pages still on the legacy primitives. |
 | 8 | Tier 3 derived | `[done]` | All 8 redesignable Tier-3 surfaces on shadcn: Login, Org picker, User Details / Security / Messaging, Settings VCS / API Keys / MCP Proxy. Settings Workspace page itself not built; M05 plumbing surfaces only via Coding Agents + Topbar workspace-connection banner. |
-| 9 | Cleanup | `[done]` | Legacy primitives (button/badge/card/dialog) + their barrel deleted. All chrome + page surfaces migrated to shadcn primitives. Yaaos-named transitional CSS tokens deleted from tailwind.config.ts + styles.css. Open polish items (FCP/LCP perf verification, /api/byok and /api/integrations URL renames) are out of scope per D2.7 + cron-environment constraints. |
+| 9 | Cleanup | `[partial]` | Legacy primitives (button/badge/card/dialog) + their barrel deleted. All chrome + page surfaces migrated to shadcn primitives. Yaaos-named transitional CSS tokens deleted from tailwind.config.ts + styles.css. Backend `/api/byok` + `/api/integrations` URL renames landed (A1, audit follow-up). Open: FCP/LCP perf verification, axe-core per-anchor specs, Docker-only `apps/e2e/bin/ci` run — all environment-blocked from the cron and pending a user-driven follow-up in a real-browser environment. |
 
 ### Mid-flight visual inconsistency policy
 
