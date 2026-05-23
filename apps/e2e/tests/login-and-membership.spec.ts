@@ -74,7 +74,7 @@ test.describe("auth + members", () => {
     await page.getByTestId("role-bob").selectOption("admin");
 
     // Sign out of every session. M03+ moved the action to the Security page.
-    await page.goto(`${BASE}/account/security`);
+    await page.goto(`${BASE}/user/security`);
     await page.getByTestId("logout-all").click();
     await page.waitForURL(/\/login$/);
   });

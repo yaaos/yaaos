@@ -104,6 +104,8 @@ M02_PROTECTED_PREFIXES: tuple[str, ...] = (
     "/api/orgs",  # exact + prefix
     "/api/byok",  # exact + prefix
     "/api/integrations",  # exact + prefix
+    # M05 — workspace connection status + activity SSE stream.
+    "/api/workspaces",  # exact + prefix
     # M06 — org-scope the three M01-era routers.
     "/api/tickets",  # exact + prefix
     "/api/lessons",  # exact + prefix

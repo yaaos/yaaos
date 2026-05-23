@@ -24,7 +24,7 @@ Three processes hold different secrets and run with different privileges.
 
 ### Authorization
 
-- Per-action `Role` mapping in [`domain/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/domain/sessions/dependencies.py): `MEMBER` < `ADMIN` < `OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
+- Per-action `Role` mapping in [`domain/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/domain/sessions/dependencies.py): `BUILDER` < `ADMIN` < `OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
 - Owner/Admin-gated M05 endpoints: `PATCH /api/orgs` (workspace_provider + registered_iam_arn), `GET /api/workspaces/connection_status`.
 
 ### Secrets at rest

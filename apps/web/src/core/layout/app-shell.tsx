@@ -13,7 +13,7 @@ const CRUMB_BY_PATH: Record<string, string> = {
 // User-scoped pages render outside the app shell — no sidebar, no topbar,
 // no org nav. The login page in particular must not surface dashboard
 // links to anonymous visitors.
-const STANDALONE_PATHS = new Set(["/login", "/user"]);
+const STANDALONE_PATHS = new Set(["/login", "/user", "/orgs"]);
 
 export function AppShell() {
   const { location } = useRouterState();

@@ -53,7 +53,7 @@ The legacy `queue.py` monolith was dismantled across slices 40-61. Today's modul
 | `secrets_detection.py` | `detect_secrets(diff)` + `secrets_warning_review(rule_id)`. Pure regex pre-flight. |
 | `mcp_wiring.py` | `build_mcp_payload`, `prefix_broken_creds_warning`. MCP-provider collection + the broken-creds GitHub callout. |
 | `diff_utils.py` | `detect_language`, `ticket_skip_reason`, `is_skip_path`. Pure `Diff` inspection. |
-| `constants.py` | `REVIEWER_TAG`, `CODING_AGENT_PLUGIN_ID`, `DEFAULT_MODEL`, `DEFAULT_EFFORT`, `M01_ORG_ID`. |
+| `constants.py` | `REVIEWER_TAG`, `CODING_AGENT_PLUGIN_ID`, `DEFAULT_MODEL`, `DEFAULT_EFFORT`. |
 | `admission.py` | `admit_raw_findings`, `findingdrafts_to_raw`, `raw_to_vcs_findings`, `post_admitted_findings_to_vcs`. The M05 `PostFindings` command + `incremental.py` both import from here. |
 | `commands/__init__.py` | M05 `WorkflowCommand` bodies (5 Workspace + 5 Local). |
 | `workflows/*` | M05 `Workflow` definitions for the 5 reviewer task modes. |

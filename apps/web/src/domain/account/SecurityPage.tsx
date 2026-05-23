@@ -9,7 +9,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 /**
- * `/account/security` — re-homed TOTP enrollment + sign-out-all-sessions from
+ * `/user/security` — re-homed TOTP enrollment + sign-out-all-sessions from
  * the M02 `/account` page. Future security settings (recovery codes, passkeys,
  * hardware keys) land here.
  */

@@ -9,10 +9,10 @@ A small, hand-maintained layer between the FastAPI backend and the UI. Owns the 
 ## Public interface
 
 Re-exports from `@core/api`:
-- **Client:** `apiClient`, `apiFetch`.
-- **Resource types:** `HealthResponse`, `OnboardingStatus`, `Ticket`, `Lesson`, `ReviewJob`, `ReviewJobActivityEvent`, `Finding`, `FindingSnippetLine`, `AuditEntry`, `GithubInstallation`, `GithubRepository`, `GithubRepositoriesResponse`, `PluginMeta`, `PluginType`, `PluginHealth`, `SetGithubCredentialsInput`.
-- **Queries:** `useHealth`, `useOnboarding`, `useTickets`, `useTicket`, `useTicketAudit`, `useReviewJobsForTicket`, `useLessons`, `useMetricsSummary`, `useGithubInstallation`, `useGithubRepositories`, `usePluginsList`, `usePluginHealth`.
-- **Mutations:** `useRereviewMutation`, `useCancelReviewerJobs`, `useCreateLesson`, `useDeleteLesson`, `useSetAnthropicKey`, `useSetGithubCredentials`.
+- **Client:** `apiClient`, `apiFetch`, `getCurrentOrgSlug`, `setCurrentOrgSlug`.
+- **Resource types:** `HealthResponse`, `Ticket`, `Lesson`, `ReviewJob`, `ReviewJobActivityEvent`, `Finding`, `FindingSnippetLine`, `AuditEntry`, `GithubInstallation`, `GithubRepository`, `GithubRepositoriesResponse`, `PluginMeta`, `PluginType`, `PluginHealth`, `ConfigStatus`, `CreateOrgResponse`, `DashboardResponse`, `DashboardStats`, `HitlHistoryEntry`, `MineOrg`, `Notification`, `NotificationsPopover`, `SsoDiscoverResult`, `ConversationRow`, `FindingRow`, `FindingThread`, `OrgSettings`, `ReviewTimelineRow`, `ThreadMessage`, `WorkspaceConnectionStatus`.
+- **Queries:** `useHealth`, `useConfigStatus`, `useDashboard`, `useTickets`, `useTicket`, `useTicketAudit`, `useReviewsForTicket`, `useReviewJobsForTicket`, `useLessons`, `useMetricsSummary`, `useGithubInstallation`, `useGithubRepositories`, `usePluginHealth`, `useNotifications`, `useNotificationsPopover`, `useMyOrgs`, `useHitlHistory`, `useOrgSettings`, `useWorkspaceConnectionStatus`, `useConversationsForTicket`, `useFindingsForTicket`, `useThreadForFinding`.
+- **Mutations:** `useRereviewMutation`, `useFullRereviewMutation`, `useCancelReviewerJobs`, `useCreateLesson`, `useDeleteLesson`, `useSetAnthropicKey`, `useSetGithubCredentials`, `useMarkNotificationRead`, `useMarkAllNotificationsRead`, `useAckFinding`, `usePushBackFinding`, `useCreateOrg`, `useHitlRespond`, `useSsoDiscover`, `useUpdateOrgSettings`.
 
 ## Module architecture
 

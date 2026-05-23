@@ -87,12 +87,8 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 |---|---|
 | `use-mobile.tsx` | Returns `true` when the viewport is below the mobile breakpoint. Used by shadcn `sidebar`. |
 
-## Legacy primitives (`src/shared/components/*.tsx`)
-
-`button.tsx`, `badge.tsx`, `card.tsx`, `dialog.tsx`, `placeholder-page.tsx` are the M01–M05 hand-rolled primitives. They keep working through Phases 1–8 so unmigrated surfaces still render; Phase 9 deletes them once every caller is on the new primitives.
-
 ## Adding a primitive
 
 1. `pnpm dlx shadcn@latest add <name> --yes` (writes to `src/shared/components/ui/<name>.tsx` and installs any Radix dep).
-2. If shadcn's CLI rewrites `tailwind.config.ts` or `src/styles.css`, reconcile so both yaaos-named and shadcn-named token layers stay intact.
+2. If shadcn's CLI rewrites `tailwind.config.ts` or `src/styles.css`, reconcile against the existing shadcn-named token layer.
 3. Update this doc with a one-liner.

@@ -43,17 +43,22 @@ Single source of truth mapping `Action → Role`. Per-endpoint overrides are exp
 
 | Action | Required role |
 |---|---|
-| `IDENTITY_READ_SELF` | Member |
-| `ORG_READ` | Member |
-| `MEMBERS_READ` | Member |
+| `IDENTITY_READ_SELF` | Builder |
+| `ORG_READ` | Builder |
+| `MEMBERS_READ` | Builder |
 | `AUDIT_READ` | Admin |
-| `ACCOUNT_UPDATE_SELF` | Member |
+| `ACCOUNT_UPDATE_SELF` | Builder |
 | `MEMBERS_INVITE` | Admin |
 | `MEMBERS_REMOVE` | Admin |
 | `MEMBERS_CHANGE_ROLE` | Admin |
 | `SSO_CONFIGURE` | Owner |
 | `GITHUB_APP_LINK` | Owner |
-| `REVIEW_TRIGGER` | Member |
+| `REVIEW_TRIGGER` | Builder |
+| `TICKETS_READ` | Builder |
+| `LESSONS_READ` | Builder |
+| `LESSONS_WRITE` | Builder |
+| `REVIEWER_READ` | Builder |
+| `REVIEWER_WRITE` | Builder |
 
 A coverage test asserts every `Action` member has a row here.
 

@@ -21,10 +21,11 @@ import {
 } from "./queries";
 
 /**
- * `/account/details` — name + per-org handles + verified emails + GitHub
+ * `/user/details` — name + per-org handles + verified emails + GitHub
  * association. The verify-only GitHub flow is initiated by a regular link
  * navigation to `/api/account/github/verify` (the SPA picks it up after the
- * callback writes the username).
+ * callback writes the username; the backend module is still named
+ * `account` even though the SPA route is `/user/*`).
  */
 export function DetailsPage() {
   const { data, isLoading } = useAccountMe();

@@ -68,10 +68,10 @@ Many coding-agent plugins per org. Each install is an `org_coding_agents` row ke
 
 ### Key value objects
 
-- **`Role`** — `OWNER ≥ ADMIN ≥ MEMBER`. `role.covers(required)` is the only comparison anywhere in the codebase; per-action minimums declared at the call site.
+- **`Role`** — `OWNER ≥ ADMIN ≥ BUILDER`. `role.covers(required)` is the only comparison anywhere in the codebase; per-action minimums declared at the call site.
   - Owner — full control incl. org deletion, billing, SSO config, GitHub App linking. ≥1 Owner required per org.
   - Admin — Owner powers minus deleting the org or removing other Owners.
-  - Member — read findings, post replies, trigger reviews, manage own acks.
+  - Builder — read findings, post replies, trigger reviews, manage own acks.
 
 ### Invitation lifecycle
 

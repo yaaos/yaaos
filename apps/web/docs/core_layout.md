@@ -20,7 +20,7 @@ Under `src/core/layout/`: `app-shell.tsx`, `sidebar.tsx`, `topbar.tsx`, `theme.t
 
 Two-column flex: fixed-width sidebar on the left, flexible-width content on the right. Only `<main>` scrolls; sidebar and topbar stay pinned. Topbar shows a static crumb derived from `useRouterState().location.pathname` through `CRUMB_BY_PATH`; routes wanting a custom title add an entry there.
 
-`STANDALONE_PATHS` (`/login`, `/account`) render the `Outlet` without sidebar or topbar — user-scoped pages don't surface org nav. Visiting a standalone path while authenticated still works; visiting one of the others while unauthenticated bounces through `indexRoute → /login`.
+`STANDALONE_PATHS` (`/login`, `/user`, `/orgs`) render the `Outlet` without sidebar or topbar — user-scoped + org-picker pages don't surface org nav. Visiting a standalone path while authenticated still works; visiting one of the others while unauthenticated bounces through `indexRoute → /login`.
 
 ### `Sidebar`
 
