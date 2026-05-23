@@ -5,7 +5,18 @@ import {
   useGithubRepositories,
   useLessons,
 } from "@core/api";
-import { Button, Card, CardContent, CardHeader } from "@shared/components";
+import { PageHeader } from "@shared/components/layout";
+import { Button } from "@shared/components/ui/button";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@shared/components/ui/select";
+import { Textarea } from "@shared/components/ui/textarea";
 import { useState } from "react";
 
 export function LessonsPage() {
@@ -18,9 +29,6 @@ export function LessonsPage() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
 
-  // Build the picker options: union of repos the App can see + repos that
-  // already have lessons (in case the App's access shrank but the lessons
-  // remain). Sorted, deduped.
   const repoNamesFromLessons = new Set((lessons ?? []).map((l) => l.repo_external_id));
   const repoNamesFromInstall = new Set(
     (repos?.repositories ?? []).map((r) => r.full_name).filter(Boolean) as string[],
@@ -30,14 +38,19 @@ export function LessonsPage() {
   ).sort();
 
   return (
-    <div className="mx-auto max-w-[900px] flex flex-col gap-3">
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Add a lesson</h2>
-        </CardHeader>
-        <CardContent>
+    <div className="mx-auto max-w-[900px] flex flex-col gap-4 p-6">
+      <PageHeader
+        title="Lessons"
+        subtitle="Repository-scoped notes the reviewer agent consults during reviews."
+      />
+
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Add a lesson</h2>
+        </header>
+        <div className="px-4 py-4">
           <form
-            className="flex flex-col gap-2"
+            className="flex flex-col gap-3"
             onSubmit={(e) => {
               e.preventDefault();
               if (!repoExternalId || !title.trim() || !body.trim()) return;
@@ -52,80 +65,93 @@ export function LessonsPage() {
               );
             }}
           >
-            <select
-              data-testid="lesson-repo"
-              value={repoExternalId}
-              onChange={(e) => setRepoExternalId(e.target.value)}
-              className="px-2 py-1.5 text-[12.5px] border border-border-soft rounded bg-bg"
-            >
-              <option value="">(select a repo)</option>
-              {pickerOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-            {pickerOptions.length === 0 && (
-              <p className="text-text-4 text-[11px]">
-                No repos yet. Install the GitHub App on at least one repo to populate this list.
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="lesson-repo">Repo</Label>
+              <Select value={repoExternalId} onValueChange={setRepoExternalId}>
+                <SelectTrigger id="lesson-repo" data-testid="lesson-repo">
+                  <SelectValue placeholder="(select a repo)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pickerOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pickerOptions.length === 0 && (
+                <p className="text-muted-foreground text-xs">
+                  No repos yet. Install the GitHub App on at least one repo to populate this list.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="lesson-title">Title</Label>
+              <Input
+                id="lesson-title"
+                data-testid="lesson-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="One-line summary"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="lesson-body">Body</Label>
+              <Textarea
+                id="lesson-body"
+                data-testid="lesson-body"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="≤1000 chars"
+                maxLength={1000}
+                rows={4}
+              />
+            </div>
+            <div>
+              <Button type="submit" data-testid="lesson-save" disabled={create.isPending}>
+                {create.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+            {create.isError && (
+              <p className="text-destructive text-xs" data-testid="lesson-error">
+                {(create.error as Error).message}
               </p>
             )}
-            <input
-              data-testid="lesson-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="title"
-              className="px-2 py-1.5 text-[12.5px] border border-border-soft rounded bg-bg"
-            />
-            <textarea
-              data-testid="lesson-body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="body (≤1000 chars)"
-              maxLength={1000}
-              rows={3}
-              className="px-2 py-1.5 text-[12.5px] border border-border-soft rounded bg-bg"
-            />
-            <Button type="submit" data-testid="lesson-save" disabled={create.isPending}>
-              Save
-            </Button>
-            {create.isError && (
-              <div className="text-danger text-[12px]" data-testid="lesson-error">
-                {(create.error as Error).message}
-              </div>
-            )}
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Lessons</h2>
-        </CardHeader>
-        <CardContent>
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Lessons</h2>
+        </header>
+        <div className="px-4 py-4">
           <ul className="flex flex-col gap-2" data-testid="lessons-list">
             {lessons?.map((l: Lesson) => (
-              <li key={l.id} className="border border-border-soft rounded p-2.5 text-[12.5px]">
+              <li key={l.id} className="rounded-md border border-border bg-background p-3 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium flex-1">{l.title}</span>
-                  <span className="mono text-text-4 text-[10.5px]">{l.repo_external_id}</span>
-                  <button
-                    type="button"
-                    className="text-text-4 hover:text-danger text-[11px]"
+                  <span className="font-mono text-muted-foreground text-xs">
+                    {l.repo_external_id}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => remove.mutate(l.id)}
+                    className="text-destructive hover:text-destructive"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
-                <p className="text-text-3 mt-1 whitespace-pre-wrap">{l.body}</p>
+                <p className="text-muted-foreground mt-1 whitespace-pre-wrap text-xs">{l.body}</p>
               </li>
             ))}
             {lessons && lessons.length === 0 && (
-              <li className="text-text-3 text-[12.5px]">No lessons yet.</li>
+              <li className="text-muted-foreground text-sm">No lessons yet.</li>
             )}
           </ul>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

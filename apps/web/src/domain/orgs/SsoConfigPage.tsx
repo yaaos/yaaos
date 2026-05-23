@@ -1,5 +1,10 @@
 import { apiFetch } from "@core/api";
-import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
+import { Badge } from "@shared/components/ui/badge";
+import { Button } from "@shared/components/ui/button";
+import { Checkbox } from "@shared/components/ui/checkbox";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
+import { Textarea } from "@shared/components/ui/textarea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -49,41 +54,39 @@ export function SsoConfigPage() {
   const [enabled, setEnabled] = useState(false);
   const [exemptOwnerId, setExemptOwnerId] = useState("");
 
-  if (isLoading) return <div className="p-6">Loading…</div>;
+  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   return (
-    <div className="mx-auto max-w-[900px] p-6 flex flex-col gap-4">
-      <h1 className="text-[20px] font-semibold tracking-tight">SAML SSO</h1>
-
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Current state</h2>
-        </CardHeader>
-        <CardContent>
-          <div className="text-sm flex gap-2 items-center">
+    <div className="flex flex-col gap-4">
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">SAML SSO — current state</h2>
+        </header>
+        <div className="px-4 py-4">
+          <div className="text-sm flex items-center gap-2">
             <span>Enabled:</span>
-            <Badge variant={data?.enabled ? "success" : "soft"}>
+            <Badge variant={data?.enabled ? "default" : "secondary"}>
               {data?.enabled ? "on" : "off"}
             </Badge>
             <span className="ml-4">JIT:</span>
-            <Badge variant={data?.jit_enabled ? "success" : "soft"}>
+            <Badge variant={data?.jit_enabled ? "default" : "secondary"}>
               {data?.jit_enabled ? "on" : "off"}
             </Badge>
           </div>
-          <p className="text-text-3 text-xs mt-2">
+          <p className="text-muted-foreground text-xs mt-2">
             Hand the IdP this URL as the SP entity / ACS:{" "}
-            <code className="mono">/api/sso/&lt;your-slug&gt;/metadata</code>
+            <code className="font-mono">/api/sso/&lt;your-slug&gt;/metadata</code>
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Update config</h2>
-        </CardHeader>
-        <CardContent>
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Update config</h2>
+        </header>
+        <div className="px-4 py-4">
           <form
-            className="flex flex-col gap-2 text-sm"
+            className="flex flex-col gap-3"
             onSubmit={(e) => {
               e.preventDefault();
               upsert.mutate({
@@ -94,51 +97,53 @@ export function SsoConfigPage() {
               });
             }}
           >
-            <label className="flex flex-col gap-1">
-              IdP metadata XML
-              <textarea
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sso-metadata">IdP metadata XML</Label>
+              <Textarea
+                id="sso-metadata"
                 value={metadata}
                 onChange={(e) => setMetadata(e.target.value)}
-                className="border rounded px-2 py-1 mono text-xs"
+                className="font-mono text-xs"
                 rows={8}
                 placeholder="<EntityDescriptor>...</EntityDescriptor>"
                 required
               />
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="sso-enabled"
                 checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
+                onCheckedChange={(v) => setEnabled(v === true)}
               />
-              Enable SSO for this org
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={jit} onChange={(e) => setJit(e.target.checked)} />
-              JIT-create memberships on first SSO login
-            </label>
-            <label className="flex flex-col gap-1">
-              Exempt Owner user id (must have verified 2FA)
-              <input
+              <Label htmlFor="sso-enabled">Enable SSO for this org</Label>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <Checkbox id="sso-jit" checked={jit} onCheckedChange={(v) => setJit(v === true)} />
+              <Label htmlFor="sso-jit">JIT-create memberships on first SSO login</Label>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sso-exempt">Exempt Owner user id (must have verified 2FA)</Label>
+              <Input
+                id="sso-exempt"
                 value={exemptOwnerId}
                 onChange={(e) => setExemptOwnerId(e.target.value)}
-                className="border rounded px-2 py-1 mono text-xs"
+                className="font-mono text-xs"
                 placeholder="(none)"
               />
-            </label>
+            </div>
             <div>
               <Button type="submit" disabled={upsert.isPending} data-testid="sso-save">
                 {upsert.isPending ? "Saving…" : "Save"}
               </Button>
             </div>
             {upsert.isError && (
-              <p className="text-red-500 text-xs">
+              <p className="text-destructive text-xs">
                 {(upsert.error as Error)?.message ?? "Save failed"}
               </p>
             )}
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,5 +1,24 @@
 import { apiFetch } from "@core/api";
-import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
+import { PageHeader } from "@shared/components/layout";
+import { Badge } from "@shared/components/ui/badge";
+import { Button } from "@shared/components/ui/button";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@shared/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@shared/components/ui/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useState } from "react";
@@ -70,14 +89,10 @@ function useRemoveMember(orgSlug: string | null) {
 }
 
 /**
- * Members page. Reads the current org slug from `X-Org-Slug` (Phase 7's
- * router-driven injection lands shortly). The interim contract: a parent
- * route component passes `orgSlug` as a prop. Until that route exists, the
- * page reads from `window.location` so devs can preview at `/members?org=...`.
+ * Members page. Reads the current org slug from the route params; ad-hoc
+ * preview supported via `?org=<slug>`.
  */
 export function MembersPage(props: { orgSlug?: string }) {
-  // Route is `/orgs/$slug/members` — params.slug carries the org slug.
-  // Fallback to a prop or to `?org=` for ad-hoc preview at `/members`.
   const params = useParams({ strict: false }) as { slug?: string };
   const orgSlug =
     props.orgSlug ?? params.slug ?? new URLSearchParams(window.location.search).get("org");
@@ -91,23 +106,23 @@ export function MembersPage(props: { orgSlug?: string }) {
 
   if (!orgSlug) {
     return (
-      <div className="mx-auto max-w-[900px] p-6">
-        No org selected. Append <code>?org=&lt;slug&gt;</code> to the URL.
+      <div className="mx-auto max-w-[900px] p-6 text-sm">
+        No org selected. Append <code className="font-mono">?org=&lt;slug&gt;</code> to the URL.
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-[900px] flex flex-col gap-4 p-6">
-      <h1 className="text-[20px] font-semibold tracking-tight">Members</h1>
+      <PageHeader title="Members" subtitle="Roster + invitations for this org." />
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Invite</h2>
-        </CardHeader>
-        <CardContent>
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Invite</h2>
+        </header>
+        <div className="px-4 py-4">
           <form
-            className="flex gap-2 items-center"
+            className="flex flex-wrap items-end gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               if (!email) return;
@@ -115,84 +130,100 @@ export function MembersPage(props: { orgSlug?: string }) {
               setEmail("");
             }}
           >
-            <input
-              type="email"
-              required
-              placeholder="email@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="flex-1 border rounded px-2 py-1 text-sm"
-            />
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
-              className="border rounded px-2 py-1 text-sm"
-              data-testid="invite-role"
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+            <div className="flex-1 min-w-[200px] flex flex-col gap-1.5">
+              <Label htmlFor="invite-email">Email</Label>
+              <Input
+                id="invite-email"
+                type="email"
+                required
+                placeholder="email@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="invite-role">Role</Label>
+              <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+                <SelectTrigger id="invite-role" data-testid="invite-role" className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button type="submit" disabled={invite.isPending}>
               {invite.isPending ? "Inviting…" : "Invite"}
             </Button>
           </form>
           {invite.isError && (
-            <p className="text-red-500 text-xs mt-2">
+            <p className="text-destructive text-xs mt-2">
               {(invite.error as Error)?.message ?? "Invite failed"}
             </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Roster</h2>
-        </CardHeader>
-        <CardContent>
-          {isLoading && <p className="text-text-3 text-xs">Loading…</p>}
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Roster</h2>
+        </header>
+        <div className="px-4 py-4">
+          {isLoading && <p className="text-muted-foreground text-xs">Loading…</p>}
           {error && (
-            <p className="text-red-500 text-xs">{(error as Error).message ?? "Failed to load"}</p>
+            <p className="text-destructive text-xs">
+              {(error as Error).message ?? "Failed to load"}
+            </p>
           )}
-          {data && data.length === 0 && <p className="text-text-3 text-xs">No members yet.</p>}
+          {data && data.length === 0 && (
+            <p className="text-muted-foreground text-xs">No members yet.</p>
+          )}
           {data && data.length > 0 && (
-            <table className="w-full text-sm">
-              <thead className="text-text-3 text-[11.5px] uppercase">
-                <tr>
-                  <th className="text-left py-1">Member</th>
-                  <th className="text-left py-1">Role</th>
-                  <th className="text-right py-1">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.map((m) => (
-                  <tr key={m.user_id} className="border-t">
-                    <td className="py-2">
+                  <TableRow key={m.user_id}>
+                    <TableCell>
                       <div className="font-medium">{m.display_name || m.handle}</div>
-                      <div className="text-text-3 text-xs">{m.primary_email}</div>
-                    </td>
-                    <td className="py-2">
-                      <select
-                        value={m.role}
-                        onChange={(e) =>
-                          changeRole.mutate({ user_id: m.user_id, role: e.target.value as Role })
-                        }
-                        className="border rounded px-2 py-1 text-xs"
-                        data-testid={`role-${m.handle}`}
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                      {m.role === "owner" && <Badge variant="soft">owner</Badge>}
-                    </td>
-                    <td className="py-2 text-right">
+                      <div className="text-muted-foreground text-xs">{m.primary_email}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={m.role}
+                          onValueChange={(v) =>
+                            changeRole.mutate({ user_id: m.user_id, role: v as Role })
+                          }
+                        >
+                          <SelectTrigger data-testid={`role-${m.handle}`} className="h-8 w-[110px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ROLES.map((r) => (
+                              <SelectItem key={r} value={r}>
+                                {r}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {m.role === "owner" && <Badge variant="secondary">owner</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
                       <Button
                         variant="ghost"
+                        size="sm"
                         onClick={() => {
                           if (window.confirm(`Remove ${m.handle}?`)) {
                             remove.mutate(m.user_id);
@@ -202,14 +233,14 @@ export function MembersPage(props: { orgSlug?: string }) {
                       >
                         Remove
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }
