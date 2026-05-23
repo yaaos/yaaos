@@ -74,10 +74,13 @@ export function StageIndicator({ stages }: { stages: TicketStage[] | undefined }
               )}
               data-testid={`stage-${stage.name}`}
             >
-              <Icon className={cn("w-3 h-3", meta.tone, spin && "animate-spin")} />
+              {/* Icon carries the semantic-color hint; the label text uses
+                  the default foreground so contrast stays >=4.5:1 against
+                  bg-secondary even at the chip's small text size. */}
+              <Icon className={cn("w-3 h-3", meta.tone, spin && "animate-spin")} aria-hidden="true" />
               <span className="font-medium">{stage.name}</span>
               <span className="text-muted-foreground">·</span>
-              <span className={meta.tone}>{meta.label}</span>
+              <span>{meta.label}</span>
               {stage.attempt_count > 1 && (
                 <span className="text-muted-foreground">
                   · Attempt {stage.current_attempt}/{stage.attempt_count}
