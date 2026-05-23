@@ -38,6 +38,13 @@ export type Ticket = {
   is_draft: boolean | null;
   created_at: string;
   updated_at: string;
+  // M06 fields — nullable until the projections that populate them ship.
+  m06_status: "running" | "hitl" | "done" | "failed" | "cancelled" | null;
+  current_stage: string | null;
+  findings_count: number;
+  max_severity: "low" | "medium" | "high" | null;
+  builder_kind: "user" | "system";
+  builder_display_name: string | null;
 };
 
 export type Lesson = {
