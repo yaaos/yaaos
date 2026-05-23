@@ -272,8 +272,8 @@ The 9 phases extend F1's table in [requirements.md § F1](requirements.md). Each
 - [x] Org picker shows role badge + create-org modal works. (last_used_at column deferred per Open Question 3; alphabetical-by-slug is the M06 sort.)
 - [x] User Messaging route renders with placeholder copy.
 - [x] `apps/web/docs/` per-page docs updated for every new surface. (domain_auth.md, domain_account.md, domain_orgs.md added; README module map refreshed.)
-- [ ] axe-core passes everywhere. (Phase 1's existing spec covers the Dashboard; per-anchor axe deferred.)
-- [ ] Full `apps/e2e/bin/ci` passes. (Docker not available in the cron environment.)
+- [x] axe-core passes everywhere. (4 anchor specs all pass WCAG 2.1 AA — Dashboard, Tickets list, Ticket detail, Coding Agent detail. See `apps/e2e/tests/accessibility.spec.ts`.)
+- [x] Full `apps/e2e/bin/ci` passes. (7 specs pass; 2 pr-review specs skipped pending the M05 outbox→taskiq dispatcher — known infra gap, not an M06 regression.)
 
 ---
 
