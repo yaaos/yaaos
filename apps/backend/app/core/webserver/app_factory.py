@@ -66,6 +66,26 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await database.dispose()
 
 
+class _ImmutableStaticFiles(StaticFiles):
+    """StaticFiles that stamps `Cache-Control: public, max-age=1y, immutable`.
+
+    Safe because Vite content-hashes every file under /assets/ (filenames like
+    `index-a3f2b1c8.js`) — the URL changes whenever the content does, so we
+    never serve stale.
+    """
+
+    async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def, override]
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+# index.html and Vite-copied public/ assets (favicon, og-image, etc.) live at
+# dist root and are NOT content-hashed — they need a short, revalidating TTL
+# so a new deploy is picked up quickly.
+_INDEX_CACHE_CONTROL = "public, max-age=60, must-revalidate"
+
+
 def _install_spa_serving(app: FastAPI) -> None:
     """Mount /assets/* + a catch-all that returns index.html for client-side routes.
 
@@ -74,7 +94,7 @@ def _install_spa_serving(app: FastAPI) -> None:
     spa_dist = Path(__file__).resolve().parents[4] / "web" / "dist"
     if not spa_dist.exists():
         return
-    app.mount("/assets", StaticFiles(directory=spa_dist / "assets"), name="assets")
+    app.mount("/assets", _ImmutableStaticFiles(directory=spa_dist / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_catchall(full_path: str) -> FileResponse:
@@ -94,8 +114,8 @@ def _install_spa_serving(app: FastAPI) -> None:
                 pass  # outside dist — fall through to index.html
             else:
                 if candidate.is_file():
-                    return FileResponse(candidate)
-        return FileResponse(spa_dist / "index.html")
+                    return FileResponse(candidate, headers={"Cache-Control": _INDEX_CACHE_CONTROL})
+        return FileResponse(spa_dist / "index.html", headers={"Cache-Control": _INDEX_CACHE_CONTROL})
 
 
 def _install_middleware(app: FastAPI) -> None:

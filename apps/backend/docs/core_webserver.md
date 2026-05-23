@@ -59,6 +59,13 @@ No CSRF, no rate limiting, no auth — the security baseline is encryption-at-re
 
 In dev (no `apps/web/dist`), the catch-all isn't installed; non-`/api/` paths 404. Developer runs `pnpm dev` separately.
 
+### Cache-Control on SPA files
+
+- `/assets/*` → `Cache-Control: public, max-age=31536000, immutable`. Safe because Vite content-hashes every bundle (`index-<hash>.js`) — the URL changes whenever the content does.
+- `index.html` and other dist-root files (favicon, og-image) → `Cache-Control: public, max-age=60, must-revalidate`. Not content-hashed, so a new deploy must be picked up quickly.
+
+Cloudflare honors these standard headers; no CDN-specific config required.
+
 ### `/api/health` carve-out
 
 Owned by `core/webserver/health.py` directly — not via `RouteSpec`. Returns `{status: "ok"|"degraded", db_ok: bool, version: str}`. Kept out of the registry so it survives even if no module registers anything.
