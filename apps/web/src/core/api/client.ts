@@ -40,6 +40,23 @@ export type Ticket = {
   max_severity: "low" | "medium" | "high" | null;
   builder_kind: "user" | "system";
   builder_display_name: string | null;
+  // Present on GET /api/tickets/:id (Phase 6 extension). Absent on the list
+  // endpoint and on cached entries that predate the extension.
+  stages?: Array<{
+    name: string;
+    state: string;
+    attempt_count: number;
+    current_attempt: number;
+    started_at: string | null;
+    completed_at: string | null;
+    workflow_execution_id: string;
+  }>;
+  builder?: {
+    kind: "user" | "system";
+    user_id?: string | null;
+    display_name: string | null;
+    avatar_url?: string | null;
+  };
 };
 
 export type Lesson = {
