@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mocks must run before the module under test is imported.
 vi.mock("@core/api", () => ({
   getCurrentOrgSlug: () => "acme",
+  useMyOrgs: () => ({
+    data: [{ id: "o1", slug: "acme", name: "Acme", role: "admin", last_used_at: null }],
+  }),
+  useConfigStatus: () => ({ data: { configured: true, missing: [], admins: [] } }),
 }));
 
 vi.mock("@tanstack/react-router", () => ({

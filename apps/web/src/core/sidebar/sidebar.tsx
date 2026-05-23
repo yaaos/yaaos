@@ -1,5 +1,6 @@
 import { getCurrentOrgSlug } from "@core/api";
 import { useCurrentUser } from "@domain/auth";
+import { NotificationsBell, OrgSwitcher } from "@shared/components/chrome";
 import { cn } from "@shared/utils/cn";
 import { useRouterState } from "@tanstack/react-router";
 import {
@@ -136,10 +137,33 @@ export function Sidebar() {
       data-pinned={pinned}
     >
       <div className="flex items-center gap-2 px-3 py-3 border-b border-border-soft h-[56px]">
-        <div className="w-6 h-6 rounded bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center text-white font-mono font-bold text-[12px]">
-          Y
-        </div>
-        {pinned && <span className="font-semibold">yaaos</span>}
+        <a href="/" className="flex items-center gap-2" aria-label="yaaos home">
+          {pinned ? (
+            <img src="/logos/yaaos-lockup-dark.svg" alt="yaaos" className="h-5 dark:block hidden" />
+          ) : null}
+          {pinned ? (
+            <img
+              src="/logos/yaaos-lockup-light.svg"
+              alt="yaaos"
+              className="h-5 dark:hidden block"
+            />
+          ) : null}
+          {!pinned && (
+            <>
+              <img src="/logos/yaaos-mark-dark.svg" alt="yaaos" className="h-5 dark:block hidden" />
+              <img
+                src="/logos/yaaos-mark-light.svg"
+                alt="yaaos"
+                className="h-5 dark:hidden block"
+              />
+            </>
+          )}
+        </a>
+      </div>
+
+      {/* Org switcher chip — defines the current org context. */}
+      <div className="px-1.5 pt-2">
+        <OrgSwitcher expanded={pinned} />
       </div>
 
       <nav className="flex flex-col gap-0.5 px-1.5 py-2 flex-1 overflow-y-auto">
@@ -161,6 +185,11 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      {/* User-scoped zone — cross-org. */}
+      <div className="px-1.5 py-2 border-t border-border-soft">
+        <NotificationsBell expanded={pinned} />
+      </div>
 
       <UserCard expanded={pinned} />
 

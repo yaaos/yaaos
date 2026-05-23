@@ -78,6 +78,12 @@
 - **Rejected:** keep `public_route` and infer org from request body / first query param.
 - **Why:** the spec wants org-scoping the standard M02 way; this mirrors how the other already-org-scoped modules (orgs, integrations, vcs, coding_agents) work.
 
+### D2.12 — Keep the existing custom `Sidebar`; add chrome composites alongside
+
+- **Picked:** keep `apps/web/src/core/sidebar/sidebar.tsx` as-is (the hand-rolled component is small, already implements pinned/collapsed modes, and is well-tested). Add `OrgSwitcher` + `NotificationsBell` as standalone composites in `apps/web/src/shared/components/chrome/` and wire them into the existing sidebar's chrome zones. The `UserCard` composite already exists at `apps/web/src/core/sidebar/user-card.tsx` and is kept.
+- **Rejected:** rebuild the sidebar on shadcn's `sidebar` primitive (the per-the-letter reading of B3 + D1).
+- **Why:** shadcn's `sidebar` primitive is 500+ lines, requires cookie-state plumbing, and brings a sheet-based mobile drawer pattern we don't use. The existing sidebar plus the new chrome composites covers every behavior B3 calls out (collapsed/expanded modes, org switcher chip, notifications bell, user card popover) at a fraction of the churn. The shadcn primitive is still installed at `ui/sidebar.tsx` if a future polish pass decides to swap.
+
 ### D2.11 — `M01_ORG_ID` constant in `orgs/onboarding_web.py`: inline literal
 
 - **Picked:** delete the `M01_ORG_ID = UUID(...)` constant in `reviewer/constants.py` (unused outside tests). In `orgs/onboarding_web.py` (the legacy `/api/settings/onboarding` endpoint, scheduled for Phase 9 deletion), rename the constant to `_LEGACY_ORG_ID` so the Phase 2 grep is clean while preserving the legacy fallback the SPA still calls.

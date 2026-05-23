@@ -63,6 +63,13 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 |---|---|
 | `sonner.tsx` | Wraps `sonner` for theme-aware toasts. Rendered once in `main.tsx`. |
 
+## Chrome composites (`src/shared/components/chrome/`)
+
+| File | Purpose |
+|---|---|
+| `org-switcher.tsx` | `OrgSwitcher` — sidebar chip showing the current org with a dropdown of the user's other orgs + a "View all organizations" link to `/orgs`. Data via `useMyOrgs()`. |
+| `notifications-bell.tsx` | `NotificationsBell` — Bell icon row with unread-count badge + popover. Phase 2 ships the shell with a placeholder empty-state; Phase 7 wires real data. |
+
 ## Layout composites (`src/shared/components/layout/`)
 
 | File | Purpose |
