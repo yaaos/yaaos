@@ -68,10 +68,10 @@ const NAV: NavConfig = {
         },
         {
           kind: "link",
-          id: "byok",
-          label: "BYOK",
+          id: "api-keys",
+          label: "API Keys",
           icon: KeyRound,
-          path: "/settings/byok",
+          path: "/settings/api-keys",
           role: "admin",
         },
         {

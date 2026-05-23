@@ -66,6 +66,12 @@
 - **Rejected:** keep `MEMBER` as an alias of `BUILDER` for backward-compat.
 - **Why:** CLAUDE.md is explicit ("no backward-compat shims"). The repo is small enough that mechanical rename + reformat is the right move; tests caught the one frontend `RANK` literal that was missed.
 
+### D2.7 — SPA route renames only (byok / integrations / account); backend paths kept
+
+- **Picked:** rename SPA-facing routes only — `/settings/byok` → `/settings/api-keys`, `/settings/integrations` → `/settings/mcp-proxy`, `/account/*` → `/user/*`. Backend `/api/byok/*` and `/api/integrations/*` paths are unchanged. UI labels: "BYOK" → "API Keys", "Integrations" → "MCP Proxy"; nav/tab ids likewise.
+- **Rejected:** rename the backend paths too (per the spec letter), in particular `/api/integrations/{provider}/callback`.
+- **Why:** `/api/integrations/{provider}/callback` is the externally-registered OAuth callback URL Linear/Notion redirect to — changing it requires user action upstream. Backend `/api/byok` is referenced from the plugin-installation layer; renaming would also cascade through tests + a sweep of the auth middleware's M02_PROTECTED_PREFIXES. The user-visible parts are what M06 is about; Phase 9 can finish the backend-side rename if it becomes important.
+
 ### D2.6 — `domain/memory` module → `domain/lessons` rename shape
 
 - **Picked:** `git mv apps/backend/app/domain/memory apps/backend/app/domain/lessons` then a `sed` sweep to rewire all imports (`app.domain.memory` → `app.domain.lessons`), `RouteSpec(module_name=...)`, the local `lessons = await memory.list_for_repo(...)` shadow in `reviewer/incremental.py` (renamed the local to `lesson_rows`), and the frontend mirror (`@domain/memory` → `@domain/lessons`, `MemoryPage` → `LessonsPage`, `/memory` route → `/lessons`, nav label "Memory" → "Lessons"). Doc files renamed: `apps/{backend,web}/docs/domain_memory.md` → `domain_lessons.md`. Ran `apps/backend/bin/sync_modules` to refresh `tach.toml`.

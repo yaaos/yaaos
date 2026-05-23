@@ -53,7 +53,7 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("nav-members")).toBeInTheDocument();
     expect(screen.getByTestId("nav-vcs")).toBeInTheDocument();
     expect(screen.getByTestId("nav-coding-agents")).toBeInTheDocument();
-    expect(screen.getByTestId("nav-byok")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-api-keys")).toBeInTheDocument();
     expect(screen.getByTestId("nav-audit")).toBeInTheDocument();
   });
 
@@ -68,7 +68,7 @@ describe("Sidebar", () => {
     expect(screen.queryByTestId("nav-auth")).toBeNull();
     expect(screen.queryByTestId("nav-vcs")).toBeNull();
     expect(screen.queryByTestId("nav-coding-agents")).toBeNull();
-    expect(screen.queryByTestId("nav-byok")).toBeNull();
+    expect(screen.queryByTestId("nav-api-keys")).toBeNull();
     expect(screen.queryByTestId("nav-audit")).toBeNull();
   });
 

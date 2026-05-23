@@ -30,7 +30,7 @@ describe("OrgSettingsLayout", () => {
     currentUserMock.mockReturnValue(userResp("admin"));
     render(<OrgSettingsLayout active="auth">child</OrgSettingsLayout>);
     expect(screen.getByTestId("tab-auth")).toHaveAttribute("data-active");
-    for (const id of ["auth", "members", "vcs", "coding-agents", "byok", "audit"]) {
+    for (const id of ["auth", "members", "vcs", "coding-agents", "api-keys", "audit"]) {
       expect(screen.getByTestId(`tab-${id}`)).toBeInTheDocument();
     }
   });
@@ -39,7 +39,7 @@ describe("OrgSettingsLayout", () => {
     currentUserMock.mockReturnValue(userResp("builder"));
     render(<OrgSettingsLayout active="members">child</OrgSettingsLayout>);
     expect(screen.getByTestId("tab-members")).toBeInTheDocument();
-    for (const id of ["auth", "vcs", "coding-agents", "byok", "audit"]) {
+    for (const id of ["auth", "vcs", "coding-agents", "api-keys", "audit"]) {
       expect(screen.queryByTestId(`tab-${id}`)).toBeNull();
     }
   });

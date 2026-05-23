@@ -51,23 +51,23 @@ const loginRoute = createRoute({
 
 const accountRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/account",
+  path: "/user",
   beforeLoad: () => {
     setCurrentOrgSlug(null);
-    throw redirect({ to: "/account/details" });
+    throw redirect({ to: "/user/details" });
   },
 });
 
 const accountDetailsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/account/details",
+  path: "/user/details",
   component: DetailsPage,
   beforeLoad: () => setCurrentOrgSlug(null),
 });
 
 const accountSecurityRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/account/security",
+  path: "/user/security",
   component: SecurityPage,
   beforeLoad: () => setCurrentOrgSlug(null),
 });
@@ -173,13 +173,13 @@ const orgSettingsCodingAgentDetailRoute = createRoute({
 
 const orgSettingsByokRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/settings/byok",
+  path: "/settings/api-keys",
   component: BYOKSettingsPage,
 });
 
 const orgSettingsIntegrationsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/settings/integrations",
+  path: "/settings/mcp-proxy",
   component: IntegrationsSettingsPage,
 });
 

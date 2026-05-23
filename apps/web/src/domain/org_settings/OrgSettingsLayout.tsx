@@ -20,8 +20,8 @@ const TABS: SettingsTab[] = [
   { id: "members", label: "Members", path: "/settings/members" },
   { id: "vcs", label: "VCS", path: "/settings/vcs", role: "admin" },
   { id: "coding-agents", label: "Coding Agents", path: "/settings/coding-agents", role: "admin" },
-  { id: "byok", label: "BYOK", path: "/settings/byok", role: "admin" },
-  { id: "integrations", label: "Integrations", path: "/settings/integrations", role: "admin" },
+  { id: "api-keys", label: "API Keys", path: "/settings/api-keys", role: "admin" },
+  { id: "mcp-proxy", label: "MCP Proxy", path: "/settings/mcp-proxy", role: "admin" },
   { id: "audit", label: "Audit", path: "/settings/audit", role: "admin" },
 ];
 

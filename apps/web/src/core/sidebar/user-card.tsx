@@ -77,14 +77,14 @@ export function UserCard({ expanded }: { expanded: boolean }) {
           className="absolute bottom-full left-2 right-2 mb-1 rounded border border-border-soft bg-bg-2 py-1 shadow-lg"
         >
           <a
-            href="/account/details"
+            href="/user/details"
             className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-text-2 hover:bg-hover hover:text-text"
             data-testid="user-nav-details"
           >
             <UserIcon className="h-3.5 w-3.5" /> Details
           </a>
           <a
-            href="/account/security"
+            href="/user/security"
             className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-text-2 hover:bg-hover hover:text-text"
             data-testid="user-nav-security"
           >

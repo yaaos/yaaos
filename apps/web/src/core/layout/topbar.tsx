@@ -44,7 +44,7 @@ export function Topbar({ crumb }: { crumb: string }) {
       {user && (
         <>
           <Link
-            to="/account"
+            to="/user/details"
             className="flex items-center gap-1.5 rounded px-2 py-1 text-text-3 hover:bg-hover hover:text-text text-[12px]"
             title="Account"
             data-testid="account-link"
