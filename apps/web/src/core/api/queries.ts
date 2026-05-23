@@ -54,6 +54,45 @@ export function useMyOrgs() {
   });
 }
 
+/** M06 Phase 8 — Login page provider button (E2a.18). Returns the SSO IdP
+ *  matching the email's domain, or github fallback. Today the backend
+ *  always returns `provider: "github"` (D8.1). */
+export interface SsoDiscoverResult {
+  provider: "github" | "saml";
+  saml_org_slug?: string;
+  saml_idp_name?: string;
+}
+
+export function useSsoDiscover() {
+  return useMutation({
+    mutationFn: (email: string) =>
+      apiFetch<SsoDiscoverResult>(`/api/auth/sso/discover?email=${encodeURIComponent(email)}`),
+  });
+}
+
+/** M06 Phase 8 — Org-picker "Create org" modal (E2a.19). On success the
+ *  caller is Admin of the new org; the SPA navigates into it. */
+export interface CreateOrgResponse {
+  id: string;
+  slug: string;
+  name: string;
+  role: "admin";
+}
+
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { name: string; slug: string }) =>
+      apiFetch<CreateOrgResponse>("/api/orgs", {
+        method: "POST",
+        body: JSON.stringify(args),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orgs", "mine"] });
+    },
+  });
+}
+
 /** Single-round-trip Dashboard projection per E2a.3. */
 export interface DashboardStats {
   in_flight: number;
