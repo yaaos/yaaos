@@ -85,6 +85,65 @@ export function useDashboard() {
   });
 }
 
+/** Cross-org notifications for the cookie-bearer. Per E2a.6 + E2a.7. */
+export interface Notification {
+  id: string;
+  user_id: string;
+  org_id: string;
+  type: string;
+  ticket_id: string | null;
+  title: string;
+  body: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationsPopover {
+  items: Notification[];
+  unread_count: number;
+}
+
+export function useNotifications(readState: "all" | "unread" | "read" = "all") {
+  return useQuery<Notification[]>({
+    queryKey: ["notifications", readState],
+    queryFn: () => apiFetch<Notification[]>(`/api/notifications?read_state=${readState}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useNotificationsPopover() {
+  return useQuery<NotificationsPopover>({
+    queryKey: ["notifications", "popover"],
+    queryFn: () => apiFetch<NotificationsPopover>("/api/notifications/popover"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<Notification>(`/api/notifications/${id}/read`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ marked: number }>("/api/notifications/mark-read", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
 interface TicketsListResponse {
   items: Ticket[];
   next_cursor: string | null;

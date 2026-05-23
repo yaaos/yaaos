@@ -8,6 +8,9 @@ vi.mock("@core/api", () => ({
     data: [{ id: "o1", slug: "acme", name: "Acme", role: "admin", last_used_at: null }],
   }),
   useConfigStatus: () => ({ data: { configured: true, missing: [], admins: [] } }),
+  useNotificationsPopover: () => ({ data: { items: [], unread_count: 0 } }),
+  useMarkNotificationRead: () => ({ mutate: vi.fn() }),
+  useMarkAllNotificationsRead: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
