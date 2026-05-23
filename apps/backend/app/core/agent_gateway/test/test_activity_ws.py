@@ -4,6 +4,7 @@ activity_batch publishes to sse_pubsub, demand-pull semantics."""
 from __future__ import annotations
 
 import asyncio
+import time
 from uuid import uuid4
 
 import pytest
@@ -67,15 +68,6 @@ def test_ws_accepts_bearer_and_registers_sender() -> None:
         assert not get_subscriber_registry().has_sender(agent_id)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TestClient.websocket_connect from asyncio.to_thread + Redis-backed "
-        "pubsub: the WS handler's receive_text() never yields the sent frame. "
-        "The publish→subscribe path itself is covered by test_progress_event_"
-        "publishes_to_sse_pubsub (HTTP-triggered). Revisit alongside WS plumbing."
-    ),
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
     """An incoming `activity_batch` carries `workflow_execution_id` (the
@@ -104,7 +96,11 @@ async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
 
     # Run the WS client in a thread because TestClient.websocket_connect
     # is synchronous and we need to keep the event loop running for the
-    # sse_pubsub consumer.
+    # sse_pubsub consumer. Without the small sleep before the with-exit,
+    # the close races the server's receive_text() and the activity_batch
+    # frame is dropped before the handler processes it (starlette's
+    # TestClient WS portal: send_json is fire-and-forget; closing the WS
+    # immediately afterwards can beat the server's frame consumption).
     def _send_batch() -> None:
         with TestClient(app) as client:
             with client.websocket_connect(
@@ -121,6 +117,9 @@ async def test_activity_batch_fans_out_to_sse_pubsub() -> None:
                         ],
                     }
                 )
+                # Give the server-side WS handler a chance to drain the
+                # frame off the receive queue before we close.
+                time.sleep(0.3)
 
     await asyncio.to_thread(_send_batch)
     await asyncio.wait_for(consumer, timeout=2)

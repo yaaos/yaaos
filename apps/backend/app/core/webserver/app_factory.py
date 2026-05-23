@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
 from app.core import database
+from app.core import redis as redis_client
 from app.core.config import get_settings
 from app.core.observability import get_logger
 from app.core.webserver.health import health_router
@@ -62,7 +63,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 log.exception("on_shutdown handler raised", module=spec.module_name)
 
-    # 6. Close DB engine.
+    # 6. Close cross-cutting clients. Redis first (per-loop cache lives
+    # outside SQLAlchemy's engine); DB engine last.
+    await redis_client.aclose()
     await database.dispose()
 
 
