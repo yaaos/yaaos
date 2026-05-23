@@ -34,7 +34,7 @@ Each page is mounted by `core/routing` at its respective path:
 1. **`BrokenIntegrationsNotice`** — amber banner when the org has any MCP credential with `last_refresh_status="failed"`. Sourced from `/api/auth/me`'s `broken_integrations`.
 2. **`BuilderReadOnlyBanner`** — info banner for Builder-role users. UI affordance only; the server-side `require(Action.CODING_AGENT_WRITE)` enforcement is the truth.
 3. **Architecture description card** — one-paragraph static explainer.
-4. **`AnthropicKeyCard`** — BYOK provider=anthropic. Reveal/save/test/clear via the four mutations in `coding_agents/plugins/claude_code/queries.ts`.
+4. **`AnthropicKeyCard`** — BYOK provider=anthropic. Write-only post-save: when a key is configured, the card shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear actions; the input is hidden until Rotate is clicked. Plaintext is never read back from the backend so the UI doesn't pretend it is. Four mutations live in `coding_agents/plugins/claude_code/queries.ts`.
 5. **`OrchestratorCard`** — bare `AgentEditor` for the orchestrator. Inline "overridden" badges + Reset buttons when any field differs from the plugin defaults from `/api/claude_code/defaults`.
 6. **`SubAgentsCard`** — repeatable `AgentEditor` rows (1..8) with Add / Remove (last-protection). Inline duplicate-name validation.
 7. **Save button** — replaces the entire settings JSONB in one PATCH; disabled when there's a duplicate sub-agent name or the count is out of range.

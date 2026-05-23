@@ -14,10 +14,12 @@ import {
 
 /**
  * Org Settings > API Keys (BYOK). Lists every provider the backend's
- * validator registry exposes (M03 ships Anthropic only). Each provider gets
- * a card with reveal/test/save/clear and read-only last-validated /
- * last-used timestamps. The same `byok_keys` row is also surfaced on the
- * Claude Code settings page — both UIs round-trip through
+ * validator registry exposes (M03 ships Anthropic only). Each provider
+ * card is write-only: once a key is configured, the input is hidden
+ * behind a Rotate button — the plaintext is never read back from the
+ * backend, so we don't pretend it is. Test/Rotate/Clear actions surface
+ * the underlying timestamps. The same `byok_keys` row is also shown on
+ * the Claude Code settings page; both round-trip through
  * `/api/api-keys/{provider}`.
  */
 export function BYOKSettingsPage() {
@@ -50,7 +52,8 @@ export function BYOKSettingsPage() {
 
 function ProviderCard({ status }: { status: ByokProviderStatus }) {
   const [value, setValue] = useState("");
-  const [reveal, setReveal] = useState(false);
+  // Editing mode: shown when the key isn't set, or when the user clicks Rotate.
+  const [editing, setEditing] = useState(status.status !== "configured");
   const setKey = useSetByok();
   const validate = useValidateByok();
   const clear = useClearByok();
@@ -60,7 +63,20 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
 
   const onSave = () => {
     if (!value) return;
-    setKey.mutate({ provider, value }, { onSuccess: () => setValue("") });
+    setKey.mutate(
+      { provider, value },
+      {
+        onSuccess: () => {
+          setValue("");
+          setEditing(false);
+        },
+      },
+    );
+  };
+
+  const onCancelRotate = () => {
+    setValue("");
+    setEditing(false);
   };
 
   return (
@@ -79,32 +95,15 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
         )}
       </header>
       <div className="px-4 py-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            type={reveal ? "text" : "password"}
-            placeholder={configured ? "•••• replace value to update" : "Paste API key"}
-            data-testid={`byok-input-${provider}`}
-            className="flex-1 min-w-[200px]"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid={`byok-reveal-${provider}`}
-            onClick={() => setReveal((v) => !v)}
-          >
-            {reveal ? "Hide" : "Show"}
-          </Button>
-          <Button
-            size="sm"
-            data-testid={`byok-save-${provider}`}
-            disabled={!value || setKey.isPending}
-            onClick={onSave}
-          >
-            {setKey.isPending ? "Saving…" : "Save"}
-          </Button>
-          {configured && (
+        {!editing && configured && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className="text-sm text-muted-foreground"
+              data-testid={`byok-configured-summary-${provider}`}
+            >
+              Configured ✓ · last set{" "}
+              {status.updated_at ? new Date(status.updated_at).toLocaleString() : "—"}
+            </span>
             <Button
               variant="outline"
               size="sm"
@@ -114,8 +113,14 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
             >
               {validate.isPending ? "Testing…" : "Test"}
             </Button>
-          )}
-          {configured && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid={`byok-rotate-${provider}`}
+              onClick={() => setEditing(true)}
+            >
+              Rotate
+            </Button>
             <Button
               variant="destructive"
               size="sm"
@@ -123,10 +128,40 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
               disabled={clear.isPending}
               onClick={() => clear.mutate(provider)}
             >
-              Remove
+              Clear
             </Button>
-          )}
-        </div>
+          </div>
+        )}
+        {editing && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              type="password"
+              placeholder={configured ? "Paste new API key to replace" : "Paste API key"}
+              data-testid={`byok-input-${provider}`}
+              className="flex-1 min-w-[200px]"
+            />
+            <Button
+              size="sm"
+              data-testid={`byok-save-${provider}`}
+              disabled={!value || setKey.isPending}
+              onClick={onSave}
+            >
+              {setKey.isPending ? "Saving…" : "Save"}
+            </Button>
+            {configured && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid={`byok-rotate-cancel-${provider}`}
+                onClick={onCancelRotate}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
+        )}
         {validate.data && validate.variables === provider && (
           <p
             className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}

@@ -83,7 +83,7 @@ describe("BYOKSettingsPage", () => {
     expect(call[0]).toEqual({ provider: "anthropic", value: "sk-ant-test" });
   });
 
-  it("configured: Test + Remove + timestamps render", () => {
+  it("configured: shows summary + Test/Rotate/Clear (input is hidden until Rotate)", () => {
     providersMock.mockReturnValue({
       data: [
         {
@@ -98,7 +98,10 @@ describe("BYOKSettingsPage", () => {
     });
     render(<BYOKSettingsPage />);
     expect(screen.getByTestId("byok-status-anthropic")).toHaveTextContent(/configured/i);
+    expect(screen.getByTestId("byok-configured-summary-anthropic")).toHaveTextContent(/last set/i);
+    expect(screen.queryByTestId("byok-input-anthropic")).toBeNull();
     expect(screen.getByTestId("byok-test-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("byok-rotate-anthropic")).toBeInTheDocument();
     expect(screen.getByTestId("byok-clear-anthropic")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("byok-test-anthropic"));
     expect(validateMutate).toHaveBeenCalledWith("anthropic");
@@ -108,13 +111,34 @@ describe("BYOKSettingsPage", () => {
     expect(screen.getByTestId("byok-timestamps-anthropic")).toBeInTheDocument();
   });
 
+  it("configured + Rotate: clicking Rotate reveals input; Cancel hides it again", () => {
+    providersMock.mockReturnValue({
+      data: [
+        {
+          provider: "anthropic",
+          status: "configured",
+          last_validated_at: null,
+          last_used_at: null,
+          updated_at: "2026-05-20T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+    });
+    render(<BYOKSettingsPage />);
+    fireEvent.click(screen.getByTestId("byok-rotate-anthropic"));
+    const input = screen.getByTestId("byok-input-anthropic") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    fireEvent.click(screen.getByTestId("byok-rotate-cancel-anthropic"));
+    expect(screen.queryByTestId("byok-input-anthropic")).toBeNull();
+  });
+
   it("empty provider list shows empty message", () => {
     providersMock.mockReturnValue({ data: [], isLoading: false });
     render(<BYOKSettingsPage />);
     expect(screen.getByTestId("byok-empty")).toBeInTheDocument();
   });
 
-  it("reveal toggle flips the input type", () => {
+  it("not_set: input is always type=password (no reveal toggle)", () => {
     providersMock.mockReturnValue({
       data: [
         {
@@ -130,7 +154,6 @@ describe("BYOKSettingsPage", () => {
     render(<BYOKSettingsPage />);
     const input = screen.getByTestId("byok-input-anthropic") as HTMLInputElement;
     expect(input.type).toBe("password");
-    fireEvent.click(screen.getByTestId("byok-reveal-anthropic"));
-    expect(input.type).toBe("text");
+    expect(screen.queryByTestId("byok-reveal-anthropic")).toBeNull();
   });
 });

@@ -20,6 +20,7 @@ All four accept an optional `session` so callers can join an outer transaction.
 - Single table, no nested entities.
 - The validator-callable pattern keeps `core/byok` free of provider-specific HTTP code: `plugins/claude_code` (or a future provider plugin) supplies its own minimal API call.
 - Plaintext crosses this module's boundary in only two directions — into `set()` and out of `get()`/`validate()`. Callers must not log the result.
+- **Write-only public API.** No endpoint returns a stored key. The list endpoint emits `status` + timestamps only; clients display "Configured ✓ · last set <updated_at>" with Rotate/Clear actions rather than offering a reveal toggle.
 
 ## Data owned
 

@@ -242,9 +242,16 @@ function AnthropicKeyCard() {
   const validate = useValidateByokAnthropic();
   const clear = useClearByokAnthropic();
   const [value, setValue] = useState("");
-  const [reveal, setReveal] = useState(false);
-
   const configured = status.data?.status === "configured";
+  // Editing mode shows the input. Defaults to true when no key is set, or
+  // when the user clicks Rotate. Cleared back to false after a successful save.
+  const [editing, setEditing] = useState(!configured);
+  // Sync editing state when status finishes loading (initial render runs with
+  // configured=undefined → editing=true; once status arrives we close the
+  // input if a key is already set).
+  useEffect(() => {
+    if (status.data && configured) setEditing(false);
+  }, [status.data, configured]);
 
   return (
     <section className="rounded-lg border border-border bg-card">
@@ -263,26 +270,12 @@ function AnthropicKeyCard() {
         </div>
       </header>
       <div className="px-4 py-4">
-        <div className="flex items-center gap-2">
-          <input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            type={reveal ? "text" : "password"}
-            placeholder={configured ? "•••• last 4 only — replace to update" : "sk-ant-..."}
-            data-testid="cc-key-input"
-            className="flex-1 rounded border border-border bg-card px-2 py-1 text-sm"
-          />
-          <Button data-testid="cc-key-reveal" onClick={() => setReveal((v) => !v)}>
-            {reveal ? "Hide" : "Show"}
-          </Button>
-          <Button
-            data-testid="cc-key-save"
-            disabled={!value || setKey.isPending}
-            onClick={() => setKey.mutate(value, { onSuccess: () => setValue("") })}
-          >
-            {setKey.isPending ? "Saving…" : "Save"}
-          </Button>
-          {configured && (
+        {!editing && configured && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground" data-testid="cc-key-summary">
+              Configured ✓ · last set{" "}
+              {status.data?.updated_at ? new Date(status.data.updated_at).toLocaleString() : "—"}
+            </span>
             <Button
               data-testid="cc-key-test"
               disabled={validate.isPending}
@@ -290,8 +283,9 @@ function AnthropicKeyCard() {
             >
               {validate.isPending ? "Testing…" : "Test"}
             </Button>
-          )}
-          {configured && (
+            <Button data-testid="cc-key-rotate" onClick={() => setEditing(true)}>
+              Rotate
+            </Button>
             <Button
               data-testid="cc-key-clear"
               disabled={clear.isPending}
@@ -299,8 +293,45 @@ function AnthropicKeyCard() {
             >
               Clear
             </Button>
-          )}
-        </div>
+          </div>
+        )}
+        {editing && (
+          <div className="flex items-center gap-2">
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              type="password"
+              placeholder={configured ? "Paste new API key to replace" : "sk-ant-..."}
+              data-testid="cc-key-input"
+              className="flex-1 rounded border border-border bg-card px-2 py-1 text-sm"
+            />
+            <Button
+              data-testid="cc-key-save"
+              disabled={!value || setKey.isPending}
+              onClick={() =>
+                setKey.mutate(value, {
+                  onSuccess: () => {
+                    setValue("");
+                    setEditing(false);
+                  },
+                })
+              }
+            >
+              {setKey.isPending ? "Saving…" : "Save"}
+            </Button>
+            {configured && (
+              <Button
+                data-testid="cc-key-rotate-cancel"
+                onClick={() => {
+                  setValue("");
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
+        )}
         {validate.data && (
           <p
             className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}
