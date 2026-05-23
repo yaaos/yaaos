@@ -16,12 +16,16 @@ Exported from `app/domain/lessons/__init__.py`:
 
 HTTP routes (`/api/lessons`):
 
-- `GET /api/lessons?repo_external_id=…` — list (filtered by repo if param given; otherwise all in org).
-- `POST /api/lessons` — create.
-- `PUT /api/lessons/{lesson_id}` — update title/body/source_pr_url.
-- `DELETE /api/lessons/{lesson_id}` — hard delete.
+| Method | Path                 | Action          |
+|--------|----------------------|-----------------|
+| GET    | `/api/lessons`       | `LESSONS_READ`  |
+| POST   | `/api/lessons`       | `LESSONS_WRITE` |
+| PUT    | `/api/lessons/{id}`  | `LESSONS_WRITE` |
+| DELETE | `/api/lessons/{id}`  | `LESSONS_WRITE` |
 
-All routes use `Actor.system()` and the fixed org id (`00000000-0000-0000-0000-000000000001`).
+Org context arrives via the `X-Org-Slug` header (M06 org-scoping); the
+`require(Action.LESSONS_*)` dep resolves it. Mutations write
+`current_actor()` (the cookie-bearer's user) as the audit-log actor.
 
 ## Module architecture
 
