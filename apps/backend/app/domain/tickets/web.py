@@ -188,11 +188,73 @@ async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
 
 
 @router.get("/{ticket_id}")
-async def detail(ticket_id: UUID) -> Ticket:
+async def detail(ticket_id: UUID) -> dict[str, Any]:
+    """Per-ticket detail with the M06 enrichment: `stages[]` (projected from
+    `workflow_executions`) + `builder` (the trigger identity).
+
+    Returns the Ticket pydantic fields plus:
+    - `stages: [{name, state, attempt_count, current_attempt, started_at,
+       completed_at, workflow_execution_id}]` — one entry per workflow run
+       on the ticket, newest first.
+    - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
+       when the ticket's PR has an `author_login`; `kind="system"` when
+       yaaos triggered the run with no human attribution.
+    """
+    from sqlalchemy import desc as _desc  # noqa: PLC0415
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+
+    org_id = _org()
     try:
-        return await get(ticket_id, org_id=_org())
+        ticket = await get(ticket_id, org_id=org_id)
     except TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        wfx_rows = (
+            (
+                await s.execute(
+                    _select(WorkflowExecutionRow)
+                    .where(WorkflowExecutionRow.ticket_id == ticket_id)
+                    .order_by(_desc(WorkflowExecutionRow.created_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    stages = [
+        {
+            "name": w.workflow_name,
+            "state": w.state,
+            "attempt_count": 1,  # POC: one attempt per execution row.
+            "current_attempt": 1,
+            "started_at": w.created_at.isoformat() if w.created_at else None,
+            "completed_at": (
+                w.updated_at.isoformat() if w.state in ("done", "failed", "cancelled") else None
+            ),
+            "workflow_execution_id": str(w.id),
+        }
+        for w in wfx_rows
+    ]
+
+    builder: dict[str, Any] = (
+        {
+            "kind": "user",
+            "user_id": None,
+            "display_name": ticket.author_login,
+            "avatar_url": None,
+        }
+        if ticket.author_login
+        else {"kind": "system", "display_name": "yaaos"}
+    )
+
+    payload = ticket.model_dump(mode="json")
+    payload["stages"] = stages
+    payload["builder"] = builder
+    return payload
 
 
 @router.get("/{ticket_id}/audit")
