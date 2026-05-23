@@ -45,14 +45,26 @@ import { useMemo, useState } from "react";
 
 type M06Status = "running" | "hitl" | "done" | "failed" | "cancelled";
 
+// Solid semantic-color chips pass WCAG AA contrast against the matching
+// `*-foreground` pair. The previous /15-tinted variant failed axe scans
+// because the same-color text on the same-color tint sat below the 4.5:1
+// contrast ratio.
 const STATUS_DISPLAY: Record<M06Status, { label: string; icon: typeof Loader2; chip: string }> = {
-  running: { label: "Running", icon: Loader2, chip: "bg-info/15 text-info border-info/30" },
-  hitl: { label: "HITL", icon: Hand, chip: "bg-warning/15 text-warning border-warning/30" },
-  done: { label: "Done", icon: CheckCircle2, chip: "bg-success/15 text-success border-success/30" },
+  running: { label: "Running", icon: Loader2, chip: "bg-info text-info-foreground border-info" },
+  hitl: {
+    label: "HITL",
+    icon: Hand,
+    chip: "bg-warning text-warning-foreground border-warning",
+  },
+  done: {
+    label: "Done",
+    icon: CheckCircle2,
+    chip: "bg-success text-success-foreground border-success",
+  },
   failed: {
     label: "Failed",
     icon: XCircle,
-    chip: "bg-destructive/15 text-destructive border-destructive/30",
+    chip: "bg-destructive text-destructive-foreground border-destructive",
   },
   cancelled: {
     label: "Cancelled",
@@ -163,12 +175,17 @@ export function TicketsListPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search title…"
             data-testid="tickets-search"
+            aria-label="Search tickets by title"
             className="h-7 pl-7 text-xs w-[200px]"
           />
         </div>
 
         <Select value={repo} onValueChange={setRepo}>
-          <SelectTrigger className="h-7 text-xs w-[160px]" data-testid="tickets-filter-repo">
+          <SelectTrigger
+            className="h-7 text-xs w-[160px]"
+            data-testid="tickets-filter-repo"
+            aria-label="Filter by repository"
+          >
             <SelectValue placeholder="All repos" />
           </SelectTrigger>
           <SelectContent>

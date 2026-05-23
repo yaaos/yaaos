@@ -61,24 +61,26 @@ interface StatusMeta {
   chip: string;
 }
 
+// Solid semantic-color chips pass WCAG AA contrast against the matching
+// `*-foreground` pair (see TicketsListPage for the same rationale).
 const DEFAULT_STATUS_META: StatusMeta = {
   label: "Running",
   icon: Loader2,
-  chip: "bg-info/15 text-info border-info/30",
+  chip: "bg-info text-info-foreground border-info",
 };
 
 const M06_STATUS_META: Record<string, StatusMeta> = {
   running: DEFAULT_STATUS_META,
-  hitl: { label: "HITL", icon: Bell, chip: "bg-warning/15 text-warning border-warning/30" },
+  hitl: { label: "HITL", icon: Bell, chip: "bg-warning text-warning-foreground border-warning" },
   done: {
     label: "Done",
     icon: CheckCircle2,
-    chip: "bg-success/15 text-success border-success/30",
+    chip: "bg-success text-success-foreground border-success",
   },
   failed: {
     label: "Failed",
     icon: XCircle,
-    chip: "bg-destructive/15 text-destructive border-destructive/30",
+    chip: "bg-destructive text-destructive-foreground border-destructive",
   },
   cancelled: {
     label: "Cancelled",

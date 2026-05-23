@@ -147,6 +147,18 @@ async def seed_credentials_and_install(
                 encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
             )
         )
+        # M06 — also write the OrgCodingAgentRow so the bespoke Coding Agent
+        # settings page (claude_code's AgentEditor) renders against the
+        # configured defaults instead of an empty-state placeholder.
+        from app.domain.orgs.models import OrgCodingAgentRow  # noqa: PLC0415
+
+        s.add(
+            OrgCodingAgentRow(
+                org_id=target_org_id,
+                plugin_id="claude_code",
+                settings={},
+            )
+        )
         await s.commit()
 
 

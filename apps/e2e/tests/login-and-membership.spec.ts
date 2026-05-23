@@ -41,7 +41,10 @@ test.describe("auth + members", () => {
     // Members page: invite a new member. M03+ re-homed it under settings.
     await page.goto(`${BASE}/orgs/acme/settings/members`);
     await page.locator('input[type="email"]').fill("bob@example.com");
-    await page.getByTestId("invite-role").selectOption("builder");
+    // The shadcn Select is a Radix popover, not a native <select>. Open
+    // it and click the option in the floating listbox.
+    await page.getByTestId("invite-role").click();
+    await page.getByRole("option", { name: "builder" }).click();
     await page.getByRole("button", { name: "Invite" }).click();
     // Wait for the network roundtrip (mutation + reload) before pulling the
     // test inbox, otherwise the invite-send may not have hit SMTP yet.
@@ -71,7 +74,8 @@ test.describe("auth + members", () => {
 
     // Owner promotes Bob to admin.
     await page.reload();
-    await page.getByTestId("role-bob").selectOption("admin");
+    await page.getByTestId("role-bob").click();
+    await page.getByRole("option", { name: "admin" }).click();
 
     // Sign out of every session. M03+ moved the action to the Security page.
     await page.goto(`${BASE}/user/security`);

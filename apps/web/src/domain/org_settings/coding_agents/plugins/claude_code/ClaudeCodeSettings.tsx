@@ -451,11 +451,20 @@ function AgentEditor({
     onChange({ ...agent, [field]: baseline[field] });
   };
 
+  const nameId = `${testIdPrefix}-name-input`;
+  const promptExpandId = `${testIdPrefix}-prompt-expand-input`;
+  const useDefaultId = `${testIdPrefix}-use-default-system-prompt-input`;
+  const modelId = `${testIdPrefix}-model-input`;
+  const versionId = `${testIdPrefix}-version-input`;
+  const effortId = `${testIdPrefix}-effort-input`;
   return (
     <div className="flex flex-col gap-2 text-sm">
       <div className="flex items-center gap-2">
-        <span className="text-muted-foreground w-20 text-xs">Name</span>
+        <label htmlFor={nameId} className="text-muted-foreground w-20 text-xs">
+          Name
+        </label>
         <input
+          id={nameId}
           value={agent.name}
           disabled={!nameEditable}
           onChange={(e) => onChange({ ...agent, name: e.target.value })}
@@ -473,13 +482,17 @@ function AgentEditor({
         )}
       </div>
       <div className="flex items-start gap-2">
-        <span className="text-muted-foreground w-20 pt-1.5 text-xs">Prompt</span>
+        <label htmlFor={promptExpandId} className="text-muted-foreground w-20 pt-1.5 text-xs">
+          Prompt
+        </label>
         <div className="flex-1">
           {!expanded ? (
             <button
+              id={promptExpandId}
               type="button"
               onClick={() => setExpanded(true)}
               data-testid={`${testIdPrefix}-prompt-expand`}
+              aria-label="Expand prompt editor"
               className="text-muted-foreground w-full truncate rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-accent"
             >
               {(agent.prompt || "").slice(0, 120) || "(empty)"}
@@ -509,8 +522,9 @@ function AgentEditor({
       <div className="flex items-start gap-2">
         <span className="text-muted-foreground w-20 pt-1.5 text-xs">System prompt</span>
         <div className="flex-1 flex flex-col gap-2">
-          <label className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs">
             <input
+              id={useDefaultId}
               type="checkbox"
               checked={agent.use_default_system_prompt ?? true}
               onChange={(e) =>
@@ -523,8 +537,8 @@ function AgentEditor({
               }
               data-testid={`${testIdPrefix}-use-default-system-prompt`}
             />
-            Use default system prompt
-          </label>
+            <label htmlFor={useDefaultId}>Use default system prompt</label>
+          </div>
           {!(agent.use_default_system_prompt ?? true) && (
             <MaximizableTextarea
               value={agent.system_prompt ?? ""}
@@ -538,8 +552,11 @@ function AgentEditor({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-muted-foreground w-20 text-xs">Model</span>
+        <label htmlFor={modelId} className="text-muted-foreground w-20 text-xs">
+          Model
+        </label>
         <select
+          id={modelId}
           value={agent.model}
           onChange={(e) => onChange({ ...agent, model: e.target.value })}
           data-testid={`${testIdPrefix}-model`}
@@ -557,8 +574,11 @@ function AgentEditor({
             title="Overridden — click Reset to revert"
           />
         )}
-        <span className="text-muted-foreground text-xs">Version</span>
+        <label htmlFor={versionId} className="text-muted-foreground text-xs">
+          Version
+        </label>
         <select
+          id={versionId}
           value={agent.version}
           onChange={(e) => onChange({ ...agent, version: e.target.value })}
           data-testid={`${testIdPrefix}-version`}
@@ -576,8 +596,11 @@ function AgentEditor({
             title="Overridden — click Reset to revert"
           />
         )}
-        <span className="text-muted-foreground text-xs">Effort</span>
+        <label htmlFor={effortId} className="text-muted-foreground text-xs">
+          Effort
+        </label>
         <select
+          id={effortId}
           value={agent.effort}
           onChange={(e) => onChange({ ...agent, effort: e.target.value })}
           data-testid={`${testIdPrefix}-effort`}

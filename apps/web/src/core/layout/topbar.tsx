@@ -37,8 +37,8 @@ export function Topbar({ crumb }: { crumb: string }) {
       >
         {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
       </button>
-      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/15 text-success text-[10.5px] font-medium">
-        <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success text-success-foreground text-[10.5px] font-medium">
+        <span className="w-1.5 h-1.5 rounded-full bg-success-foreground animate-pulse" />
         live
       </span>
       {user && (

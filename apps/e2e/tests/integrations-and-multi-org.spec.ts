@@ -62,9 +62,10 @@ test.describe("integrations + multi-org", () => {
     await expect(banner).toBeVisible();
     await expect(banner).toContainText("linear");
 
-    // Click the banner → land on the Integrations settings page.
+    // Click the banner → land on the MCP Proxy settings page (M06
+    // renamed `/settings/integrations` → `/settings/mcp-proxy`).
     await banner.click();
-    await page.waitForURL(/\/orgs\/acme\/settings\/integrations$/);
+    await page.waitForURL(/\/orgs\/acme\/settings\/mcp-proxy$/);
 
     // The broken provider's "Reconnect required" badge is visible.
     await expect(page.getByTestId("badge-linear-broken")).toBeVisible();

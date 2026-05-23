@@ -21,14 +21,19 @@ interface SeverityMeta {
   chip: string;
 }
 
+// Solid semantic-color chips pass WCAG AA contrast against the matching
+// `*-foreground` pair (same fix as TicketsListPage status chips).
 const DEFAULT_SEVERITY: SeverityMeta = {
   label: "Minor",
-  chip: "bg-info/15 text-info border-info/30",
+  chip: "bg-info text-info-foreground border-info",
 };
 
 const SEVERITY_META: Record<string, SeverityMeta> = {
-  blocker: { label: "Blocker", chip: "bg-destructive/15 text-destructive border-destructive/30" },
-  major: { label: "Major", chip: "bg-warning/15 text-warning border-warning/30" },
+  blocker: {
+    label: "Blocker",
+    chip: "bg-destructive text-destructive-foreground border-destructive",
+  },
+  major: { label: "Major", chip: "bg-warning text-warning-foreground border-warning" },
   minor: DEFAULT_SEVERITY,
   nit: { label: "Nit", chip: "bg-muted text-muted-foreground border-border" },
 };
