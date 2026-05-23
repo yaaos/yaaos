@@ -78,6 +78,24 @@
 - **Rejected:** keep `public_route` and infer org from request body / first query param.
 - **Why:** the spec wants org-scoping the standard M02 way; this mirrors how the other already-org-scoped modules (orgs, integrations, vcs, coding_agents) work.
 
+### D3.1 — M06 status vocab: separate `m06_status` field alongside legacy `status`
+
+- **Picked:** keep `Ticket.status` as the 4-state legacy lifecycle column (`open|in_review|complete|abandoned`) and add a new `Ticket.m06_status` computed field carrying the M06 5-state display vocabulary (`running|hitl|done|failed|cancelled`). `from_row()` populates `m06_status` via `apps/backend/app/domain/tickets/m06_status.project_status()`, a conservative POC mapping that collapses in-flight states to `running` until the workflow-state join lands.
+- **Rejected:** rewrite the `status` column itself to the M06 vocab (matches CLAUDE.md "no compat shims" stricter reading).
+- **Why:** the two values measure different things — `status` is the ticket lifecycle row state; `m06_status` is the workflow-derived display state. Conflating them would force every existing caller (audit logs, SQL queries, plugin tests) to migrate at once; this way the SPA reads `m06_status` and everything else keeps using `status` until a focused Phase 9 sweep merges them.
+
+### D3.2 — `/api/tickets` response shape: `{items, next_cursor}` instead of bare array
+
+- **Picked:** change the response shape now (per the spec) to `{items: TicketRow[], next_cursor: str | null}`, with `next_cursor` always null in M06 (POC uses naive limit-based pagination).
+- **Rejected:** keep the bare-array shape and add cursor support later.
+- **Why:** the spec calls for the new shape; doing it once at the wire layer is cheaper than two SPA migrations. `useTickets()` updated to unwrap `items` so existing pages still see a bare array.
+
+### D3.3 — `findings_count` + `max_severity`: computed-on-read via grouped query
+
+- **Picked:** compute `findings_count` + `max_severity` on each list call with a single `GROUP BY pr_id` against the `findings` table, scoped to the listed tickets' PRs.
+- **Rejected:** denormalize the columns onto `tickets` (or maintain them via trigger).
+- **Why:** the spec explicitly allows POC-acceptable computed-on-read; a focused aggregate is one extra round-trip and trivially cacheable. Trigger maintenance is more code today for no measurable benefit.
+
 ### D2.12 — Keep the existing custom `Sidebar`; add chrome composites alongside
 
 - **Picked:** keep `apps/web/src/core/sidebar/sidebar.tsx` as-is (the hand-rolled component is small, already implements pinned/collapsed modes, and is well-tested). Add `OrgSwitcher` + `NotificationsBell` as standalone composites in `apps/web/src/shared/components/chrome/` and wire them into the existing sidebar's chrome zones. The `UserCard` composite already exists at `apps/web/src/core/sidebar/user-card.tsx` and is kept.

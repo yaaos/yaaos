@@ -18,6 +18,9 @@ from app.domain.tickets.models import TicketRow
 TicketStatus = Literal["open", "in_review", "complete", "abandoned"]
 
 
+M06Status = Literal["running", "hitl", "done", "failed", "cancelled"]
+
+
 class Ticket(BaseModel):
     id: UUID
     org_id: UUID
@@ -37,9 +40,18 @@ class Ticket(BaseModel):
     is_draft: bool | None = None
     created_at: datetime
     updated_at: datetime
+    # M06 fields (nullable until the projections that populate them ship).
+    m06_status: M06Status | None = None
+    current_stage: str | None = None
+    findings_count: int = 0
+    max_severity: Literal["low", "medium", "high"] | None = None
+    builder_kind: Literal["user", "system"] = "user"
+    builder_display_name: str | None = None
 
     @classmethod
     def from_row(cls, row: TicketRow) -> Ticket:
+        from app.domain.tickets.m06_status import project_status  # noqa: PLC0415
+
         return cls(
             id=row.id,
             org_id=row.org_id,
@@ -53,7 +65,11 @@ class Ticket(BaseModel):
             pr_id=row.pr_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            m06_status=project_status(row.status),
         )
+
+
+TicketSort = Literal["updated_desc", "updated_asc", "created_desc", "status", "findings_count"]
 
 
 class TicketFilter(BaseModel):
@@ -62,6 +78,10 @@ class TicketFilter(BaseModel):
     created_after: datetime | None = None
     created_before: datetime | None = None
     statuses: list[TicketStatus] | None = None
+    # M06 additions — see `plan/milestones/M06-design-refresh/api-changes.md`.
+    q: str | None = None
+    sort: TicketSort = "updated_desc"
+    cursor: str | None = None
 
 
 class TicketStatusChanged(Event):
@@ -308,15 +328,19 @@ async def list_tickets(
     org_id: UUID,
     limit: int = 50,
 ) -> list[Ticket]:
+    """List tickets for the org, applying the requested filters + sort.
+
+    `findings_count` + `max_severity` are computed by a grouped query over
+    `findings` rather than denormalized on the ticket row — POC simpler than
+    maintaining a trigger-fed column, and the result set is small.
+    """
+    from sqlalchemy import case, func  # noqa: PLC0415
+
     from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+    from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
 
     async with db_session() as s:
-        stmt = (
-            select(TicketRow)
-            .where(TicketRow.org_id == org_id)
-            .order_by(TicketRow.updated_at.desc())
-            .limit(limit)
-        )
+        stmt = select(TicketRow).where(TicketRow.org_id == org_id)
         if filter.repo_external_ids:
             stmt = stmt.where(TicketRow.repo_external_id.in_(filter.repo_external_ids))
         if filter.statuses:
@@ -325,8 +349,22 @@ async def list_tickets(
             stmt = stmt.where(TicketRow.created_at >= filter.created_after)
         if filter.created_before is not None:
             stmt = stmt.where(TicketRow.created_at < filter.created_before)
+        if filter.q:
+            stmt = stmt.where(TicketRow.title.ilike(f"%{filter.q}%"))
+
+        sort_clause = {
+            "updated_desc": TicketRow.updated_at.desc(),
+            "updated_asc": TicketRow.updated_at.asc(),
+            "created_desc": TicketRow.created_at.desc(),
+            "status": TicketRow.status.asc(),
+        }.get(filter.sort, TicketRow.updated_at.desc())
+        # `findings_count` sort is handled post-fetch — keyset-paginating on a
+        # computed aggregate isn't worth the SQL gymnastics in POC.
+        stmt = stmt.order_by(sort_clause).limit(limit)
+
         rows = (await s.execute(stmt)).scalars().all()
-        # Batch-enrich with PR data (one query, not N+1).
+
+        # Batch-enrich PR data (one query, not N+1).
         pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
         prs_by_id: dict[UUID, PullRequestRow] = {}
         if pr_ids:
@@ -334,6 +372,30 @@ async def list_tickets(
                 (await s.execute(select(PullRequestRow).where(PullRequestRow.id.in_(pr_ids)))).scalars().all()
             )
             prs_by_id = {p.id: p for p in pr_rows}
+
+        # Batch-aggregate findings per pr_id. Cheap GROUP BY scoped to the
+        # listed tickets' PRs; one query regardless of result-set size.
+        findings_by_pr: dict[UUID, tuple[int, str | None]] = {}
+        if pr_ids:
+            severity_rank = case(
+                (FindingRow.severity == "high", 3),
+                (FindingRow.severity == "medium", 2),
+                (FindingRow.severity == "low", 1),
+                else_=0,
+            )
+            agg_stmt = (
+                select(
+                    FindingRow.pr_id,
+                    func.count(FindingRow.id),
+                    func.max(severity_rank),
+                )
+                .where(FindingRow.pr_id.in_(pr_ids), FindingRow.org_id == org_id)
+                .group_by(FindingRow.pr_id)
+            )
+            for pr_id, count, max_rank in (await s.execute(agg_stmt)).all():
+                severity = {3: "high", 2: "medium", 1: "low"}.get(int(max_rank or 0))
+                findings_by_pr[pr_id] = (int(count), severity)
+
         out: list[Ticket] = []
         for r in rows:
             t = Ticket.from_row(r)
@@ -343,7 +405,15 @@ async def list_tickets(
                 t.pr_html_url = pr.html_url
                 t.author_login = pr.author_login
                 t.is_draft = pr.is_draft
+                t.builder_display_name = pr.author_login
+            if r.pr_id and r.pr_id in findings_by_pr:
+                count, severity = findings_by_pr[r.pr_id]
+                t.findings_count = count
+                t.max_severity = severity  # type: ignore[assignment]
             out.append(t)
+
+        if filter.sort == "findings_count":
+            out.sort(key=lambda t: t.findings_count, reverse=True)
         return out
 
 

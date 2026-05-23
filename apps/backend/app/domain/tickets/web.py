@@ -11,6 +11,7 @@ Org context arrives via `X-Org-Slug` (M02 pattern).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -47,10 +48,34 @@ def _org() -> UUID:
 async def list_(
     repo_external_id: list[str] | None = Query(default=None),
     status: list[str] | None = Query(default=None),
-    limit: int = 50,
-) -> list[Ticket]:
-    filter_ = TicketFilter(repo_external_ids=repo_external_id, statuses=status)  # type: ignore[arg-type]
-    return await list_tickets(filter_, org_id=_org(), limit=limit)
+    q: str | None = Query(default=None),
+    sort: str = Query(default="updated_desc"),
+    cursor: str | None = Query(default=None),
+    created_after: datetime | None = Query(default=None),
+    created_before: datetime | None = Query(default=None),
+    limit: int = Query(default=50, le=200),
+) -> dict[str, Any]:
+    """List tickets per the M06 contract.
+
+    Returns `{items, next_cursor}` instead of a bare array so the SPA can
+    drive Load-more pagination. `next_cursor` is null today — POC uses
+    naive limit pagination; opaque-cursor support lands when the result
+    sets grow.
+    """
+    filter_ = TicketFilter(
+        repo_external_ids=repo_external_id,
+        statuses=status,  # type: ignore[arg-type]
+        q=q,
+        sort=sort,  # type: ignore[arg-type]
+        cursor=cursor,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    items = await list_tickets(filter_, org_id=_org(), limit=limit)
+    return {
+        "items": [t.model_dump(mode="json") for t in items],
+        "next_cursor": None,
+    }
 
 
 @router.get("/{ticket_id}")

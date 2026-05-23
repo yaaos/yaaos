@@ -63,10 +63,18 @@ export function useMyOrgs() {
   });
 }
 
+interface TicketsListResponse {
+  items: Ticket[];
+  next_cursor: string | null;
+}
+
 export function useTickets() {
   return useQuery<Ticket[]>({
     queryKey: ["tickets"],
-    queryFn: () => apiFetch<Ticket[]>("/api/tickets"),
+    queryFn: async () => {
+      const resp = await apiFetch<TicketsListResponse>("/api/tickets");
+      return resp.items;
+    },
     refetchInterval: 3_000,
   });
 }
