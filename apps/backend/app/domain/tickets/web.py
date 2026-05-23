@@ -134,6 +134,55 @@ async def list_(
     }
 
 
+@router.post("/{ticket_id}/hitl/respond")
+async def hitl_respond(ticket_id: UUID, response: dict[str, Any]) -> dict[str, Any]:
+    """Submit a HITL response. Resolves the open `PendingHumanDecisionRow`
+    for the ticket's most recent awaiting-human workflow execution and
+    re-enqueues the routing step via `core.workflow.resume_hitl`.
+
+    Request body: opaque dict — passes through to the workflow engine's
+    `resume_hitl(response=...)`. The SPA's HITL renderer shapes this
+    per the prompt's discriminated-union schema (E2a.4).
+
+    Returns `{stage, next_state}` where `next_state` is the workflow
+    state immediately after the resume.
+    """
+    from sqlalchemy import desc as _desc  # noqa: PLC0415
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow import resume_hitl  # noqa: PLC0415
+    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+
+    org_id = _org()
+    try:
+        await get(ticket_id, org_id=org_id)
+    except TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        wfx = (
+            await s.execute(
+                _select(WorkflowExecutionRow)
+                .where(
+                    WorkflowExecutionRow.ticket_id == ticket_id,
+                    WorkflowExecutionRow.state == "awaiting_human",
+                )
+                .order_by(_desc(WorkflowExecutionRow.created_at))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if wfx is None:
+            raise HTTPException(status_code=404, detail="no pending HITL on ticket")
+        resolved = await resume_hitl(str(wfx.id), response=response, session=s)
+        if not resolved:
+            raise HTTPException(status_code=409, detail="HITL decision already resolved")
+        await s.commit()
+        await s.refresh(wfx)
+
+    return {"stage": wfx.workflow_name, "next_state": wfx.state}
+
+
 @router.get("/{ticket_id}/hitl/history")
 async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
     """List past HITL exchanges (prompt + response + timestamps) for the
