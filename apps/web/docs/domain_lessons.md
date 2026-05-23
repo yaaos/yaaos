@@ -1,4 +1,4 @@
-# domain/memory
+# domain/lessons
 
 > Per-repo lessons management — teaching the agents what to look for.
 
@@ -12,7 +12,7 @@ The `/memory` page. Lists existing lessons across all repos and offers a form fo
 
 ## Module architecture
 
-`apps/web/src/domain/memory/index.tsx` is a single ~130-LOC file: an "Add a lesson" form on top, a "Lessons" list below.
+`apps/web/src/domain/lessons/index.tsx` is a single ~130-LOC file: an "Add a lesson" form on top, a "Lessons" list below.
 
 ### Add-a-lesson form
 
@@ -21,11 +21,11 @@ Three inputs:
 - **Title** (`lesson-title`) — text input.
 - **Body** (`lesson-body`) — textarea, `maxLength={1000}` (mirrors the backend cap).
 
-Submit → `useCreateLesson` → `POST /api/memory/lessons`. On success title + body clear (repo stays); on error the message renders inline.
+Submit → `useCreateLesson` → `POST /api/lessons/lessons`. On success title + body clear (repo stays); on error the message renders inline.
 
 ### Lessons list
 
-`useLessons()` (`GET /api/memory/lessons`) returns every lesson; the API is unsorted (insertion order) and the UI preserves that. Each row shows title + repo (mono right-aligned) + Delete button; body underneath with `whitespace-pre-wrap`. Delete → `useDeleteLesson` → `DELETE /api/memory/lessons/${id}`. No confirmation dialog.
+`useLessons()` (`GET /api/lessons/lessons`) returns every lesson; the API is unsorted (insertion order) and the UI preserves that. Each row shows title + repo (mono right-aligned) + Delete button; body underneath with `whitespace-pre-wrap`. Delete → `useDeleteLesson` → `DELETE /api/lessons/lessons/${id}`. No confirmation dialog.
 
 ### Cross-module entry from a finding
 

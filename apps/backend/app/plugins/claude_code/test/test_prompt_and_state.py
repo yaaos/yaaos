@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.domain.coding_agent import FindingAnchor, FindingDraft, ReviewContext
-from app.domain.memory import Lesson
+from app.domain.lessons import Lesson
 from app.domain.vcs import Diff, VCSPullRequest
 from app.plugins.claude_code.service import (
     _assemble_review_prompt,

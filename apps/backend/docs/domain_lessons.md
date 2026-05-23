@@ -1,4 +1,4 @@
-# domain/memory
+# domain/lessons
 
 > Per-repo lessons — human-supplied guidance injected into every future review prompt on the repo.
 
@@ -8,18 +8,18 @@ Owns the `lessons` table, CRUD exposed to the UI, the retrieval API used by `rev
 
 ## Public interface
 
-Exported from `app/domain/memory/__init__.py`:
+Exported from `app/domain/lessons/__init__.py`:
 
 - Types — `Lesson`, `LessonRow`.
 - Operations — `create`, `list_for_repo`, `list_all`, `get`, `update`, `delete`.
 - Exceptions — `LessonNotFoundError`, `LessonValidationError`.
 
-HTTP routes (`/api/memory`):
+HTTP routes (`/api/lessons`):
 
-- `GET /api/memory?repo_external_id=…` — list (filtered by repo if param given; otherwise all in org).
-- `POST /api/memory` — create.
-- `PUT /api/memory/{lesson_id}` — update title/body/source_pr_url.
-- `DELETE /api/memory/{lesson_id}` — hard delete.
+- `GET /api/lessons?repo_external_id=…` — list (filtered by repo if param given; otherwise all in org).
+- `POST /api/lessons` — create.
+- `PUT /api/lessons/{lesson_id}` — update title/body/source_pr_url.
+- `DELETE /api/lessons/{lesson_id}` — hard delete.
 
 All routes use `Actor.system()` and the fixed org id (`00000000-0000-0000-0000-000000000001`).
 
@@ -31,7 +31,7 @@ Lessons are scoped by `(plugin_id, repo_external_id)`. No yaaos-side `repos` tab
 
 ### `Lesson` model
 
-Pydantic view of the row. `Lesson.from_row(row)` converts a `LessonRow`. Schema in `app/domain/memory/models.py`.
+Pydantic view of the row. `Lesson.from_row(row)` converts a `LessonRow`. Schema in `app/domain/lessons/models.py`.
 
 ### Validation
 
@@ -64,4 +64,4 @@ Edits overwrite in place — no versioning table; history lives in `audit_log`. 
 
 ## How it's tested
 
-`app/domain/memory/test/test_validation.py` — empty title/body rejected, length caps enforced, valid input passes. CRUD + audit covered by HTTP-layer integration tests and by `reviewer`'s tests exercising `list_for_repo`. **Service test** `app/domain/memory/test/test_teach_from_finding_service.py` (`@pytest.mark.service`) covers the "Teach yaaos" memory-loop entry point — `memory.create` inserts a lesson row + writes the `lesson.created` audit + `list_for_repo` finds it.
+`app/domain/lessons/test/test_validation.py` — empty title/body rejected, length caps enforced, valid input passes. CRUD + audit covered by HTTP-layer integration tests and by `reviewer`'s tests exercising `list_for_repo`. **Service test** `app/domain/lessons/test/test_teach_from_finding_service.py` (`@pytest.mark.service`) covers the "Teach yaaos" memory-loop entry point — `memory.create` inserts a lesson row + writes the `lesson.created` audit + `list_for_repo` finds it.

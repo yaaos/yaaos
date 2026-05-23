@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.core.audit_log import Actor
 from app.core.auth import public_route
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.memory.service import (
+from app.domain.lessons.service import (
     Lesson,
     LessonNotFoundError,
     LessonValidationError,
@@ -92,4 +92,4 @@ async def delete_lesson(lesson_id: UUID) -> dict[str, str]:
     return {"status": "deleted"}
 
 
-register_routes(RouteSpec(module_name="memory", router=router))
+register_routes(RouteSpec(module_name="lessons", router=router))

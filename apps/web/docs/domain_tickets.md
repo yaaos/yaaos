@@ -54,7 +54,7 @@ Inside `findings-list`: severity dot + title + severity label + `file:line` + su
 
 ### Teach-yaaos modal
 
-Pre-fills title (empty), body (finding's body, editable, 1000-char cap), repo (the ticket's). Submit → `useCreateLesson` posts `/api/memory/lessons`, invalidates `["memory", repo]`, closes.
+Pre-fills title (empty), body (finding's body, editable, 1000-char cap), repo (the ticket's). Submit → `useCreateLesson` posts `/api/lessons/lessons`, invalidates `["memory", repo]`, closes.
 
 ### Audit tab
 
@@ -71,7 +71,7 @@ The SSE subscriber invalidates `["tickets"]`, `["tickets", id]`, `["tickets", id
 
 ## Data owned
 
-None. State lives in `core/api` caches; mutations target endpoints owned by `domain/reviewer` and `domain/memory`.
+None. State lives in `core/api` caches; mutations target endpoints owned by `domain/reviewer` and `domain/lessons`.
 
 ## How it's tested
 

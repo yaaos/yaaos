@@ -36,7 +36,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | Module | Responsibility |
 |---|---|
 | [domain_vcs](domain_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
-| [domain_memory](domain_memory.md) | Per-repo lessons CRUD + prompt retrieval. |
+| [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
 | [domain_coding_agent](domain_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
 | [domain_pull_requests](domain_pull_requests.md) | PR aggregate mirroring VCS state. |
 | [domain_tickets](domain_tickets.md) | Lifecycle `open → in_review → complete`. |

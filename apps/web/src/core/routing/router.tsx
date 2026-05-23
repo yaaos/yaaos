@@ -3,7 +3,7 @@ import { AppShell } from "@core/layout";
 import { DetailsPage, SecurityPage } from "@domain/account";
 import { LoginPage } from "@domain/auth";
 import { DashboardPage } from "@domain/dashboard";
-import { MemoryPage } from "@domain/memory";
+import { LessonsPage } from "@domain/lessons";
 import {
   AuditSettingsPage,
   AuthSettingsPage,
@@ -112,10 +112,10 @@ const orgTicketDetailRoute = createRoute({
   component: TicketDetailPage,
 });
 
-const orgMemoryRoute = createRoute({
+const orgLessonsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/memory",
-  component: MemoryPage,
+  path: "/lessons",
+  component: LessonsPage,
 });
 
 // M03: /orgs/$slug/settings → /orgs/$slug/settings/auth. The shell + per-tab
@@ -184,7 +184,7 @@ const orgSettingsIntegrationsRoute = createRoute({
 });
 
 // Legacy aliases — M01-era links + e2e specs target `/dashboard`,
-// `/tickets`, `/memory`, `/settings`. Render the same components directly
+// `/tickets`, `/lessons`, `/settings`. Render the same components directly
 // (no auth probe) so M01 flows keep working. M02 flows go through
 // `/orgs/$slug/...`.
 const legacyDashboardRoute = createRoute({
@@ -205,10 +205,10 @@ const legacyTicketDetailRoute = createRoute({
   component: TicketDetailPage,
 });
 
-const legacyMemoryRoute = createRoute({
+const legacyLessonsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/memory",
-  component: MemoryPage,
+  path: "/lessons",
+  component: LessonsPage,
 });
 
 const legacySettingsRoute = createRoute({
@@ -226,14 +226,14 @@ const routeTree = rootRoute.addChildren([
   legacyDashboardRoute,
   legacyTicketsRoute,
   legacyTicketDetailRoute,
-  legacyMemoryRoute,
+  legacyLessonsRoute,
   legacySettingsRoute,
   orgScopeRoute.addChildren([
     orgIndexRoute,
     orgDashboardRoute,
     orgTicketsRoute,
     orgTicketDetailRoute,
-    orgMemoryRoute,
+    orgLessonsRoute,
     orgSettingsIndexRoute,
     orgSettingsAuthRoute,
     orgSettingsMembersRoute,

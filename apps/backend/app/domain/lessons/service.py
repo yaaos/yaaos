@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core.audit_log import Actor, audit_for_lesson
 from app.core.database import session as db_session
-from app.domain.memory.models import LessonRow
+from app.domain.lessons.models import LessonRow
 
 
 class Lesson(BaseModel):

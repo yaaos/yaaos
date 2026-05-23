@@ -27,7 +27,7 @@ Prereqs (one-time): `pnpm install` + `pnpm exec playwright install chromium` fro
 | `pr-resync-reruns-review.spec.ts` | `pull_request.synchronize` triggers a fresh review run (also exercises force-push compare). |
 | `secrets-refuse-to-review.spec.ts` | Diff with `AKIA…` → review skips with `secrets_detected` → refuse-to-review comment posted. |
 | `manual-rereview-and-cancel.spec.ts` | Re-review through UI; cancel through API (`POST /api/reviewer/cancel`); assert `review_job.cancelled` audit entry. |
-| `teach-yaaos-from-finding.spec.ts` | Open a posted finding → Teach modal → save → lesson visible on `/memory`. |
+| `teach-yaaos-from-finding.spec.ts` | Open a posted finding → Teach modal → save → lesson visible on `/lessons`. |
 | `lesson-applied-next-review.spec.ts` | Pre-seed a lesson → run review → audit `prompt_sent` reports `lessons_count >= 1`. |
 | `settings-cards-are-independent.spec.ts` | Save Anthropic without GitHub installed; save GitHub credentials with Anthropic set — no gating. |
 | `sse-step-progress-live.spec.ts` | Open ticket detail, dispatch webhook, review card reaches `posted` without page reload — SSE-driven. |

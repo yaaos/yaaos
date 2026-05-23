@@ -157,7 +157,7 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.plugins.github.models",
         "app.domain.pull_requests.models",
         "app.domain.tickets.models",
-        "app.domain.memory.models",
+        "app.domain.lessons.models",
         "app.domain.reviewer.models",
     ):
         importlib.import_module(mod)

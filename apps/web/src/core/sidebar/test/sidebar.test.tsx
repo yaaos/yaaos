@@ -46,7 +46,7 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("nav-dashboard")).toHaveAttribute("href", "/orgs/acme/dashboard");
     expect(screen.getByTestId("nav-dashboard")).toHaveAttribute("data-active");
     expect(screen.getByTestId("nav-tickets")).toHaveAttribute("href", "/orgs/acme/tickets");
-    expect(screen.getByTestId("nav-memory")).toHaveAttribute("href", "/orgs/acme/memory");
+    expect(screen.getByTestId("nav-lessons")).toHaveAttribute("href", "/orgs/acme/lessons");
     // Group header rendered; children visible by default (collapsed = false).
     expect(screen.getByTestId("nav-group-org-settings")).toBeInTheDocument();
     expect(screen.getByTestId("nav-auth")).toBeInTheDocument();

@@ -31,7 +31,7 @@ from app.core.workspace import (
     WorkspaceSpec,
     with_workspace,
 )
-from app.domain import coding_agent, memory, pull_requests, tickets
+from app.domain import coding_agent, lessons, pull_requests, tickets
 from app.domain.coding_agent import (
     IncrementalReviewContext,
     InvocationStatus,
@@ -269,7 +269,7 @@ async def _run_incremental_review(
         vcs_plugin = get_vcs_plugin(pr.plugin_id)
         vcs_pr = await vcs_plugin.fetch_pr(pr.external_id)
         diff = await vcs_plugin.fetch_diff(pr.external_id)
-        lessons = await memory.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
+        lesson_rows = await lessons.list_for_repo(pr.repo_external_id, org_id=org_id, plugin_id=pr.plugin_id)
         language = _detect_language(diff)
 
         async with db_session() as s:
@@ -322,7 +322,7 @@ async def _run_incremental_review(
                 diff=diff,
                 prev_sha=prev_sha,
                 head_sha=head_sha,
-                lessons=lessons,
+                lessons=lesson_rows,
                 language_hint=language,
                 prior_open_finding_summaries=prior_open,
                 prior_acknowledged_finding_summaries=prior_ack,

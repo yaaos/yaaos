@@ -1619,7 +1619,7 @@ function LessonChips({ ids }: { ids: string[] }) {
         applied
       </span>
       <Link
-        to="/orgs/$slug/memory"
+        to="/orgs/$slug/lessons"
         params={(prev) => ({ slug: prev.slug as string })}
         className="hover:underline"
       >

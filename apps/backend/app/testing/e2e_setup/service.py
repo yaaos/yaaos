@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.core.database import Base
 from app.core.database import session as db_session
 from app.core.workspace import models as _workspace_models  # noqa: F401
-from app.domain.memory.models import LessonRow
+from app.domain.lessons.models import LessonRow
 from app.domain.pull_requests import models as _pr_models  # noqa: F401
 from app.domain.reviewer import models as _reviewer_models  # noqa: F401
 from app.domain.tickets import models as _ticket_models  # noqa: F401

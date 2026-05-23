@@ -32,7 +32,7 @@ const NAV: NavConfig = {
       path: "/dashboard",
     },
     { kind: "link", id: "tickets", label: "Tickets", icon: Ticket, path: "/tickets" },
-    { kind: "link", id: "memory", label: "Memory", icon: Brain, path: "/memory" },
+    { kind: "link", id: "lessons", label: "Lessons", icon: Brain, path: "/lessons" },
     {
       kind: "group",
       id: "org-settings",

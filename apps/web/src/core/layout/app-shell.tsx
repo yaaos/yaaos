@@ -6,7 +6,7 @@ import { Topbar } from "./topbar";
 const CRUMB_BY_PATH: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/tickets": "Tickets",
-  "/memory": "Memory",
+  "/lessons": "Lessons",
   "/settings": "Settings",
 };
 

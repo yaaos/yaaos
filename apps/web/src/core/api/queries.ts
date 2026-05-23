@@ -246,10 +246,10 @@ export function useCancelReviewerJobs() {
 
 export function useLessons(repo_external_id?: string) {
   return useQuery<Lesson[]>({
-    queryKey: ["memory", repo_external_id ?? "all"],
+    queryKey: ["lessons", repo_external_id ?? "all"],
     queryFn: () =>
       apiFetch<Lesson[]>(
-        `/api/memory${repo_external_id ? `?repo_external_id=${encodeURIComponent(repo_external_id)}` : ""}`,
+        `/api/lessons${repo_external_id ? `?repo_external_id=${encodeURIComponent(repo_external_id)}` : ""}`,
       ),
   });
 }
@@ -263,11 +263,11 @@ export function useCreateLesson() {
       body: string;
       source_pr_url?: string | null;
     }) =>
-      apiFetch<Lesson>("/api/memory", {
+      apiFetch<Lesson>("/api/lessons", {
         method: "POST",
         body: JSON.stringify(l),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["memory"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["lessons"] }),
   });
 }
 
@@ -275,8 +275,8 @@ export function useDeleteLesson() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      apiFetch<{ status: string }>(`/api/memory/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["memory"] }),
+      apiFetch<{ status: string }>(`/api/lessons/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["lessons"] }),
   });
 }
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.domain.memory.service import LessonValidationError, _validate
+from app.domain.lessons.service import LessonValidationError, _validate
 
 
 def test_empty_title_rejected() -> None:

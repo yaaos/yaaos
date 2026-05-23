@@ -65,3 +65,9 @@
 - **Picked:** add a row-UPDATE migration (`UPDATE memberships SET role='builder' WHERE role='member'`) as `020_rename_member_to_builder` in `apps/backend/app/core/database/service.py`. No enum-type ALTER needed (the column is plain TEXT). Renamed `Role.MEMBER` → `Role.BUILDER` in `types.py`; bulk-replaced all usages via sed.
 - **Rejected:** keep `MEMBER` as an alias of `BUILDER` for backward-compat.
 - **Why:** CLAUDE.md is explicit ("no backward-compat shims"). The repo is small enough that mechanical rename + reformat is the right move; tests caught the one frontend `RANK` literal that was missed.
+
+### D2.6 — `domain/memory` module → `domain/lessons` rename shape
+
+- **Picked:** `git mv apps/backend/app/domain/memory apps/backend/app/domain/lessons` then a `sed` sweep to rewire all imports (`app.domain.memory` → `app.domain.lessons`), `RouteSpec(module_name=...)`, the local `lessons = await memory.list_for_repo(...)` shadow in `reviewer/incremental.py` (renamed the local to `lesson_rows`), and the frontend mirror (`@domain/memory` → `@domain/lessons`, `MemoryPage` → `LessonsPage`, `/memory` route → `/lessons`, nav label "Memory" → "Lessons"). Doc files renamed: `apps/{backend,web}/docs/domain_memory.md` → `domain_lessons.md`. Ran `apps/backend/bin/sync_modules` to refresh `tach.toml`.
+- **Rejected:** keep `domain/memory` and add `/api/lessons` as an alias router (avoids any module rename); or write a redirect handler on the frontend.
+- **Why:** the table is already named `lessons` in the DB, so the module name was the last stale piece; aliasing would create two source-of-truth names for one concept, exactly the kind of compat debt CLAUDE.md tells us to skip in POC phase.

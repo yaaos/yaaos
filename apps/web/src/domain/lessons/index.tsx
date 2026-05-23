@@ -8,7 +8,7 @@ import {
 import { Button, Card, CardContent, CardHeader } from "@shared/components";
 import { useState } from "react";
 
-export function MemoryPage() {
+export function LessonsPage() {
   const { data: lessons } = useLessons();
   const { data: repos } = useGithubRepositories();
   const create = useCreateLesson();

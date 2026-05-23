@@ -1,9 +1,9 @@
 """Service test (Phase 3 migration of `teach-yaaos-from-finding.spec.ts`):
-the memory-loop entry point — `memory.create(repo, title, body, source_pr_url)`
+the lessons-loop entry point — `lessons.create(repo, title, body, source_pr_url)`
 inserts a lesson + writes a `lesson.created` audit row.
 
 The e2e spec exercises the UI handler chain (modal open → field fill →
-save → memory page); the durable contract is the lesson row + audit, which
+save → lessons page); the durable contract is the lesson row + audit, which
 is what this test asserts.
 """
 
@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.audit_log import Actor
-from app.domain import memory
+from app.domain import lessons
 from app.domain.orgs import repository as orgs_repo
 
 pytestmark = pytest.mark.service
@@ -29,7 +29,7 @@ async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_sessi
     title = "Cite the CWE family"
     body = "When flagging an input-validation issue, name the CWE family."
 
-    lesson = await memory.create(
+    lesson = await lessons.create(
         "owner/repo",
         title,
         body,
@@ -66,5 +66,5 @@ async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_sessi
     assert audit == "lesson.created"
 
     # Cross-check: list_for_repo finds it.
-    listed = await memory.list_for_repo("owner/repo", org_id=org.id, plugin_id="github")
+    listed = await lessons.list_for_repo("owner/repo", org_id=org.id, plugin_id="github")
     assert any(l.id == lesson.id for l in listed)

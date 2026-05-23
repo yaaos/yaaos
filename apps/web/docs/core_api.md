@@ -45,7 +45,7 @@ Each API resource has a type alias in `client.ts`, mirroring the backend Pydanti
 | `useTicket(id)` | `GET /api/tickets/${id}` | — |
 | `useTicketAudit(id)` | `GET /api/tickets/${id}/audit` | 3s |
 | `useReviewJobsForTicket(id)` | `GET /api/reviewer/jobs/by-ticket/${id}` | 3s |
-| `useLessons(repo?)` | `GET /api/memory/lessons[?repo=...]` | — |
+| `useLessons(repo?)` | `GET /api/lessons/lessons[?repo=...]` | — |
 | `useMetricsSummary` | `GET /api/reviewer/metrics` | 5s |
 | `useGithubInstallation` | `GET /api/github/installation` | 5s |
 | `useGithubRepositories` | `GET /api/github/repositories` | on demand |
@@ -62,8 +62,8 @@ Mutations invalidate the keys they affect on success:
 |---|---|---|
 | `useRereviewMutation` | `POST /api/reviewer/rereview?ticket_id=...` | `["tickets"]`, `["reviewer","jobs",id]`, `["tickets",id,"audit"]`, `["reviewer","metrics"]` |
 | `useCancelReviewerJobs` | `POST /api/reviewer/cancel?ticket_id=...` | same as re-review |
-| `useCreateLesson` | `POST /api/memory/lessons` | `["memory", repo]` |
-| `useDeleteLesson` | `DELETE /api/memory/lessons/${id}` | `["memory", repo]` |
+| `useCreateLesson` | `POST /api/lessons/lessons` | `["memory", repo]` |
+| `useDeleteLesson` | `DELETE /api/lessons/lessons/${id}` | `["memory", repo]` |
 | `useSetAnthropicKey` | `POST /api/claude_code/api_key` | `["onboarding"]`, `["plugin-health","claude_code"]` |
 | `useSetGithubCredentials` | `POST /api/github/credentials` | `["github","installation"]`, `["plugin-health","github"]`, `["onboarding"]` |
 

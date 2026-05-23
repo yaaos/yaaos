@@ -1,8 +1,8 @@
-"""domain/memory — per-repo lessons."""
+"""domain/lessons — per-repo lessons."""
 
-from app.domain.memory import web  # noqa: F401
-from app.domain.memory.models import LessonRow
-from app.domain.memory.service import (
+from app.domain.lessons import web  # noqa: F401
+from app.domain.lessons.models import LessonRow
+from app.domain.lessons.service import (
     Lesson,
     LessonNotFoundError,
     LessonValidationError,

@@ -43,11 +43,11 @@ from app.domain.orgs import onboarding_web as _orgs_onboarding_web  # noqa: F401
 from app.domain.orgs import sso_web as _orgs_sso_web  # noqa: F401, E402
 from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
 
-# 6. Domain modules — order: types first (vcs, memory), then coding_agent
-#    (which references vcs + memory types), then leaf domain modules,
+# 6. Domain modules — order: types first (vcs, lessons), then coding_agent
+#    (which references vcs + lessons types), then leaf domain modules,
 #    then domain modules that depend on others.
 from app.domain import vcs  # noqa: F401, E402
-from app.domain import memory  # noqa: F401, E402
+from app.domain import lessons  # noqa: F401, E402
 from app.domain import coding_agent  # noqa: F401, E402
 from app.domain import pull_requests  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
