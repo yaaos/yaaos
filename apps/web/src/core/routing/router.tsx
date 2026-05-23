@@ -17,7 +17,6 @@ import {
   VcsSettingsPage,
 } from "@domain/org_settings";
 import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
-import { SettingsPage } from "@domain/settings";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 
@@ -237,12 +236,6 @@ const legacyLessonsRoute = createRoute({
   component: LessonsPage,
 });
 
-const legacySettingsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/settings",
-  component: SettingsPage,
-});
-
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -256,7 +249,6 @@ const routeTree = rootRoute.addChildren([
   legacyTicketsRoute,
   legacyTicketDetailRoute,
   legacyLessonsRoute,
-  legacySettingsRoute,
   orgScopeRoute.addChildren([
     orgIndexRoute,
     orgDashboardRoute,

@@ -3,7 +3,6 @@ import {
   type AuditEntry,
   type HealthResponse,
   type Lesson,
-  type OnboardingStatus,
   type ReviewJob,
   type Ticket,
   apiClient,
@@ -19,14 +18,6 @@ export function useHealth() {
       if (!data) throw new Error("no data");
       return data;
     },
-    refetchInterval: 5_000,
-  });
-}
-
-export function useOnboarding() {
-  return useQuery<OnboardingStatus>({
-    queryKey: ["onboarding"],
-    queryFn: () => apiFetch<OnboardingStatus>("/api/settings/onboarding"),
     refetchInterval: 5_000,
   });
 }
@@ -498,13 +489,6 @@ export function useGithubRepositories(enabled = true) {
     queryFn: () => apiFetch<GithubRepositoriesResponse>("/api/github/repositories"),
     enabled,
     refetchInterval: 30_000,
-  });
-}
-
-export function usePluginsList() {
-  return useQuery<PluginMeta[]>({
-    queryKey: ["plugins"],
-    queryFn: () => apiFetch<PluginMeta[]>("/api/settings/plugins"),
   });
 }
 

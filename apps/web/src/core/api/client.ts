@@ -14,11 +14,6 @@ export type HealthResponse = {
   version: string;
 };
 
-export type OnboardingStatus = {
-  github_app_installed: boolean;
-  anthropic_key_set: boolean;
-};
-
 export type Ticket = {
   id: string;
   org_id: string;

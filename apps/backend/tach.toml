@@ -106,7 +106,7 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.webserver", "app.d
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_meta", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.identity", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.identity", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.plugins"
