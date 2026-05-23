@@ -1,5 +1,7 @@
 import { getCurrentOrgSlug } from "@core/api";
-import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
+import { PageHeader } from "@shared/components/layout";
+import { Badge } from "@shared/components/ui/badge";
+import { Button } from "@shared/components/ui/button";
 import { PluginPicker, useAvailablePlugins } from "@shared/plugin_picker";
 import type { PluginMeta } from "@shared/plugin_picker";
 import { useState } from "react";
@@ -26,7 +28,7 @@ export function CodingAgentsSettingsPage() {
   if (installs.isLoading) {
     return (
       <OrgSettingsLayout active="coding-agents">
-        <div className="text-text-3 p-6 text-sm">Loading…</div>
+        <div className="text-muted-foreground p-6 text-sm">Loading…</div>
       </OrgSettingsLayout>
     );
   }
@@ -40,25 +42,31 @@ export function CodingAgentsSettingsPage() {
   return (
     <OrgSettingsLayout active="coding-agents">
       <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[16px] font-semibold">Coding Agents</h2>
-          {!picking && (
-            <Button data-testid="ca-add" onClick={() => setPicking(true)}>
-              Add coding agent
-            </Button>
-          )}
-        </div>
+        <PageHeader
+          title="Coding Agents"
+          subtitle="Coding agents that pick up tickets routed to this org."
+          actions={
+            !picking ? (
+              <Button data-testid="ca-add" onClick={() => setPicking(true)}>
+                Add coding agent
+              </Button>
+            ) : null
+          }
+        />
         {picking && (
-          <Card data-testid="ca-picker-card">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <h3 className="text-[13.5px] font-semibold">Add a coding agent</h3>
-                <Button data-testid="ca-picker-cancel" onClick={() => setPicking(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
+          <section className="rounded-lg border border-border bg-card" data-testid="ca-picker-card">
+            <header className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-sm font-semibold">Add a coding agent</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="ca-picker-cancel"
+                onClick={() => setPicking(false)}
+              >
+                Cancel
+              </Button>
+            </header>
+            <div className="px-4 py-4">
               <PluginPicker
                 plugins={plugins.data ?? []}
                 loading={plugins.isLoading}
@@ -68,15 +76,15 @@ export function CodingAgentsSettingsPage() {
                 testIdPrefix="ca-picker"
               />
               {install.isError && (
-                <p className="mt-3 text-xs text-red-500" data-testid="ca-install-err">
+                <p className="mt-3 text-xs text-destructive" data-testid="ca-install-err">
                   {(install.error as Error)?.message || "Failed"}
                 </p>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         )}
         {(installs.data ?? []).length === 0 ? (
-          <p className="text-text-3 text-sm" data-testid="ca-empty">
+          <p className="text-muted-foreground text-sm" data-testid="ca-empty">
             No coding agents installed yet.
           </p>
         ) : (
@@ -111,62 +119,67 @@ function InstallCard({
     ? `/orgs/${slug}/settings/coding-agents/${row.plugin_id}`
     : `/settings/coding-agents/${row.plugin_id}`;
   return (
-    <Card data-testid={`ca-install-${row.plugin_id}`}>
-      <CardContent>
-        <div className="flex items-start gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h3 className="text-[13.5px] font-semibold">{row.plugin_id}</h3>
-              <Badge variant="success">installed</Badge>
-            </div>
-            <p className="text-text-3 mt-1 text-xs">
-              Updated {new Date(row.updated_at).toLocaleString()}
-            </p>
+    <section
+      className="rounded-lg border border-border bg-card px-4 py-4"
+      data-testid={`ca-install-${row.plugin_id}`}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">{row.plugin_id}</h3>
+            <Badge>installed</Badge>
           </div>
-          <a
-            href={settingsHref}
-            data-testid={`ca-settings-${row.plugin_id}`}
-            className="rounded border border-border-soft px-3 py-1.5 text-xs hover:bg-hover"
-          >
+          <p className="text-muted-foreground mt-1 text-xs">
+            Updated {new Date(row.updated_at).toLocaleString()}
+          </p>
+        </div>
+        <Button asChild variant="outline" size="sm">
+          <a href={settingsHref} data-testid={`ca-settings-${row.plugin_id}`}>
             Settings
           </a>
-          <Button
-            data-testid={`ca-remove-${row.plugin_id}`}
-            disabled={removing}
-            onClick={() => setConfirming(true)}
-          >
-            Remove
-          </Button>
-        </div>
-        {confirming && (
-          <div
-            className="mt-3 rounded border border-border-soft bg-bg-2 p-3"
-            data-testid={`ca-remove-confirm-${row.plugin_id}`}
-          >
-            <p className="mb-2 text-xs">
-              Remove this coding agent? Its settings will be deleted; reviews already running
-              continue to completion.
-            </p>
-            <div className="flex gap-2">
-              <Button
-                data-testid={`ca-remove-cancel-${row.plugin_id}`}
-                onClick={() => setConfirming(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                data-testid={`ca-remove-confirm-btn-${row.plugin_id}`}
-                onClick={() => {
-                  setConfirming(false);
-                  onRemove(row.plugin_id);
-                }}
-              >
-                Remove
-              </Button>
-            </div>
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          data-testid={`ca-remove-${row.plugin_id}`}
+          disabled={removing}
+          onClick={() => setConfirming(true)}
+        >
+          Remove
+        </Button>
+      </div>
+      {confirming && (
+        <div
+          className="mt-3 rounded-md border border-border bg-muted/50 p-3"
+          data-testid={`ca-remove-confirm-${row.plugin_id}`}
+        >
+          <p className="mb-2 text-xs">
+            Remove this coding agent? Its settings will be deleted; reviews already running continue
+            to completion.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid={`ca-remove-cancel-${row.plugin_id}`}
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              data-testid={`ca-remove-confirm-btn-${row.plugin_id}`}
+              onClick={() => {
+                setConfirming(false);
+                onRemove(row.plugin_id);
+              }}
+            >
+              Remove
+            </Button>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </section>
   );
 }

@@ -1,4 +1,6 @@
-import { Button, Card, CardContent, CardHeader } from "@shared/components";
+import { Button } from "@shared/components/ui/button";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
 import { useState } from "react";
 import { SsoConfigPage } from "../orgs/SsoConfigPage";
 import { OrgSettingsLayout } from "./OrgSettingsLayout";
@@ -20,9 +22,6 @@ export function AuthSettingsPage() {
 }
 
 function SessionTimeoutCard() {
-  // Display starts blank; the existing value would come from /api/auth/me
-  // (extended in Phase 6) — we'll wire it through once needed. For now the
-  // form is write-only with explicit "Clear" semantics.
   const [minutes, setMinutes] = useState<string>("");
   const update = useUpdateOrgSettings();
 
@@ -33,40 +32,42 @@ function SessionTimeoutCard() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-[13.5px] font-semibold">Session idle timeout</h2>
-      </CardHeader>
-      <CardContent>
-        <p className="text-text-3 mb-2 text-xs">
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold">Session idle timeout</h2>
+        <p className="text-muted-foreground text-xs mt-1">
           Override the global idle timeout for sessions in this org. Leave blank to use the system
-          default. Members whose session is idle past this window are signed out on their next
-          request.
+          default. Members idle past this window are signed out on their next request.
         </p>
-        <div className="flex items-center gap-2">
-          <input
-            value={minutes}
-            onChange={(e) => setMinutes(e.target.value)}
-            placeholder="minutes (blank = default)"
-            data-testid="session-timeout-input"
-            className="flex-1 rounded border border-border-soft bg-bg-2 px-2 py-1 text-sm"
-            inputMode="numeric"
-          />
+      </header>
+      <div className="px-4 py-4">
+        <div className="flex items-end gap-2">
+          <div className="flex-1 flex flex-col gap-1.5">
+            <Label htmlFor="session-timeout">Minutes (blank = default)</Label>
+            <Input
+              id="session-timeout"
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              placeholder="e.g. 480"
+              data-testid="session-timeout-input"
+              inputMode="numeric"
+            />
+          </div>
           <Button data-testid="session-timeout-save" disabled={update.isPending} onClick={onSave}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
         {update.isError && (
-          <p className="text-xs text-red-500 mt-2" data-testid="session-timeout-err">
+          <p className="text-xs text-destructive mt-2" data-testid="session-timeout-err">
             {(update.error as Error)?.message || "Failed"}
           </p>
         )}
         {update.isSuccess && (
-          <p className="text-xs text-success mt-2" data-testid="session-timeout-ok">
+          <p className="text-xs text-emerald-600 mt-2" data-testid="session-timeout-ok">
             Saved.
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

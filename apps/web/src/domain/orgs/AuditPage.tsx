@@ -1,5 +1,22 @@
 import { apiFetch, getCurrentOrgSlug } from "@core/api";
-import { Card, CardContent, CardHeader } from "@shared/components";
+import { PageHeader } from "@shared/components/layout";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@shared/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@shared/components/ui/table";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -29,85 +46,93 @@ function useAudit(filters: { actor_kind?: string; action?: string }) {
 
 /**
  * Owner/Admin-only org audit feed. Server-side `require(AUDIT_READ)`
- * enforces Admin minimum; the UI doesn't pre-filter — a Member who
+ * enforces Admin minimum; the UI doesn't pre-filter — a Builder who
  * navigates here just sees a 403.
  */
 export function AuditPage() {
   const [actorKind, setActorKind] = useState("");
   const [action, setAction] = useState("");
-  const { data, isLoading, error } = useAudit({ actor_kind: actorKind, action });
+  const { data, isLoading, error } = useAudit({
+    actor_kind: actorKind || undefined,
+    action: action || undefined,
+  });
 
   return (
     <div className="mx-auto max-w-[1100px] flex flex-col gap-4 p-6">
-      <h1 className="text-[20px] font-semibold tracking-tight">Audit</h1>
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-[13.5px]">Filters</h2>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2 items-center text-sm">
-            <label className="flex items-center gap-1">
-              actor
-              <select
-                value={actorKind}
-                onChange={(e) => setActorKind(e.target.value)}
-                className="border rounded px-2 py-1"
-              >
-                <option value="">all</option>
-                <option value="user">user</option>
-                <option value="workspace">workspace</option>
-                <option value="system">system</option>
-                <option value="sso">sso</option>
-              </select>
-            </label>
-            <label className="flex items-center gap-1">
-              action
-              <input
-                value={action}
-                onChange={(e) => setAction(e.target.value)}
-                placeholder="e.g. invited"
-                className="border rounded px-2 py-1"
-              />
-            </label>
+      <PageHeader title="Audit" subtitle="Mutating-action log scoped to this org." />
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Filters</h2>
+        </header>
+        <div className="px-4 py-4 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-actor">Actor</Label>
+            <Select
+              value={actorKind || "all"}
+              onValueChange={(v) => setActorKind(v === "all" ? "" : v)}
+            >
+              <SelectTrigger id="audit-actor" className="w-[160px]">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">all</SelectItem>
+                <SelectItem value="user">user</SelectItem>
+                <SelectItem value="workspace">workspace</SelectItem>
+                <SelectItem value="system">system</SelectItem>
+                <SelectItem value="sso">sso</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </CardContent>
-      </Card>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-action">Action</Label>
+            <Input
+              id="audit-action"
+              value={action}
+              onChange={(e) => setAction(e.target.value)}
+              placeholder="e.g. invited"
+              className="w-[200px]"
+            />
+          </div>
+        </div>
+      </section>
 
-      <Card>
-        <CardContent>
-          {isLoading && <p className="text-text-3 text-xs">Loading…</p>}
+      <section className="rounded-lg border border-border bg-card">
+        <div className="px-4 py-4">
+          {isLoading && <p className="text-muted-foreground text-xs">Loading…</p>}
           {error && (
-            <p className="text-red-500 text-xs">{(error as Error).message ?? "Failed to load"}</p>
+            <p className="text-destructive text-xs">
+              {(error as Error).message ?? "Failed to load"}
+            </p>
           )}
           {data && (
-            <table className="w-full text-sm">
-              <thead className="text-text-3 text-[11.5px] uppercase">
-                <tr>
-                  <th className="text-left py-1">Time</th>
-                  <th className="text-left py-1">Actor</th>
-                  <th className="text-left py-1">Action</th>
-                  <th className="text-left py-1">Entity</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Actor</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Entity</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="py-2 mono text-xs">{r.created_at}</td>
-                    <td className="py-2">
+                  <TableRow key={r.id}>
+                    <TableCell className="font-mono text-xs">{r.created_at}</TableCell>
+                    <TableCell>
                       {r.actor_kind}
                       {r.actor_login ? ` (${r.actor_login})` : ""}
-                    </td>
-                    <td className="py-2 mono">{r.kind}</td>
-                    <td className="py-2 mono text-xs">
+                    </TableCell>
+                    <TableCell className="font-mono">{r.kind}</TableCell>
+                    <TableCell className="font-mono text-xs">
                       {r.entity_kind}:{r.entity_id.slice(0, 8)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

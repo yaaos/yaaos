@@ -1,4 +1,16 @@
-import { Badge, Button, Card, CardContent, CardHeader } from "@shared/components";
+import { PageHeader } from "@shared/components/layout";
+import { Badge } from "@shared/components/ui/badge";
+import { Button } from "@shared/components/ui/button";
+import { Input } from "@shared/components/ui/input";
+import { Label } from "@shared/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@shared/components/ui/table";
 import { useState } from "react";
 import {
   type AccountOrg,
@@ -16,89 +28,114 @@ import {
  */
 export function DetailsPage() {
   const { data, isLoading } = useAccountMe();
-  if (isLoading) return <div className="p-6">Loading…</div>;
+  if (isLoading) {
+    return <div className="p-6 text-muted-foreground text-sm">Loading…</div>;
+  }
   if (!data) {
     return (
-      <div className="p-6">
-        Not signed in. <a href="/login">Go to login.</a>
+      <div className="p-6 text-sm">
+        Not signed in.{" "}
+        <a href="/login" className="text-primary underline">
+          Go to login.
+        </a>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
-      <h1 className="text-[20px] font-semibold tracking-tight">User · Details</h1>
-      <DisplayNameCard current={data.display_name} />
-      <HandlesCard orgs={data.orgs} />
-      <EmailsCard
+    <div className="mx-auto flex max-w-[900px] flex-col gap-6 p-6">
+      <PageHeader
+        title="Details"
+        subtitle="Your profile, per-org handles, emails, and linked GitHub username."
+      />
+      <DisplayNameSection current={data.display_name} />
+      <HandlesSection orgs={data.orgs} />
+      <EmailsSection
         emails={data.emails.map((e) => ({
           email: e.email,
           is_primary: e.is_primary,
           verified: e.verified,
         }))}
       />
-      <GithubCard username={data.github_username} />
+      <GithubSection username={data.github_username} />
     </div>
   );
 }
 
-function DisplayNameCard({ current }: { current: string }) {
-  const [value, setValue] = useState(current);
-  const update = useUpdateDisplayName();
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-[13.5px] font-semibold">Display name</h2>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center gap-2">
-          <input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            data-testid="display-name-input"
-            className="flex-1 rounded border border-border-soft bg-bg-2 px-2 py-1 text-sm"
-          />
-          <Button
-            data-testid="display-name-save"
-            disabled={update.isPending || value === current}
-            onClick={() => update.mutate(value)}
-          >
-            {update.isPending ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        {description && <p className="text-muted-foreground text-xs mt-1">{description}</p>}
+      </header>
+      <div className="px-4 py-4">{children}</div>
+    </section>
   );
 }
 
-function HandlesCard({ orgs }: { orgs: AccountOrg[] }) {
+function DisplayNameSection({ current }: { current: string }) {
+  const [value, setValue] = useState(current);
+  const update = useUpdateDisplayName();
+  const dirty = value !== current;
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-[13.5px] font-semibold">Per-org handles</h2>
-      </CardHeader>
-      <CardContent>
-        {orgs.length === 0 ? (
-          <p className="text-text-3 text-xs">No org memberships yet.</p>
-        ) : (
-          <table className="w-full text-sm" data-testid="handles-table">
-            <thead>
-              <tr className="text-text-3 text-xs">
-                <th className="py-1 text-left font-normal">Org</th>
-                <th className="py-1 text-left font-normal">Role</th>
-                <th className="py-1 text-left font-normal">Handle</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {orgs.map((o) => (
-                <HandleRow key={o.org_id} org={o} />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </CardContent>
-    </Card>
+    <Section title="Display name">
+      <div className="flex items-end gap-3">
+        <div className="flex-1 flex flex-col gap-1.5">
+          <Label htmlFor="display-name">Name shown to teammates</Label>
+          <Input
+            id="display-name"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            data-testid="display-name-input"
+          />
+        </div>
+        <Button
+          data-testid="display-name-save"
+          disabled={update.isPending || !dirty}
+          onClick={() => update.mutate(value)}
+        >
+          {update.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+function HandlesSection({ orgs }: { orgs: AccountOrg[] }) {
+  return (
+    <Section
+      title="Per-org handles"
+      description="The handle other members of each org see when you act in their workspace."
+    >
+      {orgs.length === 0 ? (
+        <p className="text-muted-foreground text-xs">No org memberships yet.</p>
+      ) : (
+        <Table data-testid="handles-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Org</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Handle</TableHead>
+              <TableHead className="text-right" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {orgs.map((o) => (
+              <HandleRow key={o.org_id} org={o} />
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Section>
   );
 }
 
@@ -107,21 +144,22 @@ function HandleRow({ org }: { org: AccountOrg }) {
   const update = useUpdateOrgHandle();
   const dirty = value !== org.handle;
   return (
-    <tr>
-      <td className="py-1.5">{org.display_name || org.slug}</td>
-      <td className="py-1.5">
-        <Badge variant="soft">{org.role}</Badge>
-      </td>
-      <td className="py-1.5">
-        <input
+    <TableRow>
+      <TableCell className="font-medium">{org.display_name || org.slug}</TableCell>
+      <TableCell>
+        <Badge variant="secondary">{org.role}</Badge>
+      </TableCell>
+      <TableCell>
+        <Input
           value={value}
           onChange={(e) => setValue(e.target.value)}
           data-testid={`handle-input-${org.slug}`}
-          className="w-[160px] rounded border border-border-soft bg-bg-2 px-2 py-1 text-sm"
+          className="h-8 w-[180px]"
         />
-      </td>
-      <td className="py-1.5 text-right">
+      </TableCell>
+      <TableCell className="text-right">
         <Button
+          size="sm"
           data-testid={`handle-save-${org.slug}`}
           disabled={!dirty || update.isPending}
           onClick={() => update.mutate({ orgId: org.org_id, handle: value })}
@@ -129,93 +167,81 @@ function HandleRow({ org }: { org: AccountOrg }) {
           Save
         </Button>
         {update.isError && (
-          <span className="ml-2 text-[11px] text-red-500" data-testid={`handle-err-${org.slug}`}>
+          <span className="ml-2 text-xs text-destructive" data-testid={`handle-err-${org.slug}`}>
             {(update.error as Error)?.message || "Failed"}
           </span>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
-function EmailsCard({
+function EmailsSection({
   emails,
 }: {
   emails: { email: string; is_primary: boolean; verified: boolean }[];
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-[13.5px] font-semibold">Emails</h2>
-      </CardHeader>
-      <CardContent>
-        {emails.length === 0 ? (
-          <p className="text-text-3 text-xs">No emails on file.</p>
-        ) : (
-          <ul className="flex flex-col gap-2 text-sm" data-testid="emails-list">
-            {emails.map((e) => (
-              <li key={e.email} className="flex items-center gap-2">
-                <span>{e.email}</span>
-                {e.is_primary && <Badge variant="success">primary</Badge>}
-                {e.verified ? (
-                  <Badge variant="soft">verified</Badge>
-                ) : (
-                  <Badge variant="danger">unverified</Badge>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    <Section title="Emails">
+      {emails.length === 0 ? (
+        <p className="text-muted-foreground text-xs">No emails on file.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 text-sm" data-testid="emails-list">
+          {emails.map((e) => (
+            <li key={e.email} className="flex items-center gap-2">
+              <span>{e.email}</span>
+              {e.is_primary && <Badge>primary</Badge>}
+              {e.verified ? (
+                <Badge variant="secondary">verified</Badge>
+              ) : (
+                <Badge variant="destructive">unverified</Badge>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 
-function GithubCard({ username }: { username: string | null }) {
+function GithubSection({ username }: { username: string | null }) {
   const clear = useClearGithubUsername();
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-[13.5px] font-semibold">GitHub association</h2>
-      </CardHeader>
-      <CardContent>
-        {username ? (
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-sm" data-testid="github-username">
-              @{username}
-            </span>
-            <Badge variant="success">verified</Badge>
-            <a
-              href="/api/account/github/verify"
-              className="ml-auto rounded border border-border-soft px-2 py-1 text-xs hover:bg-hover"
-              data-testid="github-reverify"
-            >
+    <Section
+      title="GitHub association"
+      description="Verifying writes only your GitHub username — no identity row is created."
+    >
+      {username ? (
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-sm" data-testid="github-username">
+            @{username}
+          </span>
+          <Badge variant="secondary">verified</Badge>
+          <Button asChild variant="outline" size="sm" className="ml-auto">
+            <a href="/api/account/github/verify" data-testid="github-reverify">
               Re-verify
             </a>
-            <Button
-              data-testid="github-clear"
-              disabled={clear.isPending}
-              onClick={() => clear.mutate()}
-            >
-              {clear.isPending ? "Clearing…" : "Clear"}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <p className="text-text-3 text-xs">
-              No GitHub handle linked. Verifying writes only your GitHub username — no identity row
-              is created.
-            </p>
-            <a
-              href="/api/account/github/verify"
-              className="ml-auto rounded border border-border-soft px-2 py-1 text-xs hover:bg-hover"
-              data-testid="github-connect"
-            >
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            data-testid="github-clear"
+            disabled={clear.isPending}
+            onClick={() => clear.mutate()}
+          >
+            {clear.isPending ? "Clearing…" : "Clear"}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <p className="text-muted-foreground text-xs">No GitHub handle linked.</p>
+          <Button asChild size="sm" className="ml-auto">
+            <a href="/api/account/github/verify" data-testid="github-connect">
               Connect GitHub
             </a>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          </Button>
+        </div>
+      )}
+    </Section>
   );
 }
