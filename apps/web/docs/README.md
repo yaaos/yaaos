@@ -32,7 +32,7 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 | [domain_notifications](domain_notifications.md) | M06 cross-org inbox page + sidebar bell popover. |
 | [domain_org_settings](domain_org_settings.md) | Tabbed org-settings shell (Auth, Members, VCS, Coding Agents, API Keys, MCP Proxy, Audit). |
 | [domain_auth](domain_auth.md) | Login page (email-first SSO-discover) + logout. |
-| [domain_account](domain_account.md) | `/user/details`, `/user/security`, `/user/messaging` — self-service profile + 2FA. |
+| [domain_user](domain_user.md) | `/user/details`, `/user/security`, `/user/messaging` — self-service profile + 2FA. |
 | [domain_orgs](domain_orgs.md) | Org picker (`/orgs`) + Members + Audit + SSO config — surfaces tied to a specific org's identity layer. |
 
 ## Directory shape
