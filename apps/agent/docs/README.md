@@ -186,7 +186,25 @@ The agent uses Go's `log/slog` and writes every record to a **multi-sink fan-out
 - **rotated local file** at `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` — the operator's out-of-band channel when the control plane is unreachable and CloudWatch is no help. Pull with `aws ecs execute-command --command 'cat /var/log/yaaos-agent/agent.log'` or `kubectl cp`.
   - Rotation: 50 MB per file, 10 backups, 3-day age (gzipped). Lumberjack runs the rotation; pruning fires on the next write so the agent's ~30s heartbeat cadence keeps it tidy.
   - If the directory is unwritable (mount missing, permissions wrong), the agent emits one stderr warning and continues with stdout-only — never fatal.
-- **caller-supplied extra handlers** — `logging.Config.ExtraHandlers` accepts additional `slog.Handler`s for OTel collector / external sinks.
+- **OTel collector** (when `OTEL_EXPORTER_OTLP_ENDPOINT` is set) — the `internal/observability` package plugs an `otelslog` bridge into the logging fan-out as the third sink. Disabled by default; zero overhead when the env var is unset.
+
+### Observability
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the agent exports all three OTel signals to whichever collector the customer points it at. The OTel Collector is vendor-neutral — pick Datadog / Honeycomb / New Relic / AWS CloudWatch / Splunk / Grafana / etc. at the collector, not in the agent.
+
+- **Logs** — every `slog` record fans out to the collector via the `otelslog` bridge (bound to scope `github.com/yaaos/agent`).
+- **Traces** — the supervisor's `tracing.StartSpan` ([`internal/tracing`](../internal/tracing)) writes spans (`supervisor.dispatch.<kind>`, `workspace.handle.<kind>`) plus auto-instrumented client spans on every outbound HTTP call (via `otelhttp.NewTransport` on the protocol client's transport). W3C TraceContext propagation chains backend → supervisor → workspace → Claude Code.
+- **Metrics** — minimum set declared in [`internal/observability/metrics.go`](../internal/observability/metrics.go):
+  - `yaaos.agent.commands.claimed` (counter)
+  - `yaaos.agent.commands.completed{result, kind}` (counter)
+  - `yaaos.agent.command.duration` (histogram, seconds)
+  - `yaaos.agent.workspaces.active` (up/down counter)
+  - `yaaos.agent.connection.failures{surface, class}` (counter)
+  - `yaaos.agent.connection.backoff_seconds{surface}` (gauge)
+
+Resource attributes: `service.name=yaaos-workspace-agent`, `service.version`, `service.instance.id` (the `agent.pod_id` the backend stores in `workspace_agents.agent_pod_id`).
+
+Standard env vars: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf` default), `OTEL_METRIC_EXPORT_INTERVAL` (ms, 30 s default), `OTEL_SDK_DISABLED`. No yaaos-prefixed variants — customers reuse whatever OTel config their other services already use.
 
 The `workspace` subcommand routes its console sink to **stderr** instead of stdout, because stdout there is the supervisor↔workspace IPC pipe. The file sink is identical in both modes.
 

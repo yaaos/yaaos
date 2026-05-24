@@ -29,10 +29,14 @@ import (
 	"syscall"
 
 	"github.com/yaaos/agent/internal/logging"
+	"github.com/yaaos/agent/internal/observability"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/supervisor"
 	"github.com/yaaos/agent/internal/workspace"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
+
+const agentVersion = "0.0.1"
 
 // Hardcoded production backend. Customers don't configure this — the
 // agent ships pre-pointed at app.yaaos.cloud. Overrideable via
@@ -52,8 +56,9 @@ func run() int {
 		return 2
 	}
 
-	// Wire slog before any other code runs, so even early bootstrap
-	// errors land in the file sink the operator can read out-of-band.
+	// Wire OTel first (if configured), then slog with the OTel bridge
+	// as a third sink. OTel must initialize before logging so we have
+	// the slog handler ready to install on the fan-out.
 	//
 	// The `workspace` subcommand uses stdout as its IPC event pipe back
 	// to the supervisor (one JSON frame per line). Logs MUST NOT touch
@@ -64,10 +69,23 @@ func run() int {
 	if os.Args[1] == "workspace" {
 		consoleWriter = os.Stderr
 	}
-	shutdownLogs, err := logging.Init(logging.Config{StdoutWriter: consoleWriter})
+
+	otelRes, err := observability.Init(context.Background(), observability.Config{
+		ServiceVersion: envOr("YAAOS_AGENT_VERSION", agentVersion),
+		AgentPodID:     envOr("YAAOS_AGENT_POD_ID", ""), // empty resource attr if unset; randomPodID() fills it later
+	})
 	if err != nil {
-		// logging.Init never returns a fatal error today, but treat
-		// future errors defensively rather than silently swallowing.
+		fmt.Fprintf(os.Stderr, "observability.init failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = otelRes.Shutdown(context.Background()) }()
+
+	logCfg := logging.Config{StdoutWriter: consoleWriter}
+	if otelRes.SlogHandler != nil {
+		logCfg.ExtraHandlers = append(logCfg.ExtraHandlers, otelRes.SlogHandler)
+	}
+	shutdownLogs, err := logging.Init(logCfg)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "logging.init failed: %v\n", err)
 		return 1
 	}
@@ -99,7 +117,14 @@ func runSupervisor() error {
 		SignedSTSRequest: envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-phase-7-wires-real-sts"),
 		WorkspaceRoot:    envOr("YAAOS_WORKSPACE_ROOT", ""),
 	}
-	httpClient := &http.Client{Timeout: 0} // no global timeout — long-poll needs to wait
+	// No global timeout — long-poll needs to wait. Per-call timeouts come
+	// from the request context. otelhttp.NewTransport adds a span per
+	// outbound HTTP call when OTel is configured; it's transparent when
+	// OTel is disabled (no-op tracer).
+	httpClient := &http.Client{
+		Timeout:   0,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 	cli := protocol.NewClient(cfg.BaseURL, httpClient)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

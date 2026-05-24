@@ -179,7 +179,7 @@ M05 reshapes how reviews actually execute. Three new concepts cross every app:
   - `POST /api/v1/commands/{id}/events` — AgentCommand events; terminal events resume the workflow.
   - `WSS /api/v1/agents/{id}/activity` — bidirectional activity stream with `subscribe`/`unsubscribe` from the backend on the `0 → 1` / `1 → 0` UI-subscriber transitions (demand-pull: no activity flows when nobody's watching). See [`core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md).
 
-  The agent writes rotated local logs to `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` (3-day age, gzip-compressed) in parallel with stdout → CloudWatch — the file sink is the operator's out-of-band channel when the control plane is unreachable. Details in [`apps/agent/docs/README.md` § Logging](../apps/agent/docs/README.md).
+  The agent writes rotated local logs to `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` (3-day age, gzip-compressed) in parallel with stdout → CloudWatch — the file sink is the operator's out-of-band channel when the control plane is unreachable. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set the agent also exports OTel logs/traces/metrics to a vendor-neutral collector. Details in [`apps/agent/docs/README.md` § Logging](../apps/agent/docs/README.md) and [§ Observability](../apps/agent/docs/README.md).
 
 ### End-to-end (current foundations)
 

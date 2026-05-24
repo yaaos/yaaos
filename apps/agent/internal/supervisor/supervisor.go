@@ -27,8 +27,10 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/yaaos/agent/internal/activity"
+	"github.com/yaaos/agent/internal/observability"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
 )
@@ -357,6 +359,7 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 			}
 			continue
 		}
+		observability.Metrics().CommandsClaimed.Add(ctx, 1)
 		s.routeCommand(ctx, cmd)
 	}
 }
@@ -487,6 +490,14 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd *protocol.AgentComman
 	}
 	// Span carries the dispatch-level error (post-back failure or pool
 	// failure if Dispatch returned a completed_failure event).
+	result := "success"
+	if event.Kind == protocol.EventCompletedFailure || postErr != nil {
+		result = "failure"
+	}
+	observability.Metrics().CommandsCompleted.Add(ctx, 1,
+		metric.WithAttributes(attribute.String("result", result),
+			attribute.String("kind", string(cmd.Kind))),
+	)
 	if event.Kind == protocol.EventCompletedFailure {
 		end(fmt.Errorf("dispatch failure: %s", event.FailureReason))
 		return
