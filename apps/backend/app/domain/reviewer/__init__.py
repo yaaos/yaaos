@@ -8,10 +8,10 @@ Entry points:
   endpoint all route through here.
 - `start_incremental_review(pr_id, *, new_head_sha, prev_head_sha, org_id)` —
   runs the §7 trigger policy for incremental review on push. On `Run`,
-  dispatches an `incremental_review_legacy_v1` workflow_execution via
-  `core/workflow.engine`; the `IncrementalReviewLegacy` command runs the
-  legacy body in `incremental.run_incremental_review`. `handle_push` is a
-  backwards-compatible alias.
+  dispatches an `incremental_review_v1` workflow_execution via
+  `core/workflow.engine`; the `IncrementalReview` command body runs the
+  full review end-to-end against the engine-provisioned workspace.
+  `handle_push` is a backwards-compatible alias.
 - `cancel_workflows_for_ticket(ticket_id)` — `workflow.request_cancel` on
   every non-terminal `workflow_executions` row for the ticket.
 
