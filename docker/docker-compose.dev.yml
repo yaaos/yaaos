@@ -34,6 +34,23 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       target: backend-ci
+    # `backend-ci` inherits from `backend` (no CMD) so we'd default to the
+    # base python3 REPL and exit immediately. Production's `web` stage
+    # declares the same uvicorn CMD; we mirror it here so dev keeps the
+    # backend-ci tooling AND boots cleanly.
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--app-dir",
+        "apps/backend",
+        "--ws-ping-interval=30",
+        "--ws-ping-timeout=10",
+      ]
     environment:
       YAAOS_ENV: dev
     volumes:
