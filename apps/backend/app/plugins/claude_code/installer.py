@@ -7,7 +7,7 @@ writing to the location Claude Code's CLI reads from.
 
 Called once per workspace provision (idempotent — safe to re-run; the file
 contents are deterministic). Per-workspace install is forward-compatible
-with M02+ Docker workspaces where each workspace has its own HOME.
+with future Docker workspaces where each workspace has its own HOME.
 """
 
 from __future__ import annotations

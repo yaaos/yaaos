@@ -3,13 +3,16 @@
 Behavior:
 
   1. Reset identity contextvars at every request.
-  2. If path is in the public allowlist (`/api/auth/*`, `/api/sso/`,
-     `/api/health`), pass through without header enforcement.
-  3. If path matches `M02_PROTECTED_PREFIXES` and lacks `X-Org-Slug`, 400.
-  4. If protected + mutating + bad CSRF, 403.
-  5. Call the route. Route deps (`require(action)` / `public_route`)
-     populate `route_security_resolved`.
-  6. **Default-deny post-response guard (any `/api/*`):** if the route
+  2. Classify the path via `classify_route(path, method)`:
+     - `PUBLIC`      → set `route_security_resolved = "public"`, pass through.
+     - `USER_SCOPED` → set `route_security_resolved = "user_scoped"`, pass
+       through. Session enforcement is the route dep's job (no header
+       requirement here).
+     - `ORG_SCOPED`  → if the request lacks `X-Org-Slug`, return 400; if it
+       mutates without a valid CSRF token, return 403. Otherwise call the
+       route; `require(action)` sets `route_security_resolved = "org_scoped"`
+       once it resolves the membership.
+  3. **Default-deny post-response guard (any `/api/*`):** if the route
      returned 2xx but no security was declared, swap the response for
      500. Non-2xx pass through so dep-raised 401/403/404 aren't masked.
 
@@ -36,14 +39,20 @@ from app.core.auth.context import (
     unbind_request_structlog_vars,
     user_id_var,
 )
-from app.core.auth.types import is_m02_protected_path, is_public_path
+from app.core.auth.types import RouteSecurity, classify_route
 
 log = structlog.get_logger("auth.middleware")
 
 
 def _csrf_ok(request: Request) -> bool:
     """Double-submit check. Both the cookie and the header must be present
-    and equal. Empty values are not acceptable."""
+    and equal. Empty values are not acceptable.
+
+    A request without a session cookie passes — there's nothing to CSRF; the
+    request is anonymous and the route's session check will reject it on
+    its own merits."""
+    if not request.cookies.get("yaaos_session"):
+        return True
     cookie = request.cookies.get("yaaos_csrf")
     header = request.headers.get("X-CSRF-Token")
     if not cookie or not header:
@@ -98,32 +107,52 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if is_public_path(path, request.method):
+        category = classify_route(path, request.method)
+
+        if category is RouteSecurity.PUBLIC:
             route_security_resolved.set("public")
             await self.app(scope, receive, send)
             return
 
-        protected = is_m02_protected_path(path)
-        if protected and not request.headers.get("X-Org-Slug"):
-            start, body = _json_response(400, {"error": "missing_org_slug"})
-            await send(start)
-            await send(body)
+        if category is RouteSecurity.USER_SCOPED:
+            # No X-Org-Slug requirement; the route dep enforces session.
+            route_security_resolved.set("user_scoped")
+            # CSRF still applies — session-cookie mutations are vulnerable
+            # regardless of whether an org is in scope.
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _csrf_ok(request):
+                start, body = _json_response(403, {"error": "csrf_mismatch"})
+                await send(start)
+                await send(body)
+                return
+            await self.app(scope, receive, send)
             return
 
-        # Double-submit CSRF on mutating requests. The session cookie carries
-        # the opaque token; the SPA echoes the per-session csrf token in
-        # `X-CSRF-Token`. If the session row's csrf_token doesn't match the
-        # header, reject. Skipped for safe methods + non-protected paths +
-        # the public allowlist (handled above).
-        if protected and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _csrf_ok(request):
-            start, body = _json_response(403, {"error": "csrf_mismatch"})
-            await send(start)
-            await send(body)
-            return
+        if category is RouteSecurity.ORG_SCOPED:
+            # Header required.
+            if not request.headers.get("X-Org-Slug"):
+                start, body = _json_response(400, {"error": "missing_org_slug"})
+                await send(start)
+                await send(body)
+                return
 
-        # Wrap `send` so we can intercept the response status. If a route
-        # under an M02-protected prefix returns 2xx without declaring
-        # security, we replace the response with a 500 instead.
+            # Double-submit CSRF on mutating org-scoped requests. The session
+            # cookie carries the opaque token; the SPA echoes the per-session
+            # csrf token in `X-CSRF-Token`. If the session row's csrf_token
+            # doesn't match the header, reject.
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _csrf_ok(request):
+                start, body = _json_response(403, {"error": "csrf_mismatch"})
+                await send(start)
+                await send(body)
+                return
+
+        # Fall-through (`category is None`, legacy unclassified) and
+        # `ORG_SCOPED` both route through the post-response guard below:
+        # the route dep is expected to set `route_security_resolved`; if a
+        # 2xx escapes without one, the guard substitutes a 500.
+
+        # Wrap `send` so we can intercept the response status. If an
+        # ORG_SCOPED route returns 2xx without declaring security via its
+        # `require(...)` dep, replace the response with a 500.
         sent_status: dict[str, int] = {}
         intercepted_start: list[Message] = []
 

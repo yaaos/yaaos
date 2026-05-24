@@ -20,7 +20,7 @@ from app.plugins.claude_code.service import _set_anthropic_key, bootstrap_anthro
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-# M02 default-deny: each route declares either `public_route` (M01-era
+# Default-deny: each route declares either `public_route` (M01-era
 # unscoped setup endpoints) or `require(action)` (M03 settings UI endpoints).
 router = APIRouter()
 

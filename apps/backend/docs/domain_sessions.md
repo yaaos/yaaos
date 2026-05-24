@@ -10,8 +10,9 @@
 
 Exported from `app/domain/sessions/__init__.py`:
 
-- `require(action)` — dependency factory. Resolves `X-Org-Slug` → org → membership → role check. Sets the identity contextvars + `route_security_resolved = "membership"`. Returns the `Membership` so handlers that want it can `Depends(require(...))` directly.
-- `public_route` — dependency for routes that intentionally have no auth requirement. Sets `route_security_resolved = "public"`. Using this where a role check should live is the bug the post-response guard catches.
+- `require(action)` — dependency factory for `RouteSecurity.ORG_SCOPED` routes. Resolves `X-Org-Slug` → org → membership → role check. Sets the identity contextvars + `route_security_resolved = "org_scoped"`. Returns the `Membership` so handlers that want it can `Depends(require(...))` directly.
+- `require_session` — dependency for `RouteSecurity.USER_SCOPED` routes. Resolves the session cookie → `user_id_var`; raises `AuthFailure("unauthenticated")` on missing/expired sessions. No `X-Org-Slug` or role check.
+- `public_route` — dependency for `RouteSecurity.PUBLIC` routes. Sets `route_security_resolved = "public"`. Using this where a role check should live is the bug the post-response guard catches.
 - `current_actor()` — reads `user_id_var` and returns an `Actor.user(user_id=…)` for audit-log writes. Raises if no session resolved.
 - `required_role_for(action)` — lookup the minimum role for an action.
 

@@ -172,7 +172,7 @@ class GitHubPlugin:
     async def get_installation_token(self, org_id: UUID) -> str:
         """Public Protocol method. Returns a freshly-issued installation token.
 
-        Callers (workspace plugin at clone time; future M02+ orchestration at
+        Callers (workspace plugin at clone time; future orchestration at
         each git push/fetch) must use the token immediately and not cache it
         across operations. Internally wraps `_installation_token` so the JWT
         exchange logic stays in one place.

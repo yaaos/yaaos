@@ -175,7 +175,7 @@ async def patch_own_membership_handle(
     body: _PatchOwnHandleRequest,
 ) -> Membership:
     """Self-update one's `@handle` in the org named by the path param.
-    Enforces `UNIQUE(org_id, handle)` via the existing M02 partial index —
+    Enforces `UNIQUE(org_id, handle)` via the existing partial index —
     duplicate handles surface as 409. The path `org_id` may differ from
     `X-Org-Slug` (which the middleware still requires for the prefix gate)."""
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415

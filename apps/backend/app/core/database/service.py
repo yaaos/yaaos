@@ -131,8 +131,8 @@ async def ensure_schema_migrations_table() -> None:
 
 # Migrations apply in declared order; the runner skips already-applied versions.
 # The `create_all` kinds are idempotent (CREATE TABLE IF NOT EXISTS underneath)
-# so re-running is safe. M02's `010_create_all_m02` adds identity + orgs +
-# sessions tables and extends `audit_entries` with M02 actor-kind columns.
+# so re-running is safe. The `010_create_all_m02` migration adds identity + orgs +
+# sessions tables and extends `audit_entries` with actor-kind columns.
 _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("001_create_all_m01", "create_all"),
     ("002_github_settings_slug", "add_github_settings_slug"),
@@ -428,10 +428,10 @@ async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
 
 
 async def _apply_create_all_m02(conn) -> None:  # type: ignore[no-untyped-def]
-    """M02 — identity + orgs + sessions.
+    """Identity + orgs + sessions migration.
 
     Adds: users, user_emails, oauth_identities, user_totp_secrets, orgs,
-    memberships, invitations, sso_configs, sessions. The M02 model also
+    memberships, invitations, sso_configs, sessions. The identity model also
     declared a `github_installations` table here; that table is dropped in
     migration 029, so it's no longer created on fresh DBs.
     Also extends `audit_entries` with `actor_user_id` + `actor_workspace_id`

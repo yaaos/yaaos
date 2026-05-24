@@ -4,9 +4,10 @@ Spec §"Cross-cutting test requirements": *"Every protected endpoint:
 triplet — unauthenticated 401, wrong-org 404, insufficient-role 403,
 success 200."*
 
-This test enumerates every registered route under `M02_PROTECTED_PREFIXES`,
-asserts the unauthenticated path returns 4xx (401 or 400 when X-Org-Slug
-is missing), and confirms the registry hasn't regressed (routes exist).
+This test enumerates every registered ORG_SCOPED route, asserts the
+unauthenticated path returns 4xx (400 when X-Org-Slug is missing, 401 when
+session is missing), and confirms the registry hasn't regressed.
+
 The per-role positive + 403 + 404 cases live in each endpoint's own test
 file — this fixture asserts the floor.
 """
@@ -18,7 +19,7 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.auth.types import M02_PROTECTED_PREFIXES, is_m02_protected_path
+from app.core.auth.types import ORG_SCOPED_PREFIXES, RouteSecurity, classify_route
 from app.domain.identity import account_web as _account_web  # noqa: F401
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import sso_web as _sso_web  # noqa: F401
@@ -40,10 +41,10 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
 
 
-def _enumerate_protected_routes() -> list[tuple[str, str]]:
+def _enumerate_org_scoped_routes() -> list[tuple[str, str]]:
     """Walk the registered routes; return `(method, path)` for every route
-    under an M02_PROTECTED_PREFIX that uses a non-templated path. Templated
-    paths get a synthetic UUID so the fixture can probe them."""
+    that classifies as `RouteSecurity.ORG_SCOPED`. Templated paths get a
+    synthetic UUID so the fixture can probe them."""
 
     from app.core.webserver.registry import get_specs  # noqa: PLC0415
 
@@ -52,10 +53,10 @@ def _enumerate_protected_routes() -> list[tuple[str, str]]:
         prefix = spec.effective_prefix
         for route in spec.router.routes:
             full = prefix + getattr(route, "path", "")
-            if not is_m02_protected_path(full):
-                continue
             for method in getattr(route, "methods", []) or []:
                 if method in {"HEAD", "OPTIONS"}:
+                    continue
+                if classify_route(full, method) is not RouteSecurity.ORG_SCOPED:
                     continue
                 concrete = full.replace("{user_id}", "00000000-0000-0000-0000-000000000000")
                 concrete = concrete.replace("{target_user_id}", "00000000-0000-0000-0000-000000000000")
@@ -66,21 +67,20 @@ def _enumerate_protected_routes() -> list[tuple[str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_protected_prefixes_have_routes() -> None:
-    """Sanity: each declared protected prefix has at least one route."""
-    routes = _enumerate_protected_routes()
-    covered_prefixes = {p for p in M02_PROTECTED_PREFIXES if any(r[1].startswith(p) for r in routes)}
-    assert "/api/account/" in covered_prefixes
+async def test_org_scoped_prefixes_have_routes() -> None:
+    """Sanity: each declared org-scoped prefix has at least one route."""
+    routes = _enumerate_org_scoped_routes()
+    covered_prefixes = {p for p in ORG_SCOPED_PREFIXES if any(r[1].startswith(p) for r in routes)}
     assert "/api/memberships/" in covered_prefixes
     assert "/api/audit" in covered_prefixes
 
 
 @pytest.mark.asyncio
-async def test_every_protected_route_rejects_anonymous_access() -> None:
+async def test_every_org_scoped_route_rejects_anonymous_access() -> None:
     """Negative-trio floor: unauthenticated + no X-Org-Slug ⇒ middleware
     returns 400 (missing_org_slug); with header but no session ⇒ 401."""
-    routes = _enumerate_protected_routes()
-    assert routes, "no protected routes discovered"
+    routes = _enumerate_org_scoped_routes()
+    assert routes, "no org-scoped routes discovered"
 
     async with _client() as c:
         for method, path in routes:
@@ -98,10 +98,10 @@ async def test_every_protected_route_rejects_anonymous_access() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_2xx_from_anonymous_protected_request() -> None:
+async def test_no_2xx_from_anonymous_org_scoped_request() -> None:
     """Strict: under no circumstance should an anonymous request return 2xx
-    against a protected route."""
-    routes = _enumerate_protected_routes()
+    against an org-scoped route."""
+    routes = _enumerate_org_scoped_routes()
     async with _client() as c:
         for method, path in routes:
             resp = await c.request(method, path)

@@ -19,7 +19,7 @@ Three processes hold different secrets and run with different privileges.
 
 ### Authentication
 
-- **User sessions** — `domain/sessions` issues session + CSRF cookies on OAuth callback. M02 default-deny middleware (`core/auth.AuthMiddleware`) gates every route via `Depends(require(action))` or `Depends(public_route)`; missing declaration is caught by a post-response guard.
+- **User sessions** — `domain/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`), and a post-response guard 500s any 2xx response that left `route_security_resolved` unset.
 - **WorkspaceAgent bearer** — placeholder verifier today (any non-empty `Bearer <token>` after a successful identity-exchange). Real SigV4-signed STS replay lands in the Phase 7 follow-on; the org-side trust anchor (`orgs.registered_iam_arn`) is in place and `core/agent_gateway.ensure_agent_row` is ready to consume the verified ARN.
 
 ### Authorization

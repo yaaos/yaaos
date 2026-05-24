@@ -193,7 +193,7 @@ async def test_public_allowlist_bypasses_header_requirement() -> None:
 
 @pytest.mark.asyncio
 async def test_legacy_route_without_security_declaration_500s() -> None:
-    """M02 default-deny: every `/api/*` route must declare security via
+    """Default-deny: every `/api/*` route must declare security via
     `require()` or `public_route`. A route that returns 2xx without one
     gets swapped for 500 by the middleware's post-response guard."""
     async with _client(_make_app()) as c:

@@ -87,7 +87,7 @@ async def seed_broken_integration(req: _BrokenIntegrationRequest) -> dict[str, s
     return {"status": "seeded"}
 
 
-# ── M02 — auth-flow helpers ──────────────────────────────────────────────
+# ── auth-flow helpers ──────────────────────────────────────────────
 
 
 class _BootstrapOwnerRequest(BaseModel):

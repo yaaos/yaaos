@@ -1,7 +1,7 @@
 """Repository-level smoke tests for `domain/identity` against real Postgres.
 
 These tests exercise the migration + raw inserts. They establish that every
-M02 table the architecture document declared actually exists with the
+table the architecture document declared actually exists with the
 expected columns.
 """
 

@@ -19,10 +19,12 @@ The module also declares the TanStack module augmentation so the `Register` inte
 | Path | Component | Notes |
 |---|---|---|
 | `/` | beforeLoad probe | Hits `/api/auth/me`; on 401 → `/login`, on 200 → `/orgs/<first-slug>/dashboard`. |
-| `/login` | `LoginPage` (`@domain/auth`) | User-scoped; clears `org_id` contextvar. |
-| `/user` | redirect | M03: 303 → `/user/details`. |
-| `/user/details` | `DetailsPage` (`@domain/account`) | display_name, per-org handles, emails, GitHub association. |
-| `/user/security` | `SecurityPage` (`@domain/account`) | TOTP + "Sign out everywhere". |
+| `/login` | `LoginPage` (`@domain/auth`) | Clears the current org slug — explicit start-of-session "no org" state. |
+| `/user` | redirect | 303 → `/user/details`. |
+| `/user/details` | `DetailsPage` (`@domain/account`) | display_name, per-org handles, emails, GitHub association. Preserves the current org slug — page is USER_SCOPED on the backend, so the slug is harmless to keep, and the sidebar / nav need it. |
+| `/user/security` | `SecurityPage` (`@domain/account`) | TOTP + "Sign out everywhere". Preserves the current org slug. |
+| `/user/messaging`, `/notifications` | placeholder + notifications | USER_SCOPED on the backend; preserve the current org slug. |
+| `/orgs` | `OrgPickerPage` | Picker — clears the current org slug since the user is choosing one. |
 | `/orgs/$slug` | scope-only route | `beforeLoad` calls `setCurrentOrgSlug(slug)`. Slug values of `undefined` / `null` / empty (from earlier failed-login redirects) bounce through `/` to re-probe `/me`. |
 | `/orgs/$slug/dashboard` | `DashboardPage` | |
 | `/orgs/$slug/tickets` | `TicketsPage` | |
@@ -39,7 +41,7 @@ The module also declares the TanStack module augmentation so the `Register` inte
 
 ### `setCurrentOrgSlug` + auto-injection
 
-`apps/web/src/core/api/org-context.ts` holds a module-global current slug. The `/orgs/$slug` parent route writes to it in `beforeLoad` whenever a navigation enters an org-scoped subtree; `/login` and `/user` clear it. `apiFetch` reads the slug and adds `X-Org-Slug` unless the caller already set one.
+`apps/web/src/core/api/org-context.ts` holds a module-global current slug. The `/orgs/$slug` parent route writes to it in `beforeLoad` whenever a navigation enters an org-scoped subtree. Only `/login` and `/orgs` (the picker) clear it — `/user/*` and `/notifications` deliberately leave it alone so the user can navigate back to their org. `apiFetch` reads the slug and adds `X-Org-Slug` unless the caller already set one; backend `USER_SCOPED` and `PUBLIC` routes ignore the header.
 
 This pattern lets every domain hook (`useTickets`, `useLessons`, etc.) stay org-agnostic at the call site — the SPA layer adds the header, the backend's `require(action)` dep validates it.
 

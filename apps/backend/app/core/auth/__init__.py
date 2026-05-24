@@ -1,9 +1,10 @@
-"""core/auth — security middleware, contextvars, action enum.
+"""core/auth — security middleware, contextvars, action enum, route taxonomy.
 
 Pure infrastructure. The role-resolving dependency factories
 (`require(action)`, `public_route`) live in `domain/sessions` because they
-depend on `domain/identity` + `domain/orgs`. The middleware here only
-enforces the header check + post-response guard.
+depend on `domain/identity` + `domain/orgs`. The middleware here enforces
+the X-Org-Slug requirement for ORG_SCOPED routes and the default-deny
+post-response guard.
 """
 
 from app.core.auth.context import (
@@ -29,34 +30,42 @@ from app.core.auth.cookies import (
 )
 from app.core.auth.middleware import AuthMiddleware
 from app.core.auth.types import (
-    M02_PROTECTED_PREFIXES,
-    PUBLIC_PATH_EXACT,
-    PUBLIC_PATH_PREFIXES,
+    ORG_SCOPED_PREFIXES,
+    PUBLIC_EXACT,
+    PUBLIC_PREFIXES,
     SESSION_IDLE_TIMEOUT,
+    USER_SCOPED_EXACT,
+    USER_SCOPED_METHOD_EXACT,
+    USER_SCOPED_PREFIXES,
     Action,
-    is_m02_protected_path,
-    is_public_path,
+    RouteSecurity,
+    classify_route,
+    is_org_scoped_path,
 )
 
 __all__ = [
     "CSRF_COOKIE_NAME",
     "CSRF_HEADER_NAME",
-    "M02_PROTECTED_PREFIXES",
-    "PUBLIC_PATH_EXACT",
-    "PUBLIC_PATH_PREFIXES",
+    "ORG_SCOPED_PREFIXES",
+    "PUBLIC_EXACT",
+    "PUBLIC_PREFIXES",
     "SESSION_COOKIE_NAME",
     "SESSION_IDLE_TIMEOUT",
+    "USER_SCOPED_EXACT",
+    "USER_SCOPED_METHOD_EXACT",
+    "USER_SCOPED_PREFIXES",
     "Action",
     "AuthMiddleware",
+    "RouteSecurity",
     "actor_id_var",
     "actor_kind_var",
+    "classify_route",
     "clear_cookie_attrs",
     "csrf_cookie_attrs",
     "current_actor_kind",
     "current_org_id",
     "current_user_id",
-    "is_m02_protected_path",
-    "is_public_path",
+    "is_org_scoped_path",
     "org_context",
     "org_id_var",
     "public_route",

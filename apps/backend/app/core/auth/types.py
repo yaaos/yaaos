@@ -1,4 +1,26 @@
-"""Action enum + low-level types for `core/auth`."""
+"""Action enum + route-security classification for `core/auth`.
+
+Every `/api/*` route falls into one of three security categories:
+
+* `RouteSecurity.PUBLIC` — no session, no org context. Login page, health
+  check, OAuth callbacks, bearer-authed bridges.
+* `RouteSecurity.USER_SCOPED` — session required, but no org. Account
+  profile, notifications, "which orgs am I in?".
+* `RouteSecurity.ORG_SCOPED` — session **and** a valid `X-Org-Slug` header
+  resolving to a membership with sufficient role. Everything that operates
+  on a single org's data.
+
+`classify_route(path, method)` performs the lookup. Middleware uses the
+result to decide whether to enforce the `X-Org-Slug` header (only
+`ORG_SCOPED` requires it). The route's `Depends(...)` chain handles
+session lookup + role checks.
+
+Unclassified `/api/*` paths fall through as `PUBLIC` — the M01-era routers
+predate this taxonomy and aren't backfilled yet. Adding a route under a
+new prefix without classifying it is a bug; the post-response guard in
+`middleware.py` shouts when a 2xx escapes without `route_security_resolved`
+being set.
+"""
 
 from __future__ import annotations
 
@@ -19,13 +41,15 @@ class Action(StrEnum):
     code change, not config.
     """
 
-    # M02 read endpoints — every member can hit these.
+    # User-scoped reads. Every member can hit these (the role check is
+    # vacuous because the route is USER_SCOPED, but the action is kept for
+    # audit-log shape consistency).
     IDENTITY_READ_SELF = "identity.read_self"
     ORG_READ = "org.read"
     MEMBERS_READ = "members.read"
     AUDIT_READ = "audit.read"
 
-    # M02 mutating endpoints.
+    # Org-scoped mutating endpoints — Builder/Admin/Owner depending on action.
     ACCOUNT_UPDATE_SELF = "account.update_self"
     MEMBERS_INVITE = "members.invite"
     MEMBERS_REMOVE = "members.remove"
@@ -34,7 +58,7 @@ class Action(StrEnum):
     GITHUB_APP_LINK = "github.app_link"
     REVIEW_TRIGGER = "review.trigger"
 
-    # M03 settings — VCS / coding-agents / BYOK / top-level org. Owner+Admin only.
+    # Settings — VCS / coding-agents / BYOK / top-level org. Owner+Admin only.
     VCS_READ = "vcs.read"
     VCS_WRITE = "vcs.write"
     CODING_AGENT_READ = "coding_agent.read"
@@ -42,15 +66,15 @@ class Action(StrEnum):
     BYOK_READ = "byok.read"
     BYOK_WRITE = "byok.write"
     ORG_SETTINGS_WRITE = "org_settings.write"
-    # M05 Phase 7 — Owner/Admin can read the workspace-agent connection status.
+    # Owner/Admin can read the workspace-agent connection status.
     ORG_SETTINGS_READ = "org_settings.read"
 
-    # M04 — hosted-MCP integrations (Linear, Notion, ...). Owner+Admin only.
+    # Hosted-MCP integrations (Linear, Notion, ...). Owner+Admin only.
     INTEGRATIONS_READ = "integrations.read"
     INTEGRATIONS_WRITE = "integrations.write"
 
-    # M06 — org-scope the M01-era routers (tickets, lessons, reviewer). Every
-    # Builder reads + mutates; Admin/Owner inherit via Role.covers().
+    # Org-scoped tickets / lessons / reviewer. Builder reads + mutates;
+    # Admin/Owner inherit via Role.covers().
     TICKETS_READ = "tickets.read"
     LESSONS_READ = "lessons.read"
     LESSONS_WRITE = "lessons.write"
@@ -58,87 +82,162 @@ class Action(StrEnum):
     REVIEWER_WRITE = "reviewer.write"
 
 
-# Public-allowlist prefixes: any path matching one of these bypasses the
-# X-Org-Slug requirement AND the post-response security guard.
-PUBLIC_PATH_PREFIXES: tuple[str, ...] = (
-    "/api/auth/",
-    # M06 — notifications are user-scoped (cross-org). The session cookie
-    # identifies the recipient; org filters are optional query params.
-    "/api/notifications",
+class RouteSecurity(StrEnum):
+    """The three route categories. See module docstring."""
+
+    PUBLIC = "public"
+    USER_SCOPED = "user_scoped"
+    ORG_SCOPED = "org_scoped"
+
+
+# ---------------------------------------------------------------------------
+# Category 1 — PUBLIC: no session, no org context.
+# ---------------------------------------------------------------------------
+
+PUBLIC_PREFIXES: tuple[str, ...] = (
     # `/api/sso/{slug}/...` carries the org slug in the path, not the
-    # `X-Org-Slug` header. The handlers resolve the slug themselves.
-    # `/api/sso/config` (Owner-only) goes through the standard auth chain
-    # via the path-prefix override below.
+    # `X-Org-Slug` header. Handlers resolve the slug themselves.
     "/api/sso/",
-    # M04 — the MCP proxy authenticates via the per-review bearer token,
-    # not the session cookie. The yaaos coding-agent CLI doesn't carry
-    # `X-Org-Slug`; the path encodes `review_id` and the proxy resolves
-    # `org_id` from the review row.
+    # The MCP proxy authenticates via the per-review bearer token, not the
+    # session cookie. The yaaos coding-agent CLI doesn't carry `X-Org-Slug`;
+    # the path encodes `review_id` and the proxy resolves `org_id` from the
+    # review row.
     "/api/mcp/",
 )
-# `/api/memberships/accept` lives on the public allowlist because acceptance
-# must work for users who have a session but no membership yet — the signed
-# invitation token is the authorization, not an org membership.
-PUBLIC_PATH_EXACT: frozenset[str] = frozenset(
+
+PUBLIC_EXACT: frozenset[str] = frozenset(
     {
         "/api/health",
+        # Acceptance must work for users who have a session but no membership
+        # yet — the signed invitation token is the authorization.
         "/api/memberships/accept",
-        # M06 — user-scoped (cross-org) listing. Session cookie identifies the
-        # user; no `X-Org-Slug` because the endpoint enumerates the user's orgs.
+        # `/api/auth/*` login surface — pre-session by definition.
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/logout-all",
+        "/api/auth/providers",
+        "/api/auth/sso/discover",
+        # TOTP flow is used both during login (no session yet) and after
+        # login from /user/security; handlers gate by their own state.
+        "/api/auth/totp/enroll",
+        "/api/auth/totp/challenge",
+        "/api/auth/totp/verify",
+    }
+)
+
+# `/api/auth/callback/{provider}` — OAuth provider redirects here with no
+# session cookie. Prefix-matched because `{provider}` is a path param.
+PUBLIC_PREFIX_VARIABLE: tuple[str, ...] = (
+    "/api/auth/callback/",
+    # OAuth callback URLs under /api/mcp-proxy/{provider}/callback. The
+    # upstream provider doesn't know about our X-Org-Slug header; the signed
+    # `state` carries the org_id.
+    # (Matched via the dedicated suffix check below.)
+)
+
+
+# ---------------------------------------------------------------------------
+# Category 2 — USER_SCOPED: session required, no org context.
+# ---------------------------------------------------------------------------
+
+USER_SCOPED_PREFIXES: tuple[str, ...] = (
+    # User profile + email management. Session via `_require_account()`.
+    "/api/account/",
+    # Cross-org notification stream. Session cookie identifies the recipient;
+    # org filters are optional query params.
+    "/api/notifications",
+)
+
+USER_SCOPED_EXACT: frozenset[str] = frozenset(
+    {
+        # Current-user lookup. SPA hits this before the org is known; on
+        # success the SPA picks an org and sets X-Org-Slug on later calls.
+        "/api/auth/me",
+        # User-scoped (cross-org) listing of the user's memberships.
         "/api/orgs/mine",
     }
 )
 
-
-# Paths the auth middleware enforces on. M02 routes opt in by adding their
-# prefix here; legacy /api/* routes are not yet covered so existing endpoints
-# keep working through the transition. Phase 14 expands this set as the
-# backfill completes.
-M02_PROTECTED_PREFIXES: tuple[str, ...] = (
-    "/api/account/",
-    "/api/memberships/",
-    "/api/audit",  # exact + prefix both — endpoint is /api/audit and /api/audit/...
-    "/api/plugins/",
-    "/api/vcs",  # exact + prefix
-    "/api/coding-agents",  # exact + prefix
-    "/api/orgs",  # exact + prefix
-    "/api/api-keys",  # exact + prefix
-    "/api/mcp-proxy",  # exact + prefix
-    # M05 — workspace connection status + activity SSE stream.
-    "/api/workspaces",  # exact + prefix
-    # M06 — org-scope the three M01-era routers.
-    "/api/tickets",  # exact + prefix
-    "/api/lessons",  # exact + prefix
-    "/api/reviewer",  # exact + prefix
-)
-
-
-# M06 — (method, path) tuples that bypass X-Org-Slug for a single verb on a
-# path that otherwise requires it. Used for `POST /api/orgs` (org-create) so
-# the picker page can hit it before any org is selected, while `GET /api/orgs`
-# (org-settings read) keeps requiring X-Org-Slug.
-PUBLIC_METHOD_EXACT: frozenset[tuple[str, str]] = frozenset(
+# (method, path) tuples that override the prefix-based classification for a
+# single verb. Used for `POST /api/orgs` (org-create runs before any org is
+# selected) while `GET /api/orgs` (org-settings read) stays ORG_SCOPED.
+USER_SCOPED_METHOD_EXACT: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/api/orgs"),
     }
 )
 
 
-def is_public_path(path: str, method: str | None = None) -> bool:
-    if path in PUBLIC_PATH_EXACT:
-        return True
-    if method is not None and (method, path) in PUBLIC_METHOD_EXACT:
-        return True
-    if any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
-        return True
-    # M04 — OAuth callback URLs under /api/mcp-proxy/{provider}/callback.
-    # The upstream OAuth provider doesn't know about our X-Org-Slug header;
-    # the signed `state` carries the org_id. Only the exact `/callback`
-    # suffix is public — `/connect`, `/validate`, etc. stay protected.
+# ---------------------------------------------------------------------------
+# Category 3 — ORG_SCOPED: session + X-Org-Slug + role check.
+# ---------------------------------------------------------------------------
+
+ORG_SCOPED_PREFIXES: tuple[str, ...] = (
+    "/api/memberships/",
+    "/api/audit",  # exact + prefix both
+    "/api/plugins/",
+    "/api/vcs",  # exact + prefix
+    "/api/coding-agents",
+    "/api/orgs",  # exact + prefix; POST is exempted via USER_SCOPED_METHOD_EXACT
+    "/api/api-keys",
+    "/api/mcp-proxy",
+    # Workspace connection status + activity SSE stream.
+    "/api/workspaces",
+    # Org-scoped tickets / lessons / reviewer.
+    "/api/tickets",
+    "/api/lessons",
+    "/api/reviewer",
+)
+
+
+# ---------------------------------------------------------------------------
+# Classifier.
+# ---------------------------------------------------------------------------
+
+
+def classify_route(path: str, method: str | None = None) -> RouteSecurity | None:
+    """Return the security category for `(method, path)`, or `None` if the
+    path isn't explicitly classified.
+
+    Precedence: method-specific exact > exact > prefix. Within those tiers,
+    PUBLIC and USER_SCOPED are checked before ORG_SCOPED so the cross-org
+    overlays for `/api/orgs/mine` and `POST /api/orgs` win over the
+    `/api/orgs` prefix.
+
+    Returning `None` (legacy unclassified) tells the middleware to skip its
+    header / CSRF enforcement and rely on the route dep + post-response
+    guard. Adding a new route under a brand-new prefix is therefore safe in
+    isolation — until you classify it, the guard returns 500 if you forgot
+    a security dep.
+    """
+    # Method-specific exact overrides.
+    if method is not None and (method, path) in USER_SCOPED_METHOD_EXACT:
+        return RouteSecurity.USER_SCOPED
+
+    # Exact matches.
+    if path in PUBLIC_EXACT:
+        return RouteSecurity.PUBLIC
+    if path in USER_SCOPED_EXACT:
+        return RouteSecurity.USER_SCOPED
+
+    # Prefix matches.
+    if any(path.startswith(p) for p in PUBLIC_PREFIXES):
+        return RouteSecurity.PUBLIC
+    if any(path.startswith(p) for p in PUBLIC_PREFIX_VARIABLE):
+        return RouteSecurity.PUBLIC
+    # `/api/mcp-proxy/{provider}/callback` — OAuth redirect target; bypass
+    # X-Org-Slug. Only the `/callback` suffix is public; `/connect`,
+    # `/validate`, etc. stay ORG_SCOPED.
     if path.startswith("/api/mcp-proxy/") and path.endswith("/callback"):
-        return True
-    return False
+        return RouteSecurity.PUBLIC
+    if any(path.startswith(p) for p in USER_SCOPED_PREFIXES):
+        return RouteSecurity.USER_SCOPED
+    if any(path == p.rstrip("/") or path.startswith(p) for p in ORG_SCOPED_PREFIXES):
+        return RouteSecurity.ORG_SCOPED
+
+    return None
 
 
-def is_m02_protected_path(path: str) -> bool:
-    return any(path == p.rstrip("/") or path.startswith(p) for p in M02_PROTECTED_PREFIXES)
+def is_org_scoped_path(path: str, method: str | None = None) -> bool:
+    """Shortcut: returns True iff `(method, path)` classifies as ORG_SCOPED."""
+    return classify_route(path, method) is RouteSecurity.ORG_SCOPED

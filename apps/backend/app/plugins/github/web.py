@@ -39,7 +39,7 @@ log = structlog.get_logger("github.webhook")
 
 M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-# M02 default-deny: GitHub plugin routes declare `public_route`. The webhook
+# Default-deny: GitHub plugin routes declare `public_route`. The webhook
 # endpoint authenticates via HMAC signature; the install/install_callback
 # endpoints are SSO-style flows. M03+ may swap install_* to `require()`.
 router = APIRouter(dependencies=[Depends(public_route)])
@@ -287,7 +287,7 @@ async def health() -> dict[str, object]:
     return {"healthy": True, "message": "ok", "checked_at": now}
 
 
-# ── M02 — GitHub App install ↔ org binding ──────────────────────────────
+# ── GitHub App install ↔ org binding ──────────────────────────────
 
 
 _INSTALL_STATE_SALT = "yaaos-github-install"

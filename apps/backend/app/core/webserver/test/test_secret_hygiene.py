@@ -20,7 +20,7 @@ def prod_env(monkeypatch):
 
 
 def test_prod_with_stub_secrets_raises(prod_env, monkeypatch):
-    # Leave all M02 secrets at their dev defaults.
+    # Leave all auth-related secrets at their dev defaults.
     for var in (
         "YAAOS_GITHUB_APP_ID",
         "YAAOS_GITHUB_APP_SLUG",

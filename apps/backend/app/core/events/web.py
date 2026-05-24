@@ -11,7 +11,7 @@ from app.core.auth import public_route
 from app.core.events.service import EventFilter, stream_events_for_filter
 from app.core.webserver import RouteSpec, register_routes
 
-# M02 default-deny: SSE endpoint declares `public_route`.
+# Default-deny: SSE endpoint declares `public_route`.
 router = APIRouter(dependencies=[Depends(public_route)])
 
 

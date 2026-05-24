@@ -1,16 +1,15 @@
-"""HTTP routes for `/api/account/*` — user-scoped (not org-scoped).
+"""HTTP routes for `/api/account/*` — `RouteSecurity.USER_SCOPED`.
 
 | Method | Path                                       | Action                 |
 |--------|--------------------------------------------|------------------------|
 | GET    | `/api/account/emails`                      | `ACCOUNT_UPDATE_SELF`  |
 | POST   | `/api/account/emails`                      | `ACCOUNT_UPDATE_SELF`  |
 | DELETE | `/api/account/emails/{email_id}`           | `ACCOUNT_UPDATE_SELF`  |
-| GET    | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF`  — user profile (display_name, github_username, emails, per-org handles) |
-| PATCH  | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF`  — update display_name; clear github_username |
+| GET    | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF` — user profile (display_name, github_username, emails, per-org handles) |
+| PATCH  | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF` — update display_name; clear github_username |
 
-These routes are user-scoped — the `X-Org-Slug` header is required by the
-middleware (since `/api/account/` is in `M02_PROTECTED_PREFIXES`) but only
-used to assert membership-in-something. Actions still operate on the user.
+Session is enforced by `_require_account()`. No `X-Org-Slug` header is
+required — these endpoints operate on the user, not on a single org.
 
 `users.github_username` is written automatically by the "Sign in with
 GitHub" login flow. Re-binding to a different GitHub account is "sign in
@@ -28,7 +27,6 @@ from pydantic import BaseModel
 
 from app.core.auth.context import user_id_var
 from app.core.auth.rate_limit import MUTATE_LIMIT, limiter
-from app.core.auth.types import Action
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
 
@@ -53,11 +51,11 @@ def _err(status: int, code: str) -> HTTPException:
 
 
 def _require_account():
-    """Lazy: domain/sessions imports domain/identity, so the dep factory has
-    to be looked up at call time, not at module import."""
-    from app.domain.sessions.dependencies import require  # noqa: PLC0415
+    """Session-only auth: resolves the cookie → `user_id_var`. No org context.
+    Lazy import because `domain/sessions` depends on `domain/identity`."""
+    from app.domain.sessions.dependencies import require_session  # noqa: PLC0415
 
-    return require(Action.ACCOUNT_UPDATE_SELF)
+    return require_session
 
 
 @router.get("/emails", dependencies=[Depends(_require_account())])

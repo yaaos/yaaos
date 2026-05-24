@@ -26,7 +26,7 @@ from app.core import audit_log, workspace  # noqa: F401, E402
 from app.core import workflow as _core_workflow  # noqa: F401, E402
 from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
 
-# 5b. Identity + tenancy + auth middleware (M02). Must be imported before
+# 5b. Identity + tenancy + auth middleware . Must be imported before
 # any domain module that declares `Depends(require(...))` or
 # `Depends(public_route)` so the contextvars + middleware classes exist.
 from app.domain import identity, orgs  # noqa: F401, E402

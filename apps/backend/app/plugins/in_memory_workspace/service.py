@@ -110,7 +110,7 @@ class InMemoryWorkspaceProvider:
         id="in_process",
         type="workspace",
         display_name="In-Process Workspace",
-        description="Host tempdir + git clone. POC only — no isolation; M02+ adds Docker workspaces.",
+        description="Host tempdir + git clone. POC only — no isolation; future Docker workspaces will add Docker workspaces.",
     )
 
     def install_url(self, org_id: UUID) -> str | None:

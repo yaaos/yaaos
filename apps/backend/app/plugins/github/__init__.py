@@ -1,6 +1,6 @@
 """plugins/github — GitHub VCSPlugin + OAuth identity provider + webhook receiver.
 
-M04: absorbed the M02 `plugins/oauth_github` plugin. The OAuth identity
+M04 absorbed the older `plugins/oauth_github` plugin. The OAuth identity
 provider (`GitHubOAuthProvider`) now lives alongside the VCS plugin since
 they share credentials, settings, and the test stack.
 """

@@ -37,7 +37,7 @@ LOAD_BEARING_URLS: set[tuple[str, str]] = {
     ("GET", "/api/account/me"),
     # Webhook ingress (GitHub App webhook).
     ("POST", "/api/intake/{type}"),
-    # M02 org membership surface (SPA invite + role flows).
+    # Org membership surface (SPA invite + role flows).
     ("POST", "/api/memberships/invite"),
     # Org settings (M05 WorkspaceSettingsCard depends on this).
     ("GET", "/api/orgs"),

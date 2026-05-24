@@ -49,11 +49,13 @@ async def test_create_org_unauthenticated_returns_401() -> None:
 
 @pytest.mark.asyncio
 async def test_create_org_happy_path(seeded, db_session) -> None:
+    sess = seeded["sess"]
     async with _client() as c:
         r = await c.post(
             "/api/orgs",
             json={"name": "Brand New", "slug": "brand-new"},
-            cookies={"yaaos_session": seeded["sess"].raw_token},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -68,11 +70,13 @@ async def test_create_org_happy_path(seeded, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_create_org_invalid_slug_returns_422(seeded) -> None:
+    sess = seeded["sess"]
     async with _client() as c:
         r = await c.post(
             "/api/orgs",
             json={"name": "X", "slug": "Has Spaces"},
-            cookies={"yaaos_session": seeded["sess"].raw_token},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 422
 
@@ -81,10 +85,12 @@ async def test_create_org_invalid_slug_returns_422(seeded) -> None:
 async def test_create_org_duplicate_slug_returns_409(seeded, db_session) -> None:
     await orgs_repo.insert_org(db_session, slug="taken", display_name="Taken")
     await db_session.commit()
+    sess = seeded["sess"]
     async with _client() as c:
         r = await c.post(
             "/api/orgs",
             json={"name": "Another", "slug": "taken"},
-            cookies={"yaaos_session": seeded["sess"].raw_token},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 409

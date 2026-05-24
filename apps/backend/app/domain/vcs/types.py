@@ -252,6 +252,6 @@ class VCSPlugin(Protocol):
 
         Callers MUST use the token immediately and forget it; tokens are never
         cached across operations. Workspace plugins use this at clone time;
-        future M02+ orchestration uses it just before each git push/fetch.
+        future orchestration uses it just before each git push/fetch.
         """
         ...

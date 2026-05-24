@@ -92,7 +92,7 @@ Both write `membership/role_changed` or `membership/removed` audit entries with 
 
 ### Public-allowlist exception for `/accept`
 
-`/api/memberships/accept` is on `PUBLIC_PATH_EXACT` because it must work for users who have a session but not yet a membership in the org. The signed token is the authorization, not the membership.
+`/api/memberships/accept` is classified as `RouteSecurity.PUBLIC` (in `PUBLIC_EXACT`) because it must work for users who have a session but not yet a membership in the org. The signed token is the authorization, not the membership.
 
 ### Import-cycle break
 

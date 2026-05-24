@@ -17,7 +17,7 @@ class ActorKind(StrEnum):
     GITHUB_USER = "github_user"
     AGENT = "agent"
     SYSTEM = "system"
-    # M02 — identity & access. A real yaaos user (uuid PK), a workspace
+    # Identity & access. A real yaaos user (uuid PK), a workspace
     # principal (background jobs running on behalf of an org), an SSO
     # assertion (used when an audit row's only "who" is a verified IdP).
     USER = "user"

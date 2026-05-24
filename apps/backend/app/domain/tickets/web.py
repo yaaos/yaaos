@@ -6,7 +6,7 @@
 | GET    | `/api/tickets/{ticket_id}`      | `TICKETS_READ`  |
 | GET    | `/api/tickets/{ticket_id}/audit`| `TICKETS_READ`  |
 
-Org context arrives via `X-Org-Slug` (M02 pattern).
+Org context arrives via `X-Org-Slug` (RouteSecurity.ORG_SCOPED).
 """
 
 from __future__ import annotations

@@ -22,7 +22,7 @@ HTTP routes (`/api/notifications`):
 | POST   | `/api/notifications/mark-read`         | session cookie only   |
 | GET    | `/api/notifications/popover`           | session cookie only   |
 
-All four endpoints are user-scoped (cross-org). The prefix lives on `PUBLIC_PATH_PREFIXES` in `core/auth/types.py` so the auth middleware does not demand `X-Org-Slug`; handlers resolve the session cookie themselves (same pattern as `/api/orgs/mine`).
+All four endpoints classify as `RouteSecurity.USER_SCOPED` (cross-org). The prefix lives in `USER_SCOPED_PREFIXES` in `core/auth/types.py`; the middleware does not demand `X-Org-Slug` and handlers resolve the session cookie themselves (same pattern as `/api/orgs/mine`).
 
 ## Module architecture
 

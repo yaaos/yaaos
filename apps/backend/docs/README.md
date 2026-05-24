@@ -24,7 +24,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [core_observability](core_observability.md) | structlog + conditional OTel SDK + `spawn()`. |
 | [core_plugin_kit](core_plugin_kit.md) | `PluginMeta` + `PluginType` — self-description every plugin exposes. Future plugin-system primitives land here. |
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
-| [core_auth](core_auth.md) | M02 default-deny middleware, contextvars, `Action` enum, `org_context()`. |
+| [core_auth](core_auth.md) | Default-deny middleware, contextvars, `Action` enum, `RouteSecurity` taxonomy, `org_context()`. |
 | [core_redis](core_redis.md) | Single Redis access point — per-loop client cache, pub/sub primitives, health ping. |
 | [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis; owns the outbox table and worker process. |
 | [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (M05 skeleton). |

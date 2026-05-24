@@ -143,7 +143,7 @@ def _install_middleware(app: FastAPI) -> None:
         allow_headers=["*"],
     )
 
-    # M02 default-deny auth middleware (see core/auth/middleware.py).
+    # Default-deny auth middleware (see core/auth/middleware.py).
     from app.core.auth import AuthMiddleware  # noqa: PLC0415
 
     app.add_middleware(AuthMiddleware)
@@ -154,7 +154,7 @@ def _install_middleware(app: FastAPI) -> None:
 
     app.add_middleware(SlowRequestLogMiddleware)
 
-    # M02 Phase 13: slowapi rate limiting. Per-IP on /api/auth/* (anonymous
+    # # slowapi rate limiting. Per-IP on /api/auth/* (anonymous
     # endpoints); per-user on mutating /api/* paths. Limits live on
     # individual route decorators (`@limiter.limit(AUTH_LIMIT)`). Only
     # mounted in `prod` so dev + Playwright suites aren't throttled.

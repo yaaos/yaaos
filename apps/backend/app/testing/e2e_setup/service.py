@@ -214,7 +214,7 @@ def is_dev_env() -> bool:
     return get_settings().is_non_prod
 
 
-# ── M02 — auth-flow helpers ──────────────────────────────────────────────
+# ── auth-flow helpers ──────────────────────────────────────────────
 
 
 async def seed_bootstrap_owner(

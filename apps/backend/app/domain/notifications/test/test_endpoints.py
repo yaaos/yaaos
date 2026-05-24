@@ -107,11 +107,13 @@ async def test_mark_one_read_is_idempotent(seeded, db_session) -> None:
     async with _client() as c:
         r1 = await c.post(
             f"/api/notifications/{n_id}/read",
-            cookies={"yaaos_session": sess.raw_token},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-CSRF-Token": sess.csrf_token},
         )
         r2 = await c.post(
             f"/api/notifications/{n_id}/read",
-            cookies={"yaaos_session": sess.raw_token},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-CSRF-Token": sess.csrf_token},
         )
     assert r1.status_code == 200
     assert r2.status_code == 200
@@ -128,7 +130,8 @@ async def test_mark_all_read_marks_only_callers_rows(seeded) -> None:
     async with _client() as c:
         r = await c.post(
             "/api/notifications/mark-read",
-            cookies={"yaaos_session": sess_alice.raw_token},
+            cookies={"yaaos_session": sess_alice.raw_token, "yaaos_csrf": sess_alice.csrf_token},
+            headers={"X-CSRF-Token": sess_alice.csrf_token},
             json={},
         )
     assert r.status_code == 200

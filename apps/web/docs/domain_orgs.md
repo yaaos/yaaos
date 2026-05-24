@@ -11,8 +11,8 @@
 
 ## Data flow
 
-- Picker: `useMyOrgs` → `GET /api/orgs/mine` (public endpoint — uses the session cookie, no `X-Org-Slug` header).
-- Create org: `useCreateOrg` → `POST /api/orgs` (also public-by-method per `PUBLIC_METHOD_EXACT`; slug regex validated client-side).
+- Picker: `useMyOrgs` → `GET /api/orgs/mine` (USER_SCOPED — uses the session cookie, no `X-Org-Slug` header).
+- Create org: `useCreateOrg` → `POST /api/orgs` (USER_SCOPED via `USER_SCOPED_METHOD_EXACT`; runs before the user has selected an org; slug regex validated client-side).
 - Members: `useQuery(["memberships", slug])` against `/api/memberships`. Invite / change-role / remove mutations all invalidate that key on success.
 - Audit: `useQuery(["audit", slug, filters])` against `/api/audit?actor_kind&action`.
 - SSO: `useQuery(["sso","config"])` against `/api/sso/config`; PUT upserts.

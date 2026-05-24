@@ -1060,7 +1060,7 @@ def bootstrap() -> None:
     _byok_register_validator("anthropic", validate_anthropic_key)
     # Install yaaos-* subagent definitions so the parent reviewer can dispatch
     # them via the Task tool. Static files, idempotent — fine to run on every
-    # backend startup. M02+ Docker-workspace isolation will move this per-
+    # backend startup. Future Docker-workspace isolation will move this per-
     # workspace; today there's one HOME shared by all reviews.
     try:
         install_subagents()

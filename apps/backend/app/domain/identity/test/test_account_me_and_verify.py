@@ -77,6 +77,31 @@ async def test_account_me_returns_orgs_and_handles(seeded) -> None:
     assert handles == {"org-a": "alpha", "org-b": "beta"}
 
 
+@pytest.mark.asyncio
+async def test_account_me_works_without_org_slug_header(seeded) -> None:
+    """The /user/details SPA page clears the org slug before calling this
+    endpoint — it's user-scoped, not org-scoped. The middleware must let
+    the request through without `X-Org-Slug`."""
+    async with _client() as c:
+        r = await c.get(
+            "/api/account/me",
+            cookies={"yaaos_session": seeded["session"].raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["display_name"] == "Acc"
+    assert {o["slug"] for o in body["orgs"]} == {"org-a", "org-b"}
+
+
+@pytest.mark.asyncio
+async def test_account_me_anonymous_without_header_is_401(seeded) -> None:
+    """No session, no header → 401 from `require_session`, not 400 from
+    the middleware. The route is USER_SCOPED, not ORG_SCOPED."""
+    async with _client() as c:
+        r = await c.get("/api/account/me")
+    assert r.status_code == 401
+
+
 # ── PATCH /api/account/me ────────────────────────────────────────────────────
 
 

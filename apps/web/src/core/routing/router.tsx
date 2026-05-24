@@ -52,11 +52,17 @@ const loginRoute = createRoute({
   },
 });
 
+// `/user/*` and `/notifications` deliberately do NOT clear the current org
+// slug — the user is still semantically in their org while reading their
+// personal account / cross-org notifications, and the sidebar + nav links
+// depend on the slug staying populated. The backend routes these pages
+// call are `RouteSecurity.USER_SCOPED`, so the header is optional.
+// Only `/login` and `/orgs` (the picker) explicitly clear it.
+
 const accountRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/user",
   beforeLoad: () => {
-    setCurrentOrgSlug(null);
     throw redirect({ to: "/user/details" });
   },
 });
@@ -65,32 +71,30 @@ const accountDetailsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/user/details",
   component: DetailsPage,
-  beforeLoad: () => setCurrentOrgSlug(null),
 });
 
 const accountSecurityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/user/security",
   component: SecurityPage,
-  beforeLoad: () => setCurrentOrgSlug(null),
 });
 
-// M06 — user-scoped placeholder routes: routing lands in Phase 2 so the
-// sidebar links don't 404; full implementations come later.
+// User-scoped placeholder routes — sidebar links work; full implementations
+// land later.
 const userMessagingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/user/messaging",
   component: MessagingPage,
-  beforeLoad: () => setCurrentOrgSlug(null),
 });
 
 const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/notifications",
   component: NotificationsPage,
-  beforeLoad: () => setCurrentOrgSlug(null),
 });
 
+// The picker is the explicit "no org selected" surface — clear the slug so
+// the sidebar collapses and the apiFetch client omits `X-Org-Slug`.
 const orgsPickerRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/orgs",

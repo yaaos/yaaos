@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     yaaos_reaper_interval_seconds: int = 30
     yaaos_heartbeat_interval_seconds: int = 10
 
-    # M02 — session lifetime + cleanup cadence.
+    # Session lifetime + cleanup cadence.
     yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
     yaaos_auth_cleanup_interval_seconds: int = 60 * 60  # 1 hour
     yaaos_integrations_health_check_interval_seconds: int = 60 * 60  # 1 hour
@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     yaaos_github_oauth_token_url: str = ""
     yaaos_oauth_state_secret: SecretStr = SecretStr("dev-only-oauth-state-secret")
 
-    # M02 — TOTP master key (Fernet, 32 bytes URL-safe base64). Defaults to
+    # TOTP master key (Fernet, 32 bytes URL-safe base64). Defaults to
     # empty; `domain/identity.totp` falls back to `yaaos_encryption_key` when
     # unset so dev/test only need one key. Production must set this.
     yaaos_totp_master_key: SecretStr = SecretStr("")
@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     notion_mcp_url: str = "https://mcp.notion.com/mcp"
     notion_api_base_url: str = "https://api.notion.com"
 
-    # M02 — invitations + dev SMTP (Mailpit).
+    # Invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: SecretStr = SecretStr("dev-only-invitation-secret")
     yaaos_invitation_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days
     yaaos_app_base_url: str = "http://localhost:8080"

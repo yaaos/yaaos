@@ -1,8 +1,9 @@
 """FastAPI dependencies — `require(action)` and `public_route`.
 
-Every M02-protected route declares exactly one of these. The middleware's
-post-response guard 500s any route under the M02 protected prefixes that
-left `route_security_resolved` unset.
+Every ORG_SCOPED route declares `require(action)`. Routes outside the
+ORG_SCOPED category use `public_route` (PUBLIC) or rely on the middleware
+classifying them as USER_SCOPED. The middleware's post-response guard 500s
+any `/api/*` route that left `route_security_resolved` unset.
 """
 
 from __future__ import annotations
@@ -102,7 +103,7 @@ def require(action: Action) -> Callable[..., None]:
     """Dependency factory. Resolves `X-Org-Slug` → org → membership → role check.
 
     On success, sets `org_id`, `user_id`, `actor_kind`, `actor_id` contextvars
-    + `route_security_resolved = "membership"`. The middleware reads these
+    + `route_security_resolved = "org_scoped"`. The middleware reads these
     when shaping the response and validating the post-response guard.
 
     Error shape:
@@ -231,7 +232,7 @@ def require(action: Action) -> Callable[..., None]:
         org_id_var.set(org_row.id)
         actor_kind_var.set(ActorKind.USER)
         actor_id_var.set(user_id)
-        route_security_resolved.set("membership")
+        route_security_resolved.set("org_scoped")
         # Bind structlog so log lines + the inner handler carry the identity.
         # Middleware unbinds at request end.
         from app.core.auth.context import bind_request_structlog_vars  # noqa: PLC0415
@@ -258,6 +259,34 @@ async def public_route(request: Request) -> None:
     from app.core.auth.context import public_route as _core_public_route  # noqa: PLC0415
 
     await _core_public_route()
+
+
+async def require_session(
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> None:
+    """Dependency for `RouteSecurity.USER_SCOPED` routes. Requires a valid
+    session cookie; sets `user_id_var`. Does **not** require `X-Org-Slug`
+    or perform any membership / role check — the route operates on the
+    user, not on an org.
+
+    Raises `AuthFailure("unauthenticated")` (→ 401, clearing cookies) when
+    no session is present. The middleware has already set
+    `route_security_resolved = "user_scoped"` based on path classification.
+    """
+    if not yaaos_session:
+        raise AuthFailure("unauthenticated")
+    token_hash = identity_repo.hash_token(yaaos_session)
+    async with db_session() as s:
+        row = await identity_repo.get_session_by_hash(s, token_hash)
+    if row is None or row.user_id is None:
+        raise AuthFailure("unauthenticated")
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    if row.expires_at < datetime.now(UTC):
+        raise AuthFailure("unauthenticated")
+    user_id_var.set(row.user_id)
+    actor_kind_var.set(ActorKind.USER)
+    actor_id_var.set(row.user_id)
 
 
 def current_actor() -> Actor:

@@ -27,10 +27,12 @@ user_id_var: ContextVar[UUID | None] = ContextVar("yaaos_user_id", default=None)
 actor_kind_var: ContextVar[ActorKind | None] = ContextVar("yaaos_actor_kind", default=None)
 actor_id_var: ContextVar[UUID | None] = ContextVar("yaaos_actor_id", default=None)
 
-# Set by `require(action)` / `public_route` deps. The middleware's post-response
-# guard checks this; an unset value on a protected route signals a missing
-# security declaration and returns 500.
-SecurityResolution = Literal["membership", "public", "background"]
+# Set by the middleware (for PUBLIC / USER_SCOPED paths) and by route deps
+# (`require(action)` sets "org_scoped" once it resolves a membership;
+# `public_route` sets "public" as a marker for explicitly-public routes).
+# The post-response guard rejects any /api/* 2xx response that left this
+# unset — that means a route lacks an auth declaration.
+SecurityResolution = Literal["public", "user_scoped", "org_scoped", "background"]
 route_security_resolved: ContextVar[SecurityResolution | None] = ContextVar(
     "yaaos_route_security_resolved", default=None
 )
@@ -126,11 +128,12 @@ def unbind_request_structlog_vars() -> None:
 
 
 async def public_route() -> None:
-    """FastAPI dependency for routes that have no auth requirement. Sets
+    """FastAPI dependency marker for `RouteSecurity.PUBLIC` routes. Sets
     `route_security_resolved = "public"` so the middleware's post-response
     guard recognizes the declaration. Lives in `core/auth` (not
     `domain/sessions`) so non-domain modules can use it without a layering
-    cycle."""
+    cycle. USER_SCOPED routes don't need this marker — the middleware sets
+    `"user_scoped"` based on path classification."""
     route_security_resolved.set("public")
 
 

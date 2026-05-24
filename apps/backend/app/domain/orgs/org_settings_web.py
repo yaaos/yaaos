@@ -7,7 +7,7 @@
 | GET    | `/api/orgs/mine`           | session cookie only (cross-org) — M06 picker + switcher. |
 | GET    | `/api/orgs/config-status`  | `ORG_READ` — M06 "not configured" gate aggregation. |
 
-Org identified by `X-Org-Slug` header (M02 pattern). Architecture.md documents
+Org identified by `X-Org-Slug` header (RouteSecurity.ORG_SCOPED). Architecture.md documents
 the URL as `/api/orgs/{slug}` for readability; this implementation mirrors the
 other M03 endpoints which all take the slug via header. The single endpoint
 returns the updated org's relevant settings.

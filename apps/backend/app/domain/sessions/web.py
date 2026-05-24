@@ -366,7 +366,7 @@ async def sso_discover(request: Request, email: str) -> dict[str, Any]:
     return {"provider": "saml", "saml_org_slug": org.slug}
 
 
-# ── M02 Phase 11 — TOTP enroll + verify ──────────────────────────────────
+# ── # TOTP enroll + verify ──────────────────────────────────
 
 
 class _TotpVerifyRequest(BaseModel):
