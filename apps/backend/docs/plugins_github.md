@@ -4,14 +4,14 @@
 
 ## Purpose
 
-Bridges GitHub REST + webhooks to `domain/vcs` types. One yaaos GitHub App drives both **"Sign in with GitHub"** (user-to-server OAuth) and **org installs** (GitHub App installations). Credentials live in `yaaos_github_app_*` env vars; no per-org credential storage.
+Bridges GitHub REST + webhooks to `domain/vcs` types. Two distinct GitHub registrations sit behind the plugin: a **GitHub App** drives per-org installs (`yaaos_github_app_*`); a separate **GitHub OAuth App** drives "Sign in with GitHub" (`yaaos_github_oauth_*`). They are different GitHub primitives — don't conflate them. No per-org credential storage.
 
-Owns: App authentication (RS256 JWT → installation token), the webhook receiver, the user-auth `Provider`, installation/repositories endpoints for the Settings UI, and three DB tables.
+Owns: App authentication (RS256 JWT → installation token), the webhook receiver, the user-auth `Provider`, installation/repositories endpoints for the Settings UI, and two DB tables.
 
 ## Public interface
 
 - Singleton `GitHubPlugin` registered into `domain/vcs` at `bootstrap()`; also registers the `github_app_installed` onboarding contributor.
-- `GitHubOAuthProvider` registered into `domain/identity` at `bootstrap_oauth()` when the App's `client_id` + `client_secret` are configured.
+- `GitHubOAuthProvider` registered into `domain/identity` at `bootstrap_oauth()` when the OAuth App's `client_id` + `client_secret` are configured.
 - Side-effect import of `web.py` wires HTTP routes (prefix `/api/github`):
   - `POST /webhook` — GitHub event receiver.
   - `GET /installation` — two-state response driving the Settings UI.
@@ -23,18 +23,25 @@ Owns: App authentication (RS256 JWT → installation token), the webhook receive
 
 ## Module architecture
 
-### One platform GitHub App, two purposes
+### Two GitHub registrations, two purposes
 
-A single yaaos-owned GitHub App registration handles both user login and org installs. The App's credentials live in `yaaos_github_app_*` env vars (see [docs/setup.md](../../../docs/setup.md)):
+The plugin is fronted by two distinct GitHub-side registrations. GitHub names them confusingly — they are *not* the same primitive:
+
+- **GitHub App** — used for per-org installs. Authenticates with an RS256-signed App JWT (`yaaos_github_app_private_key`) → short-lived installation tokens. Owns the webhook deliverability contract. No `client_id`/`client_secret`.
+- **GitHub OAuth App** — used for "Sign in with GitHub". Authenticates with `client_id`/`client_secret` → a user access token. No install concept, no installation tokens, no webhooks.
+
+Why two: the install lifecycle (org admins granting repo access) and the login flow (individual users authenticating) live on different GitHub primitives. Trying to reuse one for the other ties credential ownership to whatever team controls the App registration, and conflates two unrelated failure modes.
+
+Env vars (see [docs/setup.md](../../../docs/setup.md)):
 
 - `yaaos_github_app_id` — App's numeric id.
 - `yaaos_github_app_slug` — used to build `${github_web_base_url}/apps/<slug>/installations/new`.
 - `yaaos_github_app_private_key` — PEM, used for App-JWT minting.
-- `yaaos_github_app_client_id` / `_client_secret` — user-to-server OAuth (login).
 - `yaaos_github_app_webhook_secret` — HMAC verification.
+- `yaaos_github_oauth_client_id` / `_client_secret` — OAuth App credentials for sign-in.
 - `yaaos_github_oauth_token_url` (optional) — server-side token-exchange URL override (test stack only; server can't reach the browser-facing host).
 
-Login + install share the same upstream registration but are otherwise independent code paths and never share DB state.
+Install + sign-in are independent code paths and never share DB state.
 
 ### GitHub App authentication (server-to-GitHub)
 
@@ -47,11 +54,11 @@ Two-step (`service.py`):
 
 `get_installation_token(org_id)` is public Protocol because the workspace plugin calls it at clone time and forgets the token.
 
-### Login provider (user-to-server OAuth)
+### Login provider (GitHub OAuth App)
 
-`GitHubOAuthProvider` implements `domain/identity.Provider`:
+`GitHubOAuthProvider` implements `domain/identity.Provider`, driven by the **OAuth App** credentials (`yaaos_github_oauth_client_id`/`_secret`), not the GitHub App's:
 
-- `authorization_url()` builds `${github_web_base_url}/login/oauth/authorize?client_id=...&redirect_uri=...&state=...&allow_signup=false`. No `scope` param — GitHub App user-auth scopes are configured on the App registration, not requested per call.
+- `authorization_url()` builds `${github_web_base_url}/login/oauth/authorize?client_id=...&redirect_uri=...&state=...&allow_signup=false`. No `scope` param — OAuth App scopes are configured on the registration itself.
 - `exchange_code()` POSTs to the token URL (`yaaos_github_oauth_token_url` if set, else `${github_web_base_url}/login/oauth/access_token`), then fetches `${github_api_base_url}/user` and `/user/emails`, returns a normalized `ProviderProfile` with `external_subject = user.id`, the verified primary email, and `provider_login = user.login` (the GitHub handle, which the orchestrator persists to `users.github_username`).
 
 `mfa_satisfied=True` — GitHub's own 2FA check runs inside the authorize handshake; yaaos doesn't demand a separate TOTP step-up on top.
@@ -91,7 +98,7 @@ For `pull_request.synchronize` only, handler calls `detect_force_push(repo, befo
 ### Installation route (`GET /installation`)
 
 Owner/Admin only (`VCS_READ`). Two states:
-1. `app_configured: false` — the platform GitHub App isn't provisioned on this deployment (env vars unset). UI shows operator guidance.
+1. `app_configured: false` — the platform GitHub App isn't provisioned on this deployment (`yaaos_github_app_id`/`_slug`/`_private_key` unset). UI shows operator guidance. Tracks the GitHub App only; OAuth App credentials are irrelevant here.
 2. `installed: false` — App provisioned but not installed on this org. UI shows the "Install yaaos on GitHub" button (clicks fire `POST /install/start`).
 3. `installed: true` — UI shows "Manage on GitHub" link to `${github_web_base_url}/settings/installations/{external_id}` plus `account_login` and `installed_at`.
 

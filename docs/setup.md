@@ -21,7 +21,7 @@ The full env-var list is in [`apps/backend/docs/core_config.md`](../apps/backend
 
 ### GitHub OAuth (M02)
 
-Dev login uses a real GitHub OAuth App — credentials provisioned out-of-band and pasted into `.env` as `OAUTH_GITHUB_CLIENT_ID` + `OAUTH_GITHUB_CLIENT_SECRET`. The callback URL is the dev origin's `/api/auth/callback/github`. Production uses its own App.
+Dev login uses a real GitHub **OAuth App** (distinct from the GitHub App used for installs) — credentials provisioned out-of-band and pasted into `.env` as `YAAOS_GITHUB_OAUTH_CLIENT_ID` + `YAAOS_GITHUB_OAUTH_CLIENT_SECRET`. The callback URL is the dev origin's `/api/auth/callback/github`. Production uses its own OAuth App.
 
 ### M02 env vars (full inventory)
 
@@ -33,7 +33,8 @@ Required in prod; defaults shipped for dev/test:
 | `YAAOS_TOTP_MASTER_KEY` | Fernet, 32-byte URL-safe base64. Encrypts TOTP secrets + SP private keys. Falls back to `YAAOS_ENCRYPTION_KEY` in non-prod. |
 | `YAAOS_OAUTH_STATE_SECRET` | itsdangerous secret for OAuth `state`, TOTP-challenge, GitHub-install state, SAML stub assertions. Rotate on suspected compromise. |
 | `YAAOS_INVITATION_TOKEN_SECRET` | itsdangerous secret for invitation tokens (7-day TTL). |
-| `YAAOS_GITHUB_APP_ID` / `YAAOS_GITHUB_APP_SLUG` / `YAAOS_GITHUB_APP_PRIVATE_KEY` / `YAAOS_GITHUB_APP_CLIENT_ID` / `YAAOS_GITHUB_APP_CLIENT_SECRET` / `YAAOS_GITHUB_APP_WEBHOOK_SECRET` | The single platform yaaos GitHub App. Drives both "Sign in with GitHub" and per-org installs. Provisioning instructions below. |
+| `YAAOS_GITHUB_APP_ID` / `YAAOS_GITHUB_APP_SLUG` / `YAAOS_GITHUB_APP_PRIVATE_KEY` / `YAAOS_GITHUB_APP_WEBHOOK_SECRET` | The platform yaaos **GitHub App**. Drives per-org installs + the webhook receiver. Provisioning instructions below. |
+| `YAAOS_GITHUB_OAUTH_CLIENT_ID` / `YAAOS_GITHUB_OAUTH_CLIENT_SECRET` | The platform yaaos **GitHub OAuth App** — a distinct GitHub primitive. Drives "Sign in with GitHub" only. Provisioning instructions below. |
 | `YAAOS_APP_BASE_URL` | Public origin of this deployment. Used in invitation + SAML ACS URLs. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | Outbound mail (invitations). Dev → Mailpit (`localhost:1025`). |
 | `YAAOS_SESSION_LIFETIME_SECONDS` | Session cookie lifetime; default 14 days. |
@@ -105,14 +106,20 @@ When the Phase 7 follow-on lands the real STS verifier, this service grows a `YA
 
 The agent opens `WSS /api/v1/agents/{id}/activity` after identity exchange. Behind ALB / nginx, configure `--ws-ping-interval=30 --ws-ping-timeout=10` on uvicorn so idle WebSocket connections survive proxy idle-timeouts (typically 60s). Local dev uses uvicorn defaults — the agent reconnect loop covers any drops.
 
-## 3. Provision the platform yaaos GitHub App
+## 3. Provision the two GitHub registrations
 
-yaaos uses **one** GitHub App registration that drives both "Sign in with GitHub" and per-org installs. Provision it once per yaaos deployment; customers don't bring their own App.
+yaaos uses **two distinct GitHub-side registrations**, both provisioned once per yaaos deployment. Customers don't bring their own:
+
+- A **GitHub App** — drives per-customer-org install + the webhook deliverability contract.
+- A **GitHub OAuth App** — drives "Sign in with GitHub" for yaaos users.
+
+GitHub names them confusingly. They are not interchangeable; do not paste GitHub App credentials into the OAuth slots or vice versa.
+
+### 3a. GitHub App (per-org installs)
 
 1. Visit <https://github.com/settings/apps/new> (or your GitHub org's Apps page if you want the App owned by an org).
 2. Configure:
    - **Homepage URL:** your yaaos deployment URL.
-   - **User authorization callback URL:** `<deployment>/api/auth/callback/github`.
    - **Setup URL:** `<deployment>/api/github/install_callback` and check "Redirect on update."
    - **Webhook URL:**
      - Production: `<deployment>/api/github/webhook`.
@@ -120,13 +127,25 @@ yaaos uses **one** GitHub App registration that drives both "Sign in with GitHub
    - **Webhook secret:** generate a high-entropy string; keep it.
    - **Repository permissions:** Contents (read), Pull requests (write), Metadata (read), Issues (write — for top-level PR comments).
    - **Subscribe to events:** Pull request, Pull request review comment, Issue comment, Installation.
-3. After saving, GitHub gives you the App ID, slug, client ID, and (after clicking "Generate a private key") a PEM. Click "Generate a new client secret" and capture it.
+   - Leave the "User authorization callback URL" blank — sign-in does **not** go through this App.
+3. After saving, GitHub gives you the App ID, slug, and (after clicking "Generate a private key") a PEM.
 4. Drop those values into your `.env`:
-   - `YAAOS_GITHUB_APP_ID`, `YAAOS_GITHUB_APP_SLUG`, `YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_CLIENT_ID`, `YAAOS_GITHUB_APP_CLIENT_SECRET`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`.
+   - `YAAOS_GITHUB_APP_ID`, `YAAOS_GITHUB_APP_SLUG`, `YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`.
    - **Private key:** paste the PEM as one line with literal `\n` between rows. The backend normalizes them to real newlines before signing. Single-shot conversion: `awk 'NR>1{printf"\\n"}{printf"%s",$0}' yaaos-dev.YYYY-MM-DD.private-key.pem`.
-5. Restart the backend. Login + per-org install both work against this single registration.
 
-Customers (and your own org) install the App by signing in to yaaos as an Owner, opening **Org Settings > VCS**, clicking **Install yaaos on GitHub**, and choosing which repos to enable on github.com's install picker.
+### 3b. GitHub OAuth App (sign-in)
+
+1. Visit <https://github.com/settings/developers> → **New OAuth App** (or the equivalent org page).
+2. Configure:
+   - **Homepage URL:** your yaaos deployment URL.
+   - **Authorization callback URL:** `<deployment>/api/auth/callback/github`.
+3. After saving, click "Generate a new client secret".
+4. Drop the values into your `.env`:
+   - `YAAOS_GITHUB_OAUTH_CLIENT_ID`, `YAAOS_GITHUB_OAUTH_CLIENT_SECRET`.
+
+Restart the backend. Sign-in and per-org install now work independently against their own registrations.
+
+Customers (and your own org) install the GitHub App by signing in to yaaos as an Owner, opening **Org Settings > VCS**, clicking **Install yaaos on GitHub**, and choosing which repos to enable on github.com's install picker.
 
 ## 4. Set the Anthropic API key
 

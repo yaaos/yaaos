@@ -28,8 +28,8 @@ _EXPECTED_SECRET_TYPES = {
     "yaaos_encryption_key",
     "braintrust_api_key",
     "yaaos_github_app_private_key",
-    "yaaos_github_app_client_secret",
     "yaaos_github_app_webhook_secret",
+    "yaaos_github_oauth_client_secret",
     "yaaos_oauth_state_secret",
     "yaaos_totp_master_key",
     "yaaos_oauth_linear_client_secret",
@@ -48,7 +48,7 @@ def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "SUPER-SECRET-ENCRYPTION-KEY-DO-NOT-LEAK")
     monkeypatch.setenv("REDIS_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "SUPER-SECRET-GH-CLIENT-SECRET")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "SUPER-SECRET-GH-OAUTH-SECRET")
     monkeypatch.setenv("YAAOS_GITHUB_APP_PRIVATE_KEY", "SUPER-SECRET-GH-PRIVATE-KEY")
     monkeypatch.setenv("YAAOS_GITHUB_APP_WEBHOOK_SECRET", "SUPER-SECRET-GH-WEBHOOK-SECRET")
     monkeypatch.setenv("YAAOS_TOTP_MASTER_KEY", "SUPER-SECRET-TOTP-MASTER-KEY")
@@ -78,7 +78,7 @@ def test_repr_does_not_expose_secret_plaintexts() -> None:
     rendered = repr(settings)
     for plaintext in (
         "SUPER-SECRET-ENCRYPTION-KEY-DO-NOT-LEAK",
-        "SUPER-SECRET-GH-CLIENT-SECRET",
+        "SUPER-SECRET-GH-OAUTH-SECRET",
         "SUPER-SECRET-GH-PRIVATE-KEY",
         "SUPER-SECRET-GH-WEBHOOK-SECRET",
         "SUPER-SECRET-TOTP-MASTER-KEY",
@@ -95,7 +95,7 @@ def test_model_dump_does_not_expose_secret_plaintexts() -> None:
     dict_rendered = str(settings.model_dump())
     for plaintext in (
         "SUPER-SECRET-ENCRYPTION-KEY-DO-NOT-LEAK",
-        "SUPER-SECRET-GH-CLIENT-SECRET",
+        "SUPER-SECRET-GH-OAUTH-SECRET",
         "SUPER-SECRET-GH-PRIVATE-KEY",
         "SUPER-SECRET-GH-WEBHOOK-SECRET",
         "SUPER-SECRET-TOTP-MASTER-KEY",

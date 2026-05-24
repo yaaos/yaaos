@@ -89,9 +89,9 @@ services:
       YAAOS_GITHUB_APP_ID: "12345"
       YAAOS_GITHUB_APP_SLUG: yaaos-test
       YAAOS_GITHUB_APP_PRIVATE_KEY: test-private-key
-      YAAOS_GITHUB_APP_CLIENT_ID: yaaos-test-client-id
-      YAAOS_GITHUB_APP_CLIENT_SECRET: yaaos-test-client-secret
       YAAOS_GITHUB_APP_WEBHOOK_SECRET: "TEST-FAKE-NOT-FOR-PROD-aaaaaaaaaaaaaaaa"
+      YAAOS_GITHUB_OAUTH_CLIENT_ID: yaaos-test-oauth-client-id
+      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: yaaos-test-oauth-client-secret
       # Server-side OAuth token POST — yaaos backend must reach fake-github
       # via the docker-internal host, not the browser-facing port.
       YAAOS_GITHUB_OAUTH_TOKEN_URL: http://fake-github:8080/login/oauth/access_token

@@ -17,7 +17,7 @@ from app.plugins.github.oauth import GitHubOAuthProvider
 
 
 def test_authorization_url_contains_required_params(monkeypatch) -> None:
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "test-client")
     get_settings.cache_clear()
     p = GitHubOAuthProvider()
     url = p.authorization_url(state="abc.def", redirect_uri="http://test/api/auth/callback/github")
@@ -34,8 +34,8 @@ def test_authorization_url_contains_required_params(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_exchange_code_happy_path(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -69,8 +69,8 @@ async def test_exchange_code_happy_path(monkeypatch, httpx_mock) -> None:
 
 @pytest.mark.asyncio
 async def test_exchange_code_unverified_primary(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -95,8 +95,8 @@ async def test_exchange_code_unverified_primary(monkeypatch, httpx_mock) -> None
 
 @pytest.mark.asyncio
 async def test_exchange_code_userinfo_failure_raises(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -123,8 +123,8 @@ async def test_exchange_code_userinfo_failure_raises(monkeypatch, httpx_mock) ->
 
 @pytest.mark.asyncio
 async def test_exchange_code_token_failure_raises(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(

@@ -46,14 +46,17 @@ Events carry `pr_id` + `review_job_id` (no `agent_id` — one job per review run
 
 Polling (5s / 3s) remains as a safety net.
 
-### GitHub App auth chain
+### GitHub auth chain
 
-One yaaos-owned GitHub App registration. Credentials in env vars (`YAAOS_GITHUB_APP_*`), never in the DB. The same registration drives both **"Sign in with GitHub"** (user-to-server OAuth) and **per-org installs** (App installation tokens).
+Two distinct yaaos-owned GitHub registrations, both env-only — credentials never in the DB. They are different GitHub primitives:
 
-1. Operator registers the platform App once at github.com → `Settings > Developer settings > GitHub Apps`, drops App ID / slug / PEM / client_id / client_secret / webhook secret into `.env`. See [docs/setup.md](setup.md).
-2. **Login:** SPA hits `/api/auth/login?provider=github` → backend signs `state` and 302s to `${github_web_base_url}/login/oauth/authorize?client_id=...`. GitHub redirects back with `code`; backend exchanges via `POST /login/oauth/access_token` and reads `/user` + `/user/emails`. The [`identity` orchestrator](../apps/backend/docs/domain_identity.md#login-orchestrator) finds or creates the user.
-3. **Install:** Owner hits `Org Settings > VCS > Install yaaos on GitHub`. SPA POSTs `/api/github/install/start` (which signs `state={org_id}` and returns `${github_web_base_url}/apps/${slug}/installations/new?state=...`). Browser follows; user picks repos; GitHub redirects to `/api/github/install_callback`. Backend verifies state, looks up the install's `account.login` via App JWT, and writes a `github_app_installations` row.
-4. **Outbound API:** `plugins/github` signs a short-lived RS256 App JWT with the platform PEM, exchanges it at `POST /app/installations/{id}/access_tokens` for an installation token (~1h TTL, in-memory). Token used as Bearer for REST and `GIT_ASKPASS`-style for `git clone`.
+- **GitHub App** (`YAAOS_GITHUB_APP_*`) — drives per-org installs + the webhook receiver. Auth = App JWT (private key) → installation token.
+- **GitHub OAuth App** (`YAAOS_GITHUB_OAUTH_*`) — drives "Sign in with GitHub". Auth = `client_id`/`client_secret` → user access token. No install concept, no webhooks.
+
+1. Operator registers the GitHub App at github.com → `Settings > Developer settings > GitHub Apps`, drops App ID / slug / PEM / webhook secret into `.env`. Separately registers a GitHub OAuth App at `Settings > Developer settings > OAuth Apps`, drops `client_id` / `client_secret` into `.env`. See [docs/setup.md](setup.md).
+2. **Login (OAuth App):** SPA hits `/api/auth/login?provider=github` → backend signs `state` and 302s to `${github_web_base_url}/login/oauth/authorize?client_id=...`. GitHub redirects back with `code`; backend exchanges via `POST /login/oauth/access_token` using the OAuth App credentials and reads `/user` + `/user/emails`. The [`identity` orchestrator](../apps/backend/docs/domain_identity.md#login-orchestrator) finds or creates the user.
+3. **Install (GitHub App):** Owner hits `Org Settings > VCS > Install yaaos on GitHub`. SPA POSTs `/api/github/install/start` (which signs `state={org_id}` and returns `${github_web_base_url}/apps/${slug}/installations/new?state=...`). Browser follows; user picks repos; GitHub redirects to `/api/github/install_callback`. Backend verifies state, looks up the install's `account.login` via App JWT, and writes a `github_app_installations` row.
+4. **Outbound API (GitHub App):** `plugins/github` signs a short-lived RS256 App JWT with the platform PEM, exchanges it at `POST /app/installations/{id}/access_tokens` for an installation token (~1h TTL, in-memory). Token used as Bearer for REST and `GIT_ASKPASS`-style for `git clone`.
 
 ### MCP context for reviewer agents (M04)
 

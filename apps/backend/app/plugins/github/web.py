@@ -173,7 +173,12 @@ async def installation() -> InstallationResponse:
 
     settings = get_settings()
     slug = settings.yaaos_github_app_slug
-    app_configured = bool(settings.yaaos_github_app_id and slug and settings.yaaos_github_app_client_id)
+    # "App configured" tracks the GitHub *App* (install flow) only — the
+    # OAuth App credentials power sign-in and are unrelated to whether the
+    # install button should render.
+    app_configured = bool(
+        settings.yaaos_github_app_id and slug and settings.yaaos_github_app_private_key.get_secret_value()
+    )
     if not app_configured:
         return InstallationResponse(app_configured=False, installed=False)
 

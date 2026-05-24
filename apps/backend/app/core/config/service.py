@@ -96,17 +96,24 @@ class Settings(BaseSettings):
     yaaos_ticket_orphan_sweep_interval_seconds: int = 60
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
 
-    # The platform yaaos GitHub App. ONE App registration drives both
-    # "Login with GitHub" (user-to-server OAuth using client_id/client_secret)
-    # and per-org installs (app_id/private_key/webhook_secret). Required in
-    # `prod`; defaults let `dev` boot without provisioning. Tests override at
-    # fixture time. The slug builds `${github_web_base_url}/apps/<slug>/installations/new`.
+    # The platform yaaos GitHub App — used for per-org installs only
+    # (app_id/private_key/webhook_secret drive installation-token minting + the
+    # webhook receiver). The slug builds `${github_web_base_url}/apps/<slug>/installations/new`.
+    # Required in `prod`; defaults let `dev` boot without provisioning. Tests
+    # override at fixture time.
     yaaos_github_app_id: str = ""
     yaaos_github_app_slug: str = ""
     yaaos_github_app_private_key: SecretStr = SecretStr("")
-    yaaos_github_app_client_id: str = ""
-    yaaos_github_app_client_secret: SecretStr = SecretStr("")
     yaaos_github_app_webhook_secret: SecretStr = SecretStr("")
+    # The platform yaaos GitHub *OAuth* App — used for "Sign in with GitHub"
+    # only. This is a DIFFERENT GitHub primitive from the GitHub App above
+    # (GitHub confusingly names them both): a GitHub OAuth App has no install
+    # concept, no installation tokens, and authenticates with client_id /
+    # client_secret to mint a user access token. Keeping the two registrations
+    # separate means the install lifecycle and the login flow can fail (or be
+    # disabled) independently.
+    yaaos_github_oauth_client_id: str = ""
+    yaaos_github_oauth_client_secret: SecretStr = SecretStr("")
     # The browser-facing authorize URL is always `<github_web_base_url>/login/oauth/authorize`.
     # The server-side token exchange URL is normally the same origin (real github.com
     # serves both), but the test stack splits the browser host (`localhost:58081`)

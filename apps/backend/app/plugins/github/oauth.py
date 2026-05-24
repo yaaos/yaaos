@@ -1,13 +1,13 @@
-"""GitHub App user-to-server OAuth (Login with GitHub).
+"""GitHub OAuth App (Login with GitHub).
 
-The same yaaos GitHub App that handles per-org installs also issues
-user-access tokens for login. Same client_id/client_secret, same upstream;
-the only difference is which endpoints we hit. No separate OAuth App
-registration.
+Drives "Sign in with GitHub" via a yaaos-owned **GitHub OAuth App** — a
+distinct GitHub primitive from the GitHub App used for org installs (the
+two are not the same thing; GitHub names them confusingly). Credentials
+live in `yaaos_github_oauth_client_id` / `_client_secret`; the install
+flow's `yaaos_github_app_*` env vars play no part here.
 
-Scopes are configured on the GitHub App itself (`Identifying and authorizing
-users` page) — we never pass a `scope` query param, GitHub ignores it for
-GitHub Apps.
+Scopes are configured on the OAuth App registration itself, so we never
+pass a `scope` query param.
 
 Implements `domain/identity.Provider`.
 """
@@ -31,8 +31,7 @@ log = structlog.get_logger("plugins.github.oauth")
 
 
 class GitHubOAuthProvider:
-    """Provider implementation for the platform yaaos GitHub App's
-    user-to-server OAuth flow.
+    """Provider implementation for the platform yaaos GitHub OAuth App.
 
     Stateless: every call reads settings fresh so test overrides via
     `monkeypatch.setenv` are picked up between requests.
@@ -43,7 +42,7 @@ class GitHubOAuthProvider:
     def authorization_url(self, *, state: str, redirect_uri: str) -> str:
         s = get_settings()
         params = {
-            "client_id": s.yaaos_github_app_client_id,
+            "client_id": s.yaaos_github_oauth_client_id,
             "redirect_uri": redirect_uri,
             "state": state,
             "allow_signup": "false",
@@ -54,8 +53,8 @@ class GitHubOAuthProvider:
         s = get_settings()
         token_url = s.yaaos_github_oauth_token_url or f"{s.github_web_base_url}/login/oauth/access_token"
         async with AsyncOAuth2Client(
-            client_id=s.yaaos_github_app_client_id,
-            client_secret=s.yaaos_github_app_client_secret.get_secret_value(),
+            client_id=s.yaaos_github_oauth_client_id,
+            client_secret=s.yaaos_github_oauth_client_secret.get_secret_value(),
             redirect_uri=redirect_uri,
         ) as client:
             try:
@@ -117,13 +116,13 @@ def _pick_primary_email(emails: list[dict]) -> dict | None:
 def bootstrap_oauth() -> None:
     """Register the singleton Provider in the in-process registry.
 
-    Skipped when the GitHub App's client_id / client_secret are unset:
+    Skipped when the GitHub OAuth App's client_id / client_secret are unset:
     registering anyway would advertise GitHub login on `/api/auth/providers`
     and then 404 at GitHub with `client_id=`. The LoginPage renders an empty
     list as "no providers configured".
     """
     s = get_settings()
-    if not s.yaaos_github_app_client_id or not s.yaaos_github_app_client_secret.get_secret_value():
+    if not s.yaaos_github_oauth_client_id or not s.yaaos_github_oauth_client_secret.get_secret_value():
         log.info("oauth_github.skipped_unconfigured")
         return
     register_provider(GitHubOAuthProvider())
