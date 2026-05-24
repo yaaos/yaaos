@@ -543,39 +543,14 @@ export function useSetAnthropicKey() {
 }
 
 export type GithubInstallation = {
-  credentials_configured: boolean;
+  app_configured: boolean;
   installed: boolean;
-  app_id: string | null;
   slug: string | null;
   account_login: string | null;
   install_external_id: string | null;
   installed_at: string | null;
-  install_url: string | null;
   installations_url: string | null;
 };
-
-export type SetGithubCredentialsInput = {
-  app_id: string;
-  slug: string;
-  private_key: string;
-  webhook_secret: string;
-};
-
-export function useSetGithubCredentials() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: SetGithubCredentialsInput) =>
-      apiFetch<{ status: string }>("/api/github/credentials", {
-        method: "POST",
-        body: JSON.stringify(input),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["github", "installation"] });
-      qc.invalidateQueries({ queryKey: ["onboarding"] });
-      qc.invalidateQueries({ queryKey: ["plugin-health", "github"] });
-    },
-  });
-}
 
 export type PluginHealth = {
   healthy: boolean;

@@ -30,7 +30,7 @@ from app.domain.pull_requests import models as _pr_models  # noqa: F401
 from app.domain.reviewer import models as _reviewer_models  # noqa: F401
 from app.domain.tickets import models as _ticket_models  # noqa: F401
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
-from app.plugins.github.models import GitHubAppInstallationRow, GitHubSettingsRow
+from app.plugins.github.models import GitHubAppInstallationRow
 
 # The whole codebase pins org_id to this constant in M01. Same value the
 # domain modules use as the system-actor org.
@@ -88,13 +88,14 @@ async def reset() -> None:
     await truncate_all_tables()
 
 
-async def seed_credentials_and_install(
+async def seed_github_install(
     *,
     org_login: str = "acme",
     target_org_slug: str | None = None,
 ) -> None:
-    """Populate yaaos with credentials and an active install pointing at the
-    fake-github seeded org.
+    """Seed an active `github_app_installations` row + a Claude Code settings
+    row on the chosen org. Pre-populates the post-install state so specs that
+    aren't about the install handshake itself can skip it.
 
     `org_login` is the GitHub-side `account_login` on the install row.
     `target_org_slug`, when provided, picks the yaaos-side org row to attach
@@ -104,9 +105,8 @@ async def seed_credentials_and_install(
     authenticated user — `/orgs/<slug>/tickets` then surfaces webhook-created
     tickets under the route the user is on.
 
-    The Fernet-encrypted blobs use placeholder bytes; fake-github accepts any
-    bearer token, so the actual key material is never validated downstream.
-    The seeded slug matches fake-github's `/app` response (`yaaos-test`).
+    The platform GitHub App credentials come from `yaaos_github_app_*` env
+    vars (set on the test compose); no per-org credential row is needed.
     """
     from sqlalchemy import select  # noqa: PLC0415
 
@@ -121,16 +121,6 @@ async def seed_credentials_and_install(
             target_org_id = org.id
         else:
             target_org_id = M01_ORG_ID
-        s.add(
-            GitHubSettingsRow(
-                id=uuid4(),
-                org_id=target_org_id,
-                app_id="12345",
-                slug="yaaos-test",
-                encrypted_private_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-PEM"),
-                encrypted_webhook_secret=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-aaaaaaaaaaaaaaaa"),
-            )
-        )
         s.add(
             GitHubAppInstallationRow(
                 id=uuid4(),
@@ -367,7 +357,7 @@ __all__ = [
     "read_and_clear_email_inbox",
     "reset",
     "seed_bootstrap_owner",
-    "seed_credentials_and_install",
+    "seed_github_install",
     "seed_lesson",
     "seed_user_with_session",
     "stage_oauth_test_profile",

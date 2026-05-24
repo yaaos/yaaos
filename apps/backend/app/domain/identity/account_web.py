@@ -7,12 +7,14 @@
 | DELETE | `/api/account/emails/{email_id}`           | `ACCOUNT_UPDATE_SELF`  |
 | GET    | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF`  — user profile (display_name, github_username, emails, per-org handles) |
 | PATCH  | `/api/account/me`                          | `ACCOUNT_UPDATE_SELF`  — update display_name; clear github_username |
-| GET    | `/api/account/github/verify`               | `ACCOUNT_UPDATE_SELF`  — start verify-only GitHub OAuth |
-| GET    | `/api/account/github/verify/callback`      | `ACCOUNT_UPDATE_SELF`  — finish verify-only flow; writes `users.github_username` |
 
 These routes are user-scoped — the `X-Org-Slug` header is required by the
 middleware (since `/api/account/` is in `M02_PROTECTED_PREFIXES`) but only
 used to assert membership-in-something. Actions still operate on the user.
+
+`users.github_username` is written automatically by the "Sign in with
+GitHub" login flow. Re-binding to a different GitHub account is "sign in
+with GitHub again" — no dedicated endpoint.
 """
 
 from __future__ import annotations
@@ -21,8 +23,7 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.auth.context import user_id_var
@@ -135,8 +136,8 @@ class _AccountMeResponse(BaseModel):
 
 class _PatchAccountRequest(BaseModel):
     display_name: str | None = None
-    # If True, clears users.github_username. Setting it goes through the
-    # verify-only OAuth flow — never directly.
+    # If True, clears users.github_username. Setting it is done by signing
+    # in with GitHub — never directly.
     clear_github_username: bool = False
 
 
@@ -188,9 +189,9 @@ async def patch_account_me(
     body: _PatchAccountRequest,
     yaaos_csrf: Annotated[str | None, Cookie()] = None,
 ) -> _AccountMeResponse:
-    """Update profile fields. `display_name` accepted as plain text; setting
-    `github_username` directly is NOT allowed (must go through the verify-only
-    OAuth flow). `clear_github_username=true` removes the verified value."""
+    """Update profile fields. `display_name` accepted as plain text; the
+    `github_username` denorm is owned by the login flow and is never written
+    here. `clear_github_username=true` removes the verified value."""
     from app.domain.identity import repository as identity_repo  # noqa: PLC0415
 
     user_id = user_id_var.get()
@@ -201,91 +202,6 @@ async def patch_account_me(
             await identity_repo.set_user_display_name(s, user_id=user_id, display_name=body.display_name)
         if body.clear_github_username:
             await identity_repo.set_user_github_username(s, user_id=user_id, github_username=None)
-        await s.commit()
-    return await account_me()
-
-
-# ── Verify-only GitHub flow ──────────────────────────────────────────────────
-
-
-def _verify_state_serializer():
-    from itsdangerous import URLSafeTimedSerializer  # noqa: PLC0415
-
-    from app.core.config import get_settings  # noqa: PLC0415
-
-    return URLSafeTimedSerializer(
-        get_settings().yaaos_oauth_state_secret.get_secret_value(), salt="yaaos-github-verify"
-    )
-
-
-_VERIFY_STATE_MAX_AGE_SECONDS = 600
-
-
-def _verify_redirect_uri(request: Request) -> str:
-    return f"{request.url.scheme}://{request.url.netloc}/api/account/github/verify/callback"
-
-
-@router.get("/github/verify", dependencies=[Depends(_require_account())])
-async def github_verify_start(request: Request) -> RedirectResponse:
-    """Start a one-shot OAuth flow whose only purpose is to read the user's
-    GitHub `login` and write it to `users.github_username`. No identity row
-    is created, no session is issued; the caller already has one. Returns a
-    303 to the GitHub authorization URL."""
-    from app.domain.identity.providers import get_provider  # noqa: PLC0415
-
-    user_id = user_id_var.get()
-    if user_id is None:
-        raise _err(401, "unauthenticated")
-    provider = get_provider("github")
-    if provider is None:
-        raise _err(503, "github_oauth_unconfigured")
-    state = _verify_state_serializer().dumps({"user_id": str(user_id)})
-    url = provider.authorization_url(state=state, redirect_uri=_verify_redirect_uri(request))
-    return RedirectResponse(url, status_code=303)
-
-
-@router.get("/github/verify/callback", dependencies=[Depends(_require_account())])
-async def github_verify_callback(
-    request: Request,
-    code: Annotated[str, Query()],
-    state: Annotated[str, Query()],
-) -> _AccountMeResponse:
-    """Exchange the code with GitHub, read the `login`, write it to
-    `users.github_username`. The signed `state` carries the user_id and is
-    cross-checked against the session's user to defeat replay/forge."""
-    from itsdangerous import BadSignature, SignatureExpired  # noqa: PLC0415
-
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.identity.providers import ProviderError, get_provider  # noqa: PLC0415
-
-    user_id = user_id_var.get()
-    if user_id is None:
-        raise _err(401, "unauthenticated")
-    try:
-        payload = _verify_state_serializer().loads(state, max_age=_VERIFY_STATE_MAX_AGE_SECONDS)
-    except SignatureExpired as exc:
-        raise _err(400, "state_expired") from exc
-    except BadSignature as exc:
-        raise _err(400, "state_invalid") from exc
-    # Defence in depth: signed state user must match the session user.
-    if payload.get("user_id") != str(user_id):
-        raise _err(400, "state_user_mismatch")
-
-    provider = get_provider("github")
-    if provider is None:
-        raise _err(503, "github_oauth_unconfigured")
-    try:
-        profile = await provider.exchange_code(code=code, redirect_uri=_verify_redirect_uri(request))
-    except ProviderError as exc:
-        raise _err(502, "provider_error") from exc
-
-    if not profile.provider_login:
-        raise _err(502, "missing_github_login")
-
-    async with db_session() as s:
-        await identity_repo.set_user_github_username(
-            s, user_id=user_id, github_username=profile.provider_login
-        )
         await s.commit()
     return await account_me()
 

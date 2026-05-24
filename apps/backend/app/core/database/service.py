@@ -162,6 +162,8 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("026_drop_github_poller_state", "drop_github_poller_state"),
     ("027_create_bearer_tokens", "create_bearer_tokens"),
     ("028_orgs_aws_region_and_arn_uniqueness", "orgs_aws_region_and_arn_uniqueness"),
+    ("029_drop_github_installations", "drop_github_installations"),
+    ("030_drop_github_settings", "drop_github_settings"),
 )
 
 
@@ -419,7 +421,9 @@ async def _apply_create_all_m02(conn) -> None:  # type: ignore[no-untyped-def]
     """M02 — identity + orgs + sessions.
 
     Adds: users, user_emails, oauth_identities, user_totp_secrets, orgs,
-    memberships, invitations, sso_configs, sessions, github_installations.
+    memberships, invitations, sso_configs, sessions. The M02 model also
+    declared a `github_installations` table here; that table is dropped in
+    migration 029, so it's no longer created on fresh DBs.
     Also extends `audit_entries` with `actor_user_id` + `actor_workspace_id`
     columns so the additive ActorKind values round-trip through the audit row.
 
@@ -442,7 +446,6 @@ async def _apply_create_all_m02(conn) -> None:  # type: ignore[no-untyped-def]
             "invitations",
             "sso_configs",
             "sessions",
-            "github_installations",
         )
     ]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
@@ -648,6 +651,32 @@ async def _apply_orgs_aws_region_and_arn_uniqueness(conn) -> None:  # type: igno
     ]
     for stmt in statements:
         await conn.execute(text(stmt))
+
+
+async def _apply_drop_github_installations(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the legacy `github_installations` table.
+
+    The richer `github_app_installations` (created via the github plugin's
+    models) is now the single source of truth for install bindings —
+    `account_login`, `status`, multi-install support, etc. The legacy table
+    only carried `(installation_id, org_id, created_at)` and had no
+    production readers after the install callback was migrated to write the
+    plugin table directly.
+    """
+    await conn.execute(text("DROP TABLE IF EXISTS github_installations"))
+
+
+async def _apply_drop_github_settings(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the per-org `github_settings` table.
+
+    Replaced by a single platform GitHub App whose credentials live in env
+    vars (`yaaos_github_app_*`). The per-org table only existed to support a
+    "bring your own GitHub App" model that was always wrong-shaped for SaaS —
+    customers click "Install yaaos" instead of registering their own App.
+    `github_app_installations` keeps the per-org install_id binding; no other
+    per-org github state survives.
+    """
+    await conn.execute(text("DROP TABLE IF EXISTS github_settings"))
 
 
 async def _apply_tickets_dedupe_external_id(conn) -> None:  # type: ignore[no-untyped-def]
@@ -899,6 +928,10 @@ async def migrate() -> None:
                 await _apply_create_bearer_tokens(conn)
             elif kind == "orgs_aws_region_and_arn_uniqueness":
                 await _apply_orgs_aws_region_and_arn_uniqueness(conn)
+            elif kind == "drop_github_installations":
+                await _apply_drop_github_installations(conn)
+            elif kind == "drop_github_settings":
+                await _apply_drop_github_settings(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

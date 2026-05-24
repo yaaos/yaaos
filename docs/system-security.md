@@ -30,7 +30,7 @@ Three processes hold different secrets and run with different privileges.
 ### Secrets at rest
 
 - `core/secrets` Fernet-encrypts everything that lives in the database. Encryption key is the `YAAOS_ENCRYPTION_KEY` env var; never derived, never hard-coded.
-- Encrypted columns: `byok_keys.encrypted_value` (per-(org, provider) BYOK key), `github_settings.encrypted_webhook_secret`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`.
+- Encrypted columns: `byok_keys.encrypted_value` (per-(org, provider) BYOK key), `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`. The platform GitHub App's private key + webhook secret live in env vars (`YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`), not in the DB.
 
 ### Audit log
 
@@ -86,7 +86,7 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 |---|---|---|
 | OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | Refresh tokens in `oauth_identities.encrypted_refresh_token` (Fernet). Session bearers hashed (sha256) — raw value only on the user's cookie. |
 | BYOK provider keys | `byok_keys.encrypted_value` | Fernet via `core/secrets`. |
-| GitHub webhook secret | `github_settings.encrypted_webhook_secret` | Fernet via `core/secrets`. |
+| GitHub webhook secret + App private key | `YAAOS_GITHUB_APP_WEBHOOK_SECRET` + `YAAOS_GITHUB_APP_PRIVATE_KEY` env vars | Platform-deployment secrets (env vars, not DB). One App per yaaos deployment; never per-customer. |
 | SAML SP private key | `sso_configs.sp_private_key_encrypted` | Fernet via `core/secrets`. |
 | TOTP secrets | `user_totp_secrets.encrypted_secret` | Fernet via `core/secrets`. |
 | MCP review bearer | `mcp_review_tokens.token_hash` | sha256 — raw value never persists. |

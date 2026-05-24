@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 from app.seeds import (
     default_installation_repositories,
@@ -61,6 +61,132 @@ async def get_installation_token(
         "token": f"ghs_fake_{installation_id}_x",
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
     }
+
+
+# Default account login returned by `GET /app/installations/{id}` for any
+# installation id minted by the picker stub. Specs that need a different
+# value seed `state.installations[id]` directly or via `/__test/`.
+_DEFAULT_INSTALL_ACCOUNT_LOGIN = "acme-org"
+
+
+@app.get("/app/installations/{installation_id}")
+async def get_installation(
+    installation_id: str, authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Payload `app.plugins.github.service.fetch_install_account_login` reads
+    during the install callback. Returns the seeded `account.login` for the
+    given install id, falling back to the default so unknown ids (e.g. from
+    `seedCredentialsAndInstall` which writes "fake-install-1" directly into
+    yaaos's DB) still resolve."""
+    _check_bearer(authorization)
+    login = state.installations.get(installation_id, _DEFAULT_INSTALL_ACCOUNT_LOGIN)
+    return {"id": int(installation_id) if installation_id.isdigit() else 0, "account": {"login": login}}
+
+
+# ── OAuth user-auth (Sign in with GitHub) ──────────────────────────────────
+
+
+@app.get("/login/oauth/authorize")
+async def oauth_authorize(
+    client_id: str = Query(...),
+    state: str = Query(..., alias="state"),
+    redirect_uri: str = Query(...),
+    allow_signup: str = Query(default="false"),
+) -> RedirectResponse:
+    """Stub for GitHub's OAuth authorize page. In real GitHub the user lands
+    on a consent screen; here we auto-approve and 302 straight back to
+    `redirect_uri` with a freshly minted `code`.
+
+    `client_id` is not validated — fake-github accepts whatever yaaos's
+    config carries. Tests that need a specific user response stage it via
+    `/__test/stage_oauth_user`.
+
+    The `state` Query param shadows the module-level singleton inside this
+    function, so we reach the singleton via its global module name.
+    """
+    del client_id, allow_signup
+    from app.state import state as _store  # noqa: PLC0415
+
+    code = f"oauth-code-{_store.next_oauth_code()}"
+    _store.oauth_codes[code] = dict(_store.default_oauth_user)
+    sep = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(f"{redirect_uri}{sep}code={code}&state={state}", status_code=302)
+
+
+@app.post("/login/oauth/access_token")
+async def oauth_access_token(request: Request) -> JSONResponse:
+    """Trade an authorize code for an access token. Returns the captured
+    user profile id alongside so the subsequent `/user` + `/user/emails`
+    calls resolve against the same identity."""
+    form = await request.form()
+    code = form.get("code") or ""
+    if not code or code not in state.oauth_codes:
+        return JSONResponse(status_code=400, content={"error": "bad_verification_code"})
+    return JSONResponse(content={"access_token": f"gha_user_{code}", "token_type": "bearer", "scope": ""})
+
+
+@app.get("/user")
+async def oauth_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    token = _check_bearer(authorization)
+    # Token shape `gha_user_<code>` → look up the staged user. Falls back to
+    # the current default so direct hits (no preceding authorize call) still
+    # work for ad-hoc tests.
+    user = None
+    if token.startswith("gha_user_"):
+        user = state.oauth_codes.get(token[len("gha_user_"):])
+    if user is None:
+        user = dict(state.default_oauth_user)
+    return {"id": user["id"], "login": user["login"], "name": user.get("name", "")}
+
+
+@app.get("/user/emails")
+async def oauth_user_emails(authorization: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    token = _check_bearer(authorization)
+    user = None
+    if token.startswith("gha_user_"):
+        user = state.oauth_codes.get(token[len("gha_user_"):])
+    if user is None:
+        user = dict(state.default_oauth_user)
+    return [{"email": user["primary_email"], "primary": True, "verified": True}]
+
+
+@app.post("/__test/stage_oauth_user")
+async def test_stage_oauth_user(body: dict[str, Any]) -> dict[str, str]:
+    """Pin the user the NEXT `/login/oauth/authorize` returns. Body matches
+    the `default_oauth_user` shape: `{id, login, name, primary_email}`."""
+    state.default_oauth_user = {
+        "id": int(body.get("id", 90001)),
+        "login": body.get("login", "yaaos-owner"),
+        "name": body.get("name", ""),
+        "primary_email": body.get("primary_email", "owner@yaaos.test"),
+    }
+    return {"status": "staged"}
+
+
+# ── GitHub App install picker ──────────────────────────────────────────────
+
+
+@app.get("/apps/{slug}/installations/new")
+async def install_picker(
+    slug: str,
+    signed_state: str | None = Query(default=None, alias="state"),
+) -> RedirectResponse:
+    """Stub for the GitHub-hosted install picker UI. The real picker asks the
+    operator to choose an account + repos; here we mint a new installation id
+    immediately and 302 back to yaaos's `/api/github/install_callback` with
+    the same signed `state` the start endpoint produced.
+
+    `slug` is unused (only one App slug is ever seeded — "yaaos-test") but kept
+    in the URL so the path mirrors GitHub's shape and any future spec that
+    wants to assert on it has a hook."""
+    del slug
+    if not signed_state:
+        raise HTTPException(status_code=400, detail="missing state")
+    install_id = str(state.next_installation_id())
+    state.installations[install_id] = _DEFAULT_INSTALL_ACCOUNT_LOGIN
+    callback_base = os.environ.get("YAAOS_CALLBACK_BASE_URL", "http://yaaos:8080")
+    target = f"{callback_base}/api/github/install_callback?installation_id={install_id}&state={signed_state}"
+    return RedirectResponse(target, status_code=302)
 
 
 @app.get("/repos/{owner}/{repo}/pulls/{number}")

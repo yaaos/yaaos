@@ -1,5 +1,6 @@
-"""Coverage for the M03 account surface: GET/PATCH /api/account/me + the
-verify-only GitHub flow."""
+"""Coverage for the account surface: GET/PATCH /api/account/me + the
+membership handle update endpoint. The GitHub username denorm is owned by
+the login flow now; there's no verify-only flow to test here."""
 
 from __future__ import annotations
 
@@ -7,13 +8,11 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from app.core.auth import AuthMiddleware
 from app.domain.identity import account_web as _account_web  # noqa: F401
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
-from app.domain.identity.models import OAuthIdentityRow
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role
 from app.domain.sessions import web as _auth_web  # noqa: F401
@@ -111,117 +110,6 @@ async def test_patch_clears_github_username(seeded, db_session) -> None:
         )
     assert r.status_code == 200, r.text
     assert r.json()["github_username"] is None
-
-
-# ── Verify-only flow (provider stubbed) ──────────────────────────────────────
-
-
-@pytest.fixture
-def stub_github_provider(monkeypatch):
-    """Swap in a stand-in provider under id=`github` for the duration of the
-    test. Other providers (oauth_test) are not touched. Restores on teardown."""
-    from app.domain.identity import providers as providers_module  # noqa: PLC0415
-    from app.domain.identity.providers import ProviderProfile  # noqa: PLC0415
-
-    class _StubGithubProvider:
-        provider_id = "github"
-
-        def authorization_url(self, *, state, redirect_uri):
-            return f"https://stub.test/oauth?state={state}&redirect={redirect_uri}"
-
-        async def exchange_code(self, *, code, redirect_uri):
-            del code, redirect_uri
-            return ProviderProfile(
-                external_subject="42",
-                primary_email="primary@x.test",
-                email_verified=True,
-                display_name="Octocat",
-                mfa_satisfied=True,
-                provider_login="octocat",
-            )
-
-    prior = providers_module._REGISTRY.get("github")
-    providers_module._REGISTRY["github"] = _StubGithubProvider()
-    try:
-        yield
-    finally:
-        if prior is not None:
-            providers_module._REGISTRY["github"] = prior
-        else:
-            providers_module._REGISTRY.pop("github", None)
-
-
-@pytest.mark.asyncio
-async def test_verify_start_redirects_to_provider(seeded, stub_github_provider) -> None:
-    del stub_github_provider
-    async with _client() as c:
-        r = await c.get(
-            "/api/account/github/verify",
-            cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
-            follow_redirects=False,
-        )
-    assert r.status_code == 303, r.text
-    assert "stub.test/oauth" in r.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_verify_callback_writes_username_no_identity_row(
-    seeded, stub_github_provider, db_session
-) -> None:
-    del stub_github_provider
-    # Generate a valid state with the right user_id by hitting /verify first.
-    async with _client() as c:
-        start = await c.get(
-            "/api/account/github/verify",
-            cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
-            follow_redirects=False,
-        )
-        # Extract state from the redirect URL.
-        from urllib.parse import parse_qs, urlparse  # noqa: PLC0415
-
-        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        r = await c.get(
-            "/api/account/github/verify/callback",
-            params={"code": "stub-code", "state": state},
-            cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
-        )
-    assert r.status_code == 200, r.text
-    assert r.json()["github_username"] == "octocat"
-
-    # No oauth_identities row written for the verify flow.
-    rows = (
-        (
-            await db_session.execute(
-                select(OAuthIdentityRow).where(OAuthIdentityRow.user_id == seeded["user"].id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert rows == []
-
-
-@pytest.mark.asyncio
-async def test_verify_callback_rejects_state_for_other_user(seeded, stub_github_provider, db_session) -> None:
-    del stub_github_provider
-    # Mint a state for a different user via the serializer directly.
-    from uuid import uuid4  # noqa: PLC0415
-
-    from app.domain.identity.account_web import _verify_state_serializer  # noqa: PLC0415
-
-    bogus_state = _verify_state_serializer().dumps({"user_id": str(uuid4())})
-    async with _client() as c:
-        r = await c.get(
-            "/api/account/github/verify/callback",
-            params={"code": "x", "state": bogus_state},
-            cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
-        )
-    assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "state_user_mismatch"
 
 
 # ── PATCH /api/memberships/me/{org_id} ──────────────────────────────────────

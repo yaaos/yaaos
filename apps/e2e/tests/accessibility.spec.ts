@@ -12,7 +12,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
 
-import { dispatchWebhook, prPayload, resetStack, seedCredentialsAndInstall } from "./_helpers";
+import { dispatchWebhook, prPayload, resetStack, seedGithubInstall } from "./_helpers";
 
 const BASE = process.env.YAAOS_BASE_URL ?? "http://localhost:58080";
 
@@ -37,7 +37,7 @@ async function loginAsOwner(page: Page, request: APIRequestContext) {
   });
   // The Owner needs valid credentials + an installed Coding Agent so the
   // Coding Agent settings detail page has something to render against.
-  await seedCredentialsAndInstall({ targetOrgSlug: "acme" });
+  await seedGithubInstall({ targetOrgSlug: "acme" });
   await page.goto(`${BASE}/login`);
   await page.getByTestId("login-test").click();
   await page.waitForURL(/\/orgs\/acme\/dashboard$/);

@@ -23,6 +23,14 @@ Each page is mounted by `core/routing` at its respective path:
 
 `OrgSettingsLayout` renders the left tab strip + the page body slot; each page passes `active=…` so the matching tab highlights.
 
+### VCS page
+
+- Empty state mounts `PluginPicker`; picking GitHub fires `useStartGithubInstall()` (POSTs `/api/github/install/start`) and navigates the browser to the returned state-signed github.com URL. Picking a non-github plugin uses `useSetVcs` directly.
+- Connected state surfaces two sub-states from `/api/github/installation`: not installed on this org (button fires the same `useStartGithubInstall()` handshake), and healthy (account login + installation id + live repo list from `/api/github/repositories`). A third pseudo-state — `app_configured: false` — surfaces only when the platform yaaos GitHub App env vars are unset on the deployment; the UI shows operator guidance with no install button.
+- "Manage on GitHub" links to the per-installation settings page (`installations_url` from `/api/github/installation`) — the canonical place to change which repos are accessible. There is no yaaos-side reconnect button; reinstalling and changing repo access both happen on github.com.
+- "Remove" clears the org's VCS choice via `DELETE /api/vcs`; it does not uninstall the App on GitHub.
+- The "Install on GitHub" path goes through a backend JSON POST rather than a direct browser nav because the auth chain reads `X-Org-Slug` + CSRF from headers, which a `window.location.href` navigation can't carry.
+
 ## Coding Agent detail — M06 Phase 4 anchor
 
 `coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component registered via `coding_agents/plugin_registry.ts`. Today `claude_code` is the only registered plugin; future coding agents register here.

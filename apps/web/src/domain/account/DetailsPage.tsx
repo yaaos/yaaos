@@ -22,10 +22,8 @@ import {
 
 /**
  * `/user/details` — name + per-org handles + verified emails + GitHub
- * association. The verify-only GitHub flow is initiated by a regular link
- * navigation to `/api/account/github/verify` (the SPA picks it up after the
- * callback writes the username; the backend module is still named
- * `account` even though the SPA route is `/user/*`).
+ * association. The GitHub username is written by the "Sign in with GitHub"
+ * login flow; this page only displays it (and offers a Clear button).
  */
 export function DetailsPage() {
   const { data, isLoading } = useAccountMe();
@@ -210,7 +208,7 @@ function GithubSection({ username }: { username: string | null }) {
   return (
     <Section
       title="GitHub association"
-      description="Verifying writes only your GitHub username — no identity row is created."
+      description="Your GitHub handle is captured when you sign in with GitHub. Sign in again to refresh it."
     >
       {username ? (
         <div className="flex items-center gap-3">
@@ -218,14 +216,10 @@ function GithubSection({ username }: { username: string | null }) {
             @{username}
           </span>
           <Badge variant="secondary">verified</Badge>
-          <Button asChild variant="outline" size="sm" className="ml-auto">
-            <a href="/api/account/github/verify" data-testid="github-reverify">
-              Re-verify
-            </a>
-          </Button>
           <Button
             variant="destructive"
             size="sm"
+            className="ml-auto"
             data-testid="github-clear"
             disabled={clear.isPending}
             onClick={() => clear.mutate()}
@@ -234,14 +228,9 @@ function GithubSection({ username }: { username: string | null }) {
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-3">
-          <p className="text-muted-foreground text-xs">No GitHub handle linked.</p>
-          <Button asChild size="sm" className="ml-auto">
-            <a href="/api/account/github/verify" data-testid="github-connect">
-              Connect GitHub
-            </a>
-          </Button>
-        </div>
+        <p className="text-muted-foreground text-xs">
+          No GitHub handle linked. Sign in with GitHub to populate.
+        </p>
       )}
     </Section>
   );

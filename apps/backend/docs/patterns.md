@@ -256,7 +256,7 @@ Mechanics:
 - **Real Postgres via `db_session`.** Transactional rollback per test — production code's `session()` hits the override; inner `commit()` calls become SAVEPOINT releases; outer transaction rolls back on teardown. Empty DB at start of each test.
 - **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that returns a canned `ReviewResult`. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` swaps the workspace providers for flows that provision a workspace.
 - **HTTP routes via `httpx.ASGITransport`.** Drive endpoints in-process without a network listener. The pattern is already used by `app/domain/integrations/test/test_endpoints.py`, `app/domain/mcp_proxy/test/test_dispatch.py`, etc.
-- **Seed helpers from `app/testing/e2e_setup/`.** `seed_credentials_and_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
+- **Seed helpers from `app/testing/e2e_setup/`.** `seed_github_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
 
 Naming: `test_<flow>_service.py` in the owning module's `test/` directory. Owner is whichever module holds the entry-point function (the one you `await` first in the test body).
 

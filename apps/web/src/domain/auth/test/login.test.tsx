@@ -2,13 +2,21 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * Smoke tests for the M06 Login page. Mocks `useSsoDiscover` + `useProviders`
- * and asserts the email-first flow + the per-provider fallback that e2e
- * specs depend on (`login-test` testid).
+ * Smoke tests for the Login page. Mocks `useSsoDiscover` + `useProviders`
+ * and asserts:
+ *   - the top-level "Sign in with GitHub" button is rendered whenever the
+ *     github provider is configured — no email required.
+ *   - the email-first SAML discovery flow still works for enterprise orgs.
+ *   - the test stub provider surfaces in the "Other" section.
  */
 
 const discoverMutate = vi.fn();
-let discoverDataMock: { provider: "github" | "saml" } | undefined = undefined;
+type DiscoverResult = {
+  provider: "github" | "saml";
+  saml_idp_name?: string;
+  saml_org_slug?: string;
+};
+let discoverDataMock: DiscoverResult | undefined = undefined;
 
 vi.mock("@core/api", () => ({
   useSsoDiscover: () => ({
@@ -33,11 +41,12 @@ describe("LoginPage", () => {
     discoverDataMock = undefined;
   });
 
-  it("renders the email form + fallback provider buttons", () => {
+  it("renders a top-level Sign in with GitHub button without typing an email", () => {
     render(<LoginPage />);
+    expect(screen.getByTestId("login-github")).toBeInTheDocument();
     expect(screen.getByTestId("login-email")).toBeInTheDocument();
     expect(screen.getByTestId("login-continue")).toBeInTheDocument();
-    expect(screen.getByTestId("login-github")).toBeInTheDocument();
+    // Test stub surfaces in the "Other" section for non-prod parity.
     expect(screen.getByTestId("login-test")).toBeInTheDocument();
   });
 
@@ -50,10 +59,10 @@ describe("LoginPage", () => {
     expect(discoverMutate).toHaveBeenCalledWith("alice@example.com");
   });
 
-  it("github discovery result surfaces the discovered-github button", () => {
-    discoverDataMock = { provider: "github" };
+  it("saml discovery result surfaces the discovered-saml button", () => {
+    discoverDataMock = { provider: "saml", saml_idp_name: "Okta", saml_org_slug: "acme" };
     render(<LoginPage />);
-    expect(screen.getByTestId("login-discovered-github")).toBeInTheDocument();
+    expect(screen.getByTestId("login-discovered-saml")).toBeInTheDocument();
   });
 });
 

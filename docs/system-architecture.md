@@ -48,10 +48,12 @@ Polling (5s / 3s) remains as a safety net.
 
 ### GitHub App auth chain
 
-1. Operator creates the App via the Manifest Flow (`POST /api/github/manifest-callback` exchanges the temporary code for App ID + slug + PEM + webhook secret).
-2. Credentials encrypted at rest with `cryptography.Fernet`, keyed by `YAAOS_ENCRYPTION_KEY`.
-3. Per call: `plugins/github` signs a short-lived RS256 App JWT, exchanges it at `POST /app/installations/{id}/access_tokens` for an installation token (~1h TTL, in-memory).
-4. Installation token used as Bearer for REST and `GIT_ASKPASS`-style for `git clone`.
+One yaaos-owned GitHub App registration. Credentials in env vars (`YAAOS_GITHUB_APP_*`), never in the DB. The same registration drives both **"Sign in with GitHub"** (user-to-server OAuth) and **per-org installs** (App installation tokens).
+
+1. Operator registers the platform App once at github.com → `Settings > Developer settings > GitHub Apps`, drops App ID / slug / PEM / client_id / client_secret / webhook secret into `.env`. See [docs/setup.md](setup.md).
+2. **Login:** SPA hits `/api/auth/login?provider=github` → backend signs `state` and 302s to `${github_web_base_url}/login/oauth/authorize?client_id=...`. GitHub redirects back with `code`; backend exchanges via `POST /login/oauth/access_token` and reads `/user` + `/user/emails`. The [`identity` orchestrator](../apps/backend/docs/domain_identity.md#login-orchestrator) finds or creates the user.
+3. **Install:** Owner hits `Org Settings > VCS > Install yaaos on GitHub`. SPA POSTs `/api/github/install/start` (which signs `state={org_id}` and returns `${github_web_base_url}/apps/${slug}/installations/new?state=...`). Browser follows; user picks repos; GitHub redirects to `/api/github/install_callback`. Backend verifies state, looks up the install's `account.login` via App JWT, and writes a `github_app_installations` row.
+4. **Outbound API:** `plugins/github` signs a short-lived RS256 App JWT with the platform PEM, exchanges it at `POST /app/installations/{id}/access_tokens` for an installation token (~1h TTL, in-memory). Token used as Bearer for REST and `GIT_ASKPASS`-style for `git clone`.
 
 ### MCP context for reviewer agents (M04)
 
@@ -102,7 +104,7 @@ revoke_token(review_id) BEFORE workspace teardown
 - Browser converts to local at render only — all FE timestamp display goes through `formatTime` / `formatDateTime` in `apps/web/src/shared/utils/ago.ts`.
 
 ### Webhook authenticity
-- Inbound webhooks MUST carry `X-Hub-Signature-256`. `plugins/github` verifies HMAC against the secret in `github_settings` before dispatch.
+- Inbound webhooks MUST carry `X-Hub-Signature-256`. `plugins/github` verifies HMAC against `YAAOS_GITHUB_APP_WEBHOOK_SECRET` before dispatch.
 - `apps/fake-github` signs outbound test webhooks with the same secret so the production verification path runs unchanged.
 - Idempotency: `github_webhook_events` keyed by `X-GitHub-Delivery` UUID; duplicates skipped with `INSERT ... ON CONFLICT DO NOTHING`.
 
@@ -127,10 +129,10 @@ GitHub  GET /api/auth/callback/github
    ─────────────────────────────────────► backend
                                           ├─ verify state signature
                                           ├─ exchange code → ProviderProfile
-                                          ├─ orchestrator: existing → return user
-                                          │   email-match no-link → 409 link
-                                          │   pending invite     → JIT user+membership
-                                          │   none of the above  → 403 ask_for_invite
+                                          ├─ orchestrator: existing identity → return user
+                                          │   email-match no-link → auto-link, return user
+                                          │   no match           → JIT create user
+                                          │     (with invite → also create membership)
                                           ├─ TOTP step-up if user has verified secret
                                           │   AND provider mfa_satisfied=False
                                           ├─ sessions.create() (HttpOnly + CSRF cookies)
@@ -151,11 +153,11 @@ All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secret
 
 `/orgs/{slug}/settings/{section}` consolidates every per-org knob into one shell with six sub-pages: `auth` (SSO + session-timeout override), `members`, `vcs`, `coding-agents`, `byok`, `audit`. Member role sees only the Members tab; Owner+Admin see all. The shell + tab nav live in `apps/web/src/domain/org_settings/`.
 
-- **VCS**: one plugin per org, state on `orgs.vcs_plugin_id` + `orgs.vcs_settings`. The picker hits `GET /api/plugins/available?type=vcs`. When a plugin's `install_url(org_id)` is non-None (today: `github`'s `/api/github/install`), the SPA navigates there and the existing M02 handshake callback writes back via `domain/orgs.set_vcs`. All mutations audit.
+- **VCS**: one plugin per org, state on `orgs.vcs_plugin_id` + `orgs.vcs_settings`. The picker hits `GET /api/plugins/available?type=vcs`. GitHub's install handshake is driven by a dedicated `POST /api/github/install/start` (returns the state-signed github.com URL as JSON; the SPA navigates to it via `window.location.href`). The install callback writes back via `domain/orgs.set_vcs`. All mutations audit. The `VCSPlugin.install_url(org_id)` protocol method exists for future plugins that need a browser-redirect-only install with no signed state.
 - **Coding Agents**: many installs per org in `org_coding_agents` keyed by `(org_id, plugin_id)`. The generic shell handles install/uninstall + the picker; per-plugin settings dispatch via a frontend registry (`coding_agents/plugin_registry.ts`). The `claude_code` plugin ships a bespoke settings UI (orchestrator + 1..8 sub-agents) reading defaults from `GET /api/claude_code/defaults` (request-time imports, never cached).
 - **BYOK**: `core/byok` owns `byok_keys` per `(org_id, provider)`; plaintext is encrypted via `core/secrets`. Plugins register validators at boot (`core/byok.register_validator`) so `/api/api-keys/{provider}/validate` dispatches without `core/byok` importing plugins. The Anthropic key surfaces twice — once on the BYOK page and once embedded in the Claude Code settings page — both writing the same row.
 - **Session-timeout override**: nullable `orgs.session_timeout_override` (minutes). The `require()` dep checks `last_seen_at + override` (falls back to `SESSION_IDLE_TIMEOUT` = 12h) on every org-scoped request and 401's `session_idle_expired` past the window.
-- **Verified GitHub username**: `users.github_username` populated by the OAuth-github login callback or by a separate verify-only flow at `/api/account/github/verify` that runs the OAuth handshake without creating an identity row or issuing a session.
+- **Verified GitHub username**: `users.github_username` is a denorm written by the "Sign in with GitHub" login flow on every successful sign-in. Re-binding to a different GitHub handle is "sign in with GitHub again" — there's no separate verify-only endpoint.
 
 ### Dumb frontend
 SPA renders data and dispatches actions. It does not compute verdicts, derive status, hold permissions, or own any rule the backend doesn't also enforce. FE validation is for UX immediacy; backend re-validates. See [`apps/web/docs/patterns.md`](../apps/web/docs/patterns.md).

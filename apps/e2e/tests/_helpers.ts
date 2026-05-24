@@ -3,7 +3,7 @@
  *
  * Each spec drives its own preconditions in `beforeEach` by composing these
  * helpers — there is no batch-seeded fixture. Reset wipes yaaos's DB and
- * fake-github's in-memory state, then specs call `seedCredentialsAndInstall`
+ * fake-github's in-memory state, then specs call `seedGithubInstall`
  * if they need the system in a "ready" state.
  *
  * URL envelope:
@@ -40,19 +40,19 @@ export async function resetStack(): Promise<void> {
   ]);
 }
 
-/** Make yaaos "ready" — credentials + active install — without going through
- *  the manifest flow. Use this in specs that aren't testing the setup UI.
+/** Seed an active GitHub install on the chosen org (and the matching Claude
+ *  Code settings). Use this in specs that aren't testing the install UI —
+ *  it bypasses the handshake. The platform GitHub App credentials come from
+ *  the test compose's env vars.
  *
- *  `targetOrgSlug`, when set, attaches the install + settings rows to the
- *  yaaos org with that slug (seeded earlier via `bootstrap_owner`). Specs
- *  that authenticate a user should pass it so the install lives on the
- *  same org the user is a member of. Default behavior (no slug) keeps the
- *  legacy M01-org stub for unauthenticated specs.
+ *  `targetOrgSlug`, when set, attaches the install row to the yaaos org with
+ *  that slug (seeded earlier via `bootstrap_owner`). Default behavior (no
+ *  slug) keeps the legacy M01-org stub for unauthenticated specs.
  */
-export async function seedCredentialsAndInstall(
+export async function seedGithubInstall(
   opts: { orgLogin?: string; targetOrgSlug?: string } = {},
 ): Promise<void> {
-  await jsonPost(`${YAAOS_URL}/api/testing/seed/credentials_and_install`, {
+  await jsonPost(`${YAAOS_URL}/api/testing/seed/github_install`, {
     org_login: opts.orgLogin ?? "acme",
     target_org_slug: opts.targetOrgSlug,
   });

@@ -18,7 +18,7 @@ import {
   postedComments,
   prPayload,
   resetStack,
-  seedCredentialsAndInstall,
+  seedGithubInstall,
   YAAOS_URL,
 } from "./_helpers";
 
@@ -43,7 +43,7 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
   });
   // Pin the install + settings rows to acme so the webhook-created ticket
   // lives on the same org the authenticated user belongs to.
-  await seedCredentialsAndInstall({ targetOrgSlug: "acme" });
+  await seedGithubInstall({ targetOrgSlug: "acme" });
 
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();

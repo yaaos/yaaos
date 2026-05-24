@@ -1,7 +1,8 @@
 """GitHub OAuth Provider integration tests.
 
 `pytest-httpx` mocks GitHub's token + userinfo + emails endpoints so the real
-`exchange_code` path runs end-to-end without network.
+`exchange_code` path runs end-to-end without network. The provider drives the
+platform yaaos GitHub App's user-to-server OAuth flow.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from app.plugins.github.oauth import GitHubOAuthProvider
 
 
 def test_authorization_url_contains_required_params(monkeypatch) -> None:
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
     get_settings.cache_clear()
     p = GitHubOAuthProvider()
     url = p.authorization_url(state="abc.def", redirect_uri="http://test/api/auth/callback/github")
@@ -26,13 +27,15 @@ def test_authorization_url_contains_required_params(monkeypatch) -> None:
     assert q["client_id"] == ["test-client"]
     assert q["state"] == ["abc.def"]
     assert q["redirect_uri"] == ["http://test/api/auth/callback/github"]
-    assert "read:user" in q["scope"][0]
+    # GitHub App user-auth scopes are configured on the App registration, not
+    # requested per-call. The provider must NOT pass a `scope` param.
+    assert "scope" not in q
 
 
 @pytest.mark.asyncio
 async def test_exchange_code_happy_path(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -60,14 +63,14 @@ async def test_exchange_code_happy_path(monkeypatch, httpx_mock) -> None:
     assert profile.primary_email == "octo@example.com"
     assert profile.email_verified is True
     assert profile.display_name == "Octo Cat"
-    # M03 — provider_login surfaces GitHub `login` for users.github_username.
+    # `provider_login` surfaces GitHub `login` for users.github_username.
     assert profile.provider_login == "octocat"
 
 
 @pytest.mark.asyncio
 async def test_exchange_code_unverified_primary(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -92,8 +95,8 @@ async def test_exchange_code_unverified_primary(monkeypatch, httpx_mock) -> None
 
 @pytest.mark.asyncio
 async def test_exchange_code_userinfo_failure_raises(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(
@@ -120,8 +123,8 @@ async def test_exchange_code_userinfo_failure_raises(monkeypatch, httpx_mock) ->
 
 @pytest.mark.asyncio
 async def test_exchange_code_token_failure_raises(monkeypatch, httpx_mock) -> None:
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "test-client")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     httpx_mock.add_response(

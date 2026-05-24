@@ -43,3 +43,20 @@ export function useClearVcs() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vcs"] }),
   });
 }
+
+export interface StartGithubInstallResponse {
+  redirect_url: string;
+}
+
+/** Owner-only — POSTs to start the GitHub App install handshake and returns
+ *  the state-signed github.com URL the SPA should navigate to. The auth chain
+ *  needs `X-Org-Slug` + `X-CSRF-Token` on the request, which `apiFetch` sets;
+ *  a top-level browser nav to the same route would 401 (no headers). */
+export function useStartGithubInstall() {
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<StartGithubInstallResponse>("/api/github/install/start", {
+        method: "POST",
+      }),
+  });
+}

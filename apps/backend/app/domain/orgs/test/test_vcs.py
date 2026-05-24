@@ -181,9 +181,10 @@ async def test_get_endpoint_returns_empty_state(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_endpoint_github_returns_install_url(seeded) -> None:
-    """github's `install_url(org_id)` is non-None, so POST returns it without
-    persisting settings — the callback does that."""
+async def test_post_endpoint_github_writes_state(seeded) -> None:
+    """github's `install_url(org_id)` is None — the install handshake is
+    driven separately by `POST /api/github/install/start`. So POST /api/vcs
+    just records the picker choice."""
     sess = seeded["admin_sess"]
     async with _client() as c:
         r = await c.post(
@@ -194,8 +195,8 @@ async def test_post_endpoint_github_returns_install_url(seeded) -> None:
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["install_url"] == "/api/github/install"
-    assert body["state"] is None
+    assert body["install_url"] is None
+    assert body["state"] == {"plugin_id": "github", "settings": {}}
 
 
 @pytest.mark.asyncio
@@ -213,6 +214,14 @@ async def test_post_endpoint_unknown_plugin_404(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
+    """Remove fully disconnects: nulls the org's vcs_* columns AND wipes the
+    github plugin's credentials + install rows. The next Add starts blank."""
+    from uuid import uuid4 as _uuid4  # noqa: PLC0415
+
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.plugins.github.models import GitHubAppInstallationRow  # noqa: PLC0415
+
     actor = Actor.user(user_id=seeded["owner"].id)
     await set_vcs(
         db_session,
@@ -221,7 +230,19 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
         settings={"installation_id": 1},
         actor=actor,
     )
+    # Seed the per-org install row Remove should wipe. Platform App
+    # credentials live in env vars, so there's no per-org settings row.
+    db_session.add(
+        GitHubAppInstallationRow(
+            id=_uuid4(),
+            org_id=seeded["org"].id,
+            install_external_id="9999",
+            account_login="acme-org",
+            status="active",
+        )
+    )
     await db_session.commit()
+
     sess = seeded["admin_sess"]
     async with _client() as c:
         r = await c.delete(
@@ -231,3 +252,20 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
         )
     assert r.status_code == 200, r.text
     assert r.json() == {"plugin_id": None, "settings": {}}
+
+    # The install row is gone for this org.
+    from app.core.database import session as _db_session_factory  # noqa: PLC0415
+
+    async with _db_session_factory() as s:
+        install_rows = (
+            (
+                await s.execute(
+                    _select(GitHubAppInstallationRow).where(
+                        GitHubAppInstallationRow.org_id == seeded["org"].id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert install_rows == []

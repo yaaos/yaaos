@@ -35,18 +35,21 @@ async def reset() -> dict[str, str]:
     return {"status": "reset"}
 
 
-class _CredentialsAndInstallRequest(BaseModel):
+class _GithubInstallRequest(BaseModel):
     org_login: str = Field(default="acme", min_length=1)
     target_org_slug: str | None = Field(default=None, min_length=1)
 
 
-@router.post("/seed/credentials_and_install")
-async def seed_credentials_and_install(
-    req: _CredentialsAndInstallRequest | None = None,
+@router.post("/seed/github_install")
+async def seed_github_install(
+    req: _GithubInstallRequest | None = None,
 ) -> dict[str, str]:
+    """Seed an active `github_app_installations` row + Claude Code settings.
+    The platform GitHub App credentials come from env vars, so there's no
+    per-org credential seed."""
     _guard_dev()
-    payload = req or _CredentialsAndInstallRequest()
-    await service.seed_credentials_and_install(
+    payload = req or _GithubInstallRequest()
+    await service.seed_github_install(
         org_login=payload.org_login,
         target_org_slug=payload.target_org_slug,
     )

@@ -32,13 +32,18 @@ class _FakeGitHubPlugin:
 
     def __init__(self, token: str = "fake-token-abc") -> None:
         self._token = token
+        # Tests overwrite this with a `file://` URL pointing at a local bare
+        # repo so the real `git clone` path runs without hitting github.com.
+        self.clone_url_fn = lambda external_id: f"https://github.com/{external_id}.git"
 
     async def get_installation_token(self, org_id: Any) -> str:
         del org_id
         return self._token
 
-    # The remaining VCSPlugin methods aren't reached by these tests; structurally
-    # we satisfy the Protocol by attribute (`plugin_id`) and the one method used.
+    def clone_url(self, repo_external_id: str) -> str:
+        return self.clone_url_fn(repo_external_id)
+
+    # The remaining VCSPlugin methods aren't reached by these tests.
 
 
 def _make_bare_repo_with_commit() -> tuple[str, str, str]:
@@ -64,11 +69,8 @@ def _make_bare_repo_with_commit() -> tuple[str, str, str]:
 
 @pytest.fixture(autouse=True)
 def _register_fake_github(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Register a fake github vcs plugin for the duration of one test.
-
-    Also override _clone_url_for so it returns a file:// URL pointing at the
-    bare repo we set up — no real GitHub.
-    """
+    """Register a fake github vcs plugin for the duration of one test."""
+    del monkeypatch
     vcs._reset_for_tests()
     fake = _FakeGitHubPlugin()
     vcs.register_vcs_plugin(fake)
@@ -77,16 +79,13 @@ def _register_fake_github(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_provision_clones_repo_at_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_provision_clones_repo_at_sha(_register_fake_github) -> None:
     provider = get_provider()
     bare_path, clone_url, sha = _make_bare_repo_with_commit()
 
-    # Redirect clone-url resolution to point at our local bare repo.
-    monkeypatch.setattr(
-        type(provider),
-        "_clone_url_for",
-        staticmethod(lambda _plugin_id, _external_id: clone_url),
-    )
+    # Redirect the fake plugin's clone URL at our local bare repo so the real
+    # `git clone` runs without network.
+    _register_fake_github.clone_url_fn = lambda _external_id: clone_url
 
     state = await provider.provision(
         WorkspaceSpec(

@@ -129,13 +129,3 @@ class SessionRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class GithubInstallationRow(Base):
-    __tablename__ = "github_installations"
-
-    installation_id: Mapped[int] = mapped_column(primary_key=True)
-    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )

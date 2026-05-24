@@ -67,7 +67,6 @@ export {
   useReviewJobsForTicket,
   useReviewsForTicket,
   useSetAnthropicKey,
-  useSetGithubCredentials,
   useThreadForFinding,
   useTicket,
   useTicketAudit,

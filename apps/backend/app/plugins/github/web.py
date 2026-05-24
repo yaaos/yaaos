@@ -9,28 +9,28 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from urllib.parse import quote
 from uuid import UUID
 
 import httpx
 import structlog
-from cryptography.fernet import Fernet
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.auth import public_route
+from app.core.auth.types import Action
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.plugins.github.models import GitHubAppInstallationRow, GitHubSettingsRow
+from app.domain.sessions.dependencies import require
+from app.plugins.github.models import GitHubAppInstallationRow
 from app.plugins.github.payload_parser import parse_webhook
 from app.plugins.github.service import (
+    fetch_install_account_login,
     mark_installation_inactive,
     mark_webhook_processed,
     record_webhook_event,
-    set_github_credentials,
     upsert_installation,
     verify_webhook_signature,
 )
@@ -57,15 +57,11 @@ async def webhook(
 ) -> JSONResponse:
     body = await request.body()
 
-    async with db_session() as s:
-        settings_row = (await s.execute(select(GitHubSettingsRow).limit(1))).scalar_one_or_none()
-    if settings_row is None:
-        log.warning("github.webhook.no_settings_row")
-        return JSONResponse(status_code=400, content={"error": "github_settings missing"})
-
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-    secret = fernet.decrypt(settings_row.encrypted_webhook_secret)
-    if not verify_webhook_signature(body, x_hub_signature_256, secret):
+    secret = get_settings().yaaos_github_app_webhook_secret.get_secret_value()
+    if not secret:
+        log.warning("github.webhook.no_secret_configured")
+        return JSONResponse(status_code=400, content={"error": "github app not configured"})
+    if not verify_webhook_signature(body, x_hub_signature_256, secret.encode()):
         log.warning("github.webhook.bad_signature", delivery=x_github_delivery)
         return JSONResponse(status_code=400, content={"error": "bad signature"})
 
@@ -74,8 +70,10 @@ async def webhook(
     except json.JSONDecodeError:
         return JSONResponse(status_code=400, content={"error": "bad json"})
 
+    # Resolve org via the installation lookup. M01 single-org default applies
+    # only when no install row matches the inbound delivery.
     install_id = (payload.get("installation") or {}).get("id")
-    org_id = settings_row.org_id
+    org_id = M01_ORG_ID
     if install_id is not None:
         async with db_session() as s:
             install = (
@@ -148,121 +146,44 @@ async def webhook(
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
-# ─── Credentials entry ───────────────────────────────────────────────────────
-
-
-class SetCredentialsRequest(BaseModel):
-    app_id: str = Field(..., min_length=1)
-    slug: str = Field(..., min_length=1)
-    private_key: str = Field(..., min_length=1)
-    webhook_secret: str = Field(..., min_length=1)
-
-
-@router.post("/credentials")
-async def set_credentials(req: SetCredentialsRequest) -> dict[str, str]:
-    """Encrypt + upsert the App's credentials. Operator pastes values from the
-    GitHub App registration page (App ID, slug, private key PEM, webhook secret).
-    """
-    pem = req.private_key.strip()
-    if "BEGIN" not in pem or "PRIVATE KEY" not in pem:
-        raise HTTPException(
-            status_code=400,
-            detail={"private_key": "must be a PEM-formatted private key (-----BEGIN ... PRIVATE KEY-----)"},
-        )
-    await set_github_credentials(
-        M01_ORG_ID,
-        app_id=req.app_id.strip(),
-        slug=req.slug.strip(),
-        private_key=pem,
-        webhook_secret=req.webhook_secret.strip(),
-    )
-    return {"status": "saved"}
-
-
-# ─── Manifest-flow callback ──────────────────────────────────────────────────
-
-
-@router.get("/manifest-callback")
-async def manifest_callback(
-    code: str = Query(..., min_length=1),
-) -> RedirectResponse:
-    """Exchange the temporary `code` GitHub hands us after the operator creates
-    yaaos's App via the manifest flow. Stores App ID / slug / PEM / webhook
-    secret in `github_settings`, then redirects the browser back to /settings.
-
-    The manifest flow is described at
-    https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
-    """
-    base_url = get_settings().github_api_base_url
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{base_url}/app-manifests/{code}/conversions",
-                headers={"Accept": "application/vnd.github+json"},
-            )
-    except httpx.HTTPError as e:
-        return RedirectResponse(
-            url=f"/settings?gh_manifest_error={quote(f'could not reach GitHub: {e}')}",
-            status_code=303,
-        )
-    if resp.status_code != 201:
-        excerpt = resp.text[:200]
-        return RedirectResponse(
-            url=f"/settings?gh_manifest_error={quote(f'GitHub returned {resp.status_code}: {excerpt}')}",
-            status_code=303,
-        )
-    data = resp.json()
-    try:
-        slug = data["slug"]
-        await set_github_credentials(
-            M01_ORG_ID,
-            app_id=str(data["id"]),
-            slug=slug,
-            private_key=data["pem"],
-            webhook_secret=data["webhook_secret"],
-        )
-    except KeyError as e:
-        return RedirectResponse(
-            url=f"/settings?gh_manifest_error={quote(f'GitHub response missing field {e}')}",
-            status_code=303,
-        )
-    # Chain straight into the install flow: GitHub created the App, now the
-    # operator picks the account + repos. The App's setup_url (set in the
-    # manifest to <yaaos>/settings) brings them back here after install.
-    return RedirectResponse(url=f"https://github.com/apps/{slug}/installations/new", status_code=303)
-
-
 # ─── Installation state for the UI ───────────────────────────────────────────
 
 
 class InstallationResponse(BaseModel):
-    credentials_configured: bool
+    app_configured: bool
     installed: bool
-    app_id: str | None = None
     slug: str | None = None
     account_login: str | None = None
     install_external_id: str | None = None
     installed_at: datetime | None = None
-    install_url: str | None = None
     installations_url: str | None = None
 
 
-@router.get("/installation")
+@router.get(
+    "/installation",
+    dependencies=[Depends(require(Action.VCS_READ))],
+)
 async def installation() -> InstallationResponse:
-    """Three-state response driving the Settings UI:
-    1. credentials_configured=False → no App credentials yet; UI shows the creds form.
-    2. credentials_configured=True, installed=False → show "Install on a repo" button.
+    """Two-state response driving the Settings UI:
+    1. app_configured=False → platform GitHub App not provisioned (env vars blank).
+    2. installed=False → show "Install yaaos on GitHub" button.
     3. installed=True → show "Manage on GitHub" + account info.
     """
+    from app.core.auth import org_id_var  # noqa: PLC0415
+
+    settings = get_settings()
+    slug = settings.yaaos_github_app_slug
+    app_configured = bool(settings.yaaos_github_app_id and slug and settings.yaaos_github_app_client_id)
+    if not app_configured:
+        return InstallationResponse(app_configured=False, installed=False)
+
+    org_id = org_id_var.get() or M01_ORG_ID
     async with db_session() as s:
-        settings_row = (
-            await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == M01_ORG_ID))
-        ).scalar_one_or_none()
         install_row = (
             await s.execute(
                 select(GitHubAppInstallationRow)
                 .where(
-                    GitHubAppInstallationRow.org_id == M01_ORG_ID,
+                    GitHubAppInstallationRow.org_id == org_id,
                     GitHubAppInstallationRow.status == "active",
                 )
                 .order_by(GitHubAppInstallationRow.created_at.desc())
@@ -270,35 +191,24 @@ async def installation() -> InstallationResponse:
             )
         ).scalar_one_or_none()
 
-    if settings_row is None:
-        return InstallationResponse(credentials_configured=False, installed=False)
-
-    slug = settings_row.slug
-    install_url = f"https://github.com/apps/{slug}/installations/new" if slug else None
-
     if install_row is None:
-        return InstallationResponse(
-            credentials_configured=True,
-            installed=False,
-            app_id=settings_row.app_id,
-            slug=slug or None,
-            install_url=install_url,
-        )
+        return InstallationResponse(app_configured=True, installed=False, slug=slug)
 
     return InstallationResponse(
-        credentials_configured=True,
+        app_configured=True,
         installed=True,
-        app_id=settings_row.app_id,
-        slug=slug or None,
+        slug=slug,
         account_login=install_row.account_login,
         install_external_id=install_row.install_external_id,
         installed_at=install_row.created_at,
-        install_url=install_url,
-        installations_url=f"https://github.com/settings/installations/{install_row.install_external_id}",
+        installations_url=f"{settings.github_web_base_url}/settings/installations/{install_row.install_external_id}",
     )
 
 
-@router.get("/repositories")
+@router.get(
+    "/repositories",
+    dependencies=[Depends(require(Action.VCS_READ))],
+)
 async def repositories() -> dict[str, object]:
     """Live list of repos the App can see, fetched from GitHub via the
     installation token. No yaaos-side allowlist — GitHub's install picker IS
@@ -307,11 +217,13 @@ async def repositories() -> dict[str, object]:
     Returns `{repositories: [{full_name, html_url, private}], total_count}`
     when the App is installed; an empty list when it isn't.
     """
+    from app.core.auth import org_id_var  # noqa: PLC0415
     from app.domain import vcs as vcs_mod  # noqa: PLC0415
     from app.plugins.github.service import get_plugin as get_github_plugin  # noqa: PLC0415
 
+    org_id = org_id_var.get() or M01_ORG_ID
     try:
-        token = await vcs_mod.get_installation_token("github", M01_ORG_ID)
+        token = await vcs_mod.get_installation_token("github", org_id)
     except Exception as e:
         return {"repositories": [], "total_count": 0, "error": f"install token: {e}"}
 
@@ -348,6 +260,14 @@ async def repositories() -> dict[str, object]:
 
 @router.get("/health")
 async def health() -> dict[str, object]:
+    settings = get_settings()
+    now = datetime.now(UTC)
+    if not (settings.yaaos_github_app_id and settings.yaaos_github_app_private_key.get_secret_value()):
+        return {
+            "healthy": False,
+            "message": "yaaos GitHub App not provisioned (env vars unset)",
+            "checked_at": now,
+        }
     async with db_session() as s:
         install = (
             await s.execute(
@@ -357,17 +277,6 @@ async def health() -> dict[str, object]:
                 )
             )
         ).scalar_one_or_none()
-        settings_row = (
-            await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == M01_ORG_ID))
-        ).scalar_one_or_none()
-
-    now = datetime.now(UTC)
-    if settings_row is None:
-        return {
-            "healthy": False,
-            "message": "credentials not configured (App ID, private key, webhook secret, slug)",
-            "checked_at": now,
-        }
     if install is None:
         return {"healthy": False, "message": "GitHub App not installed on any repo", "checked_at": now}
     return {"healthy": True, "message": "ok", "checked_at": now}
@@ -389,144 +298,127 @@ def _install_state_serializer():
     )
 
 
-@router.get("/install")
-async def github_install_start(request: Request) -> RedirectResponse:
-    """Owner-initiated GitHub App install. Signs `state=<org_id>` via
-    itsdangerous and 302's to the App install URL. Callback verifies the
-    state and writes a `github_installations(org_id, installation_id)` row.
+class InstallStartResponse(BaseModel):
+    redirect_url: str
 
-    Reads `org_id` from the `X-Org-Slug` header — the route is gated on
-    the `GITHUB_APP_LINK` action (Owner) via the standard
-    middleware/dep pair. Hitting this from `/orgs/<slug>/settings` brings
-    the Owner through the install picker on GitHub.
+
+@router.post(
+    "/install/start",
+    dependencies=[Depends(require(Action.GITHUB_APP_LINK))],
+)
+async def github_install_start() -> InstallStartResponse:
+    """Owner-initiated GitHub App install. Returns the App's install URL with
+    a signed `state=<org_id>` query param. The SPA's button click POSTs here
+    (so `X-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets
+    `window.location.href = redirect_url` to send the browser to GitHub.
+
+    The callback at `/install_callback` verifies the signed state and writes
+    a `github_app_installations` row.
     """
-    from fastapi import HTTPException as _HTTPException  # noqa: PLC0415
-
     from app.core.auth import org_id_var  # noqa: PLC0415
 
+    settings = get_settings()
+    slug = settings.yaaos_github_app_slug
+    if not slug:
+        raise HTTPException(status_code=409, detail={"error": "app_not_provisioned"})
     org_id = org_id_var.get()
     if org_id is None:
-        raise _HTTPException(status_code=400, detail={"error": "no_org_context"})
+        raise HTTPException(status_code=400, detail={"error": "no_org_context"})
     state = _install_state_serializer().dumps({"org_id": str(org_id)})
-    # Build the install URL. The App's slug comes from settings (stored at
-    # manifest-create time). If not yet provisioned, send the operator to
-    # the manifest-create flow instead.
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.plugins.github.models import GitHubSettingsRow  # noqa: PLC0415
-
-    async with db_session() as s:
-        row = (
-            await s.execute(_select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-    if row is None or not row.slug:
-        raise _HTTPException(status_code=409, detail={"error": "app_not_provisioned"})
-    redirect_to = f"https://github.com/apps/{row.slug}/installations/new?state={state}"
-    from fastapi.responses import RedirectResponse as _RedirectResponse  # noqa: PLC0415
-
-    return _RedirectResponse(redirect_to)
+    return InstallStartResponse(
+        redirect_url=f"{settings.github_web_base_url}/apps/{slug}/installations/new?state={state}"
+    )
 
 
 @router.get("/install_callback")
 async def github_install_callback(request: Request) -> RedirectResponse:
     """Post-install redirect target. GitHub redirects here with
     `installation_id=<n>&state=<signed>` so we can bind the new install to
-    the right org. On success, write the `github_installations` row and
-    303 to /orgs/<slug>/settings.
+    the right org.
+
+    Writes the binding directly into `github_app_installations` (the single
+    source of truth) with `account_login` fetched from GitHub's
+    `GET /app/installations/{id}`. Going through the App API rather than
+    waiting for the `installation.created` webhook means dev environments
+    without a webhook tunnel still get a complete install row.
     """
-    from fastapi import HTTPException as _HTTPException  # noqa: PLC0415
-    from fastapi.responses import RedirectResponse as _RedirectResponse  # noqa: PLC0415
     from itsdangerous import BadSignature, SignatureExpired  # noqa: PLC0415
 
     qp = request.query_params
     raw_state = qp.get("state")
     installation_id = qp.get("installation_id")
     if not raw_state or not installation_id:
-        raise _HTTPException(status_code=400, detail={"error": "missing_params"})
+        raise HTTPException(status_code=400, detail={"error": "missing_params"})
     try:
         payload = _install_state_serializer().loads(raw_state, max_age=900)
     except SignatureExpired:
-        raise _HTTPException(status_code=400, detail={"error": "state_expired"})
+        raise HTTPException(status_code=400, detail={"error": "state_expired"})
     except BadSignature:
-        raise _HTTPException(status_code=400, detail={"error": "state_invalid"})
-
-    from uuid import UUID as _UUID  # noqa: PLC0415
+        raise HTTPException(status_code=400, detail={"error": "state_invalid"})
 
     try:
-        org_id = _UUID(payload["org_id"])
+        org_id = UUID(payload["org_id"])
     except (KeyError, ValueError):
-        raise _HTTPException(status_code=400, detail={"error": "state_invalid"})
+        raise HTTPException(status_code=400, detail={"error": "state_invalid"})
 
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.identity.models import GithubInstallationRow  # noqa: PLC0415
+    install_id_int = int(installation_id)
 
+    # Fetch account_login so the row is immediately complete. Failures here
+    # degrade to "" — the webhook will populate it shortly when it arrives.
+    try:
+        account_login = await fetch_install_account_login(install_id_int)
+    except Exception:
+        log.exception("github.install_callback.fetch_account_failed")
+        account_login = ""
+
+    # Detect first-bind: only emit the audit + set_vcs side-effects when this
+    # install row is genuinely new (not just an idempotent re-callback).
     async with db_session() as s:
         existing = (
             await s.execute(
-                __import__("sqlalchemy")
-                .select(GithubInstallationRow)
-                .where(GithubInstallationRow.installation_id == int(installation_id))
+                select(GitHubAppInstallationRow).where(
+                    GitHubAppInstallationRow.install_external_id == str(install_id_int)
+                )
             )
         ).scalar_one_or_none()
-        first_bind = existing is None
-        if existing is None:
-            s.add(GithubInstallationRow(installation_id=int(installation_id), org_id=org_id))
-        elif existing.org_id != org_id:
-            existing.org_id = org_id
-        if first_bind:
-            from pydantic import BaseModel as _BaseModel  # noqa: PLC0415
+    first_bind = existing is None
 
-            from app.core.audit_log import Actor as _Actor  # noqa: PLC0415
-            from app.core.audit_log import audit as _audit  # noqa: PLC0415
+    await upsert_installation(
+        install_external_id=str(install_id_int),
+        account_login=account_login,
+        org_id=org_id,
+    )
 
-            class _InstallAuditPayload(_BaseModel):
-                installation_id: int
+    if first_bind:
+        from pydantic import BaseModel as _BaseModel  # noqa: PLC0415
 
+        from app.core.audit_log import Actor as _Actor  # noqa: PLC0415
+        from app.core.audit_log import audit as _audit  # noqa: PLC0415
+        from app.domain.orgs import set_vcs as _set_vcs  # noqa: PLC0415
+
+        class _InstallAuditPayload(_BaseModel):
+            installation_id: int
+
+        async with db_session() as s:
             await _audit(
                 "github_installation",
                 org_id,
                 "github_app_installation_linked",
-                _InstallAuditPayload(installation_id=int(installation_id)),
+                _InstallAuditPayload(installation_id=install_id_int),
                 _Actor(kind="system"),
                 org_id=org_id,
                 session=s,
             )
-
-        # M03: register the github plugin as the org's VCS on first bind. The
-        # picker UI delegates the install handshake to this endpoint; this is
-        # where the org's VCS choice is durably recorded.
-        if first_bind:
-            from app.core.audit_log import Actor as _Actor2  # noqa: PLC0415
-            from app.domain.orgs import set_vcs as _set_vcs  # noqa: PLC0415
-
             await _set_vcs(
                 s,
                 org_id=org_id,
                 plugin_id="github",
-                settings={"installation_id": int(installation_id)},
-                actor=_Actor2(kind="system"),
+                settings={"installation_id": install_id_int},
+                actor=_Actor(kind="system"),
             )
-        await s.commit()
+            await s.commit()
 
-    return _RedirectResponse("/")
-
-
-async def resolve_org_for_installation(installation_id: int):
-    """Look up `(org_id)` by GitHub installation id via the M02
-    `github_installations` table. Returns None if not bound yet."""
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.identity.models import GithubInstallationRow  # noqa: PLC0415
-
-    async with db_session() as s:
-        row = (
-            await s.execute(
-                __import__("sqlalchemy")
-                .select(GithubInstallationRow)
-                .where(GithubInstallationRow.installation_id == int(installation_id))
-            )
-        ).scalar_one_or_none()
-    return row.org_id if row else None
+    return RedirectResponse("/")
 
 
 register_routes(RouteSpec(module_name="github", router=router))

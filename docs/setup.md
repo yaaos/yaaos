@@ -31,9 +31,9 @@ Required in prod; defaults shipped for dev/test:
 |---|---|
 | `YAAOS_ENCRYPTION_KEY` | Fernet, 32-byte URL-safe base64. Encrypts plugin credentials + (fallback) TOTP/SAML keys. |
 | `YAAOS_TOTP_MASTER_KEY` | Fernet, 32-byte URL-safe base64. Encrypts TOTP secrets + SP private keys. Falls back to `YAAOS_ENCRYPTION_KEY` in non-prod. |
-| `YAAOS_OAUTH_STATE_SECRET` | itsdangerous secret for OAuth `state`, link-pending, TOTP-challenge, GitHub-install state, SAML stub assertions. Rotate on suspected compromise. |
+| `YAAOS_OAUTH_STATE_SECRET` | itsdangerous secret for OAuth `state`, TOTP-challenge, GitHub-install state, SAML stub assertions. Rotate on suspected compromise. |
 | `YAAOS_INVITATION_TOKEN_SECRET` | itsdangerous secret for invitation tokens (7-day TTL). |
-| `YAAOS_OAUTH_GITHUB_CLIENT_ID` / `YAAOS_OAUTH_GITHUB_CLIENT_SECRET` | GitHub OAuth App (separate from the GitHub App that handles webhooks). |
+| `YAAOS_GITHUB_APP_ID` / `YAAOS_GITHUB_APP_SLUG` / `YAAOS_GITHUB_APP_PRIVATE_KEY` / `YAAOS_GITHUB_APP_CLIENT_ID` / `YAAOS_GITHUB_APP_CLIENT_SECRET` / `YAAOS_GITHUB_APP_WEBHOOK_SECRET` | The single platform yaaos GitHub App. Drives both "Sign in with GitHub" and per-org installs. Provisioning instructions below. |
 | `YAAOS_APP_BASE_URL` | Public origin of this deployment. Used in invitation + SAML ACS URLs. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | Outbound mail (invitations). Dev → Mailpit (`localhost:1025`). |
 | `YAAOS_SESSION_LIFETIME_SECONDS` | Session cookie lifetime; default 14 days. |
@@ -73,7 +73,7 @@ apps/backend/bin/bootstrap
 
 Five prompts: your email, your GitHub username, your display name, the org name, the org slug (URL-safe). The script resolves the username to GitHub's stable numeric id via `GET https://api.github.com/users/<login>` and writes everything in one transaction. Idempotent — re-running with the same inputs prints `<row>=exists` instead of erroring.
 
-After bootstrap, sign in via the GitHub OAuth provider button on the login page. Without bootstrap, the first sign-in attempt hard-rejects with `ask_for_invite` because no user / no invitation exists.
+After bootstrap, sign in via the "Sign in with GitHub" button on the login page. Without bootstrap, the first sign-in still works — it auto-creates a new yaaos user — but that user has no memberships and no Owner role.
 
 ## 2. Bring up the stack
 
@@ -105,15 +105,28 @@ When the Phase 7 follow-on lands the real STS verifier, this service grows a `YA
 
 The agent opens `WSS /api/v1/agents/{id}/activity` after identity exchange. Behind ALB / nginx, configure `--ws-ping-interval=30 --ws-ping-timeout=10` on uvicorn so idle WebSocket connections survive proxy idle-timeouts (typically 60s). Local dev uses uvicorn defaults — the agent reconnect loop covers any drops.
 
-## 3. Create the GitHub App (Manifest Flow)
+## 3. Provision the platform yaaos GitHub App
 
-- Decide where webhooks should land:
-  - **Production:** the public URL of your yaaos deployment + `/api/github/webhook`.
-  - **Laptop dev:** start a smee tunnel (`smee --url https://smee.io/<your-channel> --target http://localhost:8080/api/github/webhook`), use the smee channel URL as the webhook URL.
-- On the dashboard's GitHub App card, enter the webhook URL and click **Create GitHub App**. The browser submits a manifest to `https://github.com/settings/apps/new`; you confirm on GitHub; GitHub redirects back to `/api/github/manifest-callback`, which exchanges the temporary code for App ID + slug + PEM + webhook secret and stores them encrypted.
-- GitHub then redirects you straight to the install picker for the new App. Choose which repos yaaos can see and confirm. The install webhook fires back to yaaos and the GitHub card flips to "installed".
+yaaos uses **one** GitHub App registration that drives both "Sign in with GitHub" and per-org installs. Provision it once per yaaos deployment; customers don't bring their own App.
 
-Manual escape hatch: under the GitHub card's "Already have an App? Enter it manually" toggle, paste the App ID / slug / PEM / webhook secret directly. Useful for headless setups or App reuse.
+1. Visit <https://github.com/settings/apps/new> (or your GitHub org's Apps page if you want the App owned by an org).
+2. Configure:
+   - **Homepage URL:** your yaaos deployment URL.
+   - **User authorization callback URL:** `<deployment>/api/auth/callback/github`.
+   - **Setup URL:** `<deployment>/api/github/install_callback` and check "Redirect on update."
+   - **Webhook URL:**
+     - Production: `<deployment>/api/github/webhook`.
+     - Laptop dev: smee channel URL (`smee --url https://smee.io/<your-channel> --target http://localhost:8080/api/github/webhook`).
+   - **Webhook secret:** generate a high-entropy string; keep it.
+   - **Repository permissions:** Contents (read), Pull requests (write), Metadata (read), Issues (write — for top-level PR comments).
+   - **Subscribe to events:** Pull request, Pull request review comment, Issue comment, Installation.
+3. After saving, GitHub gives you the App ID, slug, client ID, and (after clicking "Generate a private key") a PEM. Click "Generate a new client secret" and capture it.
+4. Drop those values into your `.env`:
+   - `YAAOS_GITHUB_APP_ID`, `YAAOS_GITHUB_APP_SLUG`, `YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_CLIENT_ID`, `YAAOS_GITHUB_APP_CLIENT_SECRET`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`.
+   - **Private key:** paste the PEM as one line with literal `\n` between rows. The backend normalizes them to real newlines before signing. Single-shot conversion: `awk 'NR>1{printf"\\n"}{printf"%s",$0}' yaaos-dev.YYYY-MM-DD.private-key.pem`.
+5. Restart the backend. Login + per-org install both work against this single registration.
+
+Customers (and your own org) install the App by signing in to yaaos as an Owner, opening **Org Settings > VCS**, clicking **Install yaaos on GitHub**, and choosing which repos to enable on github.com's install picker.
 
 ## 4. Set the Anthropic API key
 

@@ -24,10 +24,14 @@ def _ensure_plugins_registered() -> None:
         _gh_bootstrap()
 
 
-def test_github_install_url_is_relative_path() -> None:
+def test_github_install_url_is_none() -> None:
+    """The github plugin's install handshake is driven by a dedicated
+    `POST /api/github/install/start` endpoint that signs state, not the
+    `install_url(org_id)` contract method (which is for browser-redirect-only
+    installs). Returning None here keeps `POST /api/vcs` from short-circuiting
+    on github."""
     plugin = _VCS_PLUGINS["github"]
-    url = plugin.install_url(uuid4())
-    assert url == "/api/github/install"
+    assert plugin.install_url(uuid4()) is None
 
 
 def test_github_validate_settings_accepts_empty_and_installation_id() -> None:

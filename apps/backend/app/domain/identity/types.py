@@ -111,15 +111,6 @@ class EmailAlreadyLinkedError(ValueError):
     """An attempt to attach an email already linked to a different user."""
 
 
-class LinkChallengeRequiredError(PermissionError):
-    """Email matches an existing user but the requested provider isn't linked.
-    Caller should run the same-browser link-confirmation flow."""
-
-
-class HardRejectError(PermissionError):
-    """Login attempt with no matching user and no pending invitation."""
-
-
 class SessionNotFoundError(LookupError):
     """No session with the supplied token hash (or session expired)."""
 

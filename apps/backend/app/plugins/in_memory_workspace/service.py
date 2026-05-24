@@ -142,7 +142,7 @@ class InMemoryWorkspaceProvider:
         try:
             askpass_path = self._write_askpass()
             token = await vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)
-            clone_url = self._clone_url_for(spec.repo.plugin_id, spec.repo.external_id)
+            clone_url = vcs.get_plugin(spec.repo.plugin_id).clone_url(spec.repo.external_id)
             base_env = self._git_env_with_token(askpass_path, token)
 
             # Step 1: clone the branch (or default branch) shallowly.
@@ -368,19 +368,6 @@ class InMemoryWorkspaceProvider:
         return HealthStatus(healthy=True, message="ok", checked_at=datetime.now(UTC))
 
     # ── private helpers ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _clone_url_for(plugin_id: str, external_id: str) -> str:
-        """Build the HTTPS clone URL for the given VCS plugin + repo identifier.
-
-        For GitHub: `https://github.com/<owner>/<repo>.git` (external_id is `<owner>/<repo>`).
-        Future plugins (gitlab, etc.) would extend this.
-        """
-        if plugin_id == "github":
-            return f"https://github.com/{external_id}.git"
-        raise WorkspaceProvisionError(
-            f"in_memory_workspace: no clone URL pattern for plugin_id={plugin_id!r}"
-        )
 
     @staticmethod
     def _write_askpass() -> str:

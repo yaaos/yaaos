@@ -70,13 +70,12 @@ The callback handler is the only place that translates a provider's normalized p
 2. Verify the `state` signature + 10-minute TTL via `itsdangerous.URLSafeTimedSerializer` (salt `yaaos-oauth-state`). Expired → 400 `state_expired`; tampered → 400 `state_invalid`.
 3. `provider.exchange_code(...)` — `ProviderError` → 502 `provider_error`.
 4. Reject unverified email → 403 `email_not_verified`.
-5. If the request carries a valid signed `yaaos_link_pending` cookie matching `target_email == primary_email`, attach the staged identity via `complete_oauth_link` and proceed to issue the session — this completes the link-confirm flow.
-6. Otherwise run `login_via_oauth`. `HardRejectError` → 403 `{error: "ask_for_invite", email}`. `LinkChallengeRequiredError` → 409 `{error: "link_required", ...}` plus a signed `yaaos_link_pending` cookie carrying `{target_email, new_provider, new_external_subject}`.
-7. On success — `sessions.create(user_id=…)`, set `yaaos_session` (HttpOnly, SameSite=Lax) + `yaaos_csrf` (non-HttpOnly) cookies, 303-redirect to the signed `next` path. Open-redirect defeated by `_safe_next`: only same-origin absolute paths are honored.
+5. Run [`login_via_oauth`](domain_identity.md#login-orchestrator) — auto-link or self-signup as needed. The orchestrator never raises rejections; the only deferral is TOTP step-up when the user has a verified TOTP secret and the provider didn't satisfy MFA (signed `yaaos_totp_challenge` cookie, JSON `{step_up: "totp_required"}`).
+6. On success — `sessions.create(user_id=…)`, set `yaaos_session` (HttpOnly, SameSite=Lax) + `yaaos_csrf` (non-HttpOnly) cookies, 303-redirect to the signed `next` path. Open-redirect defeated by `_safe_next`: only same-origin absolute paths are honored.
 
-### State + link-pending signing
+### State signing
 
-Both `yaaos-oauth-state` and `yaaos-link-pending` use `URLSafeTimedSerializer` with the shared `yaaos_oauth_state_secret` and distinct salts so a forgery in one context can't replay into the other. TTL is 10 minutes; the cookies clear when the link flow completes.
+`yaaos-oauth-state` uses `URLSafeTimedSerializer` with `yaaos_oauth_state_secret` and a per-flow salt. TTL is 10 minutes. The TOTP-challenge cookie uses the salt `yaaos-totp-challenge` so a login state can't be replayed at the step-up endpoint.
 
 ## Data owned
 
@@ -85,4 +84,4 @@ None — reads `sessions`, `orgs`, `memberships` via the identity/orgs repositor
 ## How it's tested
 
 - `test/test_middleware.py` — middleware header check, dep resolution, role check, contextvar propagation. See [`core/auth`](core_auth.md) for the test inventory.
-- `test/test_oauth_endpoints.py` — ASGI-driven coverage of `/api/auth/login` and `/api/auth/callback/test` through the `oauth_test` stub: login redirect, unknown-provider 404, existing-identity issues session, hard-reject 403, link-challenge 409 + cookie, invitation accept creates user, unverified email 403, invalid state 400, logout clears cookies.
+- `test/test_oauth_endpoints.py` — ASGI-driven coverage of `/api/auth/login` and `/api/auth/callback/test` through the `oauth_test` stub: login redirect, unknown-provider 404, existing-identity issues session, unknown-email auto-creates a user, email-match auto-links a new identity, invitation accept creates user, unverified email 403, invalid state 400, logout clears cookies.

@@ -8,7 +8,6 @@ expected columns.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 
@@ -92,16 +91,3 @@ async def test_totp_secret_upsert(db_session) -> None:
     second = await repo.upsert_totp_secret(db_session, user_id=user.id, encrypted_secret=b"sec2")
     assert second.encrypted_secret == b"sec2"
     assert second.verified_at is None
-
-
-@pytest.mark.asyncio
-async def test_github_installation_upsert(db_session) -> None:
-    org_id = uuid4()
-    await repo.upsert_github_installation(db_session, installation_id=123, org_id=org_id)
-    found = await repo.find_installation_org(db_session, installation_id=123)
-    assert found == org_id
-
-    # Re-pointing the installation updates the row in place.
-    new_org = uuid4()
-    await repo.upsert_github_installation(db_session, installation_id=123, org_id=new_org)
-    assert await repo.find_installation_org(db_session, installation_id=123) == new_org

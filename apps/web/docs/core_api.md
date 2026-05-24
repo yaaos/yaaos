@@ -12,7 +12,7 @@ Re-exports from `@core/api`:
 - **Client:** `apiClient`, `apiFetch`, `getCurrentOrgSlug`, `setCurrentOrgSlug`.
 - **Resource types:** `HealthResponse`, `Ticket`, `Lesson`, `ReviewJob`, `ReviewJobActivityEvent`, `Finding`, `FindingSnippetLine`, `AuditEntry`, `GithubInstallation`, `GithubRepository`, `GithubRepositoriesResponse`, `PluginMeta`, `PluginType`, `PluginHealth`, `ConfigStatus`, `CreateOrgResponse`, `DashboardResponse`, `DashboardStats`, `HitlHistoryEntry`, `MineOrg`, `Notification`, `NotificationsPopover`, `SsoDiscoverResult`, `ConversationRow`, `FindingRow`, `FindingThread`, `OrgSettings`, `ReviewTimelineRow`, `ThreadMessage`, `WorkspaceConnectionStatus`.
 - **Queries:** `useHealth`, `useConfigStatus`, `useDashboard`, `useTickets`, `useTicket`, `useTicketAudit`, `useReviewsForTicket`, `useReviewJobsForTicket`, `useLessons`, `useMetricsSummary`, `useGithubInstallation`, `useGithubRepositories`, `usePluginHealth`, `useNotifications`, `useNotificationsPopover`, `useMyOrgs`, `useHitlHistory`, `useOrgSettings`, `useWorkspaceConnectionStatus`, `useConversationsForTicket`, `useFindingsForTicket`, `useThreadForFinding`.
-- **Mutations:** `useRereviewMutation`, `useFullRereviewMutation`, `useCancelReviewerJobs`, `useCreateLesson`, `useDeleteLesson`, `useSetAnthropicKey`, `useSetGithubCredentials`, `useMarkNotificationRead`, `useMarkAllNotificationsRead`, `useAckFinding`, `usePushBackFinding`, `useCreateOrg`, `useHitlRespond`, `useSsoDiscover`, `useUpdateOrgSettings`.
+- **Mutations:** `useRereviewMutation`, `useFullRereviewMutation`, `useCancelReviewerJobs`, `useCreateLesson`, `useDeleteLesson`, `useSetAnthropicKey`, `useMarkNotificationRead`, `useMarkAllNotificationsRead`, `useAckFinding`, `usePushBackFinding`, `useCreateOrg`, `useHitlRespond`, `useSsoDiscover`, `useUpdateOrgSettings`.
 
 ## Module architecture
 
@@ -65,7 +65,6 @@ Mutations invalidate the keys they affect on success:
 | `useCreateLesson` | `POST /api/lessons` | `["lessons", repo]` |
 | `useDeleteLesson` | `DELETE /api/lessons/${id}` | `["lessons", repo]` |
 | `useSetAnthropicKey` | `POST /api/claude_code/api_key` | `["onboarding"]`, `["plugin-health","claude_code"]` |
-| `useSetGithubCredentials` | `POST /api/github/credentials` | `["github","installation"]`, `["plugin-health","github"]`, `["onboarding"]` |
 
 Key taxonomy: see [patterns.md § Query keys](patterns.md#query-keys).
 

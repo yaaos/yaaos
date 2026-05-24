@@ -63,6 +63,12 @@ class Settings(BaseSettings):
 
     # GitHub API base URL — overridden in the test stack to point at `apps/fake-github`.
     github_api_base_url: str = "https://api.github.com"
+    # GitHub *web* base URL — the install picker lives at
+    # `<github_web_base_url>/apps/<slug>/installations/new`. Separate from the
+    # API base because GitHub serves them on different origins; e2e overrides
+    # this to point at fake-github so the browser-side redirect chain works
+    # without leaving the docker network.
+    github_web_base_url: str = "https://github.com"
 
     # core/llm gateway. Both unset = direct provider calls via ANTHROPIC_API_KEY.
     braintrust_api_key: SecretStr | None = None
@@ -90,14 +96,23 @@ class Settings(BaseSettings):
     yaaos_ticket_orphan_sweep_interval_seconds: int = 60
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
 
-    # M02 — OAuth GitHub credentials. Required in `prod`; defaults let `dev`
-    # boot without provisioning. Tests override via env at fixture time.
-    yaaos_oauth_github_client_id: str = ""
-    yaaos_oauth_github_client_secret: SecretStr = SecretStr("")
-    yaaos_oauth_github_authorize_url: str = "https://github.com/login/oauth/authorize"
-    yaaos_oauth_github_token_url: str = "https://github.com/login/oauth/access_token"
-    yaaos_oauth_github_userinfo_url: str = "https://api.github.com/user"
-    yaaos_oauth_github_emails_url: str = "https://api.github.com/user/emails"
+    # The platform yaaos GitHub App. ONE App registration drives both
+    # "Login with GitHub" (user-to-server OAuth using client_id/client_secret)
+    # and per-org installs (app_id/private_key/webhook_secret). Required in
+    # `prod`; defaults let `dev` boot without provisioning. Tests override at
+    # fixture time. The slug builds `${github_web_base_url}/apps/<slug>/installations/new`.
+    yaaos_github_app_id: str = ""
+    yaaos_github_app_slug: str = ""
+    yaaos_github_app_private_key: SecretStr = SecretStr("")
+    yaaos_github_app_client_id: str = ""
+    yaaos_github_app_client_secret: SecretStr = SecretStr("")
+    yaaos_github_app_webhook_secret: SecretStr = SecretStr("")
+    # The browser-facing authorize URL is always `<github_web_base_url>/login/oauth/authorize`.
+    # The server-side token exchange URL is normally the same origin (real github.com
+    # serves both), but the test stack splits the browser host (`localhost:58081`)
+    # from the docker-internal host (`fake-github:8080`), so this override lets the
+    # backend hit fake-github directly. Unset → defaults to web-base.
+    yaaos_github_oauth_token_url: str = ""
     yaaos_oauth_state_secret: SecretStr = SecretStr("dev-only-oauth-state-secret")
 
     # M02 — TOTP master key (Fernet, 32 bytes URL-safe base64). Defaults to

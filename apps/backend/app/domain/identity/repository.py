@@ -15,7 +15,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.models import (
-    GithubInstallationRow,
     OAuthIdentityRow,
     SessionRow,
     UserEmailRow,
@@ -219,30 +218,3 @@ async def get_totp_secret(session: AsyncSession, user_id: UUID) -> UserTotpSecre
     return (
         await session.execute(select(UserTotpSecretRow).where(UserTotpSecretRow.user_id == user_id))
     ).scalar_one_or_none()
-
-
-async def upsert_github_installation(
-    session: AsyncSession, *, installation_id: int, org_id: UUID
-) -> GithubInstallationRow:
-    existing = (
-        await session.execute(
-            select(GithubInstallationRow).where(GithubInstallationRow.installation_id == installation_id)
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        existing.org_id = org_id
-        await session.flush()
-        return existing
-    row = GithubInstallationRow(installation_id=installation_id, org_id=org_id)
-    session.add(row)
-    await session.flush()
-    return row
-
-
-async def find_installation_org(session: AsyncSession, installation_id: int) -> UUID | None:
-    row = (
-        await session.execute(
-            select(GithubInstallationRow).where(GithubInstallationRow.installation_id == installation_id)
-        )
-    ).scalar_one_or_none()
-    return row.org_id if row is not None else None

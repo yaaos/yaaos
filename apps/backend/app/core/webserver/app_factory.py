@@ -188,10 +188,18 @@ def _check_required_prod_secrets() -> None:
         missing.append("YAAOS_OAUTH_STATE_SECRET")
     if s.yaaos_invitation_token_secret.get_secret_value() == "dev-only-invitation-secret":
         missing.append("YAAOS_INVITATION_TOKEN_SECRET")
-    if not s.yaaos_oauth_github_client_id:
-        missing.append("YAAOS_OAUTH_GITHUB_CLIENT_ID")
-    if not s.yaaos_oauth_github_client_secret.get_secret_value():
-        missing.append("YAAOS_OAUTH_GITHUB_CLIENT_SECRET")
+    if not s.yaaos_github_app_id:
+        missing.append("YAAOS_GITHUB_APP_ID")
+    if not s.yaaos_github_app_slug:
+        missing.append("YAAOS_GITHUB_APP_SLUG")
+    if not s.yaaos_github_app_private_key.get_secret_value():
+        missing.append("YAAOS_GITHUB_APP_PRIVATE_KEY")
+    if not s.yaaos_github_app_client_id:
+        missing.append("YAAOS_GITHUB_APP_CLIENT_ID")
+    if not s.yaaos_github_app_client_secret.get_secret_value():
+        missing.append("YAAOS_GITHUB_APP_CLIENT_SECRET")
+    if not s.yaaos_github_app_webhook_secret.get_secret_value():
+        missing.append("YAAOS_GITHUB_APP_WEBHOOK_SECRET")
     if not s.yaaos_totp_master_key.get_secret_value():
         missing.append("YAAOS_TOTP_MASTER_KEY")
     if missing:

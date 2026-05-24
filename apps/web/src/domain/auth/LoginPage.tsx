@@ -1,15 +1,15 @@
 /**
- * Login page — E2a.18.
+ * Login page.
  *
- * Email-first flow: user types an email → "Continue" hits
- * `/api/auth/sso/discover` → render the right provider button
- * ("Continue with GitHub" or "Continue with [SAML IdP]"). The SSO branch
- * is github-only today (D8.1); the SPA contract is stable so once a
- * domain → org mapping lands the page lights up the SAML branch with
- * no further changes.
+ * Two entry points:
+ *   1. **Sign in with GitHub** at the top — always rendered when the `github`
+ *      provider is configured. No email gate.
+ *   2. **Email-first SSO discovery** below it — for enterprise customers
+ *      whose org claims their domain to a SAML IdP. Hitting "Continue" calls
+ *      `/api/auth/sso/discover`; on a SAML hit, render the SAML button.
  *
- * The per-provider fallback buttons stay below for the test stub +
- * direct-GitHub sign-in (e2e specs depend on `data-testid="login-test"`).
+ * The test stub provider (`oauth_test`) surfaces in the same picker as
+ * additional providers in dev/test only.
  */
 
 import { useSsoDiscover } from "@core/api";
@@ -39,80 +39,87 @@ export function LoginPage() {
     window.location.href = url;
   };
 
-  const result = discover.data;
-  const showProviderPicker = result == null;
+  const samlResult = discover.data?.provider === "saml" ? discover.data : null;
+  const githubAvailable = providers?.providers.includes("github") ?? false;
+  const otherProviders = (providers?.providers ?? []).filter((p) => p !== "github");
 
   return (
     <div className="mx-auto max-w-[400px] mt-24 px-6">
       <div className="rounded-lg border border-border bg-card p-6 flex flex-col gap-4">
         <header>
           <h1 className="text-xl font-semibold tracking-tight">Sign in to yaaos</h1>
-          <p className="text-sm text-muted-foreground mt-1">Enter your work email to continue.</p>
         </header>
 
-        <form
-          className="flex flex-col gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onContinue();
-          }}
-        >
-          <div className="relative">
-            <Mail className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              data-testid="login-email"
-              className="pl-8"
-              autoComplete="email"
-              required
-            />
-          </div>
-          <Button
-            type="submit"
-            disabled={!email.trim() || discover.isPending}
-            data-testid="login-continue"
-          >
-            {discover.isPending ? "Checking…" : "Continue"}
-          </Button>
-        </form>
-
-        {result?.provider === "github" && (
+        {isLoading && <Skeleton className="h-9" />}
+        {!isLoading && githubAvailable && (
           <Button
             variant="default"
             onClick={() => startProvider("github")}
-            data-testid="login-discovered-github"
+            data-testid="login-github"
           >
-            Continue with GitHub
+            Sign in with GitHub
           </Button>
         )}
-        {result?.provider === "saml" && (
-          <Button
-            variant="default"
-            onClick={() => result.saml_org_slug && startProvider(`saml/${result.saml_org_slug}`)}
-            data-testid="login-discovered-saml"
-          >
-            Continue with {result.saml_idp_name || "your SSO provider"}
-          </Button>
+        {!isLoading && !githubAvailable && otherProviders.length === 0 && (
+          <p className="text-xs text-muted-foreground">No identity providers configured.</p>
         )}
 
-        {showProviderPicker && (
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <span className="text-xs text-muted-foreground">SSO for enterprise</span>
+          <form
+            className="flex flex-col gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onContinue();
+            }}
+          >
+            <div className="relative">
+              <Mail className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                data-testid="login-email"
+                className="pl-8"
+                autoComplete="email"
+                required
+              />
+            </div>
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={!email.trim() || discover.isPending}
+              data-testid="login-continue"
+            >
+              {discover.isPending ? "Checking…" : "Continue"}
+            </Button>
+          </form>
+
+          {samlResult && (
+            <Button
+              variant="default"
+              onClick={() =>
+                samlResult.saml_org_slug && startProvider(`saml/${samlResult.saml_org_slug}`)
+              }
+              data-testid="login-discovered-saml"
+            >
+              Continue with {samlResult.saml_idp_name || "your SSO provider"}
+            </Button>
+          )}
+        </div>
+
+        {otherProviders.length > 0 && (
           <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <span className="text-xs text-muted-foreground">Or sign in with</span>
-            {isLoading && <Skeleton className="h-9" />}
-            {providers && providers.providers.length === 0 && (
-              <p className="text-xs text-muted-foreground">No identity providers configured.</p>
-            )}
-            {providers?.providers.map((p) => (
+            <span className="text-xs text-muted-foreground">Other</span>
+            {otherProviders.map((p) => (
               <Button
                 key={p}
                 variant="outline"
                 onClick={() => startProvider(p)}
                 data-testid={`login-${p}`}
               >
-                {p === "github" ? "GitHub" : p === "test" ? "test stub" : p}
+                {p === "test" ? "test stub" : p}
               </Button>
             ))}
           </div>

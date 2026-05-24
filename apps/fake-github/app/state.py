@@ -25,6 +25,24 @@ class FakeGitHubState:
         self.compare_commits: dict[str, list[str]] = {}
         self.posted_comments: list[dict[str, Any]] = []
         self._next_comment_id = 5000
+        # Installations minted by the `/apps/{slug}/installations/new`
+        # picker stub. Maps install id (str) → account.login that
+        # `GET /app/installations/{id}` should return.
+        self.installations: dict[str, str] = {}
+        self._next_installation_id = 7000
+        # OAuth user-auth flow: per-code → user profile mapping. Codes are
+        # minted by `/login/oauth/authorize` and consumed by
+        # `/login/oauth/access_token`. Tests can stage profiles directly via
+        # `/__test/stage_oauth_user` to pin login.
+        self.oauth_codes: dict[str, dict[str, Any]] = {}
+        self._next_oauth_code = 9000
+        # The user the next unstaged /login/oauth/authorize returns.
+        self.default_oauth_user: dict[str, Any] = {
+            "id": 90001,
+            "login": "yaaos-owner",
+            "name": "yaaos Owner",
+            "primary_email": "owner@yaaos.test",
+        }
 
     def reset(self) -> None:
         self.seeded_prs.clear()
@@ -35,10 +53,30 @@ class FakeGitHubState:
         self.compare_commits.clear()
         self.posted_comments.clear()
         self._next_comment_id = 5000
+        self.installations.clear()
+        self._next_installation_id = 7000
+        self.oauth_codes.clear()
+        self._next_oauth_code = 9000
+        self.default_oauth_user = {
+            "id": 90001,
+            "login": "yaaos-owner",
+            "name": "yaaos Owner",
+            "primary_email": "owner@yaaos.test",
+        }
+
+    def next_oauth_code(self) -> int:
+        v = self._next_oauth_code
+        self._next_oauth_code += 1
+        return v
 
     def next_comment_id(self) -> int:
         v = self._next_comment_id
         self._next_comment_id += 1
+        return v
+
+    def next_installation_id(self) -> int:
+        v = self._next_installation_id
+        self._next_installation_id += 1
         return v
 
 

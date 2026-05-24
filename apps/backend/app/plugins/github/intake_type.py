@@ -11,9 +11,9 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 import structlog
-from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,8 @@ from app.core.config import get_settings
 from app.domain.intake.registry import IntakePrepared, IntakeRejectedError
 
 log = structlog.get_logger("intake.github_pr")
+
+_M01_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 class GithubPrIntakeType:
@@ -40,21 +42,18 @@ class GithubPrIntakeType:
         body: bytes,
         session: AsyncSession,
     ) -> IntakePrepared:
-        # 1. Verify HMAC against the org's stored webhook secret.
-        from app.plugins.github.models import GitHubAppInstallationRow, GitHubSettingsRow  # noqa: PLC0415
+        # 1. Verify HMAC against the platform yaaos GitHub App webhook secret.
+        from app.plugins.github.models import GitHubAppInstallationRow  # noqa: PLC0415
         from app.plugins.github.service import verify_webhook_signature  # noqa: PLC0415
 
         signature = _lookup_header(headers, "X-Hub-Signature-256")
         delivery = _lookup_header(headers, "X-Github-Delivery")
         event = _lookup_header(headers, "X-Github-Event")
 
-        settings_row = (await session.execute(select(GitHubSettingsRow).limit(1))).scalar_one_or_none()
-        if settings_row is None:
-            raise IntakeRejectedError("bad_request", "github settings not configured")
-
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        secret = fernet.decrypt(settings_row.encrypted_webhook_secret)
-        if not verify_webhook_signature(body, signature, secret):
+        secret = get_settings().yaaos_github_app_webhook_secret.get_secret_value()
+        if not secret:
+            raise IntakeRejectedError("bad_request", "github app not configured")
+        if not verify_webhook_signature(body, signature, secret.encode()):
             log.warning("intake.github_pr.bad_signature", delivery=delivery)
             raise IntakeRejectedError("bad_signature", "signature verification failed")
 
@@ -64,9 +63,10 @@ class GithubPrIntakeType:
         except json.JSONDecodeError as exc:
             raise IntakeRejectedError("bad_request", f"invalid json: {exc}") from exc
 
-        # 3. Resolve org via the installation lookup; fall back to the row
-        # owning the settings. Mirrors `plugins/github.web.webhook`.
-        org_id = settings_row.org_id
+        # 3. Resolve org via the installation lookup. Mirrors
+        # `plugins/github.web.webhook` — M01 single-org default applies only
+        # when no install row matches the inbound delivery.
+        org_id = _M01_ORG_ID
         install_id = (payload.get("installation") or {}).get("id")
         if install_id is not None:
             install = (

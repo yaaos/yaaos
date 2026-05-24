@@ -36,12 +36,12 @@ Intentionally small. Coverage is golden-path user flows and critical regressions
 
 ## Per-spec preconditions
 
-No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` using helpers from `apps/e2e/tests/_helpers.ts`. Typical pattern: `resetStack()` then `seedCredentialsAndInstall()`.
+No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` using helpers from `apps/e2e/tests/_helpers.ts`. Typical pattern: `resetStack()` then `seedGithubInstall()`.
 
 | Helper | What it does |
 |---|---|
 | `resetStack()` | `POST /api/testing/reset` (truncates every yaaos DB table) + `POST /__test/reset` on fake-github. Parallel. |
-| `seedCredentialsAndInstall()` | `POST /api/testing/seed/credentials_and_install` — writes `github_settings`, `claude_code_settings`, active `github_app_installations`. |
+| `seedGithubInstall()` | `POST /api/testing/seed/github_install` — writes `claude_code_settings` + an active `github_app_installations` row. Bypasses the install handshake; never pair with the install-handshake spec. Platform GitHub App credentials come from `yaaos_github_app_*` env vars. |
 | `seedLesson({repo_external_id, title, body})` | `POST /api/testing/seed/lesson`. |
 | `dispatchWebhook({event, payload})` | For `pull_request` events: auto-seeds PR JSON into fake-github (so subsequent `fetch_pr` returns 200), then forwards to fake-github's `/__test/dispatch_webhook`. |
 | `seedPRDiff({repo, number, diff, files})` | Sets a specific diff. Used by the secrets spec to inject `AKIA…`. |
@@ -54,7 +54,7 @@ No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` 
 `/api/testing/*` (gated on `YAAOS_ENV=dev`), owned by [`testing/e2e_setup`](../../backend/docs/testing_e2e_setup.md):
 
 - `POST /reset` — truncates every table. No structural seeding (reviewer specialists are shipped markdown).
-- `POST /seed/credentials_and_install` — sets "system ready" without going through the manifest flow or webhook handlers.
+- `POST /seed/github_install` — sets "system ready" without going through the install handshake (writes the install row + Claude Code settings).
 - `POST /seed/lesson` — inserts a single `LessonRow`.
 
 ## fake-github contract

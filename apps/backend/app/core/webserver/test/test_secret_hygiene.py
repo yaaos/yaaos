@@ -21,9 +21,16 @@ def prod_env(monkeypatch):
 
 def test_prod_with_stub_secrets_raises(prod_env, monkeypatch):
     # Leave all M02 secrets at their dev defaults.
-    monkeypatch.delenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", raising=False)
-    monkeypatch.delenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("YAAOS_TOTP_MASTER_KEY", raising=False)
+    for var in (
+        "YAAOS_GITHUB_APP_ID",
+        "YAAOS_GITHUB_APP_SLUG",
+        "YAAOS_GITHUB_APP_PRIVATE_KEY",
+        "YAAOS_GITHUB_APP_CLIENT_ID",
+        "YAAOS_GITHUB_APP_CLIENT_SECRET",
+        "YAAOS_GITHUB_APP_WEBHOOK_SECRET",
+        "YAAOS_TOTP_MASTER_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
     from app.core.config.service import get_settings  # noqa: PLC0415
 
     get_settings.cache_clear()
@@ -36,8 +43,14 @@ def test_prod_with_stub_secrets_raises(prod_env, monkeypatch):
 def test_prod_with_all_secrets_set_does_not_raise(prod_env, monkeypatch):
     monkeypatch.setenv("YAAOS_OAUTH_STATE_SECRET", "real-state-secret")
     monkeypatch.setenv("YAAOS_INVITATION_TOKEN_SECRET", "real-invitation-secret")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_ID", "real-id")
-    monkeypatch.setenv("YAAOS_OAUTH_GITHUB_CLIENT_SECRET", "real-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_ID", "12345")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_SLUG", "yaaos")
+    monkeypatch.setenv(
+        "YAAOS_GITHUB_APP_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----"
+    )
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_ID", "real-client-id")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_CLIENT_SECRET", "real-client-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_WEBHOOK_SECRET", "real-webhook-secret")
     monkeypatch.setenv("YAAOS_TOTP_MASTER_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
     from app.core.config.service import get_settings  # noqa: PLC0415
 

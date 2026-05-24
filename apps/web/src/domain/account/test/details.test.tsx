@@ -64,8 +64,7 @@ describe("DetailsPage", () => {
     expect(screen.getByTestId("emails-list")).toBeInTheDocument();
     expect(screen.getByText("jane@x.test")).toBeInTheDocument();
     expect(screen.getByText("alt@x.test")).toBeInTheDocument();
-    // GitHub not yet connected → Connect CTA.
-    expect(screen.getByTestId("github-connect")).toBeInTheDocument();
+    // GitHub not yet connected → only the prompt copy (no Connect CTA — re-binding is "sign in again").
     expect(screen.queryByTestId("github-username")).toBeNull();
   });
 
@@ -76,7 +75,6 @@ describe("DetailsPage", () => {
     });
     render(wrap(<DetailsPage />));
     expect(screen.getByTestId("github-username")).toHaveTextContent("@octocat");
-    expect(screen.getByTestId("github-reverify")).toBeInTheDocument();
     expect(screen.getByTestId("github-clear")).toBeInTheDocument();
   });
 });

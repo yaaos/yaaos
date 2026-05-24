@@ -1,3 +1,4 @@
+import { useGithubInstallation, useGithubRepositories } from "@core/api";
 import { PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
@@ -5,7 +6,7 @@ import { PluginPicker, useAvailablePlugins } from "@shared/plugin_picker";
 import type { PluginMeta } from "@shared/plugin_picker";
 import { useState } from "react";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
-import { useClearVcs, useSetVcs, useVcsState } from "./queries";
+import { useClearVcs, useSetVcs, useStartGithubInstall, useVcsState } from "./queries";
 
 /**
  * Org Settings > VCS. Two states:
@@ -20,6 +21,7 @@ export function VcsSettingsPage() {
   const { data: state, isLoading } = useVcsState();
   const { data: plugins, isLoading: pluginsLoading, error } = useAvailablePlugins("vcs");
   const setVcs = useSetVcs();
+  const startGithubInstall = useStartGithubInstall();
 
   if (isLoading) {
     return (
@@ -30,16 +32,18 @@ export function VcsSettingsPage() {
   }
 
   const onPick = (p: PluginMeta) => {
-    setVcs.mutate(
-      { plugin_id: p.id, settings: {} },
-      {
+    if (p.id === "github") {
+      // GitHub's install handshake is driven by the dedicated POST endpoint
+      // (so `X-Org-Slug` + CSRF reach the auth chain). Skip `setVcs` — the
+      // install_callback writes the `vcs_state` row itself on first-bind.
+      startGithubInstall.mutate(undefined, {
         onSuccess: (resp) => {
-          if (resp.install_url) {
-            window.location.href = resp.install_url;
-          }
+          window.location.href = resp.redirect_url;
         },
-      },
-    );
+      });
+      return;
+    }
+    setVcs.mutate({ plugin_id: p.id, settings: {} });
   };
 
   return (
@@ -89,93 +93,269 @@ function ConnectedCard({
 
   return (
     <section className="rounded-lg border border-border bg-card" data-testid="vcs-connected">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold">{plugin_id}</h3>
-          <Badge>connected</Badge>
-        </div>
-      </header>
-      <div className="px-4 py-4">
-        {plugin_id === "github" ? (
-          <GithubConnectedDetails installationId={settings.installation_id as number | undefined} />
-        ) : (
-          <pre
-            className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground overflow-auto"
-            data-testid="vcs-settings-json"
-          >
-            {JSON.stringify(settings, null, 2)}
-          </pre>
-        )}
-        <div className="mt-4 flex items-center gap-2">
-          <Button asChild variant="outline" size="sm">
-            <a
-              href="/api/vcs"
-              data-testid="vcs-reconnect"
-              onClick={(e) => {
-                e.preventDefault();
-                window.location.href = "/api/github/install";
-              }}
+      {plugin_id === "github" ? (
+        <GithubCardBody
+          installationId={settings.installation_id as number | undefined}
+          onRemove={() => setConfirming(true)}
+          removePending={clearVcs.isPending}
+        />
+      ) : (
+        <>
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">{plugin_id}</h3>
+              <Badge>connected</Badge>
+            </div>
+          </header>
+          <div className="px-4 py-4">
+            <pre
+              className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground overflow-auto"
+              data-testid="vcs-settings-json"
             >
-              Reconnect
-            </a>
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            data-testid="vcs-remove"
-            onClick={() => setConfirming(true)}
-            disabled={clearVcs.isPending}
-          >
-            Remove
-          </Button>
-        </div>
-        {confirming && (
-          <div
-            className="mt-3 rounded-md border border-border bg-muted/50 p-3"
-            data-testid="vcs-remove-confirm"
-          >
-            <p className="mb-2 text-xs">
-              Remove this VCS connection? Pull requests will stop syncing into yaaos until a new VCS
-              is configured.
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="vcs-remove-cancel"
-                onClick={() => setConfirming(false)}
-              >
-                Cancel
-              </Button>
+              {JSON.stringify(settings, null, 2)}
+            </pre>
+            <div className="mt-4 flex items-center gap-2">
               <Button
                 variant="destructive"
                 size="sm"
-                data-testid="vcs-remove-confirm-btn"
+                data-testid="vcs-remove"
+                onClick={() => setConfirming(true)}
                 disabled={clearVcs.isPending}
-                onClick={() => {
-                  setConfirming(false);
-                  clearVcs.mutate();
-                }}
               >
                 Remove
               </Button>
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
+      {confirming && (
+        <div
+          className="mx-4 mb-4 rounded-md border border-border bg-muted/50 p-3"
+          data-testid="vcs-remove-confirm"
+        >
+          <p className="mb-2 text-xs">
+            Remove this VCS connection? Pull requests will stop syncing. Reinstalling means clicking
+            "Install yaaos on GitHub" again.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="vcs-remove-cancel"
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              data-testid="vcs-remove-confirm-btn"
+              disabled={clearVcs.isPending}
+              onClick={() => {
+                setConfirming(false);
+                clearVcs.mutate();
+              }}
+            >
+              Remove
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-function GithubConnectedDetails({ installationId }: { installationId?: number }) {
+function GithubCardBody({
+  installationId,
+  onRemove,
+  removePending,
+}: {
+  installationId?: number;
+  onRemove: () => void;
+  removePending: boolean;
+}) {
+  const installation = useGithubInstallation();
+
+  if (installation.isLoading) {
+    return (
+      <>
+        <header className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold">github</h3>
+        </header>
+        <div className="px-4 py-4 text-xs text-muted-foreground">Loading installation…</div>
+      </>
+    );
+  }
+
+  const inst = installation.data;
+  const isHealthy = inst?.installed === true;
+  const appUnconfigured = inst?.app_configured === false;
+
   return (
-    <div className="text-sm">
+    <>
+      <header className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">github</h3>
+          {isHealthy ? (
+            <Badge>connected</Badge>
+          ) : (
+            <Badge variant="destructive" data-testid="vcs-github-needs-setup">
+              needs setup
+            </Badge>
+          )}
+        </div>
+      </header>
+      <div className="px-4 py-4">
+        {isHealthy ? (
+          <GithubHealthyDetails inst={inst} />
+        ) : (
+          <GithubIncompleteDetails
+            installationId={installationId}
+            appUnconfigured={appUnconfigured}
+          />
+        )}
+        <div className="mt-4 flex items-center gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            data-testid="vcs-remove"
+            onClick={onRemove}
+            disabled={removePending}
+          >
+            Remove
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function GithubHealthyDetails({
+  inst,
+}: {
+  inst: {
+    account_login: string | null;
+    install_external_id: string | null;
+    installations_url: string | null;
+  };
+}) {
+  const repos = useGithubRepositories();
+  return (
+    <div className="text-sm" data-testid="vcs-github-details">
       <p className="text-muted-foreground text-xs">
-        Installation id: <span className="font-mono">{installationId ?? "—"}</span>
+        Account: <span className="font-mono">{inst.account_login ?? "—"}</span>
+        {" · "}
+        Installation id: <span className="font-mono">{inst.install_external_id ?? "—"}</span>
       </p>
-      <p className="text-muted-foreground mt-1 text-xs">
-        Manage the App + repo allowlist on GitHub via the Reconnect link.
-      </p>
+
+      <div className="mt-4">
+        <h4 className="text-xs font-semibold mb-2">Enabled repositories</h4>
+        <RepoList query={repos} />
+      </div>
+
+      {inst.installations_url && (
+        <div className="mt-4">
+          <Button asChild variant="outline" size="sm">
+            <a
+              href={inst.installations_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="vcs-manage-on-github"
+            >
+              Manage on GitHub
+            </a>
+          </Button>
+          <p className="text-muted-foreground mt-2 text-xs">
+            Add or remove repositories from the allowlist on github.com.
+          </p>
+        </div>
+      )}
     </div>
+  );
+}
+
+function GithubIncompleteDetails({
+  installationId,
+  appUnconfigured,
+}: {
+  installationId?: number;
+  appUnconfigured: boolean;
+}) {
+  const startInstall = useStartGithubInstall();
+  return (
+    <div className="text-sm" data-testid="vcs-github-incomplete">
+      <p className="text-sm">
+        {appUnconfigured
+          ? "The yaaos GitHub App isn't provisioned on this deployment. Ask a yaaos operator to configure it."
+          : "The yaaos GitHub App isn't installed on this org yet."}
+      </p>
+      {installationId !== undefined && (
+        <p className="text-muted-foreground mt-1 text-xs">
+          Stored installation id: <span className="font-mono">{installationId}</span>
+        </p>
+      )}
+      {!appUnconfigured && (
+        <div className="mt-4">
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="vcs-github-install"
+            disabled={startInstall.isPending}
+            onClick={() =>
+              startInstall.mutate(undefined, {
+                onSuccess: (resp) => {
+                  window.location.href = resp.redirect_url;
+                },
+              })
+            }
+          >
+            Install yaaos on GitHub
+          </Button>
+          {startInstall.isError && (
+            <p className="mt-2 text-xs text-destructive" data-testid="vcs-github-install-err">
+              {(startInstall.error as Error)?.message || "Couldn't start install"}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RepoList({ query }: { query: ReturnType<typeof useGithubRepositories> }) {
+  if (query.isLoading) {
+    return <p className="text-muted-foreground text-xs">Loading repositories…</p>;
+  }
+  if (query.error || query.data?.error) {
+    return (
+      <p className="text-destructive text-xs" data-testid="vcs-repos-error">
+        Couldn't load repositories from GitHub.
+      </p>
+    );
+  }
+  const repos = query.data?.repositories ?? [];
+  if (repos.length === 0) {
+    return (
+      <p className="text-muted-foreground text-xs">
+        No repositories enabled yet. Use the link below to grant access.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-1" data-testid="vcs-repos-list">
+      {repos.map((r) => (
+        <li key={r.full_name} className="flex items-center gap-2 text-xs">
+          <a
+            href={r.html_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono hover:underline"
+          >
+            {r.full_name}
+          </a>
+          {r.private && <Badge>private</Badge>}
+        </li>
+      ))}
+    </ul>
   );
 }

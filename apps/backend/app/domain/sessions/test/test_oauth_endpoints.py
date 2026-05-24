@@ -94,7 +94,7 @@ async def test_callback_existing_identity_issues_session(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_callback_hard_reject_returns_403(db_session) -> None:
+async def test_callback_unknown_email_creates_user_and_signs_in(db_session) -> None:
     state = await _begin_login_and_get_state()
     set_next_profile(
         ProviderProfile(
@@ -112,17 +112,21 @@ async def test_callback_hard_reject_returns_403(db_session) -> None:
             follow_redirects=False,
         )
 
-    assert resp.status_code == 403
-    body = resp.json()
-    assert body["error"] == "ask_for_invite"
-    assert body["email"] == "nobody@example.com"
+    assert resp.status_code in (302, 303)
+    assert "yaaos_session" in resp.cookies
+    # The user row + identity row were created on the fly.
+    found = await repo.find_user_by_email(db_session, "nobody@example.com")
+    assert found is not None
+    identity = await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-2")
+    assert identity is not None and identity.user_id == found.id
 
 
 @pytest.mark.asyncio
-async def test_callback_link_challenge_sets_pending_cookie(db_session) -> None:
+async def test_callback_email_match_without_identity_autolinks(db_session) -> None:
     user = await repo.insert_user(db_session)
     await repo.add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
     await repo.add_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
+    await db_session.commit()
     state = await _begin_login_and_get_state()
     set_next_profile(
         ProviderProfile(
@@ -140,9 +144,11 @@ async def test_callback_link_challenge_sets_pending_cookie(db_session) -> None:
             follow_redirects=False,
         )
 
-    assert resp.status_code == 409
-    assert resp.json()["error"] == "link_required"
-    assert "yaaos_link_pending" in resp.cookies
+    assert resp.status_code in (302, 303)
+    assert "yaaos_session" in resp.cookies
+    # Identity row attached to the pre-existing user, no new user row.
+    linked = await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-3")
+    assert linked is not None and linked.user_id == user.id
 
 
 @pytest.mark.asyncio

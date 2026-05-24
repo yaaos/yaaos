@@ -13,10 +13,9 @@
  *     The e2e infra to seed two orgs + memberships under one session is
  *     not in place yet; covered here as a TODO.
  *
- *  3. GitHub username verify (deferred). `/api/account/github/verify` →
- *     OAuth callback → `users.github_username` updated. Same blocker —
- *     needs a verify-callback test profile staging surface that doesn't
- *     exist yet. TODO.
+ *  3. GitHub username verify (covered indirectly). `users.github_username`
+ *     is populated by the regular "Sign in with GitHub" callback now; no
+ *     dedicated verify-only endpoint. Asserted in the login e2e spec.
  */
 
 import { expect, test } from "@playwright/test";

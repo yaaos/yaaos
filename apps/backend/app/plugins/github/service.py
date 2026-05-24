@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 import httpx
 import jwt as pyjwt
 import structlog
-from cryptography.fernet import Fernet
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -32,7 +31,6 @@ from app.domain.vcs import (
 )
 from app.plugins.github.models import (
     GitHubAppInstallationRow,
-    GitHubSettingsRow,
     GitHubWebhookEventRow,
 )
 
@@ -69,6 +67,25 @@ def verify_webhook_signature(body: bytes, header: str | None, secret: bytes) -> 
     return hmac.compare_digest(expected, header)
 
 
+def _platform_credentials() -> tuple[str, str, str]:
+    """Returns (app_id, private_key_pem, webhook_secret) for the platform yaaos
+    GitHub App. Raises VCSAuthError if the App isn't provisioned (env vars
+    blank) — same surface the old per-org lookup raised when `github_settings`
+    was empty, so callers don't need to change.
+
+    The private key arrives as a multi-line PEM, but env-var / .env transports
+    are line-based — operators normally paste it with `\\n` escapes on a
+    single line. We normalize back to real newlines so pyjwt sees a valid PEM.
+    """
+    s = get_settings()
+    app_id = s.yaaos_github_app_id
+    pem = s.yaaos_github_app_private_key.get_secret_value().replace("\\n", "\n")
+    secret = s.yaaos_github_app_webhook_secret.get_secret_value()
+    if not app_id or not pem or not secret:
+        raise VCSAuthError("yaaos github app not configured")
+    return app_id, pem, secret
+
+
 class GitHubPlugin:
     """Implements domain/vcs.VCSPlugin against GitHub's REST API."""
 
@@ -90,12 +107,14 @@ class GitHubPlugin:
         return get_settings().github_api_base_url
 
     def install_url(self, org_id: UUID) -> str | None:
-        """The picker sends the user to the existing M02 install-handshake
-        endpoint, which signs `state=<org_id>` and redirects on to GitHub's
-        `apps/{slug}/installations/new`. Settings live in `github_settings`.
-        Always returns a relative URL — the SPA navigates to it."""
+        """The github install handshake is driven by an explicit SPA call to
+        `POST /api/github/install/start` (which returns the state-signed
+        github.com URL). Returning None here means `POST /api/vcs` doesn't
+        short-circuit on github — the VCS picker just records the choice and
+        the GitHub card surfaces a separate "Install on GitHub" button that
+        triggers the JSON handshake."""
         del org_id
-        return "/api/github/install"
+        return None
 
     def validate_settings(self, settings: dict[str, object]) -> dict[str, object]:
         """The github plugin's settings are populated by the install handshake;
@@ -106,31 +125,26 @@ class GitHubPlugin:
             raise VCSValidationError(f"unknown github settings keys: {sorted(unknown)}")
         return dict(settings)
 
-    async def _get_settings_row(self, org_id: UUID) -> GitHubSettingsRow | None:
-        async with db_session() as s:
-            return (
-                await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == org_id))
-            ).scalar_one_or_none()
+    def clone_url(self, repo_external_id: str) -> str:
+        """`<github_web_base_url>/<owner>/<repo>.git` — the workspace provider
+        pairs this with an installation-token Bearer via GIT_ASKPASS.
 
-    async def _decrypted_credentials(self, org_id: UUID) -> tuple[str, str, str]:
-        """Returns (app_id, private_key_pem, webhook_secret)."""
-        row = await self._get_settings_row(org_id)
-        if row is None:
-            raise VCSAuthError("github_settings not configured")
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        pem = fernet.decrypt(row.encrypted_private_key).decode()
-        secret = fernet.decrypt(row.encrypted_webhook_secret).decode()
-        return row.app_id, pem, secret
+        The test stack overrides `github_web_base_url` to fake-github, but
+        in_memory_workspace's clone tests monkeypatch this method directly
+        with a `file://` URL so a real git server isn't needed.
+        """
+        return f"{get_settings().github_web_base_url}/{repo_external_id}.git"
 
     async def _installation_token(self, org_id: UUID) -> str:
         """Trade an App JWT for an installation token. RS256 JWT signed with the
-        App's stored private key — GitHub validates against the App's public key.
+        platform App's private key — GitHub validates against the App's public key.
 
-        For the test stack (`apps/fake-github`), if the stored PEM is a sentinel
-        placeholder, falls back to the legacy fake JWT string so the existing
-        fake-github / integration tests keep working without real RSA material.
+        For the test stack (`apps/fake-github`), if the configured PEM is a
+        sentinel placeholder (no `BEGIN ... PRIVATE KEY` marker), falls back
+        to the legacy fake JWT string so the existing fake-github / integration
+        tests keep working without real RSA material.
         """
-        app_id, pem, _secret = await self._decrypted_credentials(org_id)
+        app_id, pem, _secret = _platform_credentials()
         async with db_session() as s:
             install = (
                 await s.execute(
@@ -426,65 +440,6 @@ class GitHubPlugin:
         # No-op for GitHub (GitHub marks outdated automatically on force push).
         return
 
-    async def _maybe_seed_settings_row(
-        self, org_id: UUID, app_id: str, pem: str, webhook_secret: str
-    ) -> None:
-        """Idempotent helper used by tests / e2e seeding."""
-        async with db_session() as s:
-            existing = (
-                await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == org_id))
-            ).scalar_one_or_none()
-            if existing is not None:
-                return
-            fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-            row = GitHubSettingsRow(
-                id=uuid4(),
-                org_id=org_id,
-                app_id=app_id,
-                slug="",
-                encrypted_private_key=fernet.encrypt(pem.encode()),
-                encrypted_webhook_secret=fernet.encrypt(webhook_secret.encode()),
-            )
-            s.add(row)
-            await s.commit()
-
-
-async def set_github_credentials(
-    org_id: UUID,
-    *,
-    app_id: str,
-    slug: str,
-    private_key: str,
-    webhook_secret: str,
-) -> None:
-    """Encrypt + upsert App credentials on `github_settings`. Wipes the cached
-    installation-token (if any) so the next API call re-issues against the new
-    private key.
-    """
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-    enc_key = fernet.encrypt(private_key.encode())
-    enc_secret = fernet.encrypt(webhook_secret.encode())
-    async with db_session() as s:
-        row = (
-            await s.execute(select(GitHubSettingsRow).where(GitHubSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-        if row is None:
-            row = GitHubSettingsRow(
-                id=uuid4(),
-                org_id=org_id,
-                app_id=app_id,
-                slug=slug,
-                encrypted_private_key=enc_key,
-                encrypted_webhook_secret=enc_secret,
-            )
-            s.add(row)
-        else:
-            row.app_id = app_id
-            row.slug = slug
-            row.encrypted_private_key = enc_key
-            row.encrypted_webhook_secret = enc_secret
-        await s.commit()
-
 
 async def upsert_installation(
     *,
@@ -517,6 +472,32 @@ async def upsert_installation(
             existing.account_login = account_login
             existing.status = "active"
         await s.commit()
+
+
+async def fetch_install_account_login(installation_id: int) -> str:
+    """Look up `account.login` for a fresh install via the App JWT. Used by the
+    post-install callback to seed `github_app_installations.account_login`
+    without waiting for the `installation.created` webhook to arrive.
+
+    Returns the login, or `""` if GitHub returns no usable payload. Raises on
+    transport errors so the caller can degrade explicitly."""
+    plugin = get_plugin()
+    app_id, pem, _ = _platform_credentials()
+    jwt_token = _build_app_jwt(app_id, pem)
+    async with httpx.AsyncClient(base_url=plugin.base_url, timeout=15) as client:
+        resp = await client.get(
+            f"/app/installations/{installation_id}",
+            headers={
+                "Authorization": f"Bearer {jwt_token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+    if resp.status_code != 200:
+        raise httpx.HTTPStatusError(
+            f"installation lookup failed: {resp.status_code}", request=resp.request, response=resp
+        )
+    body = resp.json()
+    return (body.get("account") or {}).get("login") or ""
 
 
 async def mark_installation_inactive(*, install_external_id: str, status: str) -> None:

@@ -21,6 +21,10 @@ services:
       dockerfile: apps/fake-github/Dockerfile
     environment:
       GITHUB_WEBHOOK_SECRET: "TEST-FAKE-NOT-FOR-PROD-aaaaaaaaaaaaaaaa"
+      # `/apps/{slug}/installations/new` 302's the BROWSER to yaaos's
+      # install_callback — must use the host-mapped URL, not the docker
+      # service name, so Playwright can follow the redirect.
+      YAAOS_CALLBACK_BASE_URL: "http://localhost:58080"
     ports:
       - "58081:8080"
     healthcheck:
@@ -73,6 +77,24 @@ services:
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       YAAOS_ENV: test
       GITHUB_API_BASE_URL: http://fake-github:8080
+      # Install-picker URL — the BROWSER follows this redirect, so it must
+      # be the host-mapped fake-github URL, not the docker service name.
+      GITHUB_WEB_BASE_URL: http://localhost:58081
+      # The platform yaaos GitHub App credentials. App ID + slug + webhook
+      # secret match what fake-github exposes via `/app` and signs outbound
+      # webhooks with (see apps/fake-github/app/test_secrets.py).
+      # The private key is a sentinel (no "BEGIN" marker) that routes
+      # _build_app_jwt to the legacy fake-token branch; fake-github accepts
+      # any bearer prefix.
+      YAAOS_GITHUB_APP_ID: "12345"
+      YAAOS_GITHUB_APP_SLUG: yaaos-test
+      YAAOS_GITHUB_APP_PRIVATE_KEY: test-private-key
+      YAAOS_GITHUB_APP_CLIENT_ID: yaaos-test-client-id
+      YAAOS_GITHUB_APP_CLIENT_SECRET: yaaos-test-client-secret
+      YAAOS_GITHUB_APP_WEBHOOK_SECRET: "TEST-FAKE-NOT-FOR-PROD-aaaaaaaaaaaaaaaa"
+      # Server-side OAuth token POST — yaaos backend must reach fake-github
+      # via the docker-internal host, not the browser-facing port.
+      YAAOS_GITHUB_OAUTH_TOKEN_URL: http://fake-github:8080/login/oauth/access_token
       # M04 — Linear + Notion fakes. Production URLs are the real upstreams;
       # tests override here so the autonomous suite needs no external OAuth.
       LINEAR_OAUTH_AUTHORIZE_URL: http://fake-linear:8080/oauth/authorize

@@ -11,7 +11,7 @@ from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
@@ -73,13 +73,28 @@ async def clear_vcs(
     actor: Actor,
 ) -> bool:
     """Clear the org's VCS choice. Returns True if a row was modified. Emits
-    `vcs.cleared` only when something was actually cleared."""
+    `vcs.cleared` only when something was actually cleared.
+
+    Also wipes plugin-owned credentials/install rows so Remove means "fully
+    disconnected" — the next Add starts from a blank slate. M01 has one VCS
+    plugin (github), so the cleanup is inlined here rather than dispatched
+    through a plugin hook; revisit when a second VCS plugin ships.
+    """
     row = (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
     if row.vcs_plugin_id is None:
         return False
     prior = row.vcs_plugin_id
     row.vcs_plugin_id = None
     row.vcs_settings = None
+    # Wipe the github plugin's per-org install row here (instead of importing
+    # its model, which would invert the domain→plugins layering). Raw SQL
+    # keeps the table name visible without dragging a plugin import into
+    # domain/.
+    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text — literal SQL with parameterized org_id
+    await session.execute(
+        text("DELETE FROM github_app_installations WHERE org_id = :org_id"),
+        {"org_id": org_id},
+    )
     await session.flush()
     await audit(
         "org",

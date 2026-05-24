@@ -22,7 +22,7 @@ The only concrete `core/workspace.WorkspaceProvider` in M01. Implements `provisi
 1. `tempfile.mkdtemp(prefix="yaaos-ws-")`.
 2. `_write_askpass()` — chmod 0700 askpass script in a sibling tempfile (outside `working_dir` because git clone requires an empty target).
 3. `vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)` — fresh token via the VCS plugin registry. Lives only in the Python process and briefly in the subprocess env.
-4. Build clone URL from `plugin_id` + `external_id`. GitHub: `https://github.com/{external_id}.git`. Unknown plugin id raises `WorkspaceProvisionError`.
+4. Ask the VCS plugin for the clone URL — `vcs.get_plugin(plugin_id).clone_url(external_id)`. The provider holds no VCS-specific URL knowledge; the GitHub plugin returns `<github_web_base_url>/<external_id>.git`.
 5. Subprocess env: copy of `os.environ` plus `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, `YAAOS_GIT_TOKEN`. Token never on argv — git asks via the askpass script.
 6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of head branch tip.
 7. If `spec.sha` set and not `"HEAD"`: `git fetch --depth=1 origin <sha>` then `git checkout <sha>`. Branch may have advanced; agents must see the PR's head sha.
@@ -62,7 +62,6 @@ Always `healthy=True, message="ok"` in M01. Tempdir is part of the host filesyst
 
 ### Internal helpers
 
-- `_clone_url_for(plugin_id, external_id)` — builds HTTPS URL. GitHub only; raises for unknown.
 - `_write_askpass()` — chmod 0700 askpass in a sibling tempfile.
 - `_git_env_with_token(askpass_path, token)` — env dict.
 - `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Uses `_kill_process_group` on timeout.

@@ -11,14 +11,9 @@
 `POST /api/auth/logout` → revoke the current session and clear cookies.
 
 Errors:
-  - Hard reject (no matching user, no pending invitation) → 403 with body
-    `{"error": "ask_for_invite", "email": <addr>}`.
-  - Link challenge (email matches existing user, provider not linked) → 409
-    with body `{"error": "link_required", "via_provider": ...}` and a signed
-    `yaaos_link_pending` cookie. The SPA sends the user through the
-    already-linked provider; the next callback completes the link.
   - Unknown provider → 404.
   - Unverified email from IdP → 403 `email_not_verified`.
+  - Provider transport failure → 502 `provider_error`.
 """
 
 from __future__ import annotations
@@ -50,21 +45,13 @@ from app.domain.identity.providers import (
     get_provider,
     list_providers,
 )
-from app.domain.identity.service import (
-    HardRejectError,
-    LinkChallengeRequiredError,
-    complete_oauth_link,
-    login_via_oauth,
-)
-from app.domain.identity.types import LinkChallengeRequiredError as _LCRE  # noqa: F401
+from app.domain.identity.service import login_via_oauth
 from app.domain.sessions.dependencies import public_route
 
 log = structlog.get_logger("auth.web")
 
-LINK_PENDING_COOKIE = "yaaos_link_pending"
 TOTP_CHALLENGE_COOKIE = "yaaos_totp_challenge"
 STATE_MAX_AGE_SECONDS = 600
-LINK_PENDING_MAX_AGE_SECONDS = 600
 TOTP_CHALLENGE_MAX_AGE_SECONDS = 600
 
 router = APIRouter()
@@ -73,12 +60,6 @@ router = APIRouter()
 def _state_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(
         get_settings().yaaos_oauth_state_secret.get_secret_value(), salt="yaaos-oauth-state"
-    )
-
-
-def _link_pending_serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(
-        get_settings().yaaos_oauth_state_secret.get_secret_value(), salt="yaaos-link-pending"
     )
 
 
@@ -132,7 +113,6 @@ async def callback(
     provider: str,
     code: Annotated[str, Query()],
     state: Annotated[str, Query()],
-    yaaos_link_pending: Annotated[str | None, Cookie()] = None,
 ) -> Response:
     p = get_provider(provider)
     if p is None:
@@ -154,112 +134,49 @@ async def callback(
     if not profile.email_verified:
         raise HTTPException(status_code=403, detail={"error": "email_not_verified"})
 
-    # Link-confirm completion path: the user previously hit a link challenge,
-    # we set the `yaaos_link_pending` cookie, they signed in via the already-
-    # linked provider, and now we're attaching the new identity to their user.
-    if yaaos_link_pending is not None:
-        try:
-            link_payload = _link_pending_serializer().loads(
-                yaaos_link_pending, max_age=LINK_PENDING_MAX_AGE_SECONDS
+    async with db_session() as s:
+        login_result = await login_via_oauth(s, provider_id=provider, profile=profile)
+
+        # Step-up: if the user has a verified TOTP secret and the provider
+        # didn't satisfy MFA, defer session creation and send the user
+        # through `/totp-challenge`.
+        from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+
+        needs_step_up = not profile.mfa_satisfied and await totp_lifecycle.has_verified_totp(
+            s, login_result.user.id
+        )
+        if needs_step_up:
+            await s.commit()
+            signed = _totp_challenge_serializer().dumps(
+                {"user_id": str(login_result.user.id), "next": next_path}
             )
-        except (BadSignature, SignatureExpired):
-            link_payload = None
-        if link_payload and link_payload.get("target_email") == profile.primary_email:
-            async with db_session() as s:
-                login_result = await login_via_oauth(s, provider_id=provider, profile=profile)
-                await complete_oauth_link(
-                    s,
-                    user_id=login_result.user.id,
-                    provider_id=link_payload["new_provider"],
-                    external_subject=link_payload["new_external_subject"],
-                )
-                await _revoke_pre_auth_session(s, request)
-                created = await session_lifecycle.create(
-                    s,
-                    user_id=login_result.user.id,
-                    workspace_id=None,
-                    ip=request.client.host if request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                )
-                await s.commit()
-            resp = RedirectResponse(next_path, status_code=303)
-            _set_session_cookies(resp, created)
-            resp.set_cookie(**clear_cookie_attrs(LINK_PENDING_COOKIE))
+            resp = JSONResponse(content={"step_up": "totp_required"})
+            resp.set_cookie(
+                key=TOTP_CHALLENGE_COOKIE,
+                value=signed,
+                max_age=TOTP_CHALLENGE_MAX_AGE_SECONDS,
+                httponly=True,
+                samesite="lax",
+                secure=not get_settings().is_non_prod,
+                path="/",
+            )
             return resp
 
-    try:
-        async with db_session() as s:
-            login_result = await login_via_oauth(s, provider_id=provider, profile=profile)
-
-            # Step-up: if the user has a verified TOTP secret and the
-            # provider didn't satisfy MFA, defer session creation and
-            # send the user through `/totp-challenge`.
-            from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
-
-            needs_step_up = not profile.mfa_satisfied and await totp_lifecycle.has_verified_totp(
-                s, login_result.user.id
-            )
-            if needs_step_up:
-                await s.commit()
-                signed = _totp_challenge_serializer().dumps(
-                    {"user_id": str(login_result.user.id), "next": next_path}
-                )
-                resp = JSONResponse(content={"step_up": "totp_required"})
-                resp.set_cookie(
-                    key=TOTP_CHALLENGE_COOKIE,
-                    value=signed,
-                    max_age=TOTP_CHALLENGE_MAX_AGE_SECONDS,
-                    httponly=True,
-                    samesite="lax",
-                    secure=not get_settings().is_non_prod,
-                    path="/",
-                )
-                return resp
-
-            await _revoke_pre_auth_session(s, request)
-            created = await session_lifecycle.create(
-                s,
-                user_id=login_result.user.id,
-                workspace_id=None,
-                ip=request.client.host if request.client else None,
-                user_agent=request.headers.get("user-agent"),
-            )
-            await _emit_login_audit(
-                s,
-                user_id=login_result.user.id,
-                provider=provider,
-                newly_created=login_result.newly_created,
-            )
-            await s.commit()
-    except HardRejectError:
-        return JSONResponse(
-            status_code=403,
-            content={"error": "ask_for_invite", "email": profile.primary_email},
+        await _revoke_pre_auth_session(s, request)
+        created = await session_lifecycle.create(
+            s,
+            user_id=login_result.user.id,
+            workspace_id=None,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
         )
-    except LinkChallengeRequiredError:
-        payload = {
-            "target_email": profile.primary_email,
-            "new_provider": provider,
-            "new_external_subject": profile.external_subject,
-        }
-        signed = _link_pending_serializer().dumps(payload)
-        body = {
-            "error": "link_required",
-            "email": profile.primary_email,
-            "via_provider": provider,
-            "providers": [p_id for p_id in list_providers() if p_id != provider],
-        }
-        resp = JSONResponse(status_code=409, content=body)
-        resp.set_cookie(
-            key=LINK_PENDING_COOKIE,
-            value=signed,
-            max_age=LINK_PENDING_MAX_AGE_SECONDS,
-            httponly=True,
-            samesite="lax",
-            secure=not get_settings().is_non_prod,
-            path="/",
+        await _emit_login_audit(
+            s,
+            user_id=login_result.user.id,
+            provider=provider,
+            newly_created=login_result.newly_created,
         )
-        return resp
+        await s.commit()
 
     resp = RedirectResponse(next_path, status_code=303)
     _set_session_cookies(resp, created)
@@ -612,4 +529,4 @@ async def _emit_logout_audit(s, *, user_id, kind: str = "logout") -> None:
 register_routes(RouteSpec(module_name="sessions", router=router, url_prefix="/api/auth"))
 
 
-__all__ = ["LINK_PENDING_COOKIE", "router"]
+__all__ = ["router"]

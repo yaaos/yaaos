@@ -2,7 +2,6 @@
 
 from app.domain.identity import sessions, web
 from app.domain.identity.models import (
-    GithubInstallationRow,
     OAuthIdentityRow,
     SessionRow,
     UserEmailRow,
@@ -11,8 +10,6 @@ from app.domain.identity.models import (
 )
 from app.domain.identity.service import (
     EmailAlreadyLinkedError,
-    HardRejectError,
-    LinkChallengeRequiredError,
     OAuthIdentity,
     Session,
     SessionNotFoundError,
@@ -24,9 +21,6 @@ from app.domain.identity.service import (
 
 __all__ = [
     "EmailAlreadyLinkedError",
-    "GithubInstallationRow",
-    "HardRejectError",
-    "LinkChallengeRequiredError",
     "OAuthIdentity",
     "OAuthIdentityRow",
     "Session",

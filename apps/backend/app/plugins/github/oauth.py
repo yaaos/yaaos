@@ -1,11 +1,15 @@
-"""GitHub OAuth login provider.
+"""GitHub App user-to-server OAuth (Login with GitHub).
 
-M04: previously lived in `apps/backend/app/plugins/oauth_github/`. Folded
-into `plugins/github` because the GitHub App (webhooks + install) + GitHub
-OAuth login are the same upstream, the same credentials story, and the
-same test stack — splitting them across two plugins was an M02 artifact.
+The same yaaos GitHub App that handles per-org installs also issues
+user-access tokens for login. Same client_id/client_secret, same upstream;
+the only difference is which endpoints we hit. No separate OAuth App
+registration.
 
-Implements `domain/identity.Provider` against GitHub's OAuth 2.0 flow.
+Scopes are configured on the GitHub App itself (`Identifying and authorizing
+users` page) — we never pass a `scope` query param, GitHub ignores it for
+GitHub Apps.
+
+Implements `domain/identity.Provider`.
 """
 
 from __future__ import annotations
@@ -26,11 +30,9 @@ from app.domain.identity.providers import (
 log = structlog.get_logger("plugins.github.oauth")
 
 
-_USERINFO_SCOPE = "read:user user:email"
-
-
 class GitHubOAuthProvider:
-    """Provider implementation for GitHub OAuth Apps.
+    """Provider implementation for the platform yaaos GitHub App's
+    user-to-server OAuth flow.
 
     Stateless: every call reads settings fresh so test overrides via
     `monkeypatch.setenv` are picked up between requests.
@@ -41,24 +43,24 @@ class GitHubOAuthProvider:
     def authorization_url(self, *, state: str, redirect_uri: str) -> str:
         s = get_settings()
         params = {
-            "client_id": s.yaaos_oauth_github_client_id,
+            "client_id": s.yaaos_github_app_client_id,
             "redirect_uri": redirect_uri,
-            "scope": _USERINFO_SCOPE,
             "state": state,
             "allow_signup": "false",
         }
-        return f"{s.yaaos_oauth_github_authorize_url}?{urlencode(params)}"
+        return f"{s.github_web_base_url}/login/oauth/authorize?{urlencode(params)}"
 
     async def exchange_code(self, *, code: str, redirect_uri: str) -> ProviderProfile:
         s = get_settings()
+        token_url = s.yaaos_github_oauth_token_url or f"{s.github_web_base_url}/login/oauth/access_token"
         async with AsyncOAuth2Client(
-            client_id=s.yaaos_oauth_github_client_id,
-            client_secret=s.yaaos_oauth_github_client_secret.get_secret_value(),
+            client_id=s.yaaos_github_app_client_id,
+            client_secret=s.yaaos_github_app_client_secret.get_secret_value(),
             redirect_uri=redirect_uri,
         ) as client:
             try:
                 token = await client.fetch_token(
-                    s.yaaos_oauth_github_token_url,
+                    token_url,
                     code=code,
                     headers={"Accept": "application/json"},
                 )
@@ -73,9 +75,9 @@ class GitHubOAuthProvider:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/vnd.github+json",
         }
-        async with httpx.AsyncClient() as http:
-            user_resp = await http.get(s.yaaos_oauth_github_userinfo_url, headers=headers)
-            emails_resp = await http.get(s.yaaos_oauth_github_emails_url, headers=headers)
+        async with httpx.AsyncClient(base_url=s.github_api_base_url) as http:
+            user_resp = await http.get("/user", headers=headers)
+            emails_resp = await http.get("/user/emails", headers=headers)
         if user_resp.status_code != 200 or emails_resp.status_code != 200:
             log.warning(
                 "oauth_github.userinfo_failed",
@@ -93,11 +95,9 @@ class GitHubOAuthProvider:
             primary_email=primary["email"].lower(),
             email_verified=bool(primary.get("verified")),
             display_name=user.get("name") or user.get("login") or "",
-            # GitHub OAuth is treated as MFA-trusted: their account-level
-            # 2FA gate runs inside the OAuth handshake itself, so by the
-            # time we get a token the user has already passed that
-            # second-factor check. No API verification needed; we don't
-            # demand a separate yaaos TOTP step-up on top of GitHub login.
+            # GitHub's account-level 2FA gate runs inside the OAuth handshake
+            # itself — by the time we get a token the user has already passed
+            # that second-factor check. No yaaos TOTP step-up on top.
             mfa_satisfied=True,
             # The GitHub `login` (a.k.a. username/handle). Surfaced so the
             # callback path can write `users.github_username`.
@@ -117,13 +117,13 @@ def _pick_primary_email(emails: list[dict]) -> dict | None:
 def bootstrap_oauth() -> None:
     """Register the singleton Provider in the in-process registry.
 
-    Skipped when client_id / client_secret are unset: registering anyway would
-    advertise GitHub login on `/api/auth/providers` and then 404 at GitHub
-    with `client_id=`. The LoginPage renders an empty list as "no providers
-    configured".
+    Skipped when the GitHub App's client_id / client_secret are unset:
+    registering anyway would advertise GitHub login on `/api/auth/providers`
+    and then 404 at GitHub with `client_id=`. The LoginPage renders an empty
+    list as "no providers configured".
     """
     s = get_settings()
-    if not s.yaaos_oauth_github_client_id or not s.yaaos_oauth_github_client_secret.get_secret_value():
+    if not s.yaaos_github_app_client_id or not s.yaaos_github_app_client_secret.get_secret_value():
         log.info("oauth_github.skipped_unconfigured")
         return
     register_provider(GitHubOAuthProvider())

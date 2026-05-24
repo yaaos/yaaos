@@ -51,7 +51,7 @@ The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here 
 
 ### VCS
 
-One VCS plugin per org. State lives on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). Switching is two-step: clear, then set. The github plugin's `install_url(org_id)` returns `/api/github/install`; the picker UI navigates the user there, the M02 handshake completes the install, and the install callback calls `set_vcs(...)` to durably record the org's choice. All three mutations audit (`vcs.installed`, `vcs.cleared`).
+One VCS plugin per org. State lives on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). Switching is two-step: clear, then set. The github plugin's `install_url(org_id)` returns `None` — its install handshake is driven by a dedicated `POST /api/github/install/start` endpoint (so `X-Org-Slug` + CSRF reach the auth chain) which returns the signed github.com redirect URL as JSON. The install callback calls `set_vcs(...)` to durably record the org's choice on first-bind. All three mutations audit (`vcs.installed`, `vcs.cleared`).
 
 ### Coding agents
 

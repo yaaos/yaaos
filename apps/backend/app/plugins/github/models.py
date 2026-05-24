@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, LargeBinary, String, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -22,26 +22,6 @@ class GitHubAppInstallationRow(Base):
     install_external_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     account_login: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
-    )
-
-
-class GitHubSettingsRow(Base):
-    __tablename__ = "github_settings"
-
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, unique=True)
-    app_id: Mapped[str] = mapped_column(String, nullable=False)
-    # The App's URL slug (e.g., "yaaos-test"). Used to build install/manage URLs
-    # like https://github.com/apps/<slug>/installations/new. Set via the Settings
-    # credentials form (was previously a YAAOS_GITHUB_APP_SLUG env var).
-    slug: Mapped[str] = mapped_column(String, nullable=False, server_default="")
-    encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    encrypted_webhook_secret: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
