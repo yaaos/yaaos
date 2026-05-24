@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Agent CI: go vet + go build + go test.
+# Agent CI: gofmt, go mod tidy drift, golangci-lint, build, race-enabled
+# test, govulncheck, semgrep.
 #
 # Real-clone tests (workspace package, slice 69) call `git` against a
 # local bare repo. The test skips when git isn't on PATH, but the CI
 # environment SHOULD have it so the test actually runs. Alpine: `apk
 # add git`. Debian/Ubuntu: `apt-get install -y git`. macOS dev: comes
 # with Xcode CLI tools.
+#
+# Tools assumed on PATH (install locally; the RWX agent-ci task
+# installs them in the alpine container):
+#   - go        (toolchain ships gofmt, go vet, go mod, go test)
+#   - golangci-lint  (pin to v1.61.x — last release supporting Go 1.22)
+#   - govulncheck    (go install golang.org/x/vuln/cmd/govulncheck@latest)
+#   - semgrep        (pip install semgrep, or brew install semgrep)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -14,13 +22,54 @@ if ! command -v git >/dev/null 2>&1; then
     echo "WARN: git not on PATH — real-clone tests will skip" >&2
 fi
 
-echo "==> go vet"
-go vet ./...
+echo "==> gofmt -l (format check)"
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+    echo "FAIL: the following files are not gofmt-clean:" >&2
+    echo "$unformatted" >&2
+    exit 1
+fi
+
+echo "==> go mod tidy (drift check)"
+# Go 1.22 lacks `go mod tidy -diff`. Snapshot, run tidy, diff, restore.
+cp go.mod go.mod.bak
+cp go.sum go.sum.bak
+trap 'mv go.mod.bak go.mod 2>/dev/null || true; mv go.sum.bak go.sum 2>/dev/null || true' EXIT
+go mod tidy
+if ! diff -q go.mod go.mod.bak >/dev/null || ! diff -q go.sum go.sum.bak >/dev/null; then
+    echo "FAIL: go.mod or go.sum out of sync — run \`go mod tidy\` and commit." >&2
+    diff -u go.mod.bak go.mod || true
+    diff -u go.sum.bak go.sum || true
+    exit 1
+fi
+mv go.mod.bak go.mod
+mv go.sum.bak go.sum
+trap - EXIT
+
+echo "==> golangci-lint run"
+golangci-lint run ./...
 
 echo "==> go build"
 go build ./...
 
-echo "==> go test"
-go test ./...
+echo "==> go test -race"
+go test -race ./...
+
+echo "==> govulncheck"
+govulncheck ./...
+
+echo "==> semgrep (static security: p/golang + p/owasp-top-ten)"
+# `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
+# telemetry. `*_test.go` is excluded so test fixtures don't trigger
+# rules tuned for production input handling (mirrors backend's
+# `--exclude 'test_*.py'`).
+semgrep scan \
+    --config p/golang \
+    --config p/owasp-top-ten \
+    --exclude '*_test.go' \
+    --error \
+    --metrics off \
+    --quiet \
+    .
 
 echo "OK"

@@ -1,0 +1,46 @@
+# golangci-lint v2 config for the yaaos WorkspaceAgent.
+#
+# Enabled set is the standard high-signal Go linters plus a few extras
+# (bodyclose for HTTP-client safety, gocritic for diagnostic checks,
+# revive as a faster golint successor). gosimple was merged into
+# staticcheck in v2 so it's no longer a separate linter.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - revive
+    - bodyclose
+    - gocritic
+  # revive's `exported` and `package-comments` rules require a doc comment
+  # on every exported symbol / package. At POC phase that produces stub
+  # comments ("X does X") with no signal. Disable both and keep revive's
+  # higher-signal defaults (var-naming, early-return, unused-parameter,
+  # etc.).
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

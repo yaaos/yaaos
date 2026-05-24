@@ -68,9 +68,9 @@ func DecodeInbound(raw []byte) (InboundMessage, error) {
 // `activity_batch` frame. Mirrors the backend handler in
 // `apps/backend/app/core/agent_gateway/web.py` (`activity_ws`).
 type outboundBatch struct {
-	Type                string                 `json:"type"`
-	WorkflowExecutionID string                 `json:"workflow_execution_id"`
-	Events              []protocol.AgentEvent  `json:"events"`
+	Type                string                `json:"type"`
+	WorkflowExecutionID string                `json:"workflow_execution_id"`
+	Events              []protocol.AgentEvent `json:"events"`
 }
 
 // EncodeBatch produces the JSON bytes for an `activity_batch` frame.

@@ -32,10 +32,15 @@ func Dial(ctx context.Context, wsURL, bearer string) (*WSConn, error) {
 	}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+bearer)
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: headers,
 	})
 	if err != nil {
+		// coder/websocket closes the response body on success; on error
+		// the body may still be open with the failure payload.
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 		return nil, fmt.Errorf("activity: WS dial %s: %w", wsURL, err)
 	}
 	return &WSConn{conn: conn}, nil

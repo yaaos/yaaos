@@ -81,7 +81,7 @@ func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequ
 	if err != nil {
 		return nil, err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	switch httpResp.StatusCode {
 	case http.StatusOK:
@@ -144,7 +144,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any, w
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent:

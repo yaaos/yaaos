@@ -30,7 +30,7 @@ The agent is **zero biz logic** — every threshold, prompt, lesson, depth, and 
 - `internal/workspace/` — workspace child-process dispatch loop (`Run` + `Handler` interface) plus `RealHandler` (production) and `StubHandler` (tests). `RealHandler` owns the per-workspace tempdir lifecycle: `CreateWorkspace` allocates an `os.MkdirTemp` under `YAAOS_WORKSPACE_ROOT` (or `os.TempDir()`), `WriteFiles` writes path/content entries under the workspace root with path-escape protection, `RefreshWorkspaceAuth` swaps the stored auth token in-memory, `CleanupWorkspace` does `os.RemoveAll`. Each dispatch opens a `workspace.handle.<kind>` span around the Handler call. Git clone inside CreateWorkspace and the InvokeClaudeCode subprocess wiring are still follow-on slices.
 - `internal/tracing/` — OTel wiring. `Init(withInMemory)` registers the W3C `TraceContext` propagator + an optional in-memory tracer provider for tests. `ExtractContext` parses an incoming traceparent into the active span slot so SDK `Start` derives the new span's parent correctly. `StartSpan` opens a span + returns an `end(err)` closure that records errors. `TraceparentEnv(ctx)` formats the current span as `TRACEPARENT=<value>` for export to child processes.
 - `internal/identity/` — SigV4-signed STS `GetCallerIdentity` for control-plane verification. **Stub** in foundations.
-- `bin/ci` — `go vet ./... && go build ./... && go test ./...`.
+- `bin/ci` — `gofmt`, `go mod tidy` drift, `golangci-lint`, `go build`, `go test -race`, `govulncheck`, `semgrep` (`p/golang` + `p/owasp-top-ten`). Linter config at `.golangci.yml`.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 # yaaos WorkspaceAgent — customer-deployed Go binary.
 #
-# Two-stage build: golang:1.22-alpine compiles the static binary; the
+# Two-stage build: golang:1.25-alpine compiles the static binary; the
 # runtime stage is `debian:bookworm-slim` because the agent shells out
 # to `git` for repo clone (and, later, hands off to the Claude Code CLI
 # which also expects `git` + a real userspace). Distroless/static was the
@@ -22,7 +22,7 @@
 #     yaaos-agent:dev supervisor
 
 # ── Stage 1: build ─────────────────────────────────────────────────────
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Build deps that only the compile step needs.
 RUN apk add --no-cache git ca-certificates

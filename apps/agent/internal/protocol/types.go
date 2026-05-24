@@ -85,10 +85,10 @@ type InvokeClaudeCodeCommand struct {
 	CommandHeader
 	// Invocation is intentionally permissive at the wire layer — its shape
 	// is owned by domain/coding_agent.
-	Invocation json.RawMessage          `json:"invocation"`
-	MCPServers []map[string]any         `json:"mcp_servers,omitempty"`
-	Limits     InvokeClaudeCodeLimits   `json:"limits"`
-	ResultSpec map[string]any           `json:"result_spec,omitempty"`
+	Invocation json.RawMessage        `json:"invocation"`
+	MCPServers []map[string]any       `json:"mcp_servers,omitempty"`
+	Limits     InvokeClaudeCodeLimits `json:"limits"`
+	ResultSpec map[string]any         `json:"result_spec,omitempty"`
 }
 
 type CleanupWorkspaceCommand struct {
@@ -179,10 +179,10 @@ func (c *AgentCommand) Header() CommandHeader {
 type EventKind string
 
 const (
-	EventProgress          EventKind = "progress"
-	EventCompletedSuccess  EventKind = "completed_success"
-	EventCompletedFailure  EventKind = "completed_failure"
-	EventCompletedSkipped  EventKind = "completed_skipped"
+	EventProgress         EventKind = "progress"
+	EventCompletedSuccess EventKind = "completed_success"
+	EventCompletedFailure EventKind = "completed_failure"
+	EventCompletedSkipped EventKind = "completed_skipped"
 )
 
 // AgentEvent is the agent → backend POST body for /api/v1/commands/{id}/events.
@@ -231,7 +231,7 @@ type IdentityExchangeResponse struct {
 
 type HeartbeatWorkspaceEntry struct {
 	WorkspaceID      string `json:"workspace_id"`
-	Status           string `json:"status"`            // running | exited | unknown
+	Status           string `json:"status"` // running | exited | unknown
 	CurrentCommandID string `json:"current_command_id,omitempty"`
 }
 

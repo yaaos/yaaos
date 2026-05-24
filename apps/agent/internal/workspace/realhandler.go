@@ -103,9 +103,9 @@ type realSlot struct {
 // RealHandler implements workspace.Handler for production. Construct
 // with NewRealHandler.
 type RealHandler struct {
-	cfg     RealHandlerConfig
-	mu      sync.Mutex
-	slots   map[string]*realSlot
+	cfg   RealHandlerConfig
+	mu    sync.Mutex
+	slots map[string]*realSlot
 }
 
 // NewRealHandler returns a fresh handler with the given config. Use
@@ -360,11 +360,11 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 		stdoutExcerpt = string(res.Stdout[:16*1024]) + "...[truncated]"
 	}
 	return map[string]any{
-		"workspace_id": cmd.WorkspaceID,
-		"exit_code":    res.ExitCode,
-		"duration_ms":  res.Duration.Milliseconds(),
-		"stdout":       string(res.Stdout), // full output for the engine to parse
-		"stderr":       string(res.Stderr),
+		"workspace_id":   cmd.WorkspaceID,
+		"exit_code":      res.ExitCode,
+		"duration_ms":    res.Duration.Milliseconds(),
+		"stdout":         string(res.Stdout), // full output for the engine to parse
+		"stderr":         string(res.Stderr),
 		"stdout_excerpt": stdoutExcerpt,
 	}, nil
 }
@@ -428,10 +428,10 @@ func safeJoin(base, rel string) (string, error) {
 // non-GitHub plugins arrive.
 //
 // Sequence:
-//   1. `git clone --depth=<history> [--branch=<name>] <url> .`
-//   2. If `head_sha` differs from what HEAD resolves to:
-//      `git fetch --depth=<history+1> origin <head_sha>` then
-//      `git checkout <head_sha>`.
+//  1. `git clone --depth=<history> [--branch=<name>] <url> .`
+//  2. If `head_sha` differs from what HEAD resolves to:
+//     `git fetch --depth=<history+1> origin <head_sha>` then
+//     `git checkout <head_sha>`.
 //
 // Step 2 covers two cases the supervisor flow exercises: branch-name
 // supplied + HEAD has moved since the webhook fired (the wire's head_sha

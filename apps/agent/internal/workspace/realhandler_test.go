@@ -442,9 +442,9 @@ func TestRealHandler_FullLifecycle_CreateWriteCleanup(t *testing.T) {
 func TestSafeJoin(t *testing.T) {
 	base := "/ws"
 	cases := []struct {
-		rel   string
-		ok    bool
-		want  string
+		rel  string
+		ok   bool
+		want string
 	}{
 		{"a.txt", true, "/ws/a.txt"},
 		{"src/foo.py", true, "/ws/src/foo.py"},

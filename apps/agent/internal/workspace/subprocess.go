@@ -151,7 +151,7 @@ func RunStreaming(ctx context.Context, opts RunStreamingOptions) (*RunStreamingR
 	// stdin: write what we have, close. A slow consumer will backpressure;
 	// the goroutine ensures stdout reading isn't blocked by stdin writing.
 	go func() {
-		defer stdin.Close()
+		defer func() { _ = stdin.Close() }()
 		if len(opts.Stdin) > 0 {
 			_, _ = stdin.Write(opts.Stdin)
 		}

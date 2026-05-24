@@ -38,6 +38,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // tracerName is the instrumentation name the agent's spans are tagged
@@ -64,7 +65,7 @@ func Init(withInMemory bool) *tracetest.InMemoryExporter {
 	if !withInMemory {
 		// No-op provider: spans pass through propagation but aren't
 		// exported anywhere.
-		otel.SetTracerProvider(oteltrace.NewNoopTracerProvider())
+		otel.SetTracerProvider(noop.NewTracerProvider())
 		return nil
 	}
 	exp := tracetest.NewInMemoryExporter()
