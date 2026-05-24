@@ -122,7 +122,7 @@ tasks:
           set -e
           apk add --no-cache git bash py3-pip curl
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b \$(go env GOPATH)/bin v2.1.6
+            | sh -s -- -b \$(go env GOPATH)/bin v2.12.2
           go install golang.org/x/vuln/cmd/govulncheck@latest
           pip install --break-system-packages --quiet semgrep
           export PATH=\$PATH:\$(go env GOPATH)/bin
