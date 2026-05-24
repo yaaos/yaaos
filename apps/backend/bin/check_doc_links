@@ -36,16 +36,29 @@ REPO_ROOT = Path(__file__).resolve().parents[3]  # apps/backend/bin/check_doc_li
 
 
 def _git_tracked_paths() -> set[str] | None:
-    """Repo-relative paths tracked by git, or None if git or `.git/` is unavailable."""
+    """Repo-relative paths tracked by git, or None if git or `.git/` is unavailable.
+
+    `-c safe.directory=*` disables the dubious-ownership guard. In CI the
+    repo's `.git` is bind-mounted into a container that runs as a non-root
+    user, so on Linux the in-container uid won't match the host uid that
+    owns `.git` and git refuses to read it by default. Falling back to FS
+    silently here would mask cross-app links into source trees that aren't
+    mounted (e.g. `apps/web/src/`) — so any unexpected git failure is also
+    surfaced to stderr instead of being swallowed.
+    """
     try:
         out = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files"],
+            ["git", "-c", "safe.directory=*", "-C", str(REPO_ROOT), "ls-files"],
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
+        return None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        stderr = getattr(e, "stderr", "") or ""
+        sys.stderr.write(f"warning: `git ls-files` failed, falling back to FS check: {e}\n{stderr}\n")
         return None
     return set(out.stdout.splitlines())
 
