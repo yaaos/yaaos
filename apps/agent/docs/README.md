@@ -178,7 +178,17 @@ aws logs create-log-group --log-group-name /yaaos/agent
 aws logs put-retention-policy --log-group-name /yaaos/agent --retention-in-days 30
 ```
 
-The agent logs to stdout in structured plain text today (line-per-event). JSON structured logs land alongside the Phase 6 follow-on OTel wiring.
+### Logging
+
+The agent uses Go's `log/slog` and writes every record to a **multi-sink fan-out**:
+
+- **stdout** — picked up by the ECS awslogs driver → CloudWatch (`/yaaos/agent`, 30-day retention).
+- **rotated local file** at `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` — the operator's out-of-band channel when the control plane is unreachable and CloudWatch is no help. Pull with `aws ecs execute-command --command 'cat /var/log/yaaos-agent/agent.log'` or `kubectl cp`.
+  - Rotation: 50 MB per file, 10 backups, 3-day age (gzipped). Lumberjack runs the rotation; pruning fires on the next write so the agent's ~30s heartbeat cadence keeps it tidy.
+  - If the directory is unwritable (mount missing, permissions wrong), the agent emits one stderr warning and continues with stdout-only — never fatal.
+- **caller-supplied extra handlers** — `logging.Config.ExtraHandlers` accepts additional `slog.Handler`s for OTel collector / external sinks.
+
+The `workspace` subcommand routes its console sink to **stderr** instead of stdout, because stdout there is the supervisor↔workspace IPC pipe. The file sink is identical in both modes.
 
 ### Health + scaling
 

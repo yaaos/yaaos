@@ -21,12 +21,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/yaaos/agent/internal/logging"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/supervisor"
 	"github.com/yaaos/agent/internal/workspace"
@@ -38,23 +40,55 @@ import (
 const defaultBackendURL = "https://app.yaaos.cloud"
 
 func main() {
+	// run() returns the desired exit code so deferred cleanups (the log
+	// file flush in particular) actually fire before exit. os.Exit
+	// bypasses defers, so confine it to one spot here.
+	os.Exit(run())
+}
+
+func run() int {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: agent <supervisor|workspace>")
-		os.Exit(2)
+		return 2
 	}
+
+	// Wire slog before any other code runs, so even early bootstrap
+	// errors land in the file sink the operator can read out-of-band.
+	//
+	// The `workspace` subcommand uses stdout as its IPC event pipe back
+	// to the supervisor (one JSON frame per line). Logs MUST NOT touch
+	// stdout in that mode or they'll be parsed as protocol frames and
+	// crash the supervisor. Route the console sink to stderr there;
+	// `supervisor` mode keeps stdout for ECS awslogs / CloudWatch.
+	consoleWriter := io.Writer(os.Stdout)
+	if os.Args[1] == "workspace" {
+		consoleWriter = os.Stderr
+	}
+	shutdownLogs, err := logging.Init(logging.Config{StdoutWriter: consoleWriter})
+	if err != nil {
+		// logging.Init never returns a fatal error today, but treat
+		// future errors defensively rather than silently swallowing.
+		fmt.Fprintf(os.Stderr, "logging.init failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = shutdownLogs(context.Background()) }()
+
 	switch os.Args[1] {
 	case "supervisor":
 		if err := runSupervisor(); err != nil {
-			log.Fatalf("supervisor: %v", err)
+			slog.Error("supervisor.fatal", "err", err.Error())
+			return 1
 		}
 	case "workspace":
 		if err := runWorkspace(); err != nil {
-			log.Fatalf("workspace: %v", err)
+			slog.Error("workspace.fatal", "err", err.Error())
+			return 1
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", os.Args[1])
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }
 
 func runSupervisor() error {
@@ -71,12 +105,14 @@ func runSupervisor() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	sup := supervisor.New(cfg, cli, stderrLogger{})
-	log.Printf("supervisor.starting backend=%s pod=%s", cfg.BaseURL, cfg.AgentPodID)
+	// *slog.Logger satisfies supervisor.Logger directly — Info/Warn/Error
+	// signatures match. No adapter needed.
+	sup := supervisor.New(cfg, cli, slog.Default())
+	slog.Info("supervisor.starting", "backend", cfg.BaseURL, "pod", cfg.AgentPodID)
 	if err := sup.Run(ctx); err != nil {
 		return err
 	}
-	log.Printf("supervisor.stopped")
+	slog.Info("supervisor.stopped")
 	return nil
 }
 
@@ -94,11 +130,11 @@ func runWorkspace() error {
 	handler := workspace.NewRealHandler(workspace.RealHandlerConfig{
 		Root: envOr("YAAOS_WORKSPACE_ROOT", ""),
 	})
-	log.Printf("workspace.starting")
+	slog.Info("workspace.starting")
 	if err := workspace.Run(ctx, os.Stdin, os.Stdout, handler, workspace.Options{}); err != nil {
 		return err
 	}
-	log.Printf("workspace.stopped")
+	slog.Info("workspace.stopped")
 	return nil
 }
 
@@ -107,26 +143,6 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-type stderrLogger struct{}
-
-func (stderrLogger) Info(msg string, kv ...any)  { log.Printf("INFO  %s %s", msg, kvString(kv)) }
-func (stderrLogger) Warn(msg string, kv ...any)  { log.Printf("WARN  %s %s", msg, kvString(kv)) }
-func (stderrLogger) Error(msg string, kv ...any) { log.Printf("ERROR %s %s", msg, kvString(kv)) }
-
-func kvString(kv []any) string {
-	if len(kv) == 0 {
-		return ""
-	}
-	s := ""
-	for i := 0; i+1 < len(kv); i += 2 {
-		if i > 0 {
-			s += " "
-		}
-		s += fmt.Sprintf("%v=%v", kv[i], kv[i+1])
-	}
-	return s
 }
 
 // randomPodID returns a 32-hex-char string — sufficient for the per-pod

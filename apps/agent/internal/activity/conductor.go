@@ -2,7 +2,7 @@ package activity
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
@@ -95,15 +95,15 @@ func (c *Conductor) Publish(workspaceID string, ev protocol.AgentEvent) {
 func (c *Conductor) flushOne(workspaceID string, events []protocol.AgentEvent) {
 	wf, ok := c.mapping.Get(workspaceID)
 	if !ok {
-		log.Printf("activity: drop batch — no workflow_execution_id mapping for workspace %s", workspaceID)
+		slog.Warn("activity.drop_batch_no_mapping", "workspace_id", workspaceID)
 		return
 	}
 	frame, err := EncodeBatch(wf, events)
 	if err != nil {
-		log.Printf("activity: encode batch failed for %s: %v", wf, err)
+		slog.Warn("activity.encode_batch_failed", "workflow_execution_id", wf, "err", err.Error())
 		return
 	}
 	if err := c.send(frame); err != nil {
-		log.Printf("activity: send batch failed for %s: %v", wf, err)
+		slog.Warn("activity.send_batch_failed", "workflow_execution_id", wf, "err", err.Error())
 	}
 }
