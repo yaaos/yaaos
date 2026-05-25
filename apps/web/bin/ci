@@ -1,52 +1,9 @@
 #!/usr/bin/env bash
-# Frontend CI: lint + typecheck + tests + build.
+# Frontend CI: lint + typecheck + tests + build + semgrep.
 #
-# ─── Semgrep is intentionally NOT in this script ─────────────────────────────
-#
-# Semgrep static security scanning against `apps/web/src` runs as its own
-# RWX task (`web-security` in `.rwx/push.yml`) using the official
-# `semgrep/semgrep` Docker image. The reasoning:
-#
-# 1. The web-builder Docker stage is `node:22-bookworm-slim` — pure Node.js,
-#    no Python. Semgrep is a Python tool, so it cannot run from inside the
-#    web container.
-#
-# 2. We refuse to install Python+pip into the web image just for one
-#    scanner (bloats the image, adds an unrelated toolchain).
-#
-# 3. We refuse to reach into the backend image from the web pipeline.
-#    Pipeline-level cross-app dependencies are an anti-pattern: web's CI
-#    failing because of a backend image issue is the kind of coupling that
-#    rots fast.
-#
-# Hence: CI uses the standalone `semgrep/semgrep` image, run as a sibling
-# task to `web-ci`. No pipeline-level dependency, no image bloat.
-#
-# ─── Running the same scan LOCALLY ───────────────────────────────────────────
-#
-# For local dev convenience we recommend reusing the semgrep already
-# installed in the backend's uv venv (it's pinned there as a dev dep
-# anyway, so contributors who run backend tests already have it). This is
-# a DEV-CONVENIENCE shortcut, NOT a structural dependency — semgrep is a
-# single-tool requirement and the backend venv just happens to be a place
-# it's already installed:
-#
-#   cd apps/web
-#   uv run --directory ../backend semgrep scan \
-#       --config p/typescript --config p/react --config p/owasp-top-ten \
-#       --error --metrics off --quiet src
-#
-# Contributors without uv can use the same Docker image CI uses:
-#
-#   docker run --rm \
-#     -v "$(pwd)/src:/scan/src:ro" \
-#     -v "$(pwd)/../../.semgrepignore:/scan/.semgrepignore:ro" \
-#     -w /scan \
-#     semgrep/semgrep:latest semgrep scan \
-#       --config p/typescript --config p/react --config p/owasp-top-ten \
-#       --error --metrics off --quiet /scan/src
-#
-# Either way, the same rulesets run as in CI.
+# semgrep must be on PATH. In RWX CI it's pip-installed by the web-ci
+# task; locally `pipx install semgrep` (or `pip install --user semgrep`)
+# works.
 
 set -euo pipefail
 
@@ -64,5 +21,15 @@ pnpm exec vitest run --reporter=default --reporter=json --outputFile=./tmp/vites
 
 echo "==> vite build"
 pnpm exec vite build
+
+echo "==> semgrep (static security: p/typescript + p/react + p/owasp-top-ten)"
+semgrep scan \
+    --config p/typescript \
+    --config p/react \
+    --config p/owasp-top-ten \
+    --error \
+    --metrics off \
+    --quiet \
+    src
 
 echo "OK"

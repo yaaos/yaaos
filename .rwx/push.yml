@@ -18,13 +18,42 @@ tasks:
       repository: https://github.com/JackKora/yaaos.git
       ref: ${{ init.commit-sha }}
 
-  # Each CI task uses `filter:` so only the matching files are present on
-  # disk AND contribute to the task's cache key. Without a filter, every
-  # push busts every task (the workspace tree from `code` is hashed
-  # whole). See https://www.rwx.com/docs/filtering-files.
+  # ─── Shared toolchains ──────────────────────────────────────────────
+  # Per RWX CI reference (https://www.rwx.com/docs/guides/ci): each
+  # install is its own task and downstream CI tasks `use:` what they
+  # need. RWX caches these install layers globally — a node install
+  # caches across runs until the version bumps.
+
+  - key: system-packages-backend
+    # Backend's python-xmlsec binds to libxmlsec1 + libxml2/libxslt at
+    # build time. Only the backend CI needs these.
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y --no-install-recommends \
+        libxmlsec1-dev xmlsec1 pkg-config libxml2-dev libxslt1-dev
+      sudo apt-get clean
+
+  - key: python
+    call: python/install 1.4.4
+    with:
+      python-version: "3.13"
+
+  - key: nodejs
+    call: nodejs/install 1.1.14
+    with:
+      node-version: "22.11.0"
+
+  - key: golang
+    call: golang/install 1.2.1
+    with:
+      go-version: "1.25.0"
+
+  # ─── CI tasks ───────────────────────────────────────────────────────
+  # Each task `filter:` is its own app dir + lockfile/config + this
+  # push.yml — so changes outside the filter set don't bust its cache.
 
   - key: backend-ci
-    use: [code]
+    use: [code, system-packages-backend, python]
     filter:
       - apps/backend/**
       - pyproject.toml
@@ -32,18 +61,12 @@ tasks:
       - docker/docker-compose.test.yml
       - .rwx/push.yml
     docker: true
-    # Docker is on ONLY so `docker compose` can bring up the postgres +
-    # redis services backend tests need. The test runner itself runs
-    # natively on the Ubuntu runner — uv + python on the host, pytest
-    # connects to compose-bound localhost ports. Compose maps postgres to
-    # host :55432 and redis to host :56379 (see docker-compose.test.yml).
+    # Docker is on only so `docker compose` can bring up postgres +
+    # redis services. The test runner itself runs natively on the
+    # Ubuntu agent. Compose maps postgres → host :55432 and redis →
+    # host :56379 (see docker-compose.test.yml).
     run: |
       set -e
-      apt-get update
-      apt-get install -y --no-install-recommends \
-        python3.13 python3.13-venv \
-        libxmlsec1-dev xmlsec1 pkg-config libxml2-dev libxslt1-dev \
-        curl ca-certificates
       curl -LsSf https://astral.sh/uv/install.sh | sh
       export PATH="$HOME/.local/bin:$PATH"
       docker compose -f docker/docker-compose.test.yml up -d --wait postgres redis
@@ -61,27 +84,28 @@ tasks:
 
   - key: docs-ci
     use: [code]
-    # Unfiltered: walks markdown across the whole repo and resolves link
-    # targets via `git ls-files`, so a restrictive filter risks false
-    # negatives on linked non-markdown files. Cheapest task (pure Python
-    # stdlib, no Docker) — filtering isn't worth the correctness risk.
+    # Unfiltered: walks markdown across the whole repo and resolves
+    # link targets via `git ls-files`, so a restrictive filter risks
+    # false negatives on linked non-markdown files. Cheap task — no
+    # Docker, pure Python stdlib.
     run: |
       python3 apps/backend/bin/check_doc_links
 
   - key: web-ci
-    use: [code]
+    use: [code, nodejs, python]
     filter:
       - apps/web/**
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - .semgrepignore
       - .rwx/push.yml
+    # python comes along so semgrep (run from apps/web/bin/ci) is
+    # available. corepack lives in the node distribution we install
+    # above.
     run: |
       set -e
-      apt-get update
-      apt-get install -y --no-install-recommends curl ca-certificates gnupg
-      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-      apt-get install -y --no-install-recommends nodejs
+      pip install --quiet semgrep
       corepack enable
       corepack prepare pnpm@9.12.3 --activate
       pnpm install --frozen-lockfile
@@ -94,44 +118,21 @@ tasks:
             framework: Vitest
 
   - key: agent-ci
-    use: [code]
+    use: [code, golang, python]
     filter:
       - apps/agent/**
       - apps/backend/openapi/agent-api.yaml
       - .rwx/push.yml
-    # Go is hermetic — runs natively on the Ubuntu runner. Tooling
-    # installed inline: golangci-lint (official install script,
-    # v2.x), govulncheck (go install), semgrep (pip). CGO + race
-    # detector work on Ubuntu's default gcc.
+    # Go is hermetic — runs natively. Tooling installed inline:
+    # golangci-lint (official install script, v2.x), govulncheck
+    # (go install), semgrep (pip). CGO + race detector work on
+    # Ubuntu's default gcc, so the alpine-specific CGO_ENABLED=1 from
+    # the old Docker-based config is no longer needed.
     run: |
       set -e
-      apt-get update
-      apt-get install -y --no-install-recommends \
-        curl ca-certificates git build-essential python3-pip
-      curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xz
       export PATH="/usr/local/go/bin:$(go env GOPATH 2>/dev/null || echo $HOME/go)/bin:$PATH"
       curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
         | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
       go install golang.org/x/vuln/cmd/govulncheck@latest
-      pip install --break-system-packages --quiet semgrep
+      pip install --quiet semgrep
       cd apps/agent && bin/ci
-
-  - key: web-security
-    use: [code]
-    filter:
-      - apps/web/src/**
-      - .semgrepignore
-      - .rwx/push.yml
-    run: |
-      set -e
-      apt-get update
-      apt-get install -y --no-install-recommends python3-pip
-      pip install --break-system-packages --quiet semgrep
-      semgrep scan \
-        --config p/typescript \
-        --config p/react \
-        --config p/owasp-top-ten \
-        --error \
-        --metrics off \
-        --quiet \
-        apps/web/src
