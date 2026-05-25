@@ -1,12 +1,16 @@
 """Worker process entrypoint.
 
-Boots one event loop with:
-  - the taskiq broker (Redis-backed) — consumes tasks from the queue
+Boots one event loop with three asyncio tasks raced via
+`asyncio.wait(..., FIRST_COMPLETED)`:
   - the outbox drain loop — pushes pending outbox rows into the broker
+  - `Receiver.listen` — consumes tasks from the taskiq broker
+  - a `stop.wait()` task tied to SIGTERM/SIGINT
 
-Both run as asyncio tasks via `asyncio.gather`. Single-process POC; the
-two responsibilities split into separate compose services later if/when
-scale demands it.
+Whichever finishes first triggers shutdown of the others. Normally that's
+the stop-signal task; the other two finishing means something escaped a
+handler ([`_log_done_task_exceptions`] logs it). Single-process POC; the
+drain/consume pair split into separate compose services later if scale
+demands it.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+from collections.abc import Iterable
 
 import structlog
 from taskiq.receiver import Receiver
@@ -24,6 +29,27 @@ from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_loop
 
 log = structlog.get_logger("core.tasks.worker")
+
+
+def _log_done_task_exceptions(done: Iterable[asyncio.Task[object]]) -> None:
+    """Surface exceptions that escaped a child coroutine's own handlers.
+
+    `drain_loop` and `Receiver.listen` catch their own errors, so this only
+    fires on the escape path (e.g. a bug in the except branch itself).
+    Calling `.exception()` also suppresses asyncio's GC-time "Task exception
+    was never retrieved" stderr warning — this is the single source of
+    truth for these failures, not a duplicate of any inner log line.
+    """
+    for t in done:
+        if t.cancelled():
+            continue
+        exc = t.exception()
+        if exc is not None:
+            log.error(
+                "tasks.worker.child_crashed",
+                task=t.get_name(),
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
 
 async def run() -> None:
@@ -70,6 +96,7 @@ async def run() -> None:
         "tasks.worker.shutting_down",
         finished=[t.get_name() for t in done],
     )
+    _log_done_task_exceptions(done)
     for t in pending:
         t.cancel()
     for t in pending:

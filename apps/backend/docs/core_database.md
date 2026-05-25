@@ -43,6 +43,8 @@ The migration list is the `_MIGRATIONS` tuple in [service.py](../app/core/databa
 
 The `_apply_create_all` migration explicitly imports every module's `models` so the SQLAlchemy registry is populated before `create_all`. New modules with tables need adding to that import list — no auto-discovery.
 
+Concurrent callers are serialized by a Postgres session-scoped advisory lock (`_MIGRATION_LOCK_KEY`) acquired on a dedicated connection that spans the whole call. The web process and worker both run `migrate()` on startup — and prod web will scale to multiple instances — so without the lock both readers can see an empty `applied` set, race on the DDL, and crash on the duplicate `INSERT INTO schema_migrations`. Followers block on the lock and re-read `applied` once they acquire it, finding everything already done. Session-scoped (not `pg_advisory_xact_lock`) because per-migration commits are separate transactions; the lock must outlive each. If a PgBouncer-style transaction-pooling proxy is ever placed in front of Postgres, this lock breaks (session affinity is lost between statements) — either bypass the pooler for `migrate()` or switch the lock primitive.
+
 ### `dispose()`
 
 Called on shutdown. `engine.dispose()` and resets `_engine`/`_sessionmaker` to `None`, so the next request constructs a fresh engine (used by tests that swap DB URLs).
@@ -55,6 +57,6 @@ Every other table is owned by the module that defines its ORM model.
 
 ## How it's tested
 
-`app/core/database/test/` is a placeholder. Module is exercised end-to-end by every integration test running through `TestClient` — `/api/health` covers `ping()`, and `migrate()` runs on every test-DB setup.
+`app/core/database/test/` carries focused tests for the pool kwargs, the transactional-rollback fixture, and the `migrate()` advisory-lock race. The rest of the module is exercised end-to-end by every integration test running through `TestClient` — `/api/health` covers `ping()`, and `migrate()` runs on every test-DB setup.
 
 The `db_session` fixture in `apps/backend/conftest.py` is the standard transactional-rollback wrapper used by every integration test that hits Postgres. It opens an outer transaction, binds an `AsyncSession` to that connection, installs it via `set_test_session_override`, and uses a `restart_savepoint` listener so production-side `await s.commit()` calls become SAVEPOINT releases inside the outer transaction. Teardown rolls back the outer transaction — the test DB stays clean between cases without re-running migrations.

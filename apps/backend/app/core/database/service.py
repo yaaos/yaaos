@@ -872,9 +872,42 @@ async def _apply_drop_claude_code_default_timeout_seconds(conn) -> None:  # type
     await conn.execute(text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS default_timeout_seconds"))
 
 
+# Postgres advisory lock key for `migrate()`. Arbitrary stable bigint — pick
+# any value that doesn't collide with another advisory lock; this codebase
+# has no other advisory-lock users.
+_MIGRATION_LOCK_KEY = 0x7AA05_DB_5C_4E11A
+
+
 async def migrate() -> None:
-    """Apply any un-applied migrations. Idempotent."""
+    """Apply any un-applied migrations. Idempotent and concurrency-safe.
+
+    Serializes via a Postgres session-scoped advisory lock held on a dedicated
+    connection that spans the whole call. Two processes starting at once (web
+    + worker, or two web instances) both call `migrate()`; whichever acquires
+    the lock first applies, the other blocks, then re-reads `applied` inside
+    the lock and finds nothing to do.
+
+    Session-scoped (not `pg_advisory_xact_lock`) because per-migration commits
+    happen in separate transactions — the lock has to outlive each. Today
+    there is no pooler in front of Postgres; this lock would break under
+    PgBouncer transaction pooling (session affinity is lost between
+    statements) so a pooler in this path would need to be bypassed.
+    """
     await ensure_schema_migrations_table()
+    async with get_engine().connect() as lock_conn:
+        await lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+        try:
+            await _apply_pending()
+        finally:
+            await lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+
+
+async def _apply_pending() -> None:
+    """Body of `migrate()`, called while holding the advisory lock.
+
+    Re-reads `applied` *inside* the lock so a follower that waited on a leader
+    sees the freshly-applied rows and exits without doing anything.
+    """
     async with get_engine().begin() as conn:
         result = await conn.execute(text("SELECT version FROM schema_migrations"))
         applied = {row[0] for row in result}
