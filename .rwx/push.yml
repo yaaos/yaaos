@@ -18,40 +18,40 @@ tasks:
       repository: https://github.com/JackKora/yaaos.git
       ref: ${{ init.commit-sha }}
 
-  # No filters: RWX caches at the task level (same code SHA + same run script =
-  # task skipped entirely) and Docker's BuildKit cache inside the persistent
-  # `docker: true` daemon handles incremental rebuilds. Filter lists are a
-  # maintenance trap and would have missed the cross-stage `COPY --from=
-  # web-builder` dependency on the web inputs anyway.
+  # Each CI task uses `filter:` so only the matching files are present on
+  # disk AND contribute to the task's cache key. Without a filter, every
+  # push busts every task (the workspace tree from `code` is hashed
+  # whole). See https://www.rwx.com/docs/filtering-files.
 
   - key: backend-ci
     use: [code]
+    filter:
+      - apps/backend/**
+      - pyproject.toml
+      - uv.lock
+      - docker/docker-compose.test.yml
+      - .rwx/push.yml
     docker: true
-    # bin/ci's pytest exercises real Postgres (transactional rollback
-    # pattern per apps/backend/docs/patterns.md). We bring up the postgres
-    # service from docker-compose.test.yml, run backend-ci on the same compose
-    # network, and tear it down on exit.
-    #
-    # apps/backend/tmp is mounted writable so the pytest-reportlog file
-    # produced inside the container survives `--rm` and is picked up by
-    # outputs.test-results. The mount is chmod 777 because the container
-    # runs as uid 1000 (yaaos), which won't match the RWX runner uid.
-    #
-    # Cross-app doc-link checks live in the `docs-ci` task — running them
-    # here previously required bind-mounting the other apps' docs + `.git`
-    # into this container, which was a fragility tax for no payoff.
+    # Docker is on ONLY so `docker compose` can bring up the postgres +
+    # redis services backend tests need. The test runner itself runs
+    # natively on the Ubuntu runner — uv + python on the host, pytest
+    # connects to compose-bound localhost ports. Compose maps postgres to
+    # host :55432 and redis to host :56379 (see docker-compose.test.yml).
     run: |
-      mkdir -p apps/backend/tmp && chmod 777 apps/backend/tmp
+      set -e
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        python3.13 python3.13-venv \
+        libxmlsec1-dev xmlsec1 pkg-config libxml2-dev libxslt1-dev \
+        curl ca-certificates
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+      export PATH="$HOME/.local/bin:$PATH"
       docker compose -f docker/docker-compose.test.yml up -d --wait postgres redis
       trap "docker compose -f docker/docker-compose.test.yml down -v" EXIT
-      docker build -f docker/Dockerfile --target backend-ci -t yaaos-backend-ci .
-      docker run --rm \
-        --network yaaos-test_default \
-        -e DATABASE_URL=postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos \
-        -e REDIS_URL=redis://redis:6379/0 \
-        -e YAAOS_ENV=dev \
-        -v "$(pwd)/apps/backend/tmp:/app/apps/backend/tmp" \
-        yaaos-backend-ci sh -c "cd apps/backend && bin/ci"
+      export DATABASE_URL="postgresql+asyncpg://yaaos:yaaos@localhost:55432/yaaos"
+      export REDIS_URL="redis://localhost:56379/0"
+      export YAAOS_ENV=dev
+      cd apps/backend && bin/ci
     outputs:
       test-results:
         - path: apps/backend/tmp/pytest-reportlog.json
@@ -61,27 +61,31 @@ tasks:
 
   - key: docs-ci
     use: [code]
-    # Cross-app documentation gates. Runs directly on the cloned working
-    # tree — no Docker, no bind mounts. Add more doc checks here over time
-    # rather than spawning new tasks.
-    #
-    # apps/backend/bin/check_doc_links is intentionally self-locating
-    # (resolves REPO_ROOT from __file__) so it works from any cwd, and has
-    # zero deps beyond Python stdlib so we don't need uv or a venv here.
+    # Unfiltered: walks markdown across the whole repo and resolves link
+    # targets via `git ls-files`, so a restrictive filter risks false
+    # negatives on linked non-markdown files. Cheapest task (pure Python
+    # stdlib, no Docker) — filtering isn't worth the correctness risk.
     run: |
       python3 apps/backend/bin/check_doc_links
 
   - key: web-ci
     use: [code]
-    docker: true
-    # apps/web/tmp is mounted writable so vitest's JSON reporter output
-    # survives `--rm` and is picked up by outputs.test-results.
+    filter:
+      - apps/web/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .rwx/push.yml
     run: |
-      mkdir -p apps/web/tmp && chmod 777 apps/web/tmp
-      docker build -f docker/Dockerfile --target web-builder -t yaaos-web-ci .
-      docker run --rm \
-        -v "$(pwd)/apps/web/tmp:/build/apps/web/tmp" \
-        yaaos-web-ci sh -c "cd apps/web && bin/ci"
+      set -e
+      apt-get update
+      apt-get install -y --no-install-recommends curl ca-certificates gnupg
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y --no-install-recommends nodejs
+      corepack enable
+      corepack prepare pnpm@9.12.3 --activate
+      pnpm install --frozen-lockfile
+      cd apps/web && bin/ci
     outputs:
       test-results:
         - path: apps/web/tmp/vitest.json
@@ -91,67 +95,43 @@ tasks:
 
   - key: agent-ci
     use: [code]
-    docker: true
-    # Go agent CI — gofmt, go mod tidy drift, golangci-lint, build,
-    # race-enabled test, govulncheck, semgrep. The agent's prod
-    # Dockerfile (apps/agent/Dockerfile) builds a static binary in a
-    # `golang:1.25-alpine` builder stage; we use the same upstream image
-    # directly so the CI environment matches what the prod build runs in,
-    # without adding a CI-specific stage to the agent Dockerfile.
-    #
-    # Tooling installed inline before bin/ci runs:
-    #   - git, bash — git for real-clone tests (slice 69, workspace
-    #     package shells out to `git clone` against a local bare repo;
-    #     the test skips silently when git isn't on PATH).
-    #   - golangci-lint v2.x — installed via the official curl install
-    #     script (the `go install` path changed name in v2; the install
-    #     script is the project's recommended install method).
-    #   - govulncheck — Go's official CVE scanner.
-    #   - semgrep — installed via apk pip (`--break-system-packages`
-    #     because alpine's py3-pip refuses system-site installs without
-    #     it). If pip-on-alpine becomes flaky, split semgrep into a
-    #     sibling `agent-security` task using `semgrep/semgrep:latest`,
-    #     mirroring `web-security` below.
+    filter:
+      - apps/agent/**
+      - apps/backend/openapi/agent-api.yaml
+      - .rwx/push.yml
+    # Go is hermetic — runs natively on the Ubuntu runner. Tooling
+    # installed inline: golangci-lint (official install script,
+    # v2.x), govulncheck (go install), semgrep (pip). CGO + race
+    # detector work on Ubuntu's default gcc.
     run: |
-      docker run --rm \
-        -v "$(pwd)/apps/agent:/repo/apps/agent" \
-        -v "$(pwd)/apps/backend/openapi:/repo/apps/backend/openapi:ro" \
-        -w /repo/apps/agent \
-        golang:1.25-alpine \
-        sh -c "
-          set -e
-          apk add --no-cache git bash py3-pip curl gcc musl-dev
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b \$(go env GOPATH)/bin v2.12.2
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          pip install --break-system-packages --quiet semgrep
-          export PATH=\$PATH:\$(go env GOPATH)/bin
-          bin/ci
-        "
-    # The openapi drift tests resolve `../../../backend/openapi/agent-api.yaml`
-    # from `apps/agent/internal/protocol/` — the spec lives in `apps/backend/`,
-    # so we mount it read-only alongside the agent source. This is the same
-    # cross-app dep the docs-link checker has; both are paid in test-only
-    # mounts rather than by bloating the prod image.
+      set -e
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        curl ca-certificates git build-essential python3-pip
+      curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+      export PATH="/usr/local/go/bin:$(go env GOPATH 2>/dev/null || echo $HOME/go)/bin:$PATH"
+      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+      go install golang.org/x/vuln/cmd/govulncheck@latest
+      pip install --break-system-packages --quiet semgrep
+      cd apps/agent && bin/ci
 
   - key: web-security
     use: [code]
-    docker: true
-    # Semgrep scan against the web source. Runs in the OFFICIAL
-    # `semgrep/semgrep` Docker image — no dependency on the backend image
-    # or its dev deps. The web-builder Docker stage is node-only and can't
-    # host semgrep directly; the official image is the cleanest way to run
-    # the scanner without coupling the web pipeline to backend tooling.
+    filter:
+      - apps/web/src/**
+      - .semgrepignore
+      - .rwx/push.yml
     run: |
-      docker run --rm \
-        -v "$(pwd)/apps/web/src:/scan/src:ro" \
-        -v "$(pwd)/.semgrepignore:/scan/.semgrepignore:ro" \
-        -w /scan \
-        semgrep/semgrep:latest semgrep scan \
-          --config p/typescript \
-          --config p/react \
-          --config p/owasp-top-ten \
-          --error \
-          --metrics off \
-          --quiet \
-          /scan/src
+      set -e
+      apt-get update
+      apt-get install -y --no-install-recommends python3-pip
+      pip install --break-system-packages --quiet semgrep
+      semgrep scan \
+        --config p/typescript \
+        --config p/react \
+        --config p/owasp-top-ten \
+        --error \
+        --metrics off \
+        --quiet \
+        apps/web/src

@@ -62,7 +62,7 @@ also adds these provider URL env vars (defaults point at the real upstreams; tes
 
 ### Dev mail (Mailpit)
 
-The dev overlay (`docker-compose.dev.yml`) starts [Mailpit](https://mailpit.axllent.org/) — a local SMTP sink that catches invitation emails and any other outbound mail. Web UI at <http://localhost:8025>. SMTP on `:1025`; backend points `SMTP_HOST`/`SMTP_PORT` there in dev. No real mail is ever sent in dev.
+The dev stack (`docker-compose.dev.yml`) starts [Mailpit](https://mailpit.axllent.org/) — a local SMTP sink that catches invitation emails and any other outbound mail. Web UI at <http://localhost:8025>. SMTP on `:1025`; backend points `SMTP_HOST`/`SMTP_PORT` there in dev. No real mail is ever sent in dev.
 
 ## 1b. Bootstrap the first user + org
 
@@ -80,7 +80,7 @@ After bootstrap, sign in via the "Sign in with GitHub" button on the login page.
 
 From the repo root:
 
-- `docker compose -f docker/docker-compose.yml --env-file .env up -d --build` brings up Postgres + Redis + the yaaos backend (which serves the API on `:8080` and the bundled SPA).
+- `bin/dev-rebuild` brings up Postgres + Redis + the yaaos backend (which serves the API on `:8080` and the bundled SPA) plus the worker, Mailpit, and the local WorkspaceAgent. Equivalent to `docker compose -f docker/docker-compose.dev.yml --env-file .env up -d --build`.
 - Visit `http://localhost:8080`. The dashboard renders the onboarding stepper because no GitHub App is installed and no Anthropic key is set.
 
 ### dev story (in progress)
@@ -93,7 +93,6 @@ The dev compose overlay ships an `agent` service that talks to the backend over 
 
 ```bash
 docker compose \
-    -f docker/docker-compose.yml \
     -f docker/docker-compose.dev.yml \
     --env-file .env up -d --build agent
 ```
@@ -159,18 +158,18 @@ The key is encrypted at rest with the Fernet key from your `.env`. It's never wr
 - yaaos receives the `pull_request.opened` webhook, creates a ticket, schedules one review run, provisions a workspace, and invokes the Claude Code CLI. The parent reviewer dispatches yaaos-* subagents (architecture, security, line-level, tests, docs, conditional skill) via the Task tool, synthesizes their findings, and posts one Review back to GitHub.
 - The Tickets page in the UI shows the ticket with live SSE updates as the job transitions `queued → running → posted`.
 
-## Local dev — Docker overlay (recommended)
+## Local dev — Docker stack (recommended)
 
 Bind-mount the source into the running containers so edits take effect on the next restart — no image rebuild needed. Auto-reload is intentionally NOT used: mid-edit saves on a multi-file change would otherwise crash uvicorn on each broken import. Manual restart is ~2-3s and the logs stay quiet.
 
-Bring up with the overlay:
+Bring it up:
 
 ```bash
 pnpm --filter ./apps/web build         # one-time, populates apps/web/dist
 bin/dev-rebuild                        # builds the image + starts the stack
 ```
 
-`bin/dev-restart` is the env-only variant (no rebuild) — use it after `.env` edits. Both wrap the same `docker compose … --env-file .env up -d [--build] app` invocation against the dev overlay.
+`bin/dev-restart` is the env-only variant (no rebuild) — use it after `.env` edits. Both wrap the same `docker compose -f docker/docker-compose.dev.yml --env-file .env up -d [--build] app` invocation.
 
 Inner loop:
 
@@ -181,15 +180,15 @@ Inner loop:
 | Web `.tsx` (auto) | `pnpm exec vite build --watch` in a separate terminal | ~1-2s per save |
 | Deps change       | `docker compose … up -d --build app`            | 30-60s |
 
-`apps/web/dist/` is bind-mounted into the container and served by FastAPI's `StaticFiles` per-request — FE rebuilds refresh in the browser without restarting the backend. The overlay also sets `YAAOS_ENV=dev`, which switches the engine to `NullPool` and enables the `/api/testing/*` reset+seed routes for local iteration.
+`apps/web/dist/` is bind-mounted into the container and served by FastAPI's `StaticFiles` per-request — FE rebuilds refresh in the browser without restarting the backend. The dev compose sets `YAAOS_ENV=dev`, which switches the engine to `NullPool` and enables the `/api/testing/*` reset+seed routes for local iteration.
 
-Rollback to prod shape: `docker compose -f docker/docker-compose.yml --env-file .env up -d --build app` (no overlay).
+The `app` and `worker` services build the same `web` / `worker` Dockerfile stages prod will use — dev image content matches prod. Real production is not docker-compose-based; the compose file is local only.
 
 ## Local dev — fully native (no Docker for app/web)
 
 For iterating on the FE / BE without any container:
 
-- **Postgres** — either run `docker compose -f docker/docker-compose.yml --env-file .env up -d postgres` (just the DB), or use a native install. Match `DATABASE_URL` in `.env`.
+- **Postgres** — either run `docker compose -f docker/docker-compose.dev.yml --env-file .env up -d postgres` (just the DB), or use a native install. Match `DATABASE_URL` in `.env`.
 - **Backend** — from `apps/backend/`: `uv sync` then `uv run uvicorn app.main:app --reload --port 8080`. The reloader picks up Python changes. Logs go to stdout in the terminal you ran it from.
 - **Frontend** — from `apps/web/`: `pnpm install` then `pnpm dev`. Vite serves the SPA on `:5173` and proxies `/api/*` to `:8080`.
 - **Claude Code CLI** — install on the host (`npm install -g @anthropic-ai/claude-code`) or skip by setting `YAAOS_CODING_AGENT_STUB=1`, which swaps in deterministic stub responses (no real LLM calls).

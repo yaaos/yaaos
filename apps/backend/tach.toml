@@ -142,7 +142,7 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.dat
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.identity", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.identity", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.in_memory_workspace"

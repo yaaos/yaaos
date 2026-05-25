@@ -68,9 +68,11 @@ services:
       retries: 30
 
   yaaos:
+    image: yaaos-web-test
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: apps/backend/Dockerfile
+      target: web
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       REDIS_URL: redis://redis:6379/0
@@ -146,9 +148,11 @@ services:
       ]
 
   yaaos-worker:
+    image: yaaos-worker-test
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: apps/backend/Dockerfile
+      target: worker
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres/yaaos
       REDIS_URL: redis://redis:6379/0

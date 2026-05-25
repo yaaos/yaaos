@@ -101,15 +101,3 @@ CMD uvicorn app.main:app --host 0.0.0.0 --port ${YAAOS_PORT:-8080} --app-dir app
 FROM backend AS worker
 
 CMD ["python", "apps/backend/bin/worker"]
-
-# ────────────────────────────────────────────────────────────────────────
-# Stage 4: backend CI image
-# Adds dev extras (pytest, ruff, etc.) for running `apps/backend/bin/ci`.
-# Inherits everything from the prod `backend` stage, including the
-# non-root `yaaos` user.
-# ────────────────────────────────────────────────────────────────────────
-FROM backend AS backend-ci
-
-# Re-sync with --extra dev to pull in test/lint tooling.
-RUN uv sync --frozen --package yaaos-backend --extra dev 2>/dev/null \
-    || uv sync --package yaaos-backend --extra dev

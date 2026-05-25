@@ -37,7 +37,7 @@ dependencies = [
     # M02 — auth stack.
     # authlib: OAuth/OIDC client used by plugins/oauth_github.
     # python3-saml: SAML 2.0 (SP-initiated only) — requires libxmlsec1-dev
-    # + xmlsec1 system packages, installed in docker/Dockerfile.
+    # + xmlsec1 system packages, installed in apps/backend/Dockerfile.
     # itsdangerous: signed invitation tokens + GitHub install state.
     # pyotp: TOTP fallback for 2FA.
     # slowapi: rate limiting on /api/auth/* + mutating endpoints.

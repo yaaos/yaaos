@@ -50,9 +50,11 @@ HTTP routes (`/api/tickets`):
 
 ### Idempotent creation
 
-Two insert paths: `create_for_pr` (GitHub PR-opened) and `create` (generic intake — webhooks routed via `domain/intake`). `create_for_pr` returns the existing row on duplicate `pr_id` after refreshing title/description. `create` is idempotent on `(org_id, idempotency_key)`. Both write a `ticket.created` audit entry and queue a `TicketStatusChanged` via `publish_after_commit`: `create_for_pr` emits `(previous=None, new='running')`; `create` emits `(previous=None, new='pending')` (the workflow engine emits the `pending → running` transition later).
+Three insert paths, all writing a `ticket.created` audit entry and queuing a `TicketStatusChanged` via `publish_after_commit`:
 
-In production the create path is reached *through* the github intake type, which inserts the `TicketRow` directly so it can set `pull_requests.ticket_id` before back-filling `tickets.pr_id`. `create_for_pr` exists for direct callers and tests.
+- `create` (generic intake — webhooks routed via `domain/intake`). Idempotent on `(org_id, idempotency_key)`. Emits `(previous=None, new='pending')`; the workflow engine emits the `pending → running` transition later.
+- `create_for_pr`. Returns the existing row on duplicate `pr_id` after refreshing title/description. Emits `(previous=None, new='running')`. Exists for direct callers and tests.
+- `github` intake type's `_prepare_pr_review` (the real production GitHub PR-opened path). Inserts `TicketRow` directly via `INSERT ... ON CONFLICT DO NOTHING` so it can set `pull_requests.ticket_id` before back-filling `tickets.pr_id` in one transaction. Emits `(previous=None, new='running')` — same shape as `create_for_pr`, since both start a ticket already in `running`.
 
 The `(org_id, source, source_external_id)` UNIQUE constraint collapses concurrent webhook deliveries for the same PR to a single ticket row. The github intake type uses `INSERT ... ON CONFLICT DO NOTHING` on this key; the loser exits with `IntakeSideEffect(detail="duplicate_ticket")` and only the winner emits the `ticket.created` audit + workflow start.
 

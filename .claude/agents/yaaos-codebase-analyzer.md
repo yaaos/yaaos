@@ -1,5 +1,5 @@
 ---
-name: codebase-analyzer
+name: yaaos-codebase-analyzer
 description: Deep-reads and analyzes codebase implementation details — traces data flow, maps dependencies, and documents how components actually work.
 ---
 

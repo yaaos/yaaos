@@ -1,5 +1,5 @@
 ---
-name: adversarial-debate
+name: yaaos-adversarial-debate
 description: Challenges and stress-tests findings before they're presented to the user. Re-reads code to verify claims, greps for quoted identifiers, steel-mans opposing positions, checks for contradictions, and validates output references. Use when a skill has produced findings that someone will act on.
 ---
 

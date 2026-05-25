@@ -349,6 +349,23 @@ class GithubIntakeType:
             session=session,
         )
 
+        # Broadcast the ticket-creation status change so the SSE subscriber
+        # invalidates the tickets list query. Mirrors `tickets.create_for_pr`
+        # — both insert with status="running" and previous_status=None.
+        from app.core.events import publish_after_commit  # noqa: PLC0415
+        from app.domain.tickets.service import TicketStatusChanged  # noqa: PLC0415
+
+        publish_after_commit(
+            session,
+            TicketStatusChanged(
+                ticket_id=ticket_id,
+                repo_external_id=repo_full,
+                pr_id=upserted_pr.id,
+                previous_status=None,
+                new_status="running",
+            ),
+        )
+
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.
         from app.core.observability import current_traceparent  # noqa: PLC0415

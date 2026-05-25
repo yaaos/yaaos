@@ -1,5 +1,5 @@
 ---
-name: codebase-pattern-finder
+name: yaaos-codebase-pattern-finder
 description: Finds similar implementations, usage examples, and conventions in the codebase to model new work after. Returns concrete code examples.
 ---
 

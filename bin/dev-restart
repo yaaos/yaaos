@@ -16,7 +16,6 @@ cd "$(dirname "$0")/.."
 
 # Recreate so .env is re-read; otherwise restart would keep the old environment.
 docker compose \
-  -f docker/docker-compose.yml \
   -f docker/docker-compose.dev.yml \
   --env-file .env \
-  up -d --force-recreate app
+  up -d --force-recreate app worker

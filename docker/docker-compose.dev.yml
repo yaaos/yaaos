@@ -1,25 +1,39 @@
-# Dev overlay — bind-mounts source so edits + restart picks them up
-# without an image rebuild. No auto-reload: avoids the mid-edit
-# crash-loop pattern where saving a half-broken multi-file change
-# triggers uvicorn --reload to attempt an import and dump a traceback.
+# Local dev stack — the single docker compose for running yaaos on your laptop.
+# Bind-mounts source into the containers so edits + restart pick them up
+# without an image rebuild. No auto-reload: avoids the mid-edit crash-loop
+# pattern where saving a half-broken multi-file change triggers uvicorn
+# --reload to attempt an import and dump a traceback.
+#
+# Builds the SAME `web` / `worker` stages prod will use — only bind mounts +
+# YAAOS_ENV=dev differ, so dev image content matches prod.
 #
 # Usage:
-#   docker compose \
-#     -f docker/docker-compose.yml \
-#     -f docker/docker-compose.dev.yml \
-#     --env-file .env up -d --build app
+#   docker compose -f docker/docker-compose.dev.yml --env-file .env up -d --build
 #
 # Inner loop:
 #   Backend change:  docker compose restart app                  (~2-3s)
 #   Web change:      pnpm --filter ./apps/web build              (~5-10s, refresh browser)
 #   Web auto:        pnpm exec vite build --watch                (separate terminal, ~1-2s per save)
 #   Deps change:     docker compose up -d --build app            (~30-60s)
-#
-# Production compose (without this override) is unchanged: source is
-# COPYd at image build, no bind mount, lean `backend` stage.
 name: yaaos
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: yaaos
+      POSTGRES_PASSWORD: yaaos
+      POSTGRES_DB: yaaos
+    ports:
+      - "5432:5432"
+    volumes:
+      - yaaos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yaaos -d yaaos"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   # Mailpit — local SMTP sink for dev. Invitation emails (M02) and any
   # future outbound mail land here instead of a real SMTP relay. UI at
   # http://localhost:8025; SMTP on :1025 (point SMTP_HOST/SMTP_PORT there).
@@ -30,29 +44,53 @@ services:
       - "8025:8025"
 
   app:
+    image: yaaos-web
     build:
       context: ..
-      dockerfile: docker/Dockerfile
-      target: backend-ci
-    # `backend-ci` inherits from `backend` (no CMD) so we'd default to the
-    # base python3 REPL and exit immediately. Production's `web` stage
-    # declares the same uvicorn CMD; we mirror it here so dev keeps the
-    # backend-ci tooling AND boots cleanly.
-    command:
-      [
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8080",
-        "--app-dir",
-        "apps/backend",
-        "--ws-ping-interval=30",
-        "--ws-ping-timeout=10",
-      ]
+      dockerfile: apps/backend/Dockerfile
+      target: web
     environment:
+      DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
+      YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       YAAOS_ENV: dev
+      YAAOS_PORT: "8080"
+      # `service.name` is split per-role; observability.configure() picks the right field.
+      # OTEL_EXPORTER_OTLP_ENDPOINT is intentionally unset — OTel disabled silently
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Optional Braintrust gateway routing for direct LLM calls (core/llm).
+      # When BRAINTRUST_API_KEY is set, PromptRunnable injects base_url +
+      # api_key + `x-bt-parent` per call; unset = direct provider key via
+      # Anthropic SDK with no gateway logging.
+      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
+      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
+      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
+      # The platform yaaos GitHub App (installs + webhooks). All optional at
+      # boot; unset env vars silently disable the install flow.
+      YAAOS_GITHUB_APP_ID: ${YAAOS_GITHUB_APP_ID:-}
+      YAAOS_GITHUB_APP_SLUG: ${YAAOS_GITHUB_APP_SLUG:-}
+      YAAOS_GITHUB_APP_PRIVATE_KEY: ${YAAOS_GITHUB_APP_PRIVATE_KEY:-}
+      YAAOS_GITHUB_APP_WEBHOOK_SECRET: ${YAAOS_GITHUB_APP_WEBHOOK_SECRET:-}
+      # The platform yaaos GitHub *OAuth App* — distinct from the App above.
+      # Unset client_id silently de-registers the OAuth provider so the
+      # LoginPage shows "no providers configured" instead of 404ing on GitHub.
+      YAAOS_GITHUB_OAUTH_CLIENT_ID: ${YAAOS_GITHUB_OAUTH_CLIENT_ID:-}
+      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: ${YAAOS_GITHUB_OAUTH_CLIENT_SECRET:-}
+      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
+      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
+      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
+      # M02 — dev SMTP sink (Mailpit). Override SMTP_HOST/PORT for prod relays.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
+      # M05 — Redis backs taskiq workflow tasks + sse_pubsub fanout.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
     volumes:
       # Backend source — host edits visible inside the container as
       # soon as the file is saved. `/app/.venv/` is outside this mount
@@ -66,18 +104,51 @@ services:
   # M05/core-tasks Phase 1: the worker process runs taskiq's broker
   # consumer + the outbox→Redis drain loop. Without it, every
   # workflow_execution created via `engine.start(...)` sits in `pending`
-  # and intake-driven reviews never execute. Same `backend-ci` image as
-  # `app` (saves a build) — only the command differs.
+  # and intake-driven reviews never execute.
   worker:
+    image: yaaos-worker
     build:
       context: ..
-      dockerfile: docker/Dockerfile
-      target: backend-ci
-    command: ["python", "apps/backend/bin/worker"]
+      dockerfile: apps/backend/Dockerfile
+      target: worker
     environment:
+      DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
+      YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       YAAOS_ENV: dev
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
+      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
+      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
+      YAAOS_GITHUB_APP_ID: ${YAAOS_GITHUB_APP_ID:-}
+      YAAOS_GITHUB_APP_SLUG: ${YAAOS_GITHUB_APP_SLUG:-}
+      YAAOS_GITHUB_APP_PRIVATE_KEY: ${YAAOS_GITHUB_APP_PRIVATE_KEY:-}
+      YAAOS_GITHUB_APP_WEBHOOK_SECRET: ${YAAOS_GITHUB_APP_WEBHOOK_SECRET:-}
+      YAAOS_GITHUB_OAUTH_CLIENT_ID: ${YAAOS_GITHUB_OAUTH_CLIENT_ID:-}
+      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: ${YAAOS_GITHUB_OAUTH_CLIENT_SECRET:-}
+      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
+      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
+      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ../apps/backend:/app/apps/backend
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   # M05 — local WorkspaceAgent talking to the backend over the docker
   # network. Uses the placeholder identity-exchange verifier (any
@@ -96,3 +167,18 @@ services:
     depends_on:
       app:
         condition: service_started
+
+  # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
+  # on the `app` service to `http://otel-collector:4317` to wire it up.
+  #
+  # otel-collector:
+  #   image: otel/opentelemetry-collector-contrib:latest
+  #   command: ["--config=/etc/otel/config.yaml"]
+  #   volumes:
+  #     - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+  #   ports:
+  #     - "4317:4317"   # OTLP gRPC
+  #     - "4318:4318"   # OTLP HTTP
+
+volumes:
+  yaaos-pgdata:
