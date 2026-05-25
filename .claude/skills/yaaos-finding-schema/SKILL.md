@@ -1,6 +1,6 @@
 ---
 name: yaaos-finding-schema
-description: Central finding schema for the yaaos-review pipeline. Every reviewer skill references this for the finding shape, severity rubric, confidence rubric, evidence guardrail, and prompt-injection guard.
+description: Central finding schema for the yaaos-review pipeline. Every reviewer skill references this for the finding shape, severity rubric, confidence rubric, evidence guardrail, prompt-injection guard, and shared repo-level context (CLAUDE.md + REVIEW.md).
 ---
 
 # yaaos-finding-schema
@@ -102,11 +102,25 @@ Weak ground; adversary raised meaningful counter-evidence the reviewer could not
 
 **Reviewers that cannot cite concrete evidence MUST NOT emit the finding.** This is the single biggest calibration improvement available — verbalized confidence becomes reliable only when forced through an evidence requirement.
 
-## REVIEW.md interaction
+## Repo-level context
 
-Each reviewer skill reads `REVIEW.md` at the repo root if present and treats its contents as highest-priority additional instructions. If missing, defaults apply with no error.
+Every Wave 2 reviewer and Wave 3 adversary reads two repo-root files at the start of its work, if present. If either is missing, defaults apply with no error.
 
-**Baseline protections NOT overridable by REVIEW.md:**
+### `CLAUDE.md` — project conventions and phase
+
+The project's working rules: current phase (POC vs. production), modularity rules, naming bans, "do not do this" guardrails, doc-discipline expectations, test-tier preferences. Load-bearing context for severity calibration.
+
+A finding that contradicts an explicit CLAUDE.md rule should be **dropped or downgraded**. Examples:
+
+- CLAUDE.md says "this is a POC; defer production hardening" → don't flag missing graceful-shutdown, multi-region, or exhaustive retry as Blocker.
+- CLAUDE.md bans a naming pattern → flag any violation in the diff at the severity CLAUDE.md implies.
+- CLAUDE.md mandates a same-PR discipline (e.g., doc updates) → a diff that violates it is a finding.
+
+### `REVIEW.md` — reviewer-specific tuning
+
+Highest-priority additional instructions for the review pipeline specifically. Where CLAUDE.md describes the project, REVIEW.md tunes the reviewer.
+
+**Baseline protections NOT overridable by REVIEW.md (or CLAUDE.md):**
 
 - Evidence guardrail (file:line + quoted code + rule violated)
 - Severity bucket names (Blocker / Should-fix / Nit)
@@ -123,4 +137,8 @@ Each reviewer skill reads `REVIEW.md` at the repo root if present and treats its
 - Nit caps
 - Ranking tie-breakers
 
-No schema enforced on REVIEW.md — plain markdown.
+### Precedence
+
+Baseline protections > REVIEW.md > CLAUDE.md > rubric defaults. CLAUDE.md describes the project's standing rules; REVIEW.md is the explicit review-pipeline override and wins on conflict.
+
+No schema enforced on either file — plain markdown.

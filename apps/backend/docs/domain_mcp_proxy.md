@@ -29,7 +29,7 @@ Authorization flow for `tools/call`: read tools (in `config.known_read_tools`) a
 
 Audit: one `mcp.<provider>.dispatched` row per JSON-RPC method call (no batching). Payload: `provider`, `method`, `tool`, `args_hash` (sha256 of canonicalized arguments), `result_summary` (compact one-line — never the full upstream payload, which may contain customer data), `upstream_account="org_service_account"`. Actor is `Actor.system()`.
 
-Phase 3 wires the reviewer: `domain/reviewer.queue._build_mcp_payload` mints a token per review_job, threads it via `ReviewContext.agent_config["mcp"]` into `plugins/claude_code`, which materializes `.mcp.json` in the workspace. `revoke_token(review_id)` runs in a `finally` inside the `with_workspace` block — before the tempdir tears down.
+The reviewer integration: `domain/reviewer.queue._build_mcp_payload` mints a token per review_job, threads it via `ReviewContext.agent_config["mcp"]` into `plugins/claude_code`, which materializes `.mcp.json` in the workspace. `revoke_token(review_id)` runs in a `finally` inside the `with_workspace` block — before the tempdir tears down.
 
 ## Data owned
 

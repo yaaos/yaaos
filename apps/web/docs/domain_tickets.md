@@ -17,7 +17,7 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 ## Module architecture
 
 - `apps/web/src/domain/tickets/TicketsListPage.tsx` — the list page (E2a.1).
-- `apps/web/src/domain/tickets/index.tsx` — re-exports `TicketsListPage as TicketsPage` and still holds the legacy `TicketDetailPage` until the Phase 6 rewrite lands.
+- `apps/web/src/domain/tickets/index.tsx` — re-exports `TicketsListPage as TicketsPage` and the legacy `TicketDetailPage`.
 
 ### List page
 
@@ -34,7 +34,7 @@ The only surface that exercises the full live-update path (webhook → reviewer 
 `TicketDetailPage` (apps/web/src/domain/tickets/TicketDetailPage.tsx):
 
 - **Header band** — repo · PR link (when present) · "updated <ago>"; title (h1); status pill (running spins, others static-tinted via shared `M06_STATUS_META`); "by <builder.display_name>" or "by yaaos" when `builder_kind === "system"`. Right-aligned action buttons: **Cancel** (non-terminal status only, destructive `ConfirmModal`) and **Re-run** (cost-protective `ConfirmModal`).
-- **Stage indicator** — composes `StageIndicator` against `ticket.stages` from the extended `GET /api/tickets/:id` (Phase 6 backend slice). Hides itself when the field is absent.
+- **Stage indicator** — composes `StageIndicator` against `ticket.stages` from `GET /api/tickets/:id`. Hides itself when the field is absent.
 - **3-tab strip** — Findings (default) / Activity / HITL.
 
 #### Findings tab

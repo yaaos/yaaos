@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Single home for the OAuth dance. Phase 1 ships `build_authorize_url`, `exchange_code`, `refresh_access_token` taking a `ProviderConfig` (URLs + client credentials + scope rules). Knows nothing about yaaos's domain — `domain/integrations` consumes it for hosted-MCP provider plugins and `plugins/github` consumes it for the GitHub OAuth login flow (collapsed in Phase 1 from the `plugins/oauth_github`).
+Single home for the OAuth dance. Exposes `build_authorize_url`, `exchange_code`, `refresh_access_token` taking a `ProviderConfig` (URLs + client credentials + scope rules). Knows nothing about yaaos's domain — `domain/integrations` consumes it for hosted-MCP provider plugins and `plugins/github` consumes it for the GitHub OAuth login flow.
 
 ## Public interface
 

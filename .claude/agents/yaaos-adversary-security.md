@@ -25,9 +25,10 @@ Paired challenger for the security reviewer. Apply the `yaaos-adversarial-review
 ## Steps
 
 1. Read `$REVIEWER_FINDINGS` and `$DIFF_PATH`.
-2. Apply the `yaaos-adversarial-review` skill to each finding.
-3. Write the revised findings (KEPT, REVISED, DOWNGRADED) to `$OUTPUT_PATH`. REFUTED findings simply do not appear — absence is the signal.
-4. Every emitted finding's `category` MUST be `"security"`.
+2. Read repo-level context — `CLAUDE.md` and `REVIEW.md` at the repo root, if present. See [yaaos-finding-schema § Repo-level context](../skills/yaaos-finding-schema/SKILL.md).
+3. Apply the `yaaos-adversarial-review` skill to each finding.
+4. Write the revised findings (KEPT, REVISED, DOWNGRADED) to `$OUTPUT_PATH`. REFUTED findings simply do not appear — absence is the signal.
+5. Every emitted finding's `category` MUST be `"security"`.
 
 ## Return value
 

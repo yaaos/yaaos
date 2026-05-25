@@ -1,6 +1,6 @@
 # System security
 
-> What's actually shipped today. Every section here is backed by a real code path — no aspirational content. The unfinished agenda lives in [`plan/notes/security-posture.md`](../plan/notes/security-posture.md).
+> What's actually shipped today. Every section here is backed by a real code path — no aspirational content.
 
 ## Trust boundaries
 
@@ -20,7 +20,7 @@ Three processes hold different secrets and run with different privileges.
 ### Authentication
 
 - **User sessions** — `domain/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`), and a post-response guard 500s any 2xx response that left `route_security_resolved` unset.
-- **WorkspaceAgent bearer** — placeholder verifier today (any non-empty `Bearer <token>` after a successful identity-exchange). Real SigV4-signed STS replay lands in the Phase 7 follow-on; the org-side trust anchor (`orgs.registered_iam_arn`) is in place and `core/agent_gateway.ensure_agent_row` is ready to consume the verified ARN.
+- **WorkspaceAgent bearer** — placeholder verifier (any non-empty `Bearer <token>` after a successful identity-exchange). The org-side trust anchor lives on `orgs.registered_iam_arn`; `core/agent_gateway.ensure_agent_row` consumes the ARN presented at identity exchange.
 
 ### Authorization
 
@@ -40,13 +40,12 @@ Three processes hold different secrets and run with different privileges.
 
 ### IAM trust anchor
 
-Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_arn`). The agent in their ECS task assumes that role; the placeholder identity-exchange verifier today accepts any non-empty signed-STS string, and the Phase 7 follow-on replays the SigV4 signature against AWS STS and verifies the resulting ARN matches the org's registration.
+Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_arn`). The agent in their ECS task assumes that role; the placeholder identity-exchange verifier accepts any non-empty signed-STS string.
 
 ### Workspace isolation (what ships)
 
-- **OS-process isolation per workspace** — the supervisor spawns one OS process per workspace; IPC over stdin/stdout pipes. Phase 6 foundations ships the supervisor skeleton; the workspace subprocess body lands in the follow-on.
+- **OS-process isolation per workspace** — the supervisor spawns one OS process per workspace; IPC over stdin/stdout pipes.
 - **Container filesystem read-only** except `/var/agent/workspaces/` (deployment configuration; documented in [`apps/agent/docs/README.md`](../apps/agent/docs/README.md)).
-- **`os.RLimit` per workspace process** — Phase 6 follow-on, alongside the subprocess body.
 
 ### What deliberately doesn't ship
 
@@ -64,7 +63,7 @@ Always. The agent only opens outbound TLS connections to the control plane; no i
 
 ### Bearer scope
 
-The bearer issued at identity-exchange is scoped to the per-pod `agent_id` (`workspace_agents.id`). It travels in `Authorization: Bearer <token>` on every HTTPS endpoint + the WebSocket upgrade. Phase 7 follow-on adds short-lived issuance (proactive refresh) + revocation tied to `workspace_agents.state`.
+The bearer issued at identity-exchange is scoped to the per-pod `agent_id` (`workspace_agents.id`). It travels in `Authorization: Bearer <token>` on every HTTPS endpoint + the WebSocket upgrade.
 
 ### Single-flight + stale-claim guard
 
@@ -78,7 +77,7 @@ Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{
 
 ### `traceparent` on every wire payload
 
-W3C trace context is a required field on every AgentCommand, AgentEvent, WorkspaceEvent, and Heartbeat. The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers (verified by unit tests of the helpers; full E2E rides on Phase 4 + 6 follow-on integration).
+W3C trace context is a required field on every AgentCommand, AgentEvent, WorkspaceEvent, and Heartbeat. The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers (verified by unit tests of the helpers).
 
 ## Data at rest
 
@@ -100,8 +99,8 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
-| Agent pod identity spoofing | Phase 7 follow-on — SigV4-signed STS replay against AWS. The placeholder verifier today does NOT defend against this; foundations only. |
-| Activity events leaking source content | `domain/coding_agent` ActivityEvent pre-renderer audit — Phase 8b follow-on. Foundations: the WebSocket plumbing exists; the trust-boundary audit lands alongside the in-memory provider's direct-publish path. |
+| Agent pod identity spoofing | Not yet defended — the placeholder verifier accepts any non-empty signed-STS string. |
+| Activity events leaking source content | Not yet defended — the WebSocket plumbing exists but there is no pre-renderer audit on `domain/coding_agent` ActivityEvents. |
 | Worker exhaustion under long-running AgentCommands | Async event-driven workflow engine — workers exit after dispatch and resume on the terminal event. Verified by the workflow state-machine tests. |
 
 ## Threats does NOT defend against (yet)
@@ -116,4 +115,3 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 - [`apps/backend/docs/core_workflow.md`](../apps/backend/docs/core_workflow.md) — engine + state machine.
 - [`apps/backend/docs/core_audit_log.md`](../apps/backend/docs/core_audit_log.md) — audit shape + retention.
 - [`apps/agent/docs/README.md`](../apps/agent/docs/README.md) — agent deployment + IAM role.
-- [`plan/notes/security-posture.md`](../plan/notes/security-posture.md) — unfinished security agenda (what's NOT here yet).

@@ -85,7 +85,6 @@ The "one workspace per ticket" principle is enforced by **runtime scope**, not b
 
 The ticket aggregate does not own, expose, or coordinate workspace lifecycle. It owns identity and lifecycle state only.
 
-This may change when a second workspace consumer lands (implementer agents would share workspaces across rounds on the same ticket — at which point `domain/tickets` is the natural home for a `with_ticket_workspace(ticket_id)` helper and a persistent linkage). Until then the runtime scoping is sufficient and keeps the ticket schema clean.
 
 ### What the module does not do
 

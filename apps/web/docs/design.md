@@ -157,7 +157,7 @@ We target WCAG 2.1 AA on critical flows. The discipline here keeps us there.
 - **Per-surface gotchas:**
   - Live regions for SSE-driven updates (notifications, activity) use `aria-live="polite"` so screen readers don't get spammed.
   - Long lists use semantic `<ul>/<li>` or `<table>` — not `<div>` soup.
-- **Verification:** `apps/e2e/` wires `axe-core` smoke checks. Per-surface manual a11y review at milestone close.
+- **Verification:** `apps/e2e/` wires `axe-core` smoke checks.
 
 ## Design tokens
 

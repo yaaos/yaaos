@@ -6,13 +6,13 @@
 
 Owns every artifact tied to "what yaaos has said about a PR". The workflow engine (`core/workflow`) routes every review run — pr-ready, push-incremental, re-review, verify-fix, stale-check, answer-question — through one of five typed workflows whose `WorkflowCommand` bodies live under [`commands/`](../app/domain/reviewer/commands/). The durable layer is `PRReviewAggregate` per PR: `Review`s, `Finding`s, `FindingObservation`s, `CommentThread`s, `CommentMessage`s, `AcknowledgmentDecision`s. Does not call LLMs for code review itself — `domain/coding_agent` plugins do; only the reply classifier here makes a direct LLM call (via `core/llm`).
 
-The legacy `ReviewJob` per-PR queue + `schedule_review` runner was retired with the queue.py dismantle (slices 40-61). All call sites now route through `start_pr_review` (full review) and `handle_push` (incremental) which fan out via the workflow engine; cancellation routes through `cancel_workflows_for_ticket` which calls `workflow.request_cancel`.
+All call sites route through `start_pr_review` (full review) and `handle_push` (incremental), which fan out via the workflow engine; cancellation routes through `cancel_workflows_for_ticket` → `workflow.request_cancel`.
 
 ## Public interface
 
 Exported from `app/domain/reviewer/__init__.py`:
 
-- Entry points — `start_pr_review(ticket_id, *, org_id, trigger_reason)` starts a `pr_review_v1` workflow execution. `handle_push(pr_id, *, new_head_sha, prev_head_sha, org_id)` runs the §7 trigger policy and (today) spawns an `incremental.py` runner directly; moves onto the engine path in a follow-on. `cancel_workflows_for_ticket(ticket_id)` flips every non-terminal `workflow_executions` row for the ticket via `workflow.request_cancel`.
+- Entry points — `start_pr_review(ticket_id, *, org_id, trigger_reason)` starts a `pr_review_v1` workflow execution. `handle_push(pr_id, *, new_head_sha, prev_head_sha, org_id)` runs the trigger policy and spawns an `incremental.py` runner directly. `cancel_workflows_for_ticket(ticket_id)` flips every non-terminal `workflow_executions` row for the ticket via `workflow.request_cancel`.
 - Read API — `ReviewJob` (projection shape over `workflow_executions`, see `workflow_review_view.py`).
 - Generation-2 aggregate — `PRReviewAggregate`, `RawFinding`, `AdmissionDrop`.
 - Generation-2 value objects — `Finding`, `FindingState`, `FindingFingerprint`, `CodeAnchor`, `CommentThread`, `CommentMessage`, `AcknowledgmentDecision`, `Review`, `ReviewScope`, `ReviewScopeKind`, `ReviewTrigger`, `Severity`, `AckKind`, `AuthorKind`, `ReplyIntent`.
@@ -41,13 +41,13 @@ No `on_startup` hook — the workflow engine has its own cleanup loop.
 
 ### File layout
 
-The legacy `queue.py` monolith was dismantled across slices 40-61. Today's modules:
+Module layout:
 
 | Module | Responsibility |
 |---|---|
 | `__init__.py` | Public entry points — `start_pr_review`, `cancel_workflows_for_ticket`, plus generation-2 surface (aggregate, types, helpers). |
 | `web.py` | HTTP routes (`/rereview`, `/cancel`, `/jobs/by-ticket`, `/findings/by-ticket`, `/conversations/by-ticket`, `/reviews/by-ticket`, `/threads/by-finding`, `/metrics`). |
-| `incremental.py` | `handle_push` — auto-incremental review runner. Owns the trigger-policy decision + spawns a self-driving runner that writes through the aggregate. Slated to move onto the engine path in a follow-on. |
+| `incremental.py` | `handle_push` — auto-incremental review runner. Owns the trigger-policy decision + spawns a self-driving runner that writes through the aggregate. |
 | `workflow_review_view.py` | Projects `workflow_executions` rows into the `ReviewJob` shape that `/jobs/by-ticket` + `/metrics` consume. |
 | `review_job.py` | `ReviewJob` + `ReviewJobInput` Pydantic value objects (SPA-facing shape). |
 | `secrets_detection.py` | `detect_secrets(diff)` + `secrets_warning_review(rule_id)`. Pure regex pre-flight. |
@@ -61,7 +61,7 @@ The legacy `queue.py` monolith was dismantled across slices 40-61. Today's modul
 | `service.py` + `replies.py` + `trigger.py` + `lock.py` + `anchor.py` | Reply classifier, trigger policy, advisory locking, anchor resolution. |
 | `orphan_sweep.py` | Periodic safeguard: tickets stuck `running` past the grace window with no `reviews` row → `tickets.fail(reason='orphaned_no_review_job')`. Spawned via the module's `on_startup` hook. Cadence + grace from `yaaos_ticket_orphan_{sweep_interval,grace}_seconds` (defaults 60 s / 300 s). |
 
-### workflows + commands (Phase 4 foundations)
+### Workflows + commands
 
 Five typed `Workflow` definitions live in `domain/reviewer/workflows/` and register at module import:
 
@@ -78,7 +78,7 @@ Ten matching `WorkflowCommand`s ship with real bodies in `domain/reviewer/comman
 
 The three workspace-lifecycle commands (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`) ship in [`core/workspace.commands`](core_workspace.md) and register through the reviewer bootstrap so any workflow can reference them.
 
-**Phase 4 follow-on:** All 10 reviewer command bodies (5 Workspace + 5 Local) ship real implementations.
+All 10 reviewer command bodies (5 Workspace + 5 Local) carry real implementations.
 
 - `CheckShouldReview` reads `is_draft` / `is_fork` / `labels` / `author_login` from the ticket payload and returns `Outcome.success(label="skip", outputs={"reason": ...})` on any first-match signal (`draft`, `fork`, `label:<name>`, `bot_author`). Skip labels: `yaaos-skip`, `no-review`, `wip` (case-insensitive). The bot-author check matches `*[bot]` / `*-bot` suffixes.
 - `ArchiveStaleFindings` consumes `stale_finding_ids: list[str]` from inputs (sourced from the prior `StaleCheck` step), loads the reviewer aggregate by `pr_id` via the registered `WorkflowContextProvider`, and transitions each finding to `STALE` via `aggregate.record_stale_detection(still_applies=False, confidence=1.0)`. Defensive on missing pr_id (no-op-success), unknown finding ids (skipped, not failed), invalid uuids (skipped). Outputs `archived_count` and `skipped_count`.
@@ -94,13 +94,13 @@ The five Workspace reviewer commands (`CodeReview`, `IncrementalReview`, `Verify
 
 Subclass bodies override `_run_in_workspace` to call the matching `domain/coding_agent.<method>`:
 
-- `CodeReview` builds a minimal `VCSPullRequest` + empty `Diff` from `ticket_ctx.payload` and invokes `coding_agent.review`. Outputs `draft_findings` (FindingDraft-shaped dicts) + `summary_body` + `state` for `PostFindings`. The heavy PR/diff fetch path lands with the Phase 6 Go subprocess body which owns the real VCS side.
+- `CodeReview` builds a minimal `VCSPullRequest` + empty `Diff` from `ticket_ctx.payload` and invokes `coding_agent.review`. Outputs `draft_findings` (FindingDraft-shaped dicts) + `summary_body` + `state` for `PostFindings`.
 - `IncrementalReview` invokes `coding_agent.incremental_review` with `prev_sha = base_sha` (defaulting to `head_sha`).
 - `VerifyFix` loads the finding by id via `SqlAlchemyAggregateRepository`, reads the current code snippet at the anchor via `workspace.read_text`, invokes `coding_agent.verify_fix`. Outputs `verdict` for `ResolveFinding`. Unknown finding → success with `skipped="unknown"` (not a workflow failure).
 - `StaleCheck` loops over `finding_ids`, reads each anchor's current snippet, invokes `coding_agent.stale_check`, accumulates ids whose verdict is `still_applies=False AND confidence ≥ 0.80`. Outputs `stale_finding_ids` for `ArchiveStaleFindings`. Per-finding failures are logged and skipped, not propagated.
 - `AnswerQuestion` loads the finding, reads its anchor snippet, invokes `coding_agent.answer_question`, outputs `reply_body` + `finding_id` for `PostReply`. Empty/unknown inputs → success-no-op.
 
-Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_coding_agent.md) (standalone, doesn't wrap a real plugin) under `plugin_id="claude_code"` — the bodies hardcode that id matching the legacy queue.py pipeline.
+Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_coding_agent.md) (standalone, doesn't wrap a real plugin) under `plugin_id="claude_code"` — the command bodies hardcode that id.
 
 ### Entities
 
@@ -117,7 +117,7 @@ Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_codi
 - `FindingFingerprint` — conceptual identity across reviews: `(file_path, rule_id, anchor_content_hash, body_gist_hash)`. Whitespace-normalized hashes so reindents don't churn fingerprints (plan §2.3).
 - `CodeAnchor` — `(file_path, line_start, line_end, surrounding_content_hash, commit_sha)`. The surrounding hash covers ±3 lines and is what lets `anchor.resolve_anchor` re-find the position after line drift.
 - `FindingState`, `Severity`, `AckKind`, `ReplyIntent`, `AuthorKind`, `ReviewTrigger`, `ReviewScope` — enums + frozen dataclasses per plan §2.3.
-- `RawFinding` — coding-agent output before admission; must include `concrete_failure_scenario` ≥ 20 chars (plan §10.1) or the aggregate drops it. Built from `coding_agent.FindingDraft` via `findingdrafts_to_raw` in [`admission.py`](../app/domain/reviewer/admission.py); admitted survivors are translated back to `vcs.Finding` for posting via `raw_to_vcs_findings`. These two are the only shared converters; the legacy `_vcs_findings_to_raw` is gone.
+- `RawFinding` — coding-agent output before admission; must include `concrete_failure_scenario` ≥ 20 chars or the aggregate drops it. Built from `coding_agent.FindingDraft` via `findingdrafts_to_raw` in [`admission.py`](../app/domain/reviewer/admission.py); admitted survivors are translated back to `vcs.Finding` for posting via `raw_to_vcs_findings`. These two are the only shared converters.
 - `AdmissionDrop` — audit-log payload for a rejected raw finding: `(rule_id, reason, severity, confidence)` where reason ∈ `malformed | below_threshold | nit_cap | top_cap | matches_ack`.
 
 ### Core user flows
@@ -132,9 +132,9 @@ Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_codi
 
 #### Durable findings layer
 
-1. **Initial review on PR ready** (plan §6.1, write path lands with §13 step 7's cut-over): service acquires the per-PR advisory lock, opens a transaction, loads the aggregate, starts a `Review` via `start_review`, invokes coding_agent in `full_review` mode, maps each `FindingDraft` → `RawFinding`, calls `aggregate.post_process_raw_findings` which applies the malformed / threshold / per-PR nit cap / cross-file dedup / per-review top-10 cap pipeline + dedup vs prior open/acknowledged findings. For each survivor: opens a thread, appends a yaaos message, posts via `vcs.post_review`. Completes the review; saves the aggregate; drains domain events.
-2. **Auto-incremental on push** (plan §6.2, write path WIP): intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run` per §7. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) runs the deterministic anchor pass `resolve_open_anchors(aggregate, *, touched_files, read_file, new_commit_sha)` (in `incremental.py`) BEFORE any LLM stale_check. That pure helper returns a `ResolveAnchorsResult` partitioning open findings into `moved` / `gone` / `unchanged`; `gone` transitions to `resolved_unverified`, `moved` is fed into `coding_agent.verify_fix` and routed through `apply_verify_fix_result`, `unchanged` stays put. New findings flow through the same admission pipeline. Anchor mutations happen on a snapshot aggregate loaded inside the workspace block (no long-lived DB session); the moves are replayed onto a freshly-loaded live aggregate at save time.
-3. **Developer reply** (plan §6.4): intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm` and emits exactly one of five categorical intents; `apply_classified_reply` maps that label 1:1 onto a `ReplyAction`:
+1. **Initial review on PR ready**: service acquires the per-PR advisory lock, opens a transaction, loads the aggregate, starts a `Review` via `start_review`, invokes coding_agent in `full_review` mode, maps each `FindingDraft` → `RawFinding`, calls `aggregate.post_process_raw_findings` which applies the malformed / threshold / per-PR nit cap / cross-file dedup / per-review top-10 cap pipeline + dedup vs prior open/acknowledged findings. For each survivor: opens a thread, appends a yaaos message, posts via `vcs.post_review`. Completes the review; saves the aggregate; drains domain events.
+2. **Auto-incremental on push**: intake hands `(pr_id, new_head, prev_head)` to a trigger-policy helper. `trigger.decide_trigger` returns `Skip | Debounce | Run`. On `Run`, the service schedules a debounced incremental review whose worker (a) invokes `coding_agent.incremental_review` on `prev_sha..head` and (b) runs the deterministic anchor pass `resolve_open_anchors(aggregate, *, touched_files, read_file, new_commit_sha)` (in `incremental.py`) BEFORE any LLM stale_check. That pure helper returns a `ResolveAnchorsResult` partitioning open findings into `moved` / `gone` / `unchanged`; `gone` transitions to `resolved_unverified`, `moved` is fed into `coding_agent.verify_fix` and routed through `apply_verify_fix_result`, `unchanged` stays put. New findings flow through the same admission pipeline. Anchor mutations happen on a snapshot aggregate loaded inside the workspace block (no long-lived DB session); the moves are replayed onto a freshly-loaded live aggregate at save time.
+3. **Developer reply**: intake routes a `pull_request_review_comment` / `issue_comment` payload through a thread-resolution layer that finds the `CommentThread` by `external_thread_id`. The service runs the deterministic checks first — `is_yaaos_command` routes to the command handler, `is_off_topic_message` stores without classifying. Otherwise `classify_reply` runs through `core/llm` and emits exactly one of five categorical intents; `apply_classified_reply` maps that label 1:1 onto a `ReplyAction`:
 
    | intent                    | action                                              |
    | ------------------------- | --------------------------------------------------- |
@@ -177,7 +177,7 @@ Pure transition functions in `state_machine.py`; the aggregate is the only legit
 
 Inside `aggregate.post_process_raw_findings(review_id, raw, *, diff_files=None)`, in order:
 
-1. **Schema gate** — drop raw findings whose `concrete_failure_scenario` is missing or under `_MIN_SCENARIO_LEN` (20 chars stripped). Closes the legacy synthesis loophole where a one-word body would otherwise pass. Audit reason: `malformed`.
+1. **Schema gate** — drop raw findings whose `concrete_failure_scenario` is missing or under `_MIN_SCENARIO_LEN` (20 chars stripped). Audit reason: `malformed`.
 2. **Off-diff drop** — when `diff_files` is supplied (`commands/__init__.py`'s `PostFindings` for full review, `incremental.py` for incremental), findings whose anchor file isn't in the PR diff are dropped (plan §10.9). Audit reason: `off_diff`.
 3. **Per-severity threshold** — `blocker`/`major` ≥ 75, `minor` ≥ 85, `nit` ≥ 90 (plan §10.2). Audit reason: `below_threshold`.
 4. **Per-PR nit cap** — at most 5 nits ever for this PR (plan §10.5). Audit reason: `nit_cap`.
@@ -222,8 +222,7 @@ Generation 2 (plan §4.1):
 ## How it's tested
 
 - **Unit tests** for `state_machine.py`, `fingerprint.py`, `anchor.py`, `trigger.py`, the aggregate, the service helpers (`apply_classified_reply` / `apply_verify_fix_result` / `apply_stale_check_result` / `is_yaaos_command` / `is_off_topic_message`), and the classifier (with a canned-output runnable substituting `core/llm`).
-- **In-memory `AggregateRepository`** at `test/in_memory_repository.py` exercises full scenarios from plan §6 — admission pipeline (threshold, nit cap, top cap, cross-file dedup, fingerprint match vs prior open/acknowledged), state transitions, round-trip persistence.
-- **Integration coverage** for generation 1 (`test_detect_secrets.py`, plus the scheduling / supersession / handler / startup-recovery suites in `app/test/` + `apps/e2e/`) continues to gate today's flow.
+- **In-memory `AggregateRepository`** at `test/in_memory_repository.py` exercises the admission pipeline (threshold, nit cap, top cap, cross-file dedup, fingerprint match vs prior open/acknowledged), state transitions, and round-trip persistence.
+- **Integration coverage** for generation 1 (`test_detect_secrets.py`, plus the scheduling / supersession / handler / startup-recovery suites in `app/test/` + `apps/e2e/`) gates the generation-1 flow.
 - **Service tests** (`@pytest.mark.service`, see [patterns.md § Testing](patterns.md)): `test_pr_review_v1_e2e_service.py` drives the full `pr_review_v1` pipeline in-process using `app/testing/stub_vcs` + stub coding-agent + stub workspace. `test_mcp_review_pipeline_service.py` composes the MCP proxy + broken-creds tracker + review-output prefix. `test_secrets_scan_service.py` covers the `SecretsScan` Local command refusing to provision a workspace when the diff carries leaked secrets. `test_cancel_dual_write_service.py` covers `/api/reviewer/cancel` flipping non-terminal workflow executions via `request_cancel`. `test_all_workflows_smoke.py` exercises every one of the 5 reviewer workflows end-to-end via the engine.
-- **E2E** for the durable-findings flow (multi-review render + single reply round-trip) lands with the UI commits.
 - **Evals** for the `classify_reply` prompt live under `domain/reviewer/eval/` (one `.eval.py` per prompt + fixtures); evals deliberately bypass `langchain.cache.SQLiteCache` so they always hit the model fresh.

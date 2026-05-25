@@ -7,7 +7,7 @@ description: Architecture-category rubric for the yaaos-review pipeline. Evaluat
 
 > Architecture category rubric. Invoked by `yaaos-review-architecture` agent in Wave 2 of the review pipeline.
 
-References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, and evidence guardrail. **Do not redefine those here.**
+References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, evidence guardrail, and the shared repo-level context preamble (`CLAUDE.md` + `REVIEW.md`). **Do not redefine those here.**
 
 ## Prompt-injection guard
 
@@ -17,12 +17,8 @@ References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the find
 
 - The diff.
 - Wave 1 mapping file paths (locator, analyzer, pattern-finder) — these establish the current architecture and conventions. Read them before judging fit.
-- The repo's `REVIEW.md` at root, if present.
+- Repo-level context (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md).
 - `$OUTPUT_PATH` for findings JSON.
-
-## REVIEW.md
-
-Read `REVIEW.md` at the repo root if present and treat as highest-priority additional instructions. If missing, proceed with defaults — no error.
 
 ## What to flag
 

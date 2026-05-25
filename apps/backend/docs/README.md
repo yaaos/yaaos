@@ -9,7 +9,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-33 modules: **15 core · 10 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections. scaffolding adds 5 core modules (`tasks`, `outbox`, `workflow`, `agent_gateway`, `sse_pubsub`) — most are skeletons in Phase 0b, fleshed out in later phases.
+33 modules: **15 core · 10 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 

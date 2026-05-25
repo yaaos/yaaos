@@ -58,7 +58,7 @@ Each page is mounted by `core/routing` at its respective path:
 
 Toggling the checkbox back to default clears any stale `system_prompt` override so the wire payload stays clean.
 
-`mcp_proxy_ids` lives on `ClaudeCodeSettings` (not the per-agent level); the SPA picker for it fits inside the MCP Proxy list page (E2a.13) that lands in Phase 8 — until then the field round-trips through the form unchanged.
+`mcp_proxy_ids` lives on `ClaudeCodeSettings` (not the per-agent level); the field round-trips through the form unchanged.
 
 ## Data owned
 

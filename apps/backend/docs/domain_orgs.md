@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the tenancy boundary. Every non-user yaaos data row is `org_id`-scoped; this module owns the table that defines an org and the membership rows that decide who's in it and what they can do. Invitations are the sole access gate (no self-signup). SAML SSO config lives here too — the IdP metadata + per-org SP private key + JIT toggle + break-glass exempt-Owner pointer. SSO config flows ship in Phase 12. absorbed the legacy `domain/settings` onboarding-status aggregator: `register_onboarding_contributor(name, check)` lets plugins push readiness callbacks into a per-org registry, and `get_onboarding_status(org_id)` fans them out; `onboarding_web.py` re-exposes the legacy `/api/settings/onboarding` + `/api/settings/plugins` endpoints unchanged for the settings page that consumes them.
+Owns the tenancy boundary. Every non-user yaaos data row is `org_id`-scoped; this module owns the table that defines an org and the membership rows that decide who's in it and what they can do. Invitations are the sole access gate (no self-signup). SAML SSO config lives here too — the IdP metadata + per-org SP private key + JIT toggle + break-glass exempt-Owner pointer. Also houses the onboarding-status aggregator: `register_onboarding_contributor(name, check)` lets plugins push readiness callbacks into a per-org registry, and `get_onboarding_status(org_id)` fans them out; `onboarding_web.py` exposes `/api/settings/onboarding` + `/api/settings/plugins` for the settings page.
 
 ## Public interface
 
@@ -39,8 +39,6 @@ HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to brea
 | POST   | `/api/api-keys/{provider}/validate` | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
 | DELETE | `/api/api-keys/{provider}`          | `BYOK_WRITE` — remove the row. |
 
-SSO endpoints land in Phase 12.
-
 ### BYOK routes
 
 The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here because BYOK keys are per-org and the routes need `domain/sessions` deps; `core/byok` stays free of HTTP. Plaintext crosses the boundary only inbound on `POST {provider}` — `GET` returns `configured` / `not_set` only. The provider list is sourced from `core/byok`'s validator registry: a plugin registering its validator auto-surfaces here.
@@ -55,7 +53,7 @@ One VCS plugin per org. State lives on the `orgs` row (`vcs_plugin_id` + `vcs_se
 
 ### Coding agents
 
-Many coding-agent plugins per org. Each install is an `org_coding_agents` row keyed by `(org_id, plugin_id)` with a `settings jsonb`. Mutations audit (`coding_agent.installed`, `coding_agent.settings_updated`, `coding_agent.uninstalled`). Plugin-specific settings shape lives in the plugin itself (Phase 10 ships the Claude Code Pydantic model + bespoke UI).
+Many coding-agent plugins per org. Each install is an `org_coding_agents` row keyed by `(org_id, plugin_id)` with a `settings jsonb`. Mutations audit (`coding_agent.installed`, `coding_agent.settings_updated`, `coding_agent.uninstalled`). Plugin-specific settings shape lives in the plugin itself.
 
 ## Module architecture
 
@@ -81,7 +79,7 @@ Many coding-agent plugins per org. Each install is an `org_coding_agents` row ke
 
 ### Membership mutations
 
-- `change_role(org_id, user_id, new_role, actor)` updates the row and calls `sessions.revoke_all_for_user(user_id)` — the affected user must re-authenticate. Phase 12 replaces the blunt rotation with a targeted session-row patch.
+- `change_role(org_id, user_id, new_role, actor)` updates the row and calls `sessions.revoke_all_for_user(user_id)` — the affected user must re-authenticate.
 - `remove_member(org_id, user_id, actor)` deletes the row and revokes every session for the user. No-op if the membership is already gone.
 
 Both write `membership/role_changed` or `membership/removed` audit entries with the `from_role` + `to_role` payload.
@@ -113,4 +111,3 @@ Both write `membership/role_changed` or `membership/removed` audit entries with 
 - `test/test_repository.py` — repository helpers against real Postgres.
 - `test/test_invitations.py` — service-layer coverage: invite (verifies inbox), accept happy path, used-token error, expired-token error, garbage-token error, remove revokes sessions, role change revokes sessions.
 - `test/test_membership_endpoints.py` — ASGI-driven endpoint coverage: invite + email sent, member role rejected for invite, accept happy path, accept-expired → 410, accept-used → 410, remove revokes sessions, change_role rotates sessions, list-members returns roster.
-- SAML flows ship with Phase 12.

@@ -42,9 +42,9 @@ All four endpoints classify as `RouteSecurity.USER_SCOPED` (cross-org). The pref
 - **Read.** `list_for_user(...)` filters by `read_state` (`all` / `unread` / `read`), optional `org_id`, optional `types`. `popover_for_user(...)` returns the latest N unread items + the unread count for the sidebar bell.
 - **Mark read.** `mark_read(notification_id)` flips `read_at` to now if null (idempotent). `mark_all_read(org_id?, types?)` does a single bulk UPDATE.
 
-### Subscribers (not yet wired)
+### No workflow subscribers wired today
 
-`apps/backend/app/domain/notifications/subscribers.py` is the planned home for `core/events` subscriptions that turn workflow transitions into notification rows — `workflow_state_changed{awaiting_human}` → `hitl_waiting`, `{done}` → `ticket_completed`, `{failed}` → `ticket_failed`. Until those subscribers ship, the inbox stays empty in normal operation; the schema + endpoints + SPA wiring are ready to flip on the day the subscribers land.
+`core/events` subscriptions that would turn workflow transitions into notification rows aren't wired. The schema, endpoints, and SPA wiring exist; no producer emits rows in normal operation.
 
 ## Data owned
 

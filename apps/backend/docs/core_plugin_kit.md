@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Today this module houses `PluginMeta` + `PluginType` — the self-description every plugin exposes via `plugin.meta`. Lives at `core/plugin_kit` (rather than buried in a specific plugin or in a primitives grab-bag) so plugin discovery has a focused entry point. Forward-looking: future plugin-system code (registry, validation, lifecycle hooks, discovery) lands here too without re-renaming.
+Houses `PluginMeta` + `PluginType` — the self-description every plugin exposes via `plugin.meta`. Lives at `core/plugin_kit` (rather than buried in a specific plugin or in a primitives grab-bag) so plugin discovery has a focused entry point.
 
 ## Public interface
 

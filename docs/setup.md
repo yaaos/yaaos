@@ -83,11 +83,11 @@ From the repo root:
 - `bin/dev-rebuild` brings up Postgres + Redis + the yaaos backend (which serves the API on `:8080` and the bundled SPA) plus the worker, Mailpit, and the local WorkspaceAgent. Equivalent to `docker compose -f docker/docker-compose.dev.yml --env-file .env up -d --build`.
 - Visit `http://localhost:8080`. The dashboard renders the onboarding stepper because no GitHub App is installed and no Anthropic key is set.
 
-### dev story (in progress)
+### Workers
 
-adds a separate worker process (`apps/backend/bin/worker`) that runs taskiq workers + the outbox drain in a single Python process against Redis. Local dev uses the in-memory `WorkspaceProvider` so no Go `apps/agent/` container is required; remote-agent provisioning is exercised in the test stack only. Wire-up lands across Phases 0b–9 — until then, the worker process and Go agent are scaffolds and review work still runs in-process via the legacy reviewer queue.
+A separate worker process (`apps/backend/bin/worker`) runs taskiq workers + the outbox drain in a single Python process against Redis. Local dev uses the in-memory `WorkspaceProvider` so no Go `apps/agent/` container is required; remote-agent provisioning is exercised in the test stack only.
 
-#### Running the WorkspaceAgent locally (Phase 9)
+#### Running the WorkspaceAgent locally
 
 The dev compose overlay ships an `agent` service that talks to the backend over the docker network using the placeholder identity-exchange verifier (any non-empty `YAAOS_SIGNED_STS_REQUEST` satisfies it):
 
@@ -97,9 +97,7 @@ docker compose \
     --env-file .env up -d --build agent
 ```
 
-The agent's first long-poll lands at the backend; from then on it heartbeats every 30s and waits for AgentCommands. `agent supervisor` is the only subcommand wired today — `agent workspace` prints a not-implemented marker pending the Phase 6 follow-on workspace subcommand body.
-
-When the Phase 7 follow-on lands the real STS verifier, this service grows a `YAAOS_AGENT_IAM_ROLE_ARN` env var that must match `orgs.registered_iam_arn` for the org you're testing against.
+The agent's first long-poll lands at the backend; from then on it heartbeats every 30s and waits for AgentCommands. `agent supervisor` runs the long-poll loop; `agent workspace` runs the per-workspace child-process dispatcher.
 
 #### WebSocket activity stream
 

@@ -31,4 +31,4 @@ None. State lives in `core/api` query caches keyed `["notifications", read_state
 
 ## How it's tested
 
-The page isn't covered by a dedicated Vitest yet — the chrome bell is exercised by the sidebar's existing test (which mocks `useNotificationsPopover` to return empty). E2E coverage of the live read/mark-read flow is planned alongside the SSE event-kind emission work (Phase 7 polish).
+The chrome bell is exercised by the sidebar's existing test (which mocks `useNotificationsPopover` to return empty).

@@ -181,7 +181,7 @@ reshapes how reviews actually execute. Three new concepts cross every app:
 
   The agent writes rotated local logs to `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` (3-day age, gzip-compressed) in parallel with stdout → CloudWatch — the file sink is the operator's out-of-band channel when the control plane is unreachable. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set the agent also exports OTel logs/traces/metrics to a vendor-neutral collector. Details in [`apps/agent/docs/README.md` § Logging](../apps/agent/docs/README.md) and [§ Observability](../apps/agent/docs/README.md).
 
-### End-to-end (current foundations)
+### End-to-end
 
 1. GitHub webhook → `POST /api/intake/github_pr` ([`domain/intake/web.py`](../apps/backend/app/domain/intake/web.py)) verifies HMAC, dedups via `X-Github-Delivery`, calls `domain/tickets.create(type="pr_review", payload=…, idempotency_key=…)`, starts the workflow via `core/workflow.get_engine().start("pr_review_v1", ticket_id=…)`. The intake records the active `traceparent` so downstream tasks share the trace.
 2. `route_workflow` task picks up; first step is `CheckShouldReview` (Local; admission gate). Then `ProvisionWorkspace` (Workspace category) — `start_step` parks the workflow in `awaiting_agent` and dispatches via either the in-process provider or `core/agent_gateway.enqueue_command` (for the remote agent).
@@ -192,10 +192,6 @@ reshapes how reviews actually execute. Three new concepts cross every app:
 ### Persistence
 
 New tables: `workflow_executions`, `pending_human_decisions`, `outbox_entries`, `workspace_agents`, `bearer_tokens`. Existing tables extended: `tickets` (type, idempotency_key, payload, current_workflow_execution_id), `workspaces` (provider, current_command_id, current_holder_workflow_id, max_idle_seconds), `orgs` (workspace_provider, registered_iam_arn, aws_region). Activity events are **never persisted** — they exist only in flight from WebSocket → `core/sse_pubsub` → SSE → UI. State of record stays in audit + workflow rows.
-
-### status
-
-ships **foundations across every phase**: schema + module surfaces + Pydantic types + wire protocol + Go skeleton + Dockerfile + docs. Integration follow-on still required for the full milestone-done bar — see [](../) for the per-phase deferral annotations and what remains.
 
 ## Stack at a glance
 

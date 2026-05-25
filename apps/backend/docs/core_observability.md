@@ -35,7 +35,7 @@ Reads `settings.log_level` and `settings.yaaos_env`. Processor chain: `merge_con
 
 The boot path always sets up the SDK so wire-protocol code (`traceparent` propagation, structlog correlation, ActivityEvent linkage) can rely on it without flags. Adding a real exporter in prod later (Datadog / Honeycomb / Tempo) is a single env-var flip — no code change.
 
-### Wire-protocol trace propagation (Phase 8)
+### Wire-protocol trace propagation
 
 Three helpers bridge the in-process OTel SDK and the `traceparent` strings the wire protocol carries:
 
@@ -45,7 +45,7 @@ Three helpers bridge the in-process OTel SDK and the `traceparent` strings the w
 
 `domain/intake/web.post_intake` records `current_traceparent()` when a webhook arrives and passes it into `core/workflow.get_engine().start(traceparent=...)`. The workflow execution row stamps `otel_trace_context`; downstream tasks restore that context when they emit work-spans. The architecture's "one trace_id covers webhook → ... → terminal outcome" property rides on this thread.
 
-Task-body span emission (per-`start_step`, per-`route_workflow`, per-`handle_agent_event` work spans) lands in the Phase 8 follow-on; the helpers are in place and unit-tested today.
+The helpers are unit-tested; task-body span emission (per-`start_step`, per-`route_workflow`, per-`handle_agent_event`) is not yet wired into the task bodies.
 
 ### Idempotency
 

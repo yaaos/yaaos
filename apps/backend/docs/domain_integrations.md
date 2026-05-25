@@ -19,7 +19,7 @@ Exported from `app/domain/integrations/__init__.py`:
 - `register_provider(provider)` / `get_provider(provider_id)` / `known_providers()` — bootstrap-time registry that keeps `domain/integrations` free of plugin imports.
 - Errors: `IntegrationError`, `ProviderNotRegisteredError`, `IntegrationNotConnectedError`, `BrokenCredentialsError`.
 
-Refresh-on-expiry is deferred — see . The proxy returns `broken_creds` when the stored access token's `expires_at < now()`; Phase 3b's hourly health-check + email notification surfaces the breakage so operators reconnect.
+The proxy returns `broken_creds` when the stored access token's `expires_at < now()`; the hourly health-check loop (see below) surfaces the breakage so operators reconnect.
 
 HTTP routes (mounted at `/api/mcp-proxy` with `X-Org-Slug` header):
 
@@ -32,7 +32,7 @@ HTTP routes (mounted at `/api/mcp-proxy` with `X-Org-Slug` header):
 
 ## Module architecture
 
-Skeleton at Phase 0; the service surface and HTTP routes land in Phase 1 (Linear) and Phase 1b (Notion). Phase 3b adds an hourly health-check loop (`scheduler.run_scheduler_loop`) spawned via the module's `on_startup` hook — it iterates enabled credentials, calls each provider's `validate(access_token)`, flips `last_refresh_status`, audits `mcp.<provider>.token_refresh_failed` on flip-to-failed, and emails the org's Owners (dedup once per 24h via `last_failure_notified_at`). The same loop runs `domain/mcp_proxy.sweep_expired()` so expired review-tokens get reaped without a second scheduler.
+An hourly health-check loop (`scheduler.run_scheduler_loop`) is spawned via the module's `on_startup` hook — it iterates enabled credentials, calls each provider's `validate(access_token)`, flips `last_refresh_status`, audits `mcp.<provider>.token_refresh_failed` on flip-to-failed, and emails the org's Owners (dedup once per 24h via `last_failure_notified_at`). The same loop runs `domain/mcp_proxy.sweep_expired()` so expired review-tokens get reaped without a second scheduler.
 
 ## Data owned
 

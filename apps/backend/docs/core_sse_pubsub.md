@@ -30,7 +30,7 @@ Layered on [`core/redis`](core_redis.md). This module owns the channel naming co
 
 ### Persistence invariant
 
-**Activity events are never persisted.** They exist only between publish and the subscriber's consumer loop. Reload-the-UI = empty until the next event. The architecture's [§ Persistence invariant](../../../#persistence-invariant) explains the rationale (volume + nobody-scrolls-history).
+**Activity events are never persisted.** They exist only between publish and the subscriber's consumer loop. Reload-the-UI = empty until the next event. Rationale: volume + nobody-scrolls-history.
 
 ## Data owned
 

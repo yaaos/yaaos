@@ -88,21 +88,21 @@ Module-level `_PROVIDERS: dict[str, WorkspaceProvider]`. `register_workspace_pro
 | `POST /api/workspaces/force_close_all` | Force-close every active workspace for the org. |
 | `POST /api/workspaces/{id}/retry_destroy` | Reset `destroy_failed` → `expired` so the reaper retries. |
 
-Operational endpoints, unauthenticated (documented POC limitation; tightened when auth lands).
+Operational endpoints, unauthenticated. POC limitation — not safe for production.
 
-### single-flight claim + recovery (Phase 3)
+### Single-flight claim + recovery
 
 The workspace state machine runs one in-flight AgentCommand at a time. `try_claim(workspace_id, *, command_id, workflow_execution_id, session)` performs an atomic conditional `UPDATE` that succeeds iff the row is `status='active'` AND `current_command_id IS NULL`; concurrent callers racing the same workspace see `rowcount=0` and back off. `release_claim(workspace_id, *, command_id, session)` clears the claim only when the supplied command id still owns it — making it idempotent and safe against stale event redelivery. The terminal event must arrive before disposal: `release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id` so reconciliation / audit lookups can still find which workflow last touched the workspace.
 
-The recovery-policy registry (`register_recovery_policy(failure_label=, command_kind=)`, `get_recovery_policy(label)`, `registered_recovery_labels()`) maps AgentCommand failure labels to lifecycle WorkflowCommand kinds. One policy ships at boot: `auth_expired → RefreshWorkspaceAuth`. Phase 4 registers the `RefreshWorkspaceAuth` command body alongside the reviewer workflows.
+The recovery-policy registry (`register_recovery_policy(failure_label=, command_kind=)`, `get_recovery_policy(label)`, `registered_recovery_labels()`) maps AgentCommand failure labels to lifecycle WorkflowCommand kinds. One policy ships at boot: `auth_expired → RefreshWorkspaceAuth`.
 
-### Lifecycle commands (Phase 4)
+### Lifecycle commands
 
 `commands.py` ships three `WorkflowCommand`s — `ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`. All Workspace-category, all `restart_safe=True`. Registered against the engine via `domain/reviewer` bootstrap so the reviewer workflows can reference them.
 
 - `CleanupWorkspace` has a real body: reads `workspace_id` from inputs and calls `close_workspace()`. Idempotent — missing/invalid/unknown ids return success so partial-failure workflows still drain.
 - `ProvisionWorkspace` has a real body: fetches the ticket context via the registered `WorkflowContextProvider` (see [Workflow-context callback](#workflow-context-callback)), builds a `WorkspaceSpec`, calls `create_workspace()`, returns `workspace_id` in outputs. Fails cleanly when no provider is registered, the ticket isn't found, or the underlying create fails.
-- `RefreshWorkspaceAuth` has a real body: a no-op-success for the in_memory provider (in-process provider re-fetches a fresh installation token on each git fetch/clone, so there's no stored credential to refresh). For the remote_agent provider, a future iteration will dispatch a `RefreshWorkspaceAuth` AgentCommand over the wire.
+- `RefreshWorkspaceAuth` has a real body: a no-op-success for the in_memory provider (in-process provider re-fetches a fresh installation token on each git fetch/clone, so there's no stored credential to refresh). The remote_agent provider currently inherits the same no-op body.
 
 ### Workflow-context callback
 
@@ -110,7 +110,7 @@ The recovery-policy registry (`register_recovery_policy(failure_label=, command_
 
 The bridge is registered from [`domain/reviewer/__init__.py`](domain_reviewer.md) at module-import time, alongside the workflow + command registrations.
 
-### Idle-timeout sweep (Phase 3)
+### Idle-timeout sweep
 
 The reaper's second sweep marks any workspace that is `status='active'`, holds no claim, and has been activated longer than `max_idle_seconds` (default 600s) as `expired` so the destroy pass picks it up. Workspaces with a live claim are skipped — those are the engine's; cancellation goes through `workflow.request_cancel`. This is the cleanup-failsafe layer above the TTL sweep, catching workspaces that completed their work but whose cleanup workflow never ran.
 

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns `Workflow`, `Step`, `WorkflowCommand`, `Outcome`, and (Phase 1 cont'd) the three [`core/tasks`](core_tasks.md) task bodies that drive the engine (`start_step`, `handle_agent_event`, `route_workflow`). Workflows are typed data, registered at startup; the engine is mechanism, not policy.
+Owns `Workflow`, `Step`, `WorkflowCommand`, `Outcome`, and the three [`core/tasks`](core_tasks.md) task bodies that drive the engine (`start_step`, `handle_agent_event`, `route_workflow`). Workflows are typed data, registered at startup; the engine is mechanism, not policy.
 
 ## Public interface
 
@@ -33,7 +33,7 @@ Exports `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `Outcom
 
 1. **Register at startup.** Domain modules import `get_engine()` and call `register_command(...)` for each WorkflowCommand impl + `register_workflow(...)` for each typed `Workflow`.
 2. **Start.** `domain/intake` (or any orchestrator) calls `engine.start(workflow_name=..., ticket_id=..., session=s)`. The engine validates every step's `command_kind` is registered, writes a `pending` `workflow_executions` row, enqueues an initial `route_workflow(workflow_execution_id, completed_step_id=None, ...)` via `core/outbox` in the same session.
-3. **Route → start_step → handle_agent_event → route_workflow** — Phase 1 cont'd lands the state-machine bodies. See [architecture.md § Workflow execution model](../../../#workflow-execution-model).
+3. **Route → start_step → handle_agent_event → route_workflow** — the three taskiq tasks that drive the state machine.
 
 ### State machines
 
@@ -54,14 +54,9 @@ Exports `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `Outcom
 
 `TERMINAL_STATES = {done, failed, cancelled}`.
 
-### Phase boundaries
-
-- **Phase 1 foundations (current commit)** — types, models, migration, `WorkflowEngine` register + start; three taskiq task names registered with placeholder bodies that raise `NotImplementedError`.
-- **Phase 1 cont'd** — task bodies: `start_step` branches on command category; `handle_agent_event` validates + clears `pending_agent_command_id`; `route_workflow` persists outcome, applies retry budget, evaluates transitions. Cancellation. HITL resume API. OTel span propagation.
-
 ### Why three tasks (not two)
 
-Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; `handle_agent_event` is enqueued when the terminal event arrives at `core/agent_gateway`; `route_workflow` does the routing. Workers stay free during the wait. See [architecture.md § Why three tasks (not two)](../../../#why-three-tasks-not-two).
+Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; `handle_agent_event` is enqueued when the terminal event arrives at `core/agent_gateway`; `route_workflow` does the routing. Workers stay free during the wait.
 
 ### Input-expression resolver
 
@@ -88,7 +83,7 @@ Recovery fires **at most once per step instance**. Repeated `auth_expired` after
 `engine.start(..., workspace_provider=...)` stashes the org's provider on `step_state["__workspace_provider__"]`. `start_step`'s Workspace branch reads it:
 
 - **`in_memory`** — runs the command inline (same path as Local). The command body owns the workspace lifecycle calls (`core/workspace.create_workspace` / `close_workspace`) and any in-process subprocess work. No wire round-trip; `pending_agent_command_id` stays null.
-- **`remote_agent`** — dispatches the AgentCommand to `core/agent_gateway` and parks the workflow in `awaiting_agent` until the Go agent reports the terminal event. Real `core/workspace.dispatch()` lands alongside the Go workspace subcommand body in the Phase 6 follow-on; current code synthesizes the command id so the state-machine gate behaves end-to-end.
+- **`remote_agent`** — dispatches the AgentCommand to `core/agent_gateway` and parks the workflow in `awaiting_agent` until the Go agent reports the terminal event.
 
 Default when the caller omits the parameter or passes `None`: `in_memory` (matches the default org configuration).
 
@@ -101,5 +96,3 @@ Default when the caller omits the parameter or passes `None`: `in_memory` (match
 
 - `test/test_types.py` — typed data validation (workflows, steps, retry policy, outcomes, terminal-action transitions).
 - `test/test_engine.py` — register validation (unknown entry step, dangling transitions, double-register), version-selection (`get_workflow` picks latest), `start()` writes a `pending` row + enqueues `workflow.route_workflow` via the outbox, `start()` fails loud (no row written) when a step references an unregistered command.
-
-Phase 1 cont'd adds: Local-only workflow runs to completion; Workspace step async cycle; failure + retry; HITL pause + resume; `append_steps` insertion; backend-restart resume; cancellation during `awaiting_agent`; idempotent duplicate-event handling; async-model load test (100 simultaneous workflows dispatch within < 1s wall time).

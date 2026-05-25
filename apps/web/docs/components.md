@@ -7,8 +7,8 @@
 ```
 src/shared/components/
 ├── ui/        shadcn primitives (one file per primitive; copied in via the shadcn CLI)
-├── chrome/    yaaos chrome composites — sidebar, org switcher, user popover, notifications (Phase 2+)
-└── layout/    yaaos layout composites — page header, empty state, error banner (Phase 2+)
+├── chrome/    yaaos chrome composites — sidebar, org switcher, user popover, notifications
+└── layout/    yaaos layout composites — page header, empty state, error banner
 ```
 
 Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) and Tailwind (visual style via the design tokens documented in [design.md](design.md)). They live in our repo — modify freely.
@@ -32,7 +32,7 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 
 | File | Purpose |
 |---|---|
-| `dialog.tsx` | Modal dialog. Composed by ConfirmModal / PickerModal in Phase 2. |
+| `dialog.tsx` | Modal dialog. Composed by ConfirmModal / PickerModal. |
 | `popover.tsx` | Anchored floating panel. Used by Org switcher, Notifications. |
 | `dropdown-menu.tsx` | Menu list anchored to a trigger. |
 | `tooltip.tsx` | Hover/focus tooltip. |
@@ -53,7 +53,7 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 
 | File | Purpose |
 |---|---|
-| `sidebar.tsx` | shadcn sidebar primitive — handles collapse, sub-items, mobile-sheet fallback. yaaos composes a `Sidebar` on top in Phase 2. |
+| `sidebar.tsx` | shadcn sidebar primitive — handles collapse, sub-items, mobile-sheet fallback. yaaos composes a `Sidebar` on top. |
 | `collapsible.tsx` | Inline expand/collapse panel. |
 | `scroll-area.tsx` | Custom-scrollbar viewport. |
 
@@ -68,7 +68,7 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 | File | Purpose |
 |---|---|
 | `org-switcher.tsx` | `OrgSwitcher` — sidebar chip showing the current org with a dropdown of the user's other orgs + a "View all organizations" link to `/orgs`. Data via `useMyOrgs()`. |
-| `notifications-bell.tsx` | `NotificationsBell` — Bell icon row with unread-count badge + popover. Phase 2 ships the shell with a placeholder empty-state; Phase 7 wires real data. |
+| `notifications-bell.tsx` | `NotificationsBell` — Bell icon row with unread-count badge + popover. Renders a placeholder empty-state today; no live data wired. |
 
 ## Layout composites (`src/shared/components/layout/`)
 

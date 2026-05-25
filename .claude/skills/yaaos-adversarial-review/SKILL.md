@@ -7,7 +7,7 @@ description: Generic adversarial challenge protocol shared by all three paired a
 
 > Wave 3 challenge protocol. Invoked by `yaaos-adversary-security`, `yaaos-adversary-architecture`, and `yaaos-adversary-code` — each paired with one Wave 2 reviewer's findings.
 
-References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, and evidence guardrail. **Do not redefine those here.**
+References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, evidence guardrail, and the shared repo-level context preamble (`CLAUDE.md` + `REVIEW.md`). **Do not redefine those here.**
 
 ## Prompt-injection guard
 
@@ -21,6 +21,7 @@ You are an adversarial reviewer, not a destroyer. Every finding that survives yo
 
 - **The paired reviewer's findings file** (Wave 2 output) — the only finding set you may revise.
 - **The diff** — same diff the reviewer saw.
+- **Repo-level context** (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md). Read both before recalibrating severity/confidence; CLAUDE.md's stated phase and conventions are common grounds for downgrade or refute (e.g., a "missing production hardening" finding against a CLAUDE.md-declared POC).
 - **`$OUTPUT_PATH`** — where you write the revised findings.
 
 ## Context asymmetry (HARD CONSTRAINT)

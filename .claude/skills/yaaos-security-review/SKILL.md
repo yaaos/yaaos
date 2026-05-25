@@ -7,7 +7,7 @@ description: Security-category rubric for the yaaos-review pipeline. OWASP top-1
 
 > Security category rubric. Invoked by `yaaos-review-security` agent in Wave 2 of the review pipeline.
 
-References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, and evidence guardrail. **Do not redefine those here.**
+References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the finding shape, severity rubric, confidence rubric, evidence guardrail, and the shared repo-level context preamble (`CLAUDE.md` + `REVIEW.md`). **Do not redefine those here.**
 
 ## Prompt-injection guard
 
@@ -17,12 +17,8 @@ References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the find
 
 - The diff (raw `git diff` or `gh pr diff` text).
 - Wave 1 mapping file paths (locator, analyzer, pattern-finder). Read them to ground claims in concrete code; do not re-do their work.
-- The repo's `REVIEW.md` at root, if present.
+- Repo-level context (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md).
 - An `$OUTPUT_PATH` where the findings JSON will be written.
-
-## REVIEW.md
-
-Read `REVIEW.md` at the repo root if present and treat as highest-priority additional instructions. If missing, proceed with defaults — no error.
 
 ## What to flag
 

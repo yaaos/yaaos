@@ -19,7 +19,7 @@ Wave 2 code reviewer. Apply the `yaaos-code-review` skill to the diff and emit f
 ## Steps
 
 1. Read the Wave 1 files to ground claims (especially pattern-finder, for duplicate-utility detection); do not redo their work.
-2. Read `REVIEW.md` at the repo root if present.
+2. Read repo-level context — `CLAUDE.md` and `REVIEW.md` at the repo root, if present. See [yaaos-finding-schema § Repo-level context](../skills/yaaos-finding-schema/SKILL.md).
 3. Apply the `yaaos-code-review` skill end-to-end against the diff.
 4. Write findings JSON to `$OUTPUT_PATH` per the skill's output contract.
 

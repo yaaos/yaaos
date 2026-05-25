@@ -6,7 +6,7 @@ See [core_saml.md](core_saml.md) for the full SAML SP design — moved the produ
 
 ## Purpose
 
-Issues `itsdangerous`-signed dicts standing in for real SAML Response XML so backend integration tests + the Phase 12 Playwright spec can exercise `/api/sso/{slug}/acs` without spinning up `libxmlsec1` and a live IdP. The orchestration code in `domain/orgs.sso_web` reads the verified payload identically regardless of the source — the registry hides the shape difference.
+Issues `itsdangerous`-signed dicts standing in for real SAML Response XML so backend integration tests + the Playwright SSO specs can exercise `/api/sso/{slug}/acs` without spinning up `libxmlsec1` and a live IdP. The orchestration code in `domain/orgs.sso_web` reads the verified payload identically regardless of the source — the registry hides the shape difference.
 
 ## Public interface
 
