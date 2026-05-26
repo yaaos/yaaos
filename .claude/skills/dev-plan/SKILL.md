@@ -54,6 +54,21 @@ Rules the template encodes:
 
 **Deliberately excluded:** rejected alternatives · risk register · effort/timeline · parallel current-state snapshot.
 
+## Gate: architecture → plan
+
+Before writing plan.md, the skill passes through an explicit gate. Three rules — all required, no shortcuts.
+
+1. **Explicit confirmation required.** Do not begin writing plan.md until the user gives explicit confirmation that architecture.md is complete. Implicit signals ("ok thanks", topic shifts, "what's next") do NOT count. Ask in your own message — e.g., "Architecture looks complete to me — confirm I should proceed to plan.md?" — and wait for an explicit yes.
+2. **Triple-check sweep before plan.md.** After explicit confirmation, run a verification sweep against architecture.md. Seven checks:
+   - Every `changed` / `deleted` row in Entities / Interface changes / Data model carries a `was @ path:line` cite.
+   - Every cited `path:line` in architecture.md resolves (file exists, line exists).
+   - Every boundary in "Boundaries touched" has a matching subsection in Interface changes — and every Interface changes subsection appears in "Boundaries touched" (no orphans either way).
+   - Every entity referenced in sequence diagrams is in the Entities table.
+   - Architecture.md `## Open questions` section is empty.
+   - Every per-boundary `**Current anchor:**` `path:line` resolves.
+   - Every inline `file:line` cite in Approach resolves.
+3. **Bail on triple-check failure.** If any check fails, do NOT write plan.md. Report the specific failures to the user as a terse list, fix architecture.md (or ask user to clarify), re-run the sweep, and only proceed when clean. No partial plan.md writes "to keep momentum."
+
 ## `plan.md` structure
 
 Use the template at `.claude/skills/dev-plan/templates/plan.md`. Copy it to `plan/ticket/<slug>/plan.md` on first write and fill in placeholders. Add or remove phase blocks as needed; keep the final "Verify requirements" phase.
@@ -99,7 +114,6 @@ Rules the template encodes:
 - **Read `CLAUDE.md` + `docs/` first** — root `CLAUDE.md`, any `apps/<app>/CLAUDE.md`, root `docs/`, per-app `apps/<app>/docs/`. All are hints. Code wins on conflict.
 - **Spawn "serious" Explore subagents in parallel** — one per affected boundary, soft cap of 5 concurrent. Broader scope than `dev-requirements`'s Explore: services, module boundaries, entities/value objects, current interfaces. Each Explore returns a **current-state map with `file:line` anchors** for its boundary; the map feeds the four delta slots in architecture.md (Notes-column `was → is`, per-boundary Current anchor, before-half of sequence diagrams, inline Approach cites) — never a parallel current-state section. Filter results through this skill — never raw-dump.
 - **Pushback discipline** per "code is king".
-- **Architecture first, then phases.** Generate phases only after architecture is confirmed with the user.
 - **Incremental file writes** — sidebar-visible working draft, written only when meaningful new info accumulates.
 - **Bail clause.** If the plan can't be made concrete (requirements too vague, code reality blocks the approach), say so — do not write a hollow plan. Specific case: refuse to write architecture.md if any `changed` or `deleted` row can't cite the current `file:line` it diverges from.
 
