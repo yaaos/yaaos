@@ -41,4 +41,4 @@
 
 ## Open questions
 
-- <architectural-level unknowns — distinct from intent.md and plan.md lists>
+- <architectural-level unknowns — distinct from requirements.md and plan.md lists>

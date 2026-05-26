@@ -18,12 +18,12 @@ Phases are CI-clean but not feature-shippable until final phase.
 
 <same shape>
 
-## Phase N — Verify intent (final, non-code)
+## Phase N — Verify requirements (final, non-code)
 
-- **Goal:** confirm every intent.md use case "After" behavior is real and docs are current.
+- **Goal:** confirm every requirements.md use case "After" behavior is real and docs are current.
 - **Steps:**
   - Run `apps/backend/bin/ci`, `apps/web/bin/ci`, `apps/agent/bin/ci`, `apps/e2e/bin/ci`.
-  - Re-read `intent.md`; walk each use case "After" against the running system.
+  - Re-read `requirements.md`; walk each use case "After" against the running system.
   - Confirm doc updates from prior phases are landed and current.
 
 ## Open questions
