@@ -31,8 +31,14 @@
 
 ## Open questions
 
-- <punch list for dev-plan>
+- <requirements punch list — unresolved scope, behavior, or outcome questions>
 
 ## Current state
 
 <grounded in code, not docs. cite file:line for load-bearing claims>
+
+## Tech questions for dev-plan
+
+> Tech/architecture questions that surfaced — for dev-plan to resolve. Capture only; do not answer here.
+
+- <bullet>
