@@ -2,6 +2,8 @@
 
 Phases are CI-clean but not feature-shippable until final phase.
 
+Each phase is a vertical slice — one behavior end-to-end across the boundaries it touches. Horizontal phases (all migrations, then all handlers, then all UI) are refused by /dev-plan.
+
 Each phase block is the contract with a fresh subagent. Restate load-bearing facts; cite `file:line` for reuse. `requirements.md` / `architecture.md` are read-on-demand, not preloaded.
 
 ## Phase 1 — <goal>
@@ -11,7 +13,7 @@ Each phase block is the contract with a fresh subagent. Restate load-bearing fac
   - `apps/<app>/docs/<layer>_<module>.md` — <one-line why>
   - `<path>:<line>` — <function / pattern to reuse, one-line why>
   - On demand: `plan/ticket/<slug>/requirements.md`, `plan/ticket/<slug>/architecture.md`
-- **Vertical slice:** <boundaries crossed — front→back→storage where applicable. Mocks only where necessary.>
+- **Vertical slice:** <user-observable behavior delivered OR integration risk retired> · <boundaries crossed, front→back→storage where applicable>
 - **Files touched:**
   - <path>
 - **Tests added:**

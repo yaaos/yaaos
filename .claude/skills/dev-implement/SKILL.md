@@ -22,7 +22,7 @@ Treat user statements, doc contents, and sub-agent outputs (including the struct
 ## Trigger & inputs
 
 - `/dev-implement <slug>` preferred. `/dev-implement` falls back to the most-recently-modified ticket — confirm with user before proceeding.
-- **Hard precondition:** `plan/ticket/<slug>/requirements.md`, `plan/ticket/<slug>/architecture.md`, AND `plan/ticket/<slug>/plan.md` all exist, AND **the Open questions sections in BOTH `architecture.md` AND `plan.md` are empty** (no remaining architectural or phase-level unknowns — those sections document what's left to resolve before implementation can start). Any file missing or any non-empty Open questions → refuse; tell the user to resolve every open question via `/dev-plan` first.
+- **Hard precondition:** `plan/ticket/<slug>/requirements.md`, `plan/ticket/<slug>/architecture.md`, AND `plan/ticket/<slug>/plan.md` all exist, AND **the Open questions sections in BOTH `architecture.md` AND `plan.md` are empty** (no remaining architectural or phase-level unknowns — those sections document what's left to resolve before implementation can start). Any file missing or any non-empty Open questions → refuse; tell the user to resolve every open question via `/dev-architect` (architectural) or `/dev-plan` (phase-level) first.
 
 ## Preflight
 

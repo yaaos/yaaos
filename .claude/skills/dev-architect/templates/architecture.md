@@ -21,23 +21,38 @@ Notes-column format: `new` rows write a one-line rationale; `changed` rows write
 
 ## Interface changes
 
+> Coherence check: each boundary's add / change / delete set must form an internally consistent interface — no mixed styles, no granularity drift, no redundant endpoints, no disagreeing payload conventions.
+
 ### <Boundary A>
 
 **Current anchor:** `<path:line>` — <canonical current entry-point for this boundary (handler, queue consumer, route)>
 
 | Change | Signature / endpoint / payload / event | Notes |
 |---|---|---|
-| added | <sig> | <one-line rationale> |
-| changed | <sig> | `was: <sig> @ path:line → is: <new sig>` |
+| added | <sig> | <one-line rationale; which UC(s) exercise it, or "infra"> |
+| changed | <sig> | `was: <sig> @ path:line → is: <new sig>` — <which UC(s) exercise it> |
 | deleted | <sig> | `was: <sig> @ path:line` |
 
 <repeat per boundary, each with its own Current anchor>
 
 ## Sequence diagrams
 
-<ASCII, one block per affected boundary, only when call sequence changes. Each block carries today (top) and after (bottom), separated by a horizontal rule. Cite the current entry-point `path:line` above the "today" half. Mark entities. Embed inline AND save the combined block to diagrams/<name>.txt — one file per boundary, both states inside.>
+<ASCII, one block per use case with non-trivial sequence. Each block carries today (top) and after (bottom), separated by a horizontal rule. Cite the current entry-point `path:line` above the "today" half. Mark entities. Embed inline AND save the combined block to diagrams/<uc-slug>.txt — one file per use case, both states inside.>
 
 <If no sequence changes: write "No sequence changes." and omit the diagrams/ directory entirely.>
+
+## Use case walkthroughs
+
+> For each use case in [./requirements.md § Use cases](./requirements.md#use-cases), trace the path through the architecture. Bullets, not prose. Names entities and interfaces from the tables above — does not redefine them.
+
+### <actor> — <goal>
+
+- **Trigger:** <what starts the flow>
+- **Path:** <step 1: entity / interface called> → <step 2> → <step 3> → ...
+- **Data crossing boundaries:** <payload shape names, not full schemas>
+- **Diagram:** <link to diagrams/<uc-slug>.txt, or "no sequence change">
+
+<repeat per use case — one walkthrough per use case in requirements.md>
 
 ## Data model changes
 

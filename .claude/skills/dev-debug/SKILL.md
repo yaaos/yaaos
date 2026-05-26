@@ -1,6 +1,6 @@
 ---
 name: dev-debug
-description: Slash command /dev-debug [slug] — diagnose a bug with code-grounded evidence. On user approval, auto-chain into dev-requirements (one-shot) and dev-plan (interactive) to create a fix ticket. Manual trigger only.
+description: Slash command /dev-debug [slug] — diagnose a bug with code-grounded evidence. On user approval, auto-chain into dev-requirements (one-shot), dev-architect (interactive), and dev-plan (interactive) to create a fix ticket. Manual trigger only.
 ---
 
 # /dev-debug
@@ -47,7 +47,7 @@ If iteration cannot reach a root cause with `file:line` evidence, say so plainly
 
 Name which one. Stop.
 
-## Escalation (auto-chain into dev-requirements + dev-plan)
+## Escalation (auto-chain into dev-requirements + dev-architect + dev-plan)
 
 On user approval after diagnosis:
 
@@ -60,11 +60,12 @@ On user approval after diagnosis:
    - **Success signal** — bug no longer reproduces under the documented reproduction steps.
    - **Open questions** — anything diagnosis couldn't pin down.
    - **Current state** — diagnosis with `file:line` citations. If a context slug was given via `/dev-debug <slug>`, reference that slug here.
-3. **Pass investigation findings forward** to `dev-plan` so it doesn't re-explore areas already mapped. `dev-plan` may still spawn targeted Explores for areas not yet touched.
-4. Transition into `dev-plan` **interactive** behavior — drop the user into the standard `dev-plan` flow (architecture review, then phases).
+3. **Pass investigation findings forward** to `dev-architect` so it doesn't re-explore areas already mapped. `dev-architect` may still spawn targeted Explores for areas not yet touched.
+4. Transition into `dev-architect` **interactive** behavior — drop the user into the standard `dev-architect` flow (target shape + delta, then lock gate).
+5. After `dev-architect` locks `architecture.md`, transition into `dev-plan` **interactive** behavior — slice gate, then phases.
 
 ## Out of scope
 
-- No inline fix application. All fixes go through escalation (`dev-requirements` → `dev-plan` → `dev-implement`).
+- No inline fix application. All fixes go through escalation (`dev-requirements` → `dev-architect` → `dev-plan` → `dev-implement`).
 - No modification of an existing ticket's files when `/dev-debug <slug>` was given. The slug is context only; escalation creates a NEW ticket.
 - No `gh` for PR / comment / check context. Git only.

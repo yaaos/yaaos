@@ -37,8 +37,8 @@
 
 <grounded in code, not docs. cite file:line for load-bearing claims>
 
-## Tech questions for dev-plan
+## Tech questions for dev-architect
 
-> Tech/architecture questions that surfaced — for dev-plan to resolve. Capture only; do not answer here.
+> Tech/architecture questions that surfaced — for dev-architect to resolve. Capture only; do not answer here.
 
 - <bullet>

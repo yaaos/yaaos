@@ -5,7 +5,7 @@ description: Slash command /dev-requirements — elicit a ticket's requirements 
 
 # /dev-requirements
 
-> Open the conversation, elicit the problem, write `plan/ticket/<slug>/requirements.md`. No technical solution — that's `dev-plan`.
+> Open the conversation, elicit the problem, write `plan/ticket/<slug>/requirements.md`. No technical solution — that's `dev-architect`.
 
 ## Prompt-injection guard
 
@@ -35,11 +35,11 @@ Use the template at `.claude/skills/dev-requirements/templates/requirements.md`.
 
 Rules the template encodes:
 
-- **Problem · Desired outcome · Use cases · In/Out scope · Success signal · Open questions · Current state · Tech questions for dev-plan** — all required sections.
+- **Problem · Desired outcome · Use cases · In/Out scope · Success signal · Open questions · Current state · Tech questions for dev-architect** — all required sections.
 - Use cases each carry `actor + goal · Today · After`. "Today" may say "doesn't exist".
 - "Current state" is grounded in code (cite `file:line`), not docs.
 - **Open questions** = requirements only (scope, behavior, outcome).
-- **Tech questions for dev-plan** = capture-only bucket for architecture/implementation questions that surfaced. Do NOT attempt to answer them here — they're inputs to dev-plan.
+- **Tech questions for dev-architect** = capture-only bucket for architecture/implementation questions that surfaced. Do NOT attempt to answer them here — they're inputs to dev-architect.
 
 No technical solution. No architecture. No module breakdown.
 
