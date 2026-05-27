@@ -45,7 +45,7 @@ Adding a new module with tables means adding one import line here. Otherwise `/r
 
 ### `reset()`
 
-Opens a `db_session()`, calls `core.database.truncate_all_tables(session)`, then commits. Truncates `Base.metadata.sorted_tables` in reverse order with `RESTART IDENTITY CASCADE`.
+Opens a `db_session()`, calls `core.database.truncate_all_tables(session)`, then commits. Empties `Base.metadata.sorted_tables` in reverse-FK order via per-table `DELETE FROM` (RowExclusive locks only, so the endpoint doesn't deadlock against lingering SSE / WS / background-task connections from a prior spec).
 
 Reviewer specialists are shipped as markdown files in `app/domain/coding_agent/reviewers/` and installed to `~/.claude/agents/` by the claude_code plugin at backend bootstrap. No DB-level structural seeding needed. Lessons, credentials, install rows are test data and must be seeded explicitly.
 

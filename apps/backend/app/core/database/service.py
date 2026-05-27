@@ -982,40 +982,42 @@ async def _apply_pending() -> None:
 
 
 async def truncate_all_tables(session) -> None:
-    """Truncate every table in ``Base.metadata`` in reverse-FK order.
+    """Empty every table in ``Base.metadata`` in reverse-FK order.
 
-    Emits a single ``TRUNCATE … RESTART IDENTITY CASCADE`` so sequences
-    reset and FK chains cascade in one DDL statement.
+    Issues per-table ``DELETE FROM`` statements instead of a single
+    ``TRUNCATE … CASCADE``. DELETE takes only ``RowExclusive`` locks, so
+    it does not block on lingering ``AccessShare`` readers from a
+    previous request — SSE subscribers, agent-gateway WebSockets, or
+    background tasks still holding open transactions. TRUNCATE requires
+    ``AccessExclusive`` on every table it touches and was causing the
+    e2e reset endpoint to deadlock between specs.
+
+    All yaaos primary keys are UUIDs, so no sequence-reset step is
+    needed.
 
     Callers must ensure all model modules have been imported (so their
     tables are registered on ``Base.metadata``) before calling this. The
     ``app/testing/e2e_setup`` module handles that for the test reset path
     by importing every model module at the top of its file.
     """
-    tables = ", ".join(f'"{t.name}"' for t in reversed(Base.metadata.sorted_tables))
+    tables = list(reversed(Base.metadata.sorted_tables))
     if not tables:
         return
-    # ── nosemgrep justification ──────────────────────────────────────
-    # Suppressing
-    #   python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-    # because the f-string is provably injection-free here:
-    #
-    # 1. Every value interpolated into the SQL is a `Table.name` from
-    #    SQLAlchemy model declarations in our own codebase
-    #    (`__tablename__ = "comment_messages"` and friends, resolved
-    #    at module-import time before any request ever runs).
-    # 2. No request data, query string, header, env var, or DB
-    #    lookup feeds this string.
-    # 3. The rule's suggested fix (`or_()` / `and_()` / Core
-    #    constructs) doesn't apply: TRUNCATE is DDL, not a SELECT/
-    #    UPDATE/DELETE expression, so there is no Core-level builder.
-    # 4. This is intended as a test-reset primitive only.
-    # ─────────────────────────────────────────────────────────────────
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"TRUNCATE {tables} RESTART IDENTITY CASCADE"
+    # Set a short lock_timeout so that if a stuck connection is somehow
+    # holding a conflicting row lock the reset fails fast with a clear
+    # PostgresError instead of timing out at the HTTP layer.
+    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    for table in tables:
+        # `table.name` comes from SQLAlchemy model declarations in this
+        # repo (resolved at import time before any request runs). No
+        # request data feeds these names, so f-string interpolation is
+        # injection-free. SQLAlchemy Core has no DELETE-without-where
+        # builder for raw tables, so `text(...)` is the simplest fit.
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                f'DELETE FROM "{table.name}"'
+            )
         )
-    )
 
 
 async def dispose() -> None:

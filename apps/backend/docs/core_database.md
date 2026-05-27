@@ -17,7 +17,7 @@ Exports `Base`, `get_engine`, `get_sessionmaker`, `session`, `ping`, `ensure_sch
 - `dispose()` — closes engine, clears singletons.
 - `shutdown()` — async alias for `dispose()`; self-registered with both web and worker shutdown registries at import time.
 - `set_test_session_override(s)` — install (or clear) a fixture-bound `AsyncSession` so every production `session()` call routes to it. Used exclusively by the `db_session` test fixture.
-- `truncate_all_tables(session) -> None` — emits a single `TRUNCATE … RESTART IDENTITY CASCADE` over all tables in `Base.metadata` (reverse-FK order). Callers must ensure model modules are imported first so their tables appear in metadata. The only allowed DB-wide reset primitive — used exclusively by the test reset path. See [patterns.md § e2e seed paths use public APIs](patterns.md).
+- `truncate_all_tables(session) -> None` — empties every table in `Base.metadata` via per-table `DELETE FROM` in reverse-FK order. Uses DELETE rather than TRUNCATE so the reset endpoint doesn't block on lingering `AccessShare` readers (SSE streams, agent-gateway WS, background tasks). Sets a 2s `lock_timeout` so unexpected contention fails fast. yaaos PKs are UUIDs, no sequence reset needed. Callers must ensure model modules are imported first so their tables appear in metadata. The only allowed DB-wide reset primitive — used exclusively by the test reset path. See [patterns.md § e2e seed paths use public APIs](patterns.md).
 
 No HTTP routes.
 
