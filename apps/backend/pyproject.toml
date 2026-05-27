@@ -88,7 +88,7 @@ exclude = ["app/testing", "app/testing/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["app"]
+testpaths = ["app", "bin"]
 python_files = ["test_*.py"]
 markers = [
     # Cross-module flow tests that drive a backend entry-point (function or

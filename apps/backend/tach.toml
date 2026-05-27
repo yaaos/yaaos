@@ -7,179 +7,792 @@ exclude = [".venv", "test"]
 [[modules]]
 path = "app.core.agent_gateway"
 depends_on = ["app.core.auth", "app.core.database", "app.core.redis", "app.core.sse_pubsub", "app.core.tasks", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
+# interface_members = [
+#   "AgentCommand",
+#   "AgentCommandKind",
+#   "AgentEvent",
+#   "AgentEventKind",
+#   "AuthBlock",
+#   "CleanupWorkspaceCommand",
+#   "CreateWorkspaceCommand",
+#   "GatewayError",
+#   "HeartbeatRequest",
+#   "HeartbeatResponse",
+#   "HeartbeatWorkspaceEntry",
+#   "IdentityExchangeRequest",
+#   "IdentityExchangeResponse",
+#   "InvokeClaudeCodeCommand",
+#   "InvokeClaudeCodeLimits",
+#   "RefreshWorkspaceAuthCommand",
+#   "RepoRef",
+#   "StaleClaimError",
+#   "SubscriberRegistry",
+#   "TERMINAL_EVENT_KINDS",
+#   "UnauthorizedError",
+#   "WorkspaceEvent",
+#   "WorkspaceEventKind",
+#   "WriteFilesCommand",
+#   "WriteFilesEntry",
+#   "_reset_queues_for_tests",
+#   "_reset_subscriber_registry_for_tests",
+#   "claim_next",
+#   "enqueue_command",
+#   "get_subscriber_registry",
+#   "queue_depth",
+#   "record_agent_event",
+#   "record_heartbeat",
+#   "record_workspace_event",
+# ]
 
 [[modules]]
 path = "app.core.audit_log"
 depends_on = ["app.core.database"]
+# interface_members = [
+#   "AUDIT_LOG_RETENTION",
+#   "Actor",
+#   "ActorKind",
+#   "AuditEntry",
+#   "AuditEntryNotFoundError",
+#   "AuditEntryRow",
+#   "audit",
+#   "audit_for_finding",
+#   "audit_for_lesson",
+#   "audit_for_pr",
+#   "audit_for_review_job",
+#   "audit_for_ticket",
+#   "audit_for_webhook_event",
+#   "audit_for_workspace",
+#   "get",
+#   "list_for_entity",
+#   "list_for_org",
+#   "purge_older_than",
+# ]
 
 [[modules]]
 path = "app.core.auth"
 depends_on = ["app.core.audit_log", "app.core.config"]
+# interface_members = [
+#   "Action",
+#   "AuthMiddleware",
+#   "CSRF_COOKIE_NAME",
+#   "CSRF_HEADER_NAME",
+#   "ORG_SCOPED_PREFIXES",
+#   "PUBLIC_EXACT",
+#   "PUBLIC_PREFIXES",
+#   "RouteSecurity",
+#   "SESSION_COOKIE_NAME",
+#   "SESSION_IDLE_TIMEOUT",
+#   "USER_SCOPED_EXACT",
+#   "USER_SCOPED_METHOD_EXACT",
+#   "USER_SCOPED_PREFIXES",
+#   "actor_id_var",
+#   "actor_kind_var",
+#   "classify_route",
+#   "clear_cookie_attrs",
+#   "csrf_cookie_attrs",
+#   "current_actor_kind",
+#   "current_org_id",
+#   "current_user_id",
+#   "is_org_scoped_path",
+#   "org_context",
+#   "org_id_var",
+#   "public_route",
+#   "require_org_context",
+#   "route_security_resolved",
+#   "session_cookie_attrs",
+#   "user_id_var",
+# ]
 
 [[modules]]
 path = "app.core.byok"
 depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
+# interface_members = [
+#   "ByokDecryptError",
+#   "ByokKeyRow",
+#   "clear",
+#   "get",
+#   "get_validator",
+#   "known_providers",
+#   "register_validator",
+#   "set",
+#   "validate",
+# ]
 
 [[modules]]
 path = "app.core.config"
 depends_on = []
+# interface_members = ["Settings", "get_settings"]
 
 [[modules]]
 path = "app.core.database"
 depends_on = ["app.core.config"]
+# interface_members = [
+#   "Base",
+#   "dispose",
+#   "ensure_schema_migrations_table",
+#   "get_engine",
+#   "get_sessionmaker",
+#   "migrate",
+#   "ping",
+#   "session",
+#   "set_test_session_override",
+# ]
 
 [[modules]]
 path = "app.core.events"
 depends_on = ["app.core.auth", "app.core.webserver"]
+# interface_members = [
+#   "Event",
+#   "EventFilter",
+#   "_reset_for_tests",
+#   "publish",
+#   "publish_after_commit",
+#   "serialize_for_sse",
+#   "stream_events_for_filter",
+#   "subscribe",
+#   "subscriber_count",
+# ]
 
 [[modules]]
 path = "app.core.llm"
 depends_on = ["app.core.config"]
+# interface_members = [
+#   "FilePrompt",
+#   "LLMError",
+#   "LLMTestCache",
+#   "MalformedOutput",
+#   "ParsedMessage",
+#   "PromptParseError",
+#   "PromptRunnable",
+#   "configure_gateway",
+#   "create_eval",
+#   "load_prompt",
+# ]
 
 [[modules]]
 path = "app.core.oauth"
 depends_on = []
+# interface_members = [
+#   "OAuthError",
+#   "ProviderConfig",
+#   "Tokens",
+#   "build_authorize_url",
+#   "exchange_code",
+#   "refresh_access_token",
+# ]
 
 [[modules]]
 path = "app.core.observability"
 depends_on = ["app.core.config"]
+# interface_members = [
+#   "SLOW_REQUEST_THRESHOLD_MS",
+#   "SlowRequestLogMiddleware",
+#   "active_task_count",
+#   "configure",
+#   "current_traceparent",
+#   "get_logger",
+#   "restore_traceparent_context",
+#   "spawn",
+#   "with_remote_parent_span",
+# ]
 
 [[modules]]
 path = "app.core.plugin_kit"
 depends_on = []
+# interface_members = ["PluginMeta", "PluginType"]
 
 [[modules]]
 path = "app.core.redis"
 depends_on = ["app.core.config"]
+# interface_members = [
+#   "_reset_for_tests",
+#   "aclose",
+#   "get_client",
+#   "get_url",
+#   "ping",
+#   "publish",
+#   "subscribe",
+# ]
 
 [[modules]]
 path = "app.core.saml"
 depends_on = ["app.core.secrets"]
+# interface_members = [
+#   "SamlNotAvailableError",
+#   "generate_sp_keypair",
+#   "is_available",
+#   "parse_assertion",
+#   "verify_assertion",
+# ]
 
 [[modules]]
 path = "app.core.secrets"
 depends_on = ["app.core.config"]
+# interface_members = ["SecretsDecryptError", "decrypt", "encrypt"]
 
 [[modules]]
 path = "app.core.sse_pubsub"
 depends_on = ["app.core.redis"]
+# interface_members = [
+#   "RedisPubsub",
+#   "_reset_for_tests",
+#   "channel_for",
+#   "get_pubsub",
+#   "publish",
+#   "subscribe",
+#   "subscriber_count",
+# ]
 
 [[modules]]
 path = "app.core.tasks"
 depends_on = ["app.core.database", "app.core.observability", "app.core.redis", "app.core.workflow"]
+# interface_members = [
+#   "OutboxEntryRow",
+#   "TaskRef",
+#   "drain_once",
+#   "enqueue",
+#   "task",
+#   "write",
+# ]
 
 [[modules]]
 path = "app.core.webserver"
 depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis"]
+# interface_members = [
+#   "RouteSpec",
+#   "create_app",
+#   "mount_specs",
+#   "register_routes",
+# ]
 
 [[modules]]
 path = "app.core.workflow"
 depends_on = ["app.core.database", "app.core.observability", "app.core.tasks", "app.core.workspace"]
+# interface_members = [
+#   "CommandCategory",
+#   "CommandContext",
+#   "CommandNotRegisteredError",
+#   "HANDLE_AGENT_EVENT",
+#   "Outcome",
+#   "OutcomeKind",
+#   "PendingHumanDecisionRow",
+#   "ROUTE_WORKFLOW",
+#   "RetryPolicy",
+#   "START_STEP",
+#   "Step",
+#   "TERMINAL_STATES",
+#   "TerminalAction",
+#   "Workflow",
+#   "WorkflowCommand",
+#   "WorkflowEngine",
+#   "WorkflowError",
+#   "WorkflowExecutionNotFoundError",
+#   "WorkflowExecutionRow",
+#   "WorkflowNotFoundError",
+#   "WorkflowState",
+#   "_reset_for_tests",
+#   "get_engine",
+#   "handle_agent_event",
+#   "request_cancel",
+#   "resume_hitl",
+#   "route_workflow",
+#   "start_step",
+# ]
 
 [[modules]]
 path = "app.core.workspace"
 depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.database", "app.core.observability", "app.core.plugin_kit", "app.core.workflow"]
+# interface_members = [
+#   "CodingAgentCliResult",
+#   "HealthStatus",
+#   "NetworkPolicy",
+#   "OnStreamLine",
+#   "RepoRefForSpec",
+#   "ResourceCaps",
+#   "WorkflowContextProvider",
+#   "Workspace",
+#   "WorkspaceDestroyError",
+#   "WorkspaceError",
+#   "WorkspaceExecError",
+#   "WorkspaceExpiredError",
+#   "WorkspaceInfo",
+#   "WorkspaceNotFoundError",
+#   "WorkspaceProvider",
+#   "WorkspaceProvisionError",
+#   "WorkspaceRow",
+#   "WorkspaceSpec",
+#   "WorkspaceStatus",
+#   "WorkspaceTicketContext",
+#   "_reset_providers_for_tests",
+#   "_reset_recovery_policies_for_tests",
+#   "_reset_workflow_context_provider_for_tests",
+#   "close_workspace",
+#   "create_workspace",
+#   "force_close_all",
+#   "get_provider",
+#   "get_recovery_policy",
+#   "get_workflow_context_provider",
+#   "get_workspace",
+#   "get_workspace_info",
+#   "health_check_all",
+#   "register_recovery_policy",
+#   "register_workflow_context_provider",
+#   "register_workspace_provider",
+#   "registered_recovery_labels",
+#   "release_claim",
+#   "start_reaper",
+#   "startup_recovery",
+#   "try_claim",
+#   "with_workspace",
+# ]
 
 [[modules]]
 path = "app.domain.coding_agent"
 depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
+# interface_members = [
+#   "ActivityEvent",
+#   "AnswerQuestionContext",
+#   "AnswerQuestionResult",
+#   "CodingAgentCacheMiss",
+#   "CodingAgentError",
+#   "CodingAgentPlugin",
+#   "FindingAnchor",
+#   "FindingDraft",
+#   "HealthStatus",
+#   "IncrementalReviewContext",
+#   "IncrementalReviewResult",
+#   "InvocationMode",
+#   "InvocationStatus",
+#   "InvocationTelemetry",
+#   "OnActivity",
+#   "PluginNotFoundError",
+#   "PriorThreadMessage",
+#   "ReviewContext",
+#   "ReviewResult",
+#   "Severity",
+#   "StaleCheckContext",
+#   "StaleCheckResult",
+#   "ValidationResult",
+#   "VerifyFixContext",
+#   "VerifyFixResult",
+#   "_PLUGINS",
+#   "_reset_plugins_for_tests",
+#   "answer_question",
+#   "build_invocation",
+#   "get_plugin",
+#   "health_check_all",
+#   "incremental_review",
+#   "list_plugin_metas",
+#   "register_coding_agent_plugin",
+#   "registered_plugin_ids",
+#   "review",
+#   "stale_check",
+#   "validate_config",
+#   "verify_fix",
+# ]
 
 [[modules]]
 path = "app.domain.identity"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.orgs", "app.domain.sessions"]
+# interface_members = [
+#   "EmailAlreadyLinkedError",
+#   "OAuthIdentity",
+#   "OAuthIdentityRow",
+#   "Session",
+#   "SessionNotFoundError",
+#   "SessionRow",
+#   "TotpError",
+#   "User",
+#   "UserEmail",
+#   "UserEmailRow",
+#   "UserNotFoundError",
+#   "UserRow",
+#   "UserTotpSecretRow",
+#   "sessions",
+#   "web",
+# ]
 
 [[modules]]
 path = "app.domain.intake"
 depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.tickets"]
+# interface_members = [
+#   "IntakeError",
+#   "IntakeOutcome",
+#   "IntakePrepared",
+#   "IntakeRejectedError",
+#   "IntakeSideEffect",
+#   "IntakeType",
+#   "_reset_registry_for_tests",
+#   "get_intake_type",
+#   "is_skippable_path",
+#   "parse_rereview",
+#   "register_intake_type",
+#   "registered_intake_types",
+# ]
 
 [[modules]]
 path = "app.domain.integrations"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.identity", "app.domain.mcp_proxy", "app.domain.orgs", "app.domain.sessions"]
+# interface_members = [
+#   "BrokenCredentialsError",
+#   "IntegrationError",
+#   "IntegrationNotConnectedError",
+#   "IntegrationProvider",
+#   "McpCredentialRow",
+#   "ProviderConfig",
+#   "ProviderNotRegisteredError",
+#   "clear",
+#   "connect_callback",
+#   "get",
+#   "get_provider",
+#   "known_providers",
+#   "register_provider",
+#   "update_allowlist",
+#   "validate",
+# ]
 
 [[modules]]
 path = "app.domain.lessons"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.webserver", "app.domain.sessions"]
+# interface_members = [
+#   "Lesson",
+#   "LessonNotFoundError",
+#   "LessonRow",
+#   "LessonValidationError",
+#   "create",
+#   "delete",
+#   "get",
+#   "list_all",
+#   "list_for_repo",
+#   "update",
+# ]
 
 [[modules]]
 path = "app.domain.mcp_proxy"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.secrets", "app.core.webserver", "app.domain.integrations", "app.domain.reviewer"]
+# interface_members = [
+#   "McpReviewTokenRow",
+#   "REVIEW_TOKEN_TTL",
+#   "consume_broken_creds",
+#   "lookup_token",
+#   "mint_token",
+#   "record_broken_creds",
+#   "revoke_token",
+#   "sweep_expired",
+# ]
 
 [[modules]]
 path = "app.domain.notifications"
 depends_on = ["app.core.auth", "app.core.database", "app.core.events", "app.core.observability", "app.core.webserver", "app.domain.identity", "app.domain.tickets"]
+# interface_members = [
+#   "Notification",
+#   "NotificationRow",
+#   "list_for_user",
+#   "mark_all_read",
+#   "mark_read",
+#   "popover_for_user",
+#   "record",
+# ]
 
 [[modules]]
 path = "app.domain.orgs"
 depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.identity", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+# interface_members = [
+#   "CodingAgentAlreadyInstalledError",
+#   "CodingAgentInstall",
+#   "CodingAgentNotInstalledError",
+#   "InsufficientRoleError",
+#   "Invitation",
+#   "InvitationError",
+#   "InvitationExpiredError",
+#   "InvitationInvalidError",
+#   "InvitationRow",
+#   "InvitationUsedError",
+#   "Membership",
+#   "MembershipNotFoundError",
+#   "MembershipRow",
+#   "OnboardingStatus",
+#   "Org",
+#   "OrgCodingAgentRow",
+#   "OrgNotFoundError",
+#   "OrgRow",
+#   "Role",
+#   "SsoConfig",
+#   "SsoConfigRow",
+#   "VcsState",
+#   "accept_invitation",
+#   "change_role",
+#   "clear_vcs",
+#   "get_onboarding_status",
+#   "get_vcs",
+#   "install_coding_agent",
+#   "invite",
+#   "list_coding_agents",
+#   "register_onboarding_contributor",
+#   "remove_member",
+#   "set_vcs",
+#   "uninstall_coding_agent",
+#   "update_coding_agent_settings",
+# ]
 
 [[modules]]
 path = "app.domain.plugins"
 depends_on = ["app.core.auth", "app.core.plugin_kit", "app.core.webserver", "app.domain.coding_agent", "app.domain.sessions", "app.domain.vcs"]
+# interface_members = ["list_available"]
 
 [[modules]]
 path = "app.domain.pull_requests"
 depends_on = ["app.core.audit_log", "app.core.database", "app.domain.vcs"]
+# interface_members = [
+#   "PRState",
+#   "PullRequest",
+#   "PullRequestNotFoundError",
+#   "PullRequestRow",
+#   "get",
+#   "get_by_external",
+#   "update_state",
+#   "upsert",
+# ]
 
 [[modules]]
 path = "app.domain.reviewer"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.observability", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.lessons", "app.domain.mcp_proxy", "app.domain.pull_requests", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+# interface_members = [
+#   "AckKind",
+#   "AcknowledgmentDecision",
+#   "AcknowledgmentDecisionRow",
+#   "AdmissionDrop",
+#   "AgentReplyPosted",
+#   "AggregateRepository",
+#   "AuthorKind",
+#   "ClassifyReplyInput",
+#   "ClassifyReplyOutput",
+#   "CodeAnchor",
+#   "CommentMessage",
+#   "CommentMessageRow",
+#   "CommentReplyReceived",
+#   "CommentThread",
+#   "CommentThreadRow",
+#   "ConversationView",
+#   "Debounce",
+#   "DomainEvent",
+#   "Finding",
+#   "FindingAcknowledged",
+#   "FindingAnchorUpdated",
+#   "FindingFingerprint",
+#   "FindingObservation",
+#   "FindingObservationRow",
+#   "FindingRaised",
+#   "FindingReObserved",
+#   "FindingResolutionDetected",
+#   "FindingRow",
+#   "FindingStaleDetected",
+#   "FindingState",
+#   "FindingStateChanged",
+#   "FindingView",
+#   "PRReviewAggregate",
+#   "RawFinding",
+#   "ReplyAction",
+#   "ReplyIntent",
+#   "Review",
+#   "ReviewCompleted",
+#   "ReviewFailed",
+#   "ReviewJob",
+#   "ReviewJobInput",
+#   "ReviewRequested",
+#   "ReviewRow",
+#   "ReviewScope",
+#   "ReviewScopeKind",
+#   "ReviewStarted",
+#   "ReviewSuperseded",
+#   "ReviewTrigger",
+#   "Run",
+#   "Severity",
+#   "Skip",
+#   "SkipReason",
+#   "SqlAlchemyAggregateRepository",
+#   "StaleCheckAction",
+#   "ThreadMessageView",
+#   "ThreadView",
+#   "TriggerDecision",
+#   "TriggerInputs",
+#   "VERIFY_ACT_THRESHOLD",
+#   "VERIFY_OBSERVE_THRESHOLD",
+#   "VerifyFixAction",
+#   "acquire_pr_lock",
+#   "all_conversations_view",
+#   "apply_classified_reply",
+#   "apply_stale_check_result",
+#   "apply_verify_fix_result",
+#   "cancel_workflows_for_ticket",
+#   "classify_reply",
+#   "compute_acceptance_rate",
+#   "compute_resolved_without_edit_rate",
+#   "decide_trigger",
+#   "dispatch_events",
+#   "get_review",
+#   "get_thread",
+#   "handle_developer_reply",
+#   "handle_push",
+#   "humanize_skip",
+#   "is_off_topic_message",
+#   "is_yaaos_command",
+#   "list_findings_for_pr",
+#   "list_findings_view",
+#   "list_reviews_for_pr",
+#   "review_summary",
+#   "start_incremental_review",
+#   "start_pr_review",
+# ]
 
 [[modules]]
 path = "app.domain.sessions"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.webserver", "app.domain.identity", "app.domain.integrations", "app.domain.orgs"]
+# interface_members = [
+#   "current_actor",
+#   "public_route",
+#   "require",
+#   "required_role_for",
+#   "web",
+# ]
 
 [[modules]]
 path = "app.domain.tickets"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.events", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions"]
+# interface_members = [
+#   "InvalidTicketTransition",
+#   "Ticket",
+#   "TicketFilter",
+#   "TicketNotFoundError",
+#   "TicketRow",
+#   "TicketStatus",
+#   "TicketStatusChanged",
+#   "abandon",
+#   "attach_workflow_execution",
+#   "complete",
+#   "create",
+#   "create_for_pr",
+#   "fail",
+#   "get",
+#   "get_by_pr",
+#   "get_payload",
+#   "list_tickets",
+# ]
 
 [[modules]]
 path = "app.domain.vcs"
 depends_on = ["app.core.plugin_kit"]
+# interface_members = [
+#   "Comment",
+#   "CommentCreated",
+#   "Diff",
+#   "FileSummary",
+#   "Finding",
+#   "FindingSnippetLine",
+#   "PluginNotFoundError",
+#   "PullRequestClosed",
+#   "PullRequestReadyForReview",
+#   "PullRequestReopened",
+#   "PullRequestSynchronized",
+#   "ReactionAdded",
+#   "RepoRef",
+#   "Review",
+#   "ReviewPostResult",
+#   "ReviewState",
+#   "Severity",
+#   "VCSAuthError",
+#   "VCSError",
+#   "VCSEvent",
+#   "VCSEventBase",
+#   "VCSNotFoundError",
+#   "VCSPermissionError",
+#   "VCSPlugin",
+#   "VCSPullRequest",
+#   "VCSRateLimitError",
+#   "VCSTransientError",
+#   "VCSValidationError",
+#   "_reset_for_tests",
+#   "get_installation_token",
+#   "get_plugin",
+#   "is_registered",
+#   "list_plugin_metas",
+#   "register_vcs_plugin",
+#   "registered_plugin_ids",
+# ]
 
 [[modules]]
 path = "app.plugins.claude_code"
 depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_kit", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs", "app.domain.sessions"]
+# interface_members = [
+#   "ClaudeCodePlugin",
+#   "ClaudeCodeSettingsRow",
+#   "bootstrap",
+#   "get_plugin",
+# ]
 
 [[modules]]
 path = "app.plugins.github"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.identity", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+# interface_members = [
+#   "GitHubAppInstallationRow",
+#   "GitHubOAuthProvider",
+#   "GitHubPlugin",
+#   "GitHubWebhookEventRow",
+#   "GithubIntakeType",
+#   "bootstrap",
+#   "bootstrap_oauth",
+#   "get_plugin",
+#   "mark_webhook_processed",
+#   "record_webhook_event",
+#   "verify_webhook_signature",
+# ]
 
 [[modules]]
 path = "app.plugins.in_memory_workspace"
 depends_on = ["app.core.auth", "app.core.plugin_kit", "app.core.webserver", "app.core.workspace", "app.domain.vcs"]
+# interface_members = ["InMemoryWorkspaceProvider", "bootstrap", "get_provider"]
 
 [[modules]]
 path = "app.plugins.linear"
 depends_on = ["app.core.config", "app.core.oauth", "app.domain.integrations"]
+# interface_members = ["LinearProvider", "bootstrap"]
 
 [[modules]]
 path = "app.plugins.notion"
 depends_on = ["app.core.config", "app.core.oauth", "app.domain.integrations"]
+# interface_members = ["NotionProvider", "bootstrap"]
 
 [[modules]]
 path = "app.plugins.oauth_test"
 depends_on = ["app.core.config", "app.domain.identity"]
+# interface_members = ["TestOAuthProvider", "bootstrap", "set_next_profile"]
 
 [[modules]]
 path = "app.plugins.saml_test"
 depends_on = ["app.core.config", "app.domain.orgs"]
+# interface_members = ["bootstrap", "sign_assertion", "verify_assertion"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.secrets", "app.core.webserver", "app.core.workspace", "app.domain.identity", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
+# interface_members = []
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
 depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.coding_agent"]
+# interface_members = ["FakeCodingAgentPlugin", "register_fake_coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
 depends_on = ["app.core.workspace", "app.domain.coding_agent"]
+# interface_members = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
 depends_on = ["app.core.plugin_kit", "app.domain.vcs"]
+# interface_members = ["StubVCSPlugin", "register_stub_vcs"]
 
 [[modules]]
 path = "app.testing.stub_workspace"
 depends_on = ["app.core.workspace"]
+# interface_members = ["StubWorkspaceProvider", "wrap_all_registered_workspace_providers"]
