@@ -27,12 +27,11 @@ Deferred to the Phase 7 follow-on:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import (
@@ -40,8 +39,9 @@ from app.core.agent_gateway import (
     CleanupWorkspaceCommand,
     CreateWorkspaceCommand,
     RepoRef,
-    WorkspaceAgentRow,
     enqueue_command,
+    has_any_reachable_agent,
+    pick_agent_for_org,
 )
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
@@ -133,28 +133,11 @@ class RemoteAgentWorkspaceProvider:
         """Reachability check — at least one workspace_agents row in the
         deployment has heartbeated within the last 90s (architecture's
         agent-liveness window). Healthy iff at least one reachable pod."""
-        # No org context in the Protocol; check globally. Phase 7
-        # follow-on wires a per-org variant for the connection-status UI.
+        # No org context in the Protocol; check globally.
         from app.core.database import session as db_session  # noqa: PLC0415
 
-        cutoff = datetime.now(UTC) - timedelta(seconds=90)
         async with db_session() as s:
-            rows = (
-                (
-                    await s.execute(
-                        select(WorkspaceAgentRow.id)
-                        .where(
-                            WorkspaceAgentRow.state == "reachable",
-                            WorkspaceAgentRow.last_heartbeat_at.is_not(None),
-                            WorkspaceAgentRow.last_heartbeat_at >= cutoff,
-                        )
-                        .limit(1)
-                    )
-                )
-                .tuples()
-                .all()
-            )
-        healthy = bool(rows)
+            healthy = await has_any_reachable_agent(session=s)
         return HealthStatus(
             healthy=healthy,
             message="reachable agents present" if healthy else "no reachable agents",
@@ -163,60 +146,6 @@ class RemoteAgentWorkspaceProvider:
 
 
 # ── Dispatch entry points ──────────────────────────────────────────────
-
-
-async def pick_agent_for_org(
-    org_id: UUID,
-    *,
-    session: AsyncSession,
-) -> WorkspaceAgentRow | None:
-    """Pick the least-loaded reachable agent for `org_id`.
-
-    "Load" is the in-process queue depth from
-    `core.agent_gateway.queue_depth(agent_id)` — how many AgentCommands
-    are waiting for that pod to claim. Among reachable agents (heartbeat
-    within the 90-second cutoff), the one with the smallest queue wins;
-    tie-break by most-recent heartbeat so a fresh pod beats a stale one
-    when both are idle.
-
-    Returns None when no pod is reachable; caller should fail the
-    provisioning step with a recoverable error.
-
-    The queue is process-local in the POC. Multi-pod backends will
-    swap the load signal for a cross-instance counter (Redis or a
-    distributed in_flight_commands count per agent_id) — the policy
-    here stays "least loaded → most recent heartbeat", just sourced
-    from a shared counter.
-    """
-    from app.core.agent_gateway import queue_depth  # noqa: PLC0415
-
-    cutoff = datetime.now(UTC) - timedelta(seconds=90)
-    rows = (
-        (
-            await session.execute(
-                select(WorkspaceAgentRow)
-                .where(
-                    WorkspaceAgentRow.org_id == org_id,
-                    WorkspaceAgentRow.state == "reachable",
-                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
-                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
-                )
-                .order_by(WorkspaceAgentRow.last_heartbeat_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return None
-    # Sort by (queue_depth ascending, last_heartbeat_at descending).
-    # Python's sort is stable, so passing in reverse heartbeat order
-    # already lets `min` ties resolve correctly on the secondary key
-    # — but be explicit with a tuple so the contract is grep-able.
-    return min(
-        rows,
-        key=lambda r: (queue_depth(r.id), -(r.last_heartbeat_at.timestamp() if r.last_heartbeat_at else 0)),
-    )
 
 
 async def dispatch_create_workspace(

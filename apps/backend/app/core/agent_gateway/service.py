@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway.types import (
     AgentCommand,
     AgentEvent,
+    AgentRef,
     HeartbeatRequest,
     HeartbeatResponse,
     StaleClaimError,
@@ -314,6 +315,76 @@ async def ensure_agent_row(
         row.last_heartbeat_at = now
         row.state = "reachable"
     return row.id
+
+
+async def pick_agent_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> AgentRef | None:
+    """Pick the least-loaded reachable agent for `org_id`.
+
+    Selects reachable pods (heartbeat within 90 s) and returns the one with the
+    smallest in-process queue depth; ties break on most-recent heartbeat so a
+    fresh pod beats a stale one when both are idle.
+
+    Returns `None` when no reachable pod exists for the org.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=90)
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow)
+                .where(
+                    WorkspaceAgentRow.org_id == org_id,
+                    WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .order_by(WorkspaceAgentRow.last_heartbeat_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+    best = min(
+        rows,
+        key=lambda r: (queue_depth(r.id), -(r.last_heartbeat_at.timestamp() if r.last_heartbeat_at else 0)),
+    )
+    return AgentRef(agent_id=best.id, agent_pod_id=best.agent_pod_id)
+
+
+async def has_any_reachable_agent(
+    *,
+    session: AsyncSession,
+) -> bool:
+    """Return `True` when at least one workspace-agent pod heartbeated within
+    the last 90 s — used by health-check callers to avoid cross-module Row
+    access.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=90)
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow.id)
+                .where(
+                    WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .limit(1)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return bool(rows)
 
 
 async def connection_status_for_org(

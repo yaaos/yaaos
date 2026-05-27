@@ -12,6 +12,7 @@ import pytest
 from app.core.agent_gateway import (
     AgentEvent,
     AgentEventKind,
+    AgentRef,
     AuthBlock,
     CreateWorkspaceCommand,
     HeartbeatRequest,
@@ -23,6 +24,8 @@ from app.core.agent_gateway import (
     _reset_queues_for_tests,
     claim_next,
     enqueue_command,
+    has_any_reachable_agent,
+    pick_agent_for_org,
     queue_depth,
     record_agent_event,
     record_heartbeat,
@@ -496,3 +499,107 @@ async def test_workspace_event_with_stale_command_raises(db_session) -> None:
     )
     with pytest.raises(StaleClaimError):
         await record_workspace_event(event, session=db_session)
+
+
+# ── pick_agent_for_org + has_any_reachable_agent ───────────────────────
+
+
+def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
+    """Build a WorkspaceAgentRow for seeding. Returns the unsaved row."""
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    return WorkspaceAgentRow(
+        org_id=org_id,
+        agent_pod_id=uuid4(),
+        iam_arn="arn:aws:iam::123456789012:role/test-role",
+        version="0.1.0",
+        last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=seconds_ago),
+        state=state,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pick_agent_for_org_returns_none_when_no_agents(db_session) -> None:
+    result = await pick_agent_for_org(uuid4(), session=db_session)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_agent_for_org_returns_agent_ref(db_session) -> None:
+    org_id = uuid4()
+    row = _make_agent_row(org_id)
+    db_session.add(row)
+    await db_session.flush()
+
+    result = await pick_agent_for_org(org_id, session=db_session)
+
+    assert result is not None
+    assert isinstance(result, AgentRef)
+    assert result.agent_pod_id == row.agent_pod_id
+    assert result.agent_id == row.id
+
+
+@pytest.mark.asyncio
+async def test_pick_agent_for_org_ignores_stale_heartbeat(db_session) -> None:
+    org_id = uuid4()
+    stale = _make_agent_row(org_id, seconds_ago=200)  # beyond 90-s cutoff
+    db_session.add(stale)
+    await db_session.flush()
+
+    result = await pick_agent_for_org(org_id, session=db_session)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_agent_for_org_ignores_unreachable_state(db_session) -> None:
+    org_id = uuid4()
+    row = _make_agent_row(org_id, state="lost")
+    db_session.add(row)
+    await db_session.flush()
+
+    result = await pick_agent_for_org(org_id, session=db_session)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_agent_for_org_prefers_less_loaded(db_session) -> None:
+    """Among two reachable agents, the one with fewer queued commands wins."""
+    org_id = uuid4()
+    row_a = _make_agent_row(org_id, seconds_ago=5)
+    row_b = _make_agent_row(org_id, seconds_ago=10)
+    db_session.add(row_a)
+    db_session.add(row_b)
+    await db_session.flush()
+
+    # Enqueue two commands for row_a so row_b is less loaded.
+    await enqueue_command(row_a.id, _make_create_command())
+    await enqueue_command(row_a.id, _make_create_command())
+
+    result = await pick_agent_for_org(org_id, session=db_session)
+    assert result is not None
+    assert result.agent_pod_id == row_b.agent_pod_id
+
+
+@pytest.mark.asyncio
+async def test_has_any_reachable_agent_false_when_empty(db_session) -> None:
+    assert await has_any_reachable_agent(session=db_session) is False
+
+
+@pytest.mark.asyncio
+async def test_has_any_reachable_agent_true_when_present(db_session) -> None:
+    org_id = uuid4()
+    row = _make_agent_row(org_id)
+    db_session.add(row)
+    await db_session.flush()
+
+    assert await has_any_reachable_agent(session=db_session) is True
+
+
+@pytest.mark.asyncio
+async def test_has_any_reachable_agent_false_when_stale(db_session) -> None:
+    org_id = uuid4()
+    row = _make_agent_row(org_id, seconds_ago=200)
+    db_session.add(row)
+    await db_session.flush()
+
+    assert await has_any_reachable_agent(session=db_session) is False
