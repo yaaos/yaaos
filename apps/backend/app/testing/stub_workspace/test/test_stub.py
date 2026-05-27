@@ -12,7 +12,7 @@ from app.core.workspace import (
     WorkspaceSpec,
     register_workspace_provider,
 )
-from app.core.workspace.service import _PROVIDERS, _reset_providers_for_tests
+from app.core.workspace.service import _PROVIDERS, clear_workspace_providers
 from app.plugins.in_memory_workspace import get_provider as get_in_process_provider
 from app.testing.stub_workspace import (
     StubWorkspaceProvider,
@@ -22,9 +22,9 @@ from app.testing.stub_workspace import (
 
 @pytest.fixture(autouse=True)
 def _reset_registry() -> None:
-    _reset_providers_for_tests()
+    clear_workspace_providers()
     yield
-    _reset_providers_for_tests()
+    clear_workspace_providers()
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 # 45 module(s) discovered.
 
 source_roots = ["."]
-exclude = [".venv", "test"]
+exclude = [".venv", "test", "app/testing"]
 
 [[modules]]
 path = "app.core.agent_gateway"
@@ -183,3 +183,779 @@ depends_on = ["app.core.plugin_kit", "app.domain.vcs"]
 [[modules]]
 path = "app.testing.stub_workspace"
 depends_on = ["app.core.workspace"]
+
+[[interfaces]]
+expose = [
+  "AgentCommand",
+  "AgentCommandKind",
+  "AgentEvent",
+  "AgentEventKind",
+  "AgentRef",
+  "AuthBlock",
+  "CleanupWorkspaceCommand",
+  "CreateWorkspaceCommand",
+  "GatewayError",
+  "HeartbeatRequest",
+  "HeartbeatResponse",
+  "HeartbeatWorkspaceEntry",
+  "IdentityExchangeRequest",
+  "IdentityExchangeResponse",
+  "InvokeClaudeCodeCommand",
+  "InvokeClaudeCodeLimits",
+  "RefreshWorkspaceAuthCommand",
+  "RepoRef",
+  "StaleClaimError",
+  "SubscriberRegistry",
+  "TERMINAL_EVENT_KINDS",
+  "UnauthorizedError",
+  "WorkspaceEvent",
+  "WorkspaceEventKind",
+  "WriteFilesCommand",
+  "WriteFilesEntry",
+  "claim_next",
+  "clear_queues",
+  "connection_status_for_org",
+  "enqueue_command",
+  "get_subscriber_registry",
+  "has_any_reachable_agent",
+  "pick_agent_for_org",
+  "queue_depth",
+  "record_agent_event",
+  "record_heartbeat",
+  "record_workspace_event",
+  "revoke_all_for_org",
+]
+from = ["app.core.agent_gateway"]
+
+[[interfaces]]
+expose = [
+  "AUDIT_LOG_RETENTION",
+  "Actor",
+  "ActorKind",
+  "AuditEntry",
+  "AuditEntryNotFoundError",
+  "audit",
+  "audit_for_finding",
+  "audit_for_lesson",
+  "audit_for_pr",
+  "audit_for_review_job",
+  "audit_for_ticket",
+  "audit_for_webhook_event",
+  "audit_for_workspace",
+  "get",
+  "list_for_entity",
+  "list_for_org",
+  "purge_older_than",
+]
+from = ["app.core.audit_log"]
+
+[[interfaces]]
+expose = [
+  "AUTH_LIMIT",
+  "Action",
+  "AuthFailure",
+  "AuthMiddleware",
+  "CSRF_COOKIE_NAME",
+  "CSRF_HEADER_NAME",
+  "MUTATE_LIMIT",
+  "ORG_SCOPED_PREFIXES",
+  "PUBLIC_EXACT",
+  "PUBLIC_PREFIXES",
+  "RouteSecurity",
+  "SESSION_COOKIE_NAME",
+  "SESSION_IDLE_TIMEOUT",
+  "USER_SCOPED_EXACT",
+  "USER_SCOPED_METHOD_EXACT",
+  "USER_SCOPED_PREFIXES",
+  "actor_id_var",
+  "actor_kind_var",
+  "auth_failure_response",
+  "bind_request_structlog_vars",
+  "classify_route",
+  "clear_cookie_attrs",
+  "csrf_cookie_attrs",
+  "current_actor_kind",
+  "current_org_id",
+  "current_user_id",
+  "is_org_scoped_path",
+  "limiter",
+  "org_context",
+  "org_id_var",
+  "public_route",
+  "register_handler",
+  "require_org_context",
+  "route_security_resolved",
+  "session_cookie_attrs",
+  "user_id_var",
+]
+from = ["app.core.auth"]
+
+[[interfaces]]
+expose = [
+  "ByokDecryptError",
+  "ByokKey",
+  "clear",
+  "get",
+  "get_validator",
+  "known_providers",
+  "list_keys_for_org",
+  "register_validator",
+  "set",
+  "validate",
+]
+from = ["app.core.byok"]
+
+[[interfaces]]
+expose = ["Settings", "get_settings"]
+from = ["app.core.config"]
+
+[[interfaces]]
+expose = [
+  "Base",
+  "dispose",
+  "ensure_schema_migrations_table",
+  "get_engine",
+  "get_sessionmaker",
+  "migrate",
+  "ping",
+  "session",
+  "set_test_session_override",
+]
+from = ["app.core.database"]
+
+[[interfaces]]
+expose = [
+  "Event",
+  "EventFilter",
+  "publish",
+  "publish_after_commit",
+  "serialize_for_sse",
+  "stream_events_for_filter",
+  "subscribe",
+  "subscriber_count",
+]
+from = ["app.core.events"]
+
+[[interfaces]]
+expose = [
+  "FilePrompt",
+  "LLMError",
+  "LLMTestCache",
+  "MalformedOutput",
+  "ParsedMessage",
+  "PromptParseError",
+  "PromptRunnable",
+  "configure_gateway",
+  "create_eval",
+  "load_prompt",
+]
+from = ["app.core.llm"]
+
+[[interfaces]]
+expose = [
+  "OAuthError",
+  "ProviderConfig",
+  "Tokens",
+  "build_authorize_url",
+  "exchange_code",
+  "refresh_access_token",
+]
+from = ["app.core.oauth"]
+
+[[interfaces]]
+expose = [
+  "SLOW_REQUEST_THRESHOLD_MS",
+  "SlowRequestLogMiddleware",
+  "active_task_count",
+  "configure",
+  "current_traceparent",
+  "get_logger",
+  "restore_traceparent_context",
+  "spawn",
+  "with_remote_parent_span",
+]
+from = ["app.core.observability"]
+
+[[interfaces]]
+expose = ["PluginMeta", "PluginType"]
+from = ["app.core.plugin_kit"]
+
+[[interfaces]]
+expose = [
+  "aclose",
+  "get_client",
+  "get_url",
+  "ping",
+  "publish",
+  "subscribe",
+]
+from = ["app.core.redis"]
+
+[[interfaces]]
+expose = [
+  "SamlNotAvailableError",
+  "generate_sp_keypair",
+  "is_available",
+  "parse_assertion",
+  "verify_assertion",
+]
+from = ["app.core.saml"]
+
+[[interfaces]]
+expose = ["SecretsDecryptError", "decrypt", "encrypt"]
+from = ["app.core.secrets"]
+
+[[interfaces]]
+expose = [
+  "RedisPubsub",
+  "channel_for",
+  "get_pubsub",
+  "publish",
+  "subscribe",
+  "subscriber_count",
+]
+from = ["app.core.sse_pubsub"]
+
+[[interfaces]]
+expose = ["TaskRef", "enqueue", "task"]
+from = ["app.core.tasks"]
+
+[[interfaces]]
+expose = [
+  "RouteSpec",
+  "create_app",
+  "mount_specs",
+  "register_routes",
+]
+from = ["app.core.webserver"]
+
+[[interfaces]]
+expose = [
+  "CommandCategory",
+  "CommandContext",
+  "CommandNotRegisteredError",
+  "HANDLE_AGENT_EVENT",
+  "HitlHistoryEntry",
+  "Outcome",
+  "OutcomeKind",
+  "ROUTE_WORKFLOW",
+  "RetryPolicy",
+  "START_STEP",
+  "Step",
+  "TERMINAL_STATES",
+  "TerminalAction",
+  "Workflow",
+  "WorkflowCommand",
+  "WorkflowEngine",
+  "WorkflowError",
+  "WorkflowExecutionNotFoundError",
+  "WorkflowExecutionSummary",
+  "WorkflowNotFoundError",
+  "WorkflowState",
+  "get_awaiting_human_execution",
+  "get_engine",
+  "get_execution_summary",
+  "handle_agent_event",
+  "list_active_execution_ids",
+  "list_all_execution_states",
+  "list_executions_for_ticket",
+  "list_hitl_history",
+  "request_cancel",
+  "resume_hitl",
+  "route_workflow",
+  "start_step",
+]
+from = ["app.core.workflow"]
+
+[[interfaces]]
+expose = [
+  "ALL_LIFECYCLE_COMMANDS",
+  "CodingAgentCliResult",
+  "HealthStatus",
+  "NetworkPolicy",
+  "OnStreamLine",
+  "RepoRefForSpec",
+  "ResourceCaps",
+  "WorkflowContextProvider",
+  "Workspace",
+  "WorkspaceClaimState",
+  "WorkspaceCommandState",
+  "WorkspaceDestroyError",
+  "WorkspaceError",
+  "WorkspaceExecError",
+  "WorkspaceExpiredError",
+  "WorkspaceInfo",
+  "WorkspaceNotFoundError",
+  "WorkspaceProvider",
+  "WorkspaceProvisionError",
+  "WorkspaceSpec",
+  "WorkspaceStatus",
+  "WorkspaceTicketContext",
+  "clear_recovery_policies",
+  "clear_workflow_context_provider",
+  "clear_workspace_providers",
+  "close_workspace",
+  "create_workspace",
+  "force_close_all",
+  "get_provider",
+  "get_recovery_policy",
+  "get_workflow_context_provider",
+  "get_workspace",
+  "get_workspace_claim_state",
+  "get_workspace_command_state",
+  "get_workspace_info",
+  "get_workspace_statuses",
+  "health_check_all",
+  "register_recovery_policy",
+  "register_workflow_context_provider",
+  "register_workspace_provider",
+  "registered_recovery_labels",
+  "release_claim",
+  "start_reaper",
+  "startup_recovery",
+  "try_claim",
+  "update_workspace_status",
+  "with_workspace",
+]
+from = ["app.core.workspace"]
+
+[[interfaces]]
+expose = [
+  "ActivityEvent",
+  "AnswerQuestionContext",
+  "AnswerQuestionDto",
+  "AnswerQuestionResult",
+  "CodingAgentCacheMiss",
+  "CodingAgentError",
+  "CodingAgentPlugin",
+  "FindingAnchor",
+  "FindingDraft",
+  "FindingDraftList",
+  "HealthStatus",
+  "IncrementalReviewContext",
+  "IncrementalReviewResult",
+  "InvocationMode",
+  "InvocationStatus",
+  "InvocationTelemetry",
+  "OnActivity",
+  "PluginNotFoundError",
+  "PriorThreadMessage",
+  "ReviewContext",
+  "ReviewResult",
+  "Severity",
+  "StaleCheckContext",
+  "StaleCheckDto",
+  "StaleCheckResult",
+  "ValidationResult",
+  "VerifyFixContext",
+  "VerifyFixDto",
+  "VerifyFixResult",
+  "answer_question",
+  "assemble_answer_question_prompt",
+  "assemble_incremental_review_prompt",
+  "assemble_review_prompt",
+  "assemble_stale_check_prompt",
+  "assemble_verify_fix_prompt",
+  "build_invocation",
+  "clear_plugins",
+  "get_plugin",
+  "health_check_all",
+  "incremental_review",
+  "list_plugin_metas",
+  "list_registered_plugins",
+  "register_plugin",
+  "registered_plugin_ids",
+  "review",
+  "schema_appendix",
+  "stale_check",
+  "validate_config",
+  "verify_fix",
+]
+from = ["app.domain.coding_agent"]
+
+[[interfaces]]
+expose = [
+  "EmailAlreadyLinkedError",
+  "OAuthIdentity",
+  "ProviderError",
+  "ProviderProfile",
+  "Session",
+  "SessionNotFoundError",
+  "TotpError",
+  "User",
+  "UserEmail",
+  "UserNotFoundError",
+  "can_be_sso_exempt_owner",
+  "create_email",
+  "create_oauth_identity",
+  "create_session",
+  "create_user",
+  "get_provider",
+  "has_verified_totp",
+  "list_providers",
+  "login_via_oauth",
+  "register_provider",
+  "repository",
+  "sessions",
+  "totp",
+]
+from = ["app.domain.identity"]
+
+[[interfaces]]
+expose = [
+  "IntakeError",
+  "IntakeOutcome",
+  "IntakePrepared",
+  "IntakeRejectedError",
+  "IntakeSideEffect",
+  "IntakeType",
+  "get_intake_type",
+  "is_mid_band_confirm",
+  "is_skippable_path",
+  "parse_rereview",
+  "parse_yaaos_command",
+  "register_intake_type",
+  "registered_intake_types",
+]
+from = ["app.domain.intake"]
+
+[[interfaces]]
+expose = [
+  "BrokenCredentialsError",
+  "IntegrationError",
+  "IntegrationNotConnectedError",
+  "IntegrationProvider",
+  "McpCredential",
+  "ProviderConfig",
+  "ProviderNotRegisteredError",
+  "clear",
+  "connect_callback",
+  "create_credential",
+  "get",
+  "get_provider",
+  "known_providers",
+  "list_broken_credentials_for_org",
+  "register_provider",
+  "update_allowlist",
+  "validate",
+]
+from = ["app.domain.integrations"]
+
+[[interfaces]]
+expose = [
+  "Lesson",
+  "LessonNotFoundError",
+  "LessonValidationError",
+  "create",
+  "delete",
+  "get",
+  "list_all",
+  "list_for_repo",
+  "update",
+]
+from = ["app.domain.lessons"]
+
+[[interfaces]]
+expose = [
+  "McpToken",
+  "REVIEW_TOKEN_TTL",
+  "consume_broken_creds",
+  "lookup_token",
+  "mint_token",
+  "record_broken_creds",
+  "revoke_token",
+  "sweep_expired",
+]
+from = ["app.domain.mcp_proxy"]
+
+[[interfaces]]
+expose = [
+  "Notification",
+  "list_for_user",
+  "mark_all_read",
+  "mark_read",
+  "popover_for_user",
+  "record",
+]
+from = ["app.domain.notifications"]
+
+[[interfaces]]
+expose = [
+  "CodingAgentAlreadyInstalledError",
+  "CodingAgentInstall",
+  "CodingAgentNotInstalledError",
+  "InsufficientRoleError",
+  "Invitation",
+  "InvitationError",
+  "InvitationExpiredError",
+  "InvitationInvalidError",
+  "InvitationUsedError",
+  "Membership",
+  "MembershipNotFoundError",
+  "OnboardingStatus",
+  "Org",
+  "OrgNotFoundError",
+  "Role",
+  "SsoConfig",
+  "SsoConfigError",
+  "VcsState",
+  "accept_invitation",
+  "change_role",
+  "clear_vcs",
+  "delete_expired_invitations",
+  "find_saml_org_slug_for_domain",
+  "get_config",
+  "get_onboarding_status",
+  "get_org",
+  "get_vcs",
+  "install_coding_agent",
+  "invite",
+  "list_coding_agents",
+  "register_assertion_verifier",
+  "register_onboarding_contributor",
+  "remove_member",
+  "repository",
+  "run_assertion_verifier",
+  "send_plain",
+  "set_vcs",
+  "sp_metadata_xml",
+  "uninstall_coding_agent",
+  "update_coding_agent_settings",
+  "upsert_config",
+]
+from = ["app.domain.orgs"]
+
+[[interfaces]]
+expose = ["list_available"]
+from = ["app.domain.plugins"]
+
+[[interfaces]]
+expose = [
+  "PRState",
+  "PullRequest",
+  "PullRequestNotFoundError",
+  "get",
+  "get_by_external",
+  "list_by_ids",
+  "update_state",
+  "upsert",
+]
+from = ["app.domain.pull_requests"]
+
+[[interfaces]]
+expose = [
+  "AckKind",
+  "AcknowledgmentDecision",
+  "AdmissionDrop",
+  "AgentReplyPosted",
+  "AggregateRepository",
+  "AuthorKind",
+  "ClassifyReplyInput",
+  "ClassifyReplyOutput",
+  "CodeAnchor",
+  "CommentMessage",
+  "CommentReplyReceived",
+  "CommentThread",
+  "ConversationView",
+  "Debounce",
+  "DomainEvent",
+  "Finding",
+  "FindingAcknowledged",
+  "FindingAnchorUpdated",
+  "FindingFingerprint",
+  "FindingObservation",
+  "FindingRaised",
+  "FindingReObserved",
+  "FindingResolutionDetected",
+  "FindingStaleDetected",
+  "FindingState",
+  "FindingStateChanged",
+  "FindingView",
+  "PRReviewAggregate",
+  "RawFinding",
+  "ReplyAction",
+  "ReplyIntent",
+  "Review",
+  "ReviewCompleted",
+  "ReviewFailed",
+  "ReviewJob",
+  "ReviewJobInput",
+  "ReviewRequested",
+  "ReviewScope",
+  "ReviewScopeKind",
+  "ReviewStarted",
+  "ReviewSuperseded",
+  "ReviewTrigger",
+  "Run",
+  "Severity",
+  "Skip",
+  "SkipReason",
+  "SqlAlchemyAggregateRepository",
+  "StaleCheckAction",
+  "ThreadMessageView",
+  "ThreadView",
+  "TriggerDecision",
+  "TriggerInputs",
+  "VERIFY_ACT_THRESHOLD",
+  "VERIFY_OBSERVE_THRESHOLD",
+  "VerifyFixAction",
+  "acquire_pr_lock",
+  "aggregate_findings_by_prs",
+  "all_conversations_view",
+  "apply_classified_reply",
+  "apply_stale_check_result",
+  "apply_verify_fix_result",
+  "cancel_workflows_for_ticket",
+  "classify_reply",
+  "compute_acceptance_rate",
+  "compute_resolved_without_edit_rate",
+  "decide_trigger",
+  "dispatch_events",
+  "find_pr_id_by_external_comment_id",
+  "get_org_id_for_review",
+  "get_review",
+  "get_thread",
+  "handle_developer_reply",
+  "handle_push",
+  "humanize_skip",
+  "is_off_topic_message",
+  "is_yaaos_command",
+  "list_findings_for_pr",
+  "list_findings_view",
+  "list_reviews_for_pr",
+  "review_summary",
+  "start_incremental_review",
+  "start_pr_review",
+]
+from = ["app.domain.reviewer"]
+
+[[interfaces]]
+expose = [
+  "current_actor",
+  "public_route",
+  "require",
+  "require_session",
+  "required_role_for",
+  "web",
+]
+from = ["app.domain.sessions"]
+
+[[interfaces]]
+expose = [
+  "InvalidTicketTransition",
+  "Ticket",
+  "TicketFilter",
+  "TicketNotFoundError",
+  "TicketStatus",
+  "TicketStatusChanged",
+  "abandon",
+  "attach_pr_to_ticket",
+  "attach_workflow_execution",
+  "complete",
+  "create",
+  "create_for_pr",
+  "fail",
+  "get",
+  "get_by_id",
+  "get_by_pr",
+  "get_payload",
+  "get_workspace_ticket_context",
+  "list_running_older_than",
+  "list_tickets",
+  "set_workflow_execution",
+  "upsert_ticket_for_pr",
+]
+from = ["app.domain.tickets"]
+
+[[interfaces]]
+expose = [
+  "Comment",
+  "CommentCreated",
+  "Diff",
+  "FileSummary",
+  "Finding",
+  "FindingSnippetLine",
+  "PluginNotFoundError",
+  "PullRequestClosed",
+  "PullRequestReadyForReview",
+  "PullRequestReopened",
+  "PullRequestSynchronized",
+  "ReactionAdded",
+  "RepoRef",
+  "Review",
+  "ReviewPostResult",
+  "ReviewState",
+  "Severity",
+  "VCSAuthError",
+  "VCSError",
+  "VCSEvent",
+  "VCSEventBase",
+  "VCSNotFoundError",
+  "VCSPermissionError",
+  "VCSPlugin",
+  "VCSPullRequest",
+  "VCSRateLimitError",
+  "VCSTransientError",
+  "VCSValidationError",
+  "get_installation_token",
+  "get_plugin",
+  "is_registered",
+  "list_plugin_metas",
+  "register_vcs_plugin",
+  "registered_plugin_ids",
+]
+from = ["app.domain.vcs"]
+
+[[interfaces]]
+expose = ["ClaudeCodePlugin", "bootstrap", "get_plugin"]
+from = ["app.plugins.claude_code"]
+
+[[interfaces]]
+expose = [
+  "GitHubOAuthProvider",
+  "GitHubPlugin",
+  "GithubIntakeType",
+  "bootstrap",
+  "bootstrap_oauth",
+  "get_plugin",
+  "mark_webhook_processed",
+  "record_webhook_event",
+  "verify_webhook_signature",
+]
+from = ["app.plugins.github"]
+
+[[interfaces]]
+expose = ["InMemoryWorkspaceProvider", "bootstrap", "get_provider"]
+from = ["app.plugins.in_memory_workspace"]
+
+[[interfaces]]
+expose = ["LinearProvider", "bootstrap"]
+from = ["app.plugins.linear"]
+
+[[interfaces]]
+expose = ["NotionProvider", "bootstrap"]
+from = ["app.plugins.notion"]
+
+[[interfaces]]
+expose = ["TestOAuthProvider", "bootstrap", "set_next_profile"]
+from = ["app.plugins.oauth_test"]
+
+[[interfaces]]
+expose = ["bootstrap", "sign_assertion", "verify_assertion"]
+from = ["app.plugins.saml_test"]
+
+[[interfaces]]
+expose = ["FakeCodingAgentPlugin", "register_fake_coding_agent"]
+from = ["app.testing.fake_coding_agent"]
+
+[[interfaces]]
+expose = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]
+from = ["app.testing.stub_coding_agent"]
+
+[[interfaces]]
+expose = ["StubVCSPlugin", "register_stub_vcs"]
+from = ["app.testing.stub_vcs"]
+
+[[interfaces]]
+expose = ["StubWorkspaceProvider", "wrap_all_registered_workspace_providers"]
+from = ["app.testing.stub_workspace"]

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket
@@ -267,7 +268,7 @@ async def create_for_pr(
 
 
 async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+    from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
 
     async with db_session() as s:
         row = (
@@ -276,15 +277,17 @@ async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
         if row is None:
             raise TicketNotFoundError(str(ticket_id))
         t = Ticket.from_row(row)
-        if row.pr_id is not None:
-            pr = (
-                await s.execute(select(PullRequestRow).where(PullRequestRow.id == row.pr_id))
-            ).scalar_one_or_none()
-            if pr is not None:
-                t.pr_number = pr.number
-                t.pr_html_url = pr.html_url
-                t.author_login = pr.author_login
-                t.is_draft = pr.is_draft
+    if row.pr_id is not None:
+        from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
+
+        try:
+            pr = await get_pull_request(row.pr_id, org_id=row.org_id)
+            t.pr_number = pr.number
+            t.pr_html_url = pr.html_url
+            t.author_login = pr.author_login
+            t.is_draft = pr.is_draft
+        except PullRequestNotFoundError:
+            pass
     return t
 
 
@@ -331,6 +334,38 @@ async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
     return Ticket.from_row(row) if row is not None else None
 
 
+async def get_by_id(ticket_id: UUID) -> Ticket | None:
+    """Return the `Ticket` for *ticket_id* without an org_id filter, or ``None``.
+
+    Use when the caller does not yet know the org (e.g. resolving org context
+    from a ticket reference). Callers that DO know the org should use `get`
+    which applies the org scope.
+    """
+    async with db_session() as s:
+        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
+    return Ticket.from_row(row) if row is not None else None
+
+
+async def list_running_older_than(cutoff: datetime) -> list[tuple[UUID, UUID, UUID | None]]:
+    """Return `(ticket_id, org_id, pr_id)` triples for every `running` ticket
+    created before *cutoff*.
+
+    Does not filter by org — intended for system sweeps that process all orgs.
+    `pr_id` is ``None`` for tickets not yet linked to a PR. Callers perform any
+    secondary domain checks (e.g. review-row existence) before acting.
+    """
+    async with db_session() as s:
+        rows = (
+            await s.execute(
+                select(TicketRow.id, TicketRow.org_id, TicketRow.pr_id).where(
+                    TicketRow.status == "running",
+                    TicketRow.created_at < cutoff,
+                )
+            )
+        ).all()
+    return [(r[0], r[1], r[2]) for r in rows]
+
+
 async def list_tickets(
     filter: TicketFilter,
     *,
@@ -343,10 +378,9 @@ async def list_tickets(
     `findings` rather than denormalized on the ticket row — POC simpler than
     maintaining a trigger-fed column, and the result set is small.
     """
-    from sqlalchemy import case, func  # noqa: PLC0415
-
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-    from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
+    from app.domain.pull_requests import PullRequest  # noqa: PLC0415
+    from app.domain.pull_requests import list_by_ids as list_prs_by_ids  # noqa: PLC0415
+    from app.domain.reviewer import aggregate_findings_by_prs  # noqa: PLC0415
 
     async with db_session() as s:
         stmt = select(TicketRow).where(TicketRow.org_id == org_id)
@@ -373,57 +407,116 @@ async def list_tickets(
 
         rows = (await s.execute(stmt)).scalars().all()
 
-        # Batch-enrich PR data (one query, not N+1).
-        pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
-        prs_by_id: dict[UUID, PullRequestRow] = {}
-        if pr_ids:
-            pr_rows = (
-                (await s.execute(select(PullRequestRow).where(PullRequestRow.id.in_(pr_ids)))).scalars().all()
-            )
-            prs_by_id = {p.id: p for p in pr_rows}
+    # Batch-aggregate findings per pr_id via the reviewer public op.
+    pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
+    findings_by_pr: dict[UUID, tuple[int, str | None]] = {}
+    if pr_ids:
+        findings_by_pr = await aggregate_findings_by_prs(pr_ids, org_id=org_id)
 
-        # Batch-aggregate findings per pr_id. Cheap GROUP BY scoped to the
-        # listed tickets' PRs; one query regardless of result-set size.
-        findings_by_pr: dict[UUID, tuple[int, str | None]] = {}
-        if pr_ids:
-            severity_rank = case(
-                (FindingRow.severity == "high", 3),
-                (FindingRow.severity == "medium", 2),
-                (FindingRow.severity == "low", 1),
-                else_=0,
-            )
-            agg_stmt = (
-                select(
-                    FindingRow.pr_id,
-                    func.count(FindingRow.id),
-                    func.max(severity_rank),
-                )
-                .where(FindingRow.pr_id.in_(pr_ids), FindingRow.org_id == org_id)
-                .group_by(FindingRow.pr_id)
-            )
-            for pr_id, count, max_rank in (await s.execute(agg_stmt)).all():
-                severity = {3: "high", 2: "medium", 1: "low"}.get(int(max_rank or 0))
-                findings_by_pr[pr_id] = (int(count), severity)
+    # Batch-enrich PR data via the public pull_requests op (one query, not N+1).
+    prs_by_id: dict[UUID, PullRequest] = {}
+    if pr_ids:
+        prs_by_id = {p.id: p for p in await list_prs_by_ids(pr_ids)}
 
-        out: list[Ticket] = []
-        for r in rows:
-            t = Ticket.from_row(r)
-            if r.pr_id and r.pr_id in prs_by_id:
-                pr = prs_by_id[r.pr_id]
-                t.pr_number = pr.number
-                t.pr_html_url = pr.html_url
-                t.author_login = pr.author_login
-                t.is_draft = pr.is_draft
-                t.builder_display_name = pr.author_login
-            if r.pr_id and r.pr_id in findings_by_pr:
-                count, severity = findings_by_pr[r.pr_id]
-                t.findings_count = count
-                t.max_severity = severity  # type: ignore[assignment]
-            out.append(t)
+    out: list[Ticket] = []
+    for r in rows:
+        t = Ticket.from_row(r)
+        if r.pr_id and r.pr_id in prs_by_id:
+            pr = prs_by_id[r.pr_id]
+            t.pr_number = pr.number
+            t.pr_html_url = pr.html_url
+            t.author_login = pr.author_login
+            t.is_draft = pr.is_draft
+            t.builder_display_name = pr.author_login
+        if r.pr_id and r.pr_id in findings_by_pr:
+            count, severity = findings_by_pr[r.pr_id]
+            t.findings_count = count
+            t.max_severity = severity  # type: ignore[assignment]
+        out.append(t)
 
-        if filter.sort == "findings_count":
-            out.sort(key=lambda t: t.findings_count, reverse=True)
-        return out
+    if filter.sort == "findings_count":
+        out.sort(key=lambda t: t.findings_count, reverse=True)
+    return out
+
+
+async def upsert_ticket_for_pr(
+    *,
+    org_id: UUID,
+    source_external_id: str,
+    title: str,
+    description: str | None,
+    repo_external_id: str,
+    plugin_id: str,
+    idempotency_key: str,
+    payload: dict,
+    session: AsyncSession,
+) -> tuple[UUID | None, bool]:
+    """Race-safe ticket INSERT for a GitHub PR-opened-style event.
+
+    Uses INSERT … ON CONFLICT DO NOTHING on `(org_id, source, source_external_id)`.
+    Returns `(ticket_id, created)`.  On conflict (race loser), returns
+    `(None, False)` — the caller should exit without doing further work.
+    Caller commits; never commits here.
+    """
+    new_id = uuid4()
+    stmt = (
+        pg_insert(TicketRow)
+        .values(
+            id=new_id,
+            org_id=org_id,
+            source="github_pr",
+            source_external_id=source_external_id,
+            title=title,
+            description=description,
+            status="running",
+            plugin_id=plugin_id,
+            repo_external_id=repo_external_id,
+            pr_id=None,
+            type="github_pr",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            current_workflow_execution_id=None,
+        )
+        .on_conflict_do_nothing(index_elements=["org_id", "source", "source_external_id"])
+        .returning(TicketRow.id)
+    )
+    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
+    if inserted_id is None:
+        return None, False
+    return inserted_id, True
+
+
+async def attach_pr_to_ticket(
+    ticket_id: UUID,
+    *,
+    pr_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Back-fill `pr_id` on a ticket that was inserted without it.
+
+    The `WHERE pr_id IS NULL` guard makes the op idempotent: if a concurrent
+    caller already set `pr_id`, this is a safe no-op.  Caller commits.
+    """
+    await session.execute(
+        update(TicketRow).where(TicketRow.id == ticket_id, TicketRow.pr_id.is_(None)).values(pr_id=pr_id)
+    )
+
+
+async def set_workflow_execution(
+    ticket_id: UUID,
+    *,
+    workflow_execution_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Stamp the workflow execution id onto the ticket after engine.start().
+
+    Caller commits.
+    """
+    await session.execute(
+        update(TicketRow)
+        .where(TicketRow.id == ticket_id)
+        .values(current_workflow_execution_id=workflow_execution_id)
+    )
 
 
 async def complete(ticket_id: UUID, *, org_id: UUID) -> None:

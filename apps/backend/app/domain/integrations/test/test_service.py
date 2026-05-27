@@ -8,10 +8,8 @@ from dataclasses import dataclass, field
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import select
 
-from app.core.audit_log import Actor
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import Actor, list_for_org
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
 from app.domain import integrations as integ
@@ -119,18 +117,7 @@ async def test_connect_callback_emits_audit(seeded, stub_provider, stub_exchange
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == seeded["org"].id,
-                    AuditEntryRow.kind == "mcp.stub.connected",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.connected"])
     assert len(rows) == 1
 
 
@@ -181,18 +168,7 @@ async def test_clear_removes_and_audits(seeded, stub_provider, stub_exchange, db
     removed = await integ.clear(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
     assert removed is True
     assert await integ.get(db_session, seeded["org"].id, "stub") is None
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.kind == "mcp.stub.disconnected",
-                    AuditEntryRow.org_id == seeded["org"].id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.disconnected"])
     assert len(rows) == 1
 
 
@@ -200,11 +176,7 @@ async def test_clear_removes_and_audits(seeded, stub_provider, stub_exchange, db
 async def test_clear_no_op_returns_false_no_audit(seeded, db_session) -> None:
     removed = await integ.clear(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
     assert removed is False
-    rows = (
-        (await db_session.execute(select(AuditEntryRow).where(AuditEntryRow.kind == "mcp.stub.disconnected")))
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.disconnected"])
     assert rows == []
 
 
@@ -286,16 +258,45 @@ async def test_update_allowlist_replaces_and_audits(seeded, stub_provider, stub_
         actor=seeded["actor"],
     )
     assert row.allowed_tools == []
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.kind == "mcp.stub.allowlist_updated",
-                    AuditEntryRow.org_id == seeded["org"].id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.allowlist_updated"])
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_broken_credentials_for_org(seeded, db_session) -> None:
+    """Only enabled + failed credentials appear; ok + disabled variants are excluded."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+
+    org_id = seeded["org"].id
+
+    def _row(provider: str, *, enabled: bool, status: str) -> McpCredentialRow:
+        return McpCredentialRow(
+            org_id=org_id,
+            provider=provider,
+            encrypted_access_token="enc",
+            encrypted_refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            scopes=["read"],
+            allowed_tools=[],
+            enabled=enabled,
+            upstream_identity=f"{provider}-bot",
+            last_refresh_status=status,
+            last_refresh_failed_at=datetime.now(UTC) if status == "failed" else None,
+        )
+
+    # enabled + failed → should appear
+    db_session.add(_row("linear", enabled=True, status="failed"))
+    # enabled + ok → excluded
+    db_session.add(_row("notion", enabled=True, status="ok"))
+    # disabled + failed → excluded
+    db_session.add(_row("jira", enabled=False, status="failed"))
+    await db_session.flush()
+
+    result = await integ.list_broken_credentials_for_org(db_session, org_id)
+    assert len(result) == 1
+    assert result[0].provider == "linear"
+    assert result[0].enabled is True
+    assert result[0].last_refresh_status == "failed"
+    assert result[0].last_refresh_failed_at is not None

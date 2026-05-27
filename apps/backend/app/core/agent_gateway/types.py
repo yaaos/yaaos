@@ -201,6 +201,22 @@ class ClaimRequest(BaseModel):
     wait_seconds: int = Field(ge=0, le=55)
 
 
+# ── Agent reference ───────────────────────────────────────────────────
+
+
+class AgentRef(BaseModel):
+    """Minimal agent-pod reference returned by `pick_agent_for_org`.
+
+    Callers only need `agent_pod_id` to enqueue commands; `agent_id` is
+    the row PK used when the caller needs to address the row directly (e.g.
+    queue-depth checks).
+    """
+
+    model_config = ConfigDict(frozen=True)
+    agent_id: UUID
+    agent_pod_id: UUID
+
+
 # ── Errors ─────────────────────────────────────────────────────────────
 
 

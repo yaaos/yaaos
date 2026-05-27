@@ -9,7 +9,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_org
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
@@ -122,18 +122,7 @@ async def test_validate_failure_flips_status_audits_and_notifies(db_session, stu
     assert refreshed.last_refresh_failed_at is not None
     assert refreshed.last_failure_notified_at is not None
 
-    audits = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id,
-                    AuditEntryRow.kind == "mcp.stub_sched.token_refresh_failed",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    audits = await list_for_org(org_id=org.id, actions=["mcp.stub_sched.token_refresh_failed"])
     assert len(audits) == 1
     assert any(m.to == "o1@example.com" for m in inbox)
 

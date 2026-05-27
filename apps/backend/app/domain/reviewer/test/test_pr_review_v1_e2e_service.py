@@ -25,13 +25,15 @@ import pytest
 from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
-from app.core.tasks import drain_once
+from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
-from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow import Outcome, WorkflowState, get_engine
+from app.core.workflow.models import WorkflowExecutionRow
+from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_providers_for_tests,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
+    clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -87,8 +89,8 @@ class _StaticWorkflowContextProvider:
 @pytest.fixture
 def _registered_engine():
     _reset_for_tests()
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
     register_workspace_provider(_StubWorkspaceProvider())
     eng = get_engine()
@@ -100,8 +102,8 @@ def _registered_engine():
     eng.register_workflow(pr_review_v1)
     yield eng
     _reset_for_tests()
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
 
 async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int:
@@ -254,8 +256,8 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
     from app.domain.tickets.models import TicketRow  # noqa: PLC0415
 
     _reset_for_tests()
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
     # 1. Workspace provider whose plugin_state carries the file content the
     #    finding's anchor references. CodeReview spy never reads it (it just
@@ -426,8 +428,8 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
         assert rows[0].title == "Spy finding"
     finally:
         _reset_for_tests()
-        _reset_providers_for_tests()
-        _reset_workflow_context_provider_for_tests()
+        clear_workspace_providers()
+        clear_workflow_context_provider()
 
 
 async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered_engine) -> None:  # type: ignore[no-untyped-def]

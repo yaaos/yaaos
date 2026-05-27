@@ -14,8 +14,7 @@ Exported from `app/domain/tickets/__init__.py`:
 - `TicketFilter` — list filter (`repo_external_ids`, `author_logins`, `created_after`, `created_before`, `statuses`).
 - `TicketStatus` — `Literal["running", "hitl", "done", "failed", "cancelled"]` (collapse).
 - `TicketStatusChanged` — published on every transition (subclass of `core.events.Event`).
-- `TicketRow` — SQLAlchemy model (exported so cross-module joins avoid import cycles).
-- Service — `create` (intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `get`, `get_by_pr`, `list_tickets`, `complete`, `abandon`, `fail`, `attach_workflow_execution`.
+- Service — `create` (intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `upsert_ticket_for_pr`, `attach_pr_to_ticket`, `set_workflow_execution`, `get`, `get_by_id` (unscoped fetch — use when org is unknown), `get_by_pr`, `list_tickets`, `list_running_older_than(cutoff) -> list[tuple[ticket_id, org_id, pr_id | None]]` (system sweep helper), `complete`, `abandon`, `fail`, `attach_workflow_execution`.
 - Exceptions — `TicketNotFoundError`, `InvalidTicketTransition`.
 
 columns on `tickets`: `type` (`pr_review` default), `idempotency_key` (sparse-unique), `payload` (JSONB), `current_workflow_execution_id` (soft pointer into `workflow_executions`). Created by migration `016_tickets_m05_columns`.
@@ -54,9 +53,9 @@ Three insert paths, all writing a `ticket.created` audit entry and queuing a `Ti
 
 - `create` (generic intake — webhooks routed via `domain/intake`). Idempotent on `(org_id, idempotency_key)`. Emits `(previous=None, new='pending')`; the workflow engine emits the `pending → running` transition later.
 - `create_for_pr`. Returns the existing row on duplicate `pr_id` after refreshing title/description. Emits `(previous=None, new='running')`. Exists for direct callers and tests.
-- `github` intake type's `_prepare_pr_review` (the real production GitHub PR-opened path). Inserts `TicketRow` directly via `INSERT ... ON CONFLICT DO NOTHING` so it can set `pull_requests.ticket_id` before back-filling `tickets.pr_id` in one transaction. Emits `(previous=None, new='running')` — same shape as `create_for_pr`, since both start a ticket already in `running`.
+- `upsert_ticket_for_pr` (the real production GitHub PR-opened path). Race-safe INSERT via `INSERT … ON CONFLICT DO NOTHING` on `(org_id, source, source_external_id)`; returns `(ticket_id, created)`. On conflict (race loser) returns `(None, False)`. Used by the github intake type's `_prepare_pr_review` so it can upsert the PR and back-fill `tickets.pr_id` in one shared transaction. Emits `(previous=None, new='running')` — same shape as `create_for_pr`.
 
-The `(org_id, source, source_external_id)` UNIQUE constraint collapses concurrent webhook deliveries for the same PR to a single ticket row. The github intake type uses `INSERT ... ON CONFLICT DO NOTHING` on this key; the loser exits with `IntakeSideEffect(detail="duplicate_ticket")` and only the winner emits the `ticket.created` audit + workflow start.
+The `(org_id, source, source_external_id)` UNIQUE constraint collapses concurrent webhook deliveries for the same PR to a single ticket row. `upsert_ticket_for_pr` uses `INSERT … ON CONFLICT DO NOTHING` on this key; callers detect the loser via `created=False` and exit without doing further work.
 
 ### Read-time denormalization
 
@@ -100,4 +99,6 @@ The ticket aggregate does not own, expose, or coordinate workspace lifecycle. It
 
 ## How it's tested
 
-`app/domain/tickets/test/` is currently `__init__.py` only; behaviour is exercised end-to-end by integration suites in `app/test/` and e2e in `apps/e2e/`. State-machine and event-publish semantics covered by intake and reviewer integration tests.
+- `app/domain/tickets/test/test_service.py` — `@pytest.mark.service` round-trips for `upsert_ticket_for_pr` (create + idempotency/race-loser path), `attach_pr_to_ticket` (happy path + `pr_id IS NULL` guard), and `set_workflow_execution`.
+- `app/domain/tickets/test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
+- State-machine and event-publish semantics covered by intake and reviewer integration tests.

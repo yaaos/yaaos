@@ -10,7 +10,7 @@ boot; `core/workspace.commands` calls it when needed.
 
 The Protocol is the contract; concrete implementations live in domain
 modules. Only one provider may be registered at a time; tests can reset
-via `_reset_workflow_context_provider_for_tests()`.
+via `clear_workflow_context_provider()`.
 """
 
 from __future__ import annotations
@@ -68,7 +68,8 @@ def get_workflow_context_provider() -> WorkflowContextProvider | None:
     return _PROVIDER
 
 
-def _reset_workflow_context_provider_for_tests() -> None:
+def clear_workflow_context_provider() -> None:
+    """Clear the registered workflow-context provider."""
     global _PROVIDER
     _PROVIDER = None
 
@@ -76,7 +77,7 @@ def _reset_workflow_context_provider_for_tests() -> None:
 __all__ = [
     "WorkflowContextProvider",
     "WorkspaceTicketContext",
-    "_reset_workflow_context_provider_for_tests",
+    "clear_workflow_context_provider",
     "get_workflow_context_provider",
     "register_workflow_context_provider",
 ]

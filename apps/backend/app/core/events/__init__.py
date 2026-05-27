@@ -4,7 +4,6 @@ from app.core.events import web  # noqa: F401 — registers SSE route at import 
 from app.core.events.service import (
     Event,
     EventFilter,
-    _reset_for_tests,
     publish,
     publish_after_commit,
     serialize_for_sse,
@@ -16,7 +15,6 @@ from app.core.events.service import (
 __all__ = [
     "Event",
     "EventFilter",
-    "_reset_for_tests",
     "publish",
     "publish_after_commit",
     "serialize_for_sse",

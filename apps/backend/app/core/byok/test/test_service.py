@@ -6,8 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core import byok
-from app.core.audit_log import Actor
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import Actor, list_for_org
 from app.core.byok.models import ByokKeyRow
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
@@ -130,15 +129,7 @@ async def test_set_emits_audit(db_session) -> None:
     actor = Actor.user(user_id=user.id)
 
     await byok.set(org.id, "anthropic", "sk-audit", actor=actor, session=db_session)
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "byok.set")
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["byok.set"])
     assert len(rows) == 1
     assert rows[0].payload == {"provider": "anthropic"}
 
@@ -152,33 +143,13 @@ async def test_clear_emits_audit_only_on_actual_removal(db_session) -> None:
 
     # No-op clear: no audit row.
     await byok.clear(org.id, "anthropic", actor=actor, session=db_session)
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "byok.cleared"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["byok.cleared"])
     assert rows == []
 
     # Real clear: one audit row.
     await byok.set(org.id, "anthropic", "v", actor=actor, session=db_session)
     await byok.clear(org.id, "anthropic", actor=actor, session=db_session)
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "byok.cleared"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["byok.cleared"])
     assert len(rows) == 1
 
 
@@ -199,20 +170,42 @@ async def test_validate_audit_records_success_flag(db_session) -> None:
     await byok.validate(org.id, "anthropic", _ok, actor=actor, session=db_session)
     await byok.validate(org.id, "anthropic", _bad, actor=actor, session=db_session)
 
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow)
-                .where(AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "byok.validated")
-                .order_by(AuditEntryRow.created_at)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["byok.validated"])
+    # list_for_org returns newest-first; reverse for chronological order.
+    rows = list(reversed(rows))
     assert len(rows) == 2
     assert rows[0].payload == {"provider": "anthropic", "success": True}
     assert rows[1].payload == {"provider": "anthropic", "success": False}
+
+
+@pytest.mark.asyncio
+async def test_list_keys_for_org_returns_only_requested_org(db_session) -> None:
+    """list_keys_for_org returns all keys for one org and excludes other orgs."""
+    user = await identity_repo.insert_user(db_session, display_name="U")
+    org_a = await orgs_repo.insert_org(db_session, slug="byok-list-a")
+    org_b = await orgs_repo.insert_org(db_session, slug="byok-list-b")
+    await orgs_repo.insert_membership(
+        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="ua"
+    )
+    await orgs_repo.insert_membership(
+        db_session, user_id=user.id, org_id=org_b.id, role=Role.OWNER, handle="ub"
+    )
+    actor = Actor.user(user_id=user.id)
+
+    await byok.set(org_a.id, "anthropic", "key-a1", actor=actor, session=db_session)
+    await byok.set(org_a.id, "openai", "key-a2", actor=actor, session=db_session)
+    await byok.set(org_b.id, "anthropic", "key-b1", actor=actor, session=db_session)
+
+    keys = await byok.list_keys_for_org(org_a.id, session=db_session)
+    assert len(keys) == 2
+    providers = {k.provider for k in keys}
+    assert providers == {"anthropic", "openai"}
+    assert all(k.org_id == org_a.id for k in keys)
+
+    # org_b's key must not appear
+    keys_b = await byok.list_keys_for_org(org_b.id, session=db_session)
+    assert len(keys_b) == 1
+    assert keys_b[0].provider == "anthropic"
 
 
 @pytest.mark.asyncio

@@ -36,17 +36,15 @@ import structlog
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from app.core.audit_log import Actor, audit
 from app.core.auth import public_route
 from app.core.database import session as db_session
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.integrations import service as integ
-from app.domain.integrations.types import get_provider
+from app.domain.integrations import get, get_provider
 from app.domain.mcp_proxy.service import lookup_token, record_broken_creds
-from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer import get_org_id_for_review
 
 log = structlog.get_logger("mcp_proxy.web")
 
@@ -127,15 +125,14 @@ async def dispatch(
             )
 
         # Resolve org_id from the review row.
-        review = (await s.execute(select(ReviewRow).where(ReviewRow.id == review_id))).scalar_one_or_none()
-        if review is None:
+        org_id = await get_org_id_for_review(review_id)
+        if org_id is None:
             return JSONResponse(
                 _rpc_error(rpc_id, *_RPC_ERR_UNAUTHENTICATED, "review not found"),
                 status_code=404,
             )
-        org_id = review.org_id
 
-        credential = await integ.get(s, org_id, server)
+        credential = await get(s, org_id, server)
         if credential is None or not credential.enabled:
             record_broken_creds(review_id, server)
             return JSONResponse(

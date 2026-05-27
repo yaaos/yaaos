@@ -11,8 +11,8 @@ Owns who the human (or workspace principal) is, what identities they've linked, 
 Exported from `app/domain/identity/__init__.py`:
 
 - Types — `User`, `UserEmail`, `OAuthIdentity`, `Session`, `LoginResult`.
-- Rows — `UserRow`, `UserEmailRow`, `OAuthIdentityRow`, `UserTotpSecretRow`, `SessionRow`.
 - Exceptions — `UserNotFoundError`, `EmailAlreadyLinkedError`, `SessionNotFoundError`, `TotpError`.
+- Seed ops — `create_user(db, display_name)`, `create_email(db, user_id, email, is_primary, verified)`, `create_oauth_identity(db, user_id, provider, external_subject, verified)`, `create_session(db, token_hash, user_id, workspace_id, csrf_token, ip, user_agent, expires_at)`. Return the ORM row; caller owns the transaction.
 - Login orchestrator — `login_via_oauth(db, provider_id, profile)`.
 - Provider Protocol — `providers.Provider`, `providers.ProviderProfile`, `providers.ProviderError`, `providers.register_provider`, `providers.get_provider`, `providers.list_providers`.
 - Sessions namespace — `sessions.create`, `sessions.lookup`, `sessions.touch`, `sessions.revoke`, `sessions.revoke_all_for_user`, `sessions.rotate`, `sessions.mark_sso_satisfied`, `sessions.is_sso_satisfied`, `sessions.cleanup_expired`, `sessions.CreatedSession`, `sessions.SSO_TTL`.
@@ -74,6 +74,7 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 ## How it's tested
 
+- `test/test_service.py` — round-trip coverage for `create_user`, `create_email`, `create_oauth_identity`, `create_session` against real Postgres.
 - `test/test_repository.py` — repository helpers against real Postgres via the transactional-rollback fixture.
 - `test/test_sessions.py` — lifecycle: create, rotate, revoke, revoke-all, expired-lookup, mark-sso-satisfied, TTL.
 - `test/test_login_orchestrator.py` — the three orchestrator branches: existing-identity, auto-link-by-email, fresh-signup-creates-user (with and without invitation).

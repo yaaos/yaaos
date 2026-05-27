@@ -15,13 +15,13 @@ import pytest
 
 from app.core.sse_pubsub import (
     RedisPubsub,
-    _reset_for_tests,
     channel_for,
     get_pubsub,
     publish,
     subscribe,
     subscriber_count,
 )
+from app.core.sse_pubsub.service import _reset_for_tests
 
 
 @pytest.fixture(autouse=True)

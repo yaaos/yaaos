@@ -1,7 +1,8 @@
 ---
 name: yaaos-adversary-code
 description: Wave 3 paired adversary in the yaaos-review pipeline. Challenges code findings from yaaos-review-code using the yaaos-adversarial-review skill. Context-asymmetric — does NOT read Wave 1 mapping files.
-model: opus
+model: claude-sonnet-4-6
+effort: high
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

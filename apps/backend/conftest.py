@@ -70,17 +70,17 @@ def _ensure_plugins_registered() -> None:
     """Repopulate the plugin registries if any are empty + re-wrap stubs.
 
     Some unit tests (e.g. `test_coding_agent/test_registry.py`) call
-    `_reset_plugins_for_tests()` in teardown, which clears the global
-    registries and leaks empty state to subsequent tests. Service tests that
-    drive `reviewer.start_pr_review` / the github intake type need the
-    real plugin entries (wrapped by `stub_coding_agent` + `stub_workspace`)
-    present regardless of test ordering. Idempotent + cheap.
+    `clear_plugins()` in teardown, which clears the global registries and
+    leaks empty state to subsequent tests. Service tests that drive
+    `reviewer.start_pr_review` / the github intake type need the real plugin
+    entries (wrapped by `stub_coding_agent` + `stub_workspace`) present
+    regardless of test ordering. Idempotent + cheap.
     """
     from app.core.workspace.service import _PROVIDERS as _WS  # noqa: PLC0415
-    from app.domain.coding_agent.service import _PLUGINS as _CA  # noqa: PLC0415
+    from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
     from app.domain.vcs.registry import _PLUGINS as _VCS  # noqa: PLC0415
 
-    if "claude_code" not in _CA:
+    if "claude_code" not in _ca_ids():
         from app.plugins.claude_code.service import bootstrap as _cc  # noqa: PLC0415
 
         _cc()

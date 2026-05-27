@@ -1,7 +1,8 @@
 ---
 name: yaaos-review-architecture
 description: Wave 2 reviewer in the yaaos-review pipeline. Architecture-category reviewer — uses the yaaos-architecture-review skill to evaluate the diff against the codebase's boundaries and conventions, and emit findings JSON.
-model: opus
+model: claude-opus-4-7
+effort: xhigh
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

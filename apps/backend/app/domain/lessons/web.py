@@ -20,8 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
+from app.core.auth import Action, org_id_var
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.lessons.service import (
     Lesson,
@@ -34,7 +33,7 @@ from app.domain.lessons.service import (
     list_lessons,
     update,
 )
-from app.domain.sessions.dependencies import current_actor, require
+from app.domain.sessions import current_actor, require
 
 router = APIRouter()
 

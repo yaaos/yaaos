@@ -1,6 +1,8 @@
 ---
 name: yaaos-review-core
 description: Orchestrator for the yaaos-review pipeline. Generates a run-id, spawns Wave 1 mappers, Wave 2 reviewers, and Wave 3 paired adversaries, then synthesizes the surviving findings (dedupe, filter Speculative, tally, tuple-sort) and emits final.json to stdout. Invoked by the yaaos-review and yaaos-review-pr entry skills — not a slash command itself.
+model: claude-sonnet-4-6
+effort: medium
 ---
 
 # yaaos-review-core

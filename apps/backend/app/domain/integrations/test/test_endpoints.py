@@ -17,7 +17,7 @@ from itsdangerous import URLSafeTimedSerializer
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
 from app.core.config import get_settings
 from app.core.oauth import ProviderConfig, Tokens
@@ -314,18 +314,7 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
     assert body["allowed_tools"] == ["update_thing"]
     assert body["enabled"] is False
     # Audit row was written.
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.kind == "mcp.stub.allowlist_updated",
-                    AuditEntryRow.org_id == seeded["org"].id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.allowlist_updated"])
     assert len(rows) == 1
 
 

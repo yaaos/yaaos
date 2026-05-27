@@ -13,12 +13,12 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.agent_gateway import (
-    _reset_subscriber_registry_for_tests,
     bearers,
     get_subscriber_registry,
 )
-from app.core.sse_pubsub import _reset_for_tests as _reset_pubsub
+from app.core.agent_gateway.subscribers import _reset_for_tests as _reset_subscriber_registry
 from app.core.sse_pubsub import channel_for, subscribe
+from app.core.sse_pubsub.service import _reset_for_tests as _reset_pubsub
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
 
@@ -52,10 +52,10 @@ def _app() -> FastAPI:
 
 @pytest.fixture(autouse=True)
 def _isolate() -> None:
-    _reset_subscriber_registry_for_tests()
+    _reset_subscriber_registry()
     _reset_pubsub()
     yield
-    _reset_subscriber_registry_for_tests()
+    _reset_subscriber_registry()
     _reset_pubsub()
     bearers.set_verify_override(None)
 

@@ -23,19 +23,19 @@ from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
 from app.core.sse_pubsub import (
-    _reset_for_tests as _reset_pubsub,
-)
-from app.core.sse_pubsub import (
     channel_for,
     subscribe,
 )
-from app.core.tasks import drain_once
+from app.core.sse_pubsub.service import _reset_for_tests as _reset_pubsub
+from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
-from app.core.workflow import WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow import WorkflowState, get_engine
+from app.core.workflow.models import WorkflowExecutionRow
+from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_providers_for_tests,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
+    clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -84,8 +84,8 @@ class _StaticCtxProvider:
 @pytest.fixture
 def _engine_with_in_memory():
     _reset_for_tests()
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     _reset_pubsub()
     register_workspace_provider(_StubWorkspaceProvider())
     eng = get_engine()
@@ -96,8 +96,8 @@ def _engine_with_in_memory():
     eng.register_workflow(pr_review_v1)
     yield eng
     _reset_for_tests()
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     _reset_pubsub()
 
 

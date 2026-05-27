@@ -29,15 +29,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
-from app.core.agent_gateway.service import connection_status_for_org
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
+from app.core.agent_gateway import connection_status_for_org
+from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.sse_pubsub import channel_for
 from app.core.sse_pubsub import subscribe as sse_subscribe
 from app.core.webserver import RouteSpec, register_routes
-from app.core.workflow.models import WorkflowExecutionRow
-from app.domain.sessions.dependencies import require
+from app.core.workflow import get_execution_summary
+from app.domain.sessions import require
 
 router = APIRouter()
 
@@ -88,15 +87,15 @@ async def stream_workflow_activity(
     if org_id is None:
         raise _err(400, "no_org_context")
     async with db_session() as s:
-        wfx = await s.get(WorkflowExecutionRow, workflow_execution_id)
+        wfx = await get_execution_summary(workflow_execution_id, session=s)
         if wfx is None:
             raise _err(404, "workflow_execution_not_found")
         # Resolve the owning org via the ticket so cross-org reads are
         # rejected even when the SPA hands the same slug + a borrowed
         # workflow id.
-        from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+        from app.domain.tickets import get_by_id as get_ticket_by_id  # noqa: PLC0415
 
-        ticket = await s.get(TicketRow, wfx.ticket_id)
+        ticket = await get_ticket_by_id(wfx.ticket_id)
         if ticket is None or ticket.org_id != org_id:
             raise _err(404, "workflow_execution_not_found")
     return StreamingResponse(

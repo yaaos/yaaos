@@ -156,8 +156,27 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres/yaaos
       REDIS_URL: redis://redis:6379/0
-      YAAOS_ENCRYPTION_KEY: "TEST-FAKE-NOT-FOR-PROD-32-CHARS!!!"
+      # Encryption key must match the web container — the worker decrypts
+      # rows the web wrote.
+      YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
+      YAAOS_ENV: test
+      GITHUB_API_BASE_URL: http://fake-github:8080
+      GITHUB_WEB_BASE_URL: http://localhost:58081
+      YAAOS_GITHUB_APP_ID: "12345"
+      YAAOS_GITHUB_APP_SLUG: yaaos-test
+      YAAOS_GITHUB_APP_PRIVATE_KEY: test-private-key
+      YAAOS_GITHUB_APP_WEBHOOK_SECRET: "TEST-FAKE-NOT-FOR-PROD-aaaaaaaaaaaaaaaa"
+      YAAOS_GITHUB_OAUTH_CLIENT_ID: yaaos-test-oauth-client-id
+      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: yaaos-test-oauth-client-secret
+      YAAOS_GITHUB_OAUTH_TOKEN_URL: http://fake-github:8080/login/oauth/access_token
+      LINEAR_API_BASE_URL: http://fake-linear:8080
+      NOTION_API_BASE_URL: http://fake-notion:8080
       YAAOS_CODING_AGENT_STUB: "1"
+      YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
+      YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
+      YAAOS_REAPER_INTERVAL_SECONDS: "1"
+      YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
+      YAAOS_CATCHUP_DELAY_SECONDS: "0"
     depends_on:
       postgres:
         condition: service_healthy

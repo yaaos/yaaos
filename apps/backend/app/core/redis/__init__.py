@@ -7,10 +7,9 @@ that `core/tasks/broker.py` passes to taskiq, raw pub/sub helpers that
 """
 
 from app.core.redis.pubsub import publish, subscribe
-from app.core.redis.service import _reset_for_tests, aclose, get_client, get_url, ping
+from app.core.redis.service import aclose, get_client, get_url, ping
 
 __all__ = [
-    "_reset_for_tests",
     "aclose",
     "get_client",
     "get_url",

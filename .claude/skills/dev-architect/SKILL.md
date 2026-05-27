@@ -1,6 +1,8 @@
 ---
 name: dev-architect
 description: Slash command /dev-architect [slug] — translate plan/ticket/<slug>/requirements.md into architecture.md (target state + delta). Manual trigger only.
+model: claude-opus-4-7
+effort: xhigh
 ---
 
 # /dev-architect

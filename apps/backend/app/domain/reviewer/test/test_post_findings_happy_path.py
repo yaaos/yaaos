@@ -18,8 +18,8 @@ from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_providers_for_tests,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
+    clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -69,12 +69,12 @@ class _StaticContextProvider:
 
 @pytest.fixture
 def _stubs():
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     register_workspace_provider(_StubWorkspaceProvider())
     yield
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
 
 async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> None:  # type: ignore[no-untyped-def]

@@ -16,12 +16,11 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.auth import public_route
-from app.core.auth.types import Action
+from app.core.auth import Action, public_route
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions.dependencies import require
+from app.domain.sessions import require
 from app.plugins.github.models import GitHubAppInstallationRow
 from app.plugins.github.service import (
     fetch_install_account_login,

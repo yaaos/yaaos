@@ -7,7 +7,6 @@ name shape: `activity:{workflow_execution_id}`.
 
 from app.core.sse_pubsub.service import (
     RedisPubsub,
-    _reset_for_tests,
     channel_for,
     get_pubsub,
     publish,
@@ -17,7 +16,6 @@ from app.core.sse_pubsub.service import (
 
 __all__ = [
     "RedisPubsub",
-    "_reset_for_tests",
     "channel_for",
     "get_pubsub",
     "publish",

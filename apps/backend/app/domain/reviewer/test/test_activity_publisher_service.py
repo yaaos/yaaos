@@ -18,10 +18,10 @@ from uuid import uuid4
 import pytest
 
 from app.core.sse_pubsub import (
-    _reset_for_tests,
     channel_for,
     subscribe,
 )
+from app.core.sse_pubsub.service import _reset_for_tests
 from app.core.workflow import CommandContext
 from app.domain.coding_agent.types import ActivityEvent
 from app.domain.reviewer.commands import _activity_publisher_for

@@ -1,6 +1,8 @@
 ---
 name: dev-requirements
 description: Slash command /dev-requirements — elicit a ticket's requirements through conversation and write plan/ticket/<slug>/requirements.md. Manual trigger only; do not auto-fire on related-sounding work.
+model: claude-opus-4-7
+effort: xhigh
 ---
 
 # /dev-requirements

@@ -20,9 +20,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
-from sqlalchemy import select
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
@@ -143,18 +142,7 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     assert counts["notified"] == 1
     assert any(m.to == "owner@example.com" for m in inbox)
 
-    failure_audits = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id,
-                    AuditEntryRow.kind == "mcp.stub_chain.token_refresh_failed",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    failure_audits = await list_for_org(org_id=org.id, actions=["mcp.stub_chain.token_refresh_failed"])
     assert len(failure_audits) == 1
 
     # 4. Seed a review + mint its bearer.

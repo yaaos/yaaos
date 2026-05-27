@@ -48,7 +48,7 @@ Each subdirectory of a layer is a module. Conventional files:
 
 - Absolute imports only. No relative imports across module boundaries.
 - Module-level imports only.
-- Other modules import only what's in `__init__.py`'s `__all__`. Importing internals across boundaries is Tach-rejected.
+- Other modules import only what's in `__init__.py`'s `__all__`. The canonical form is `from app.<module> import X`. Deep imports (`from app.<module>.<submodule> import X`) from outside the module are rejected by `tach check --interfaces` in CI — only symbols in the `expose` list (derived from `__all__` by `bin/sync_modules`) are reachable across boundaries.
 
 ## Plugin Protocols
 
@@ -75,10 +75,10 @@ Runs as part of `bin/ci` and as a pre-commit hook.
 Runs the full modularity workflow:
 
 1. Discover modules under each layer.
-2. Sync `tach.toml` — write module entries and interface exports from `__all__`.
+2. Sync `tach.toml` — write `[[modules]]` entries and `[[interfaces]]` blocks (expose lists derived from each module's `__all__`); `app/testing` is excluded from tach analysis since test scaffolding accesses module internals intentionally.
 3. Check internal imports (no relative-imports across boundaries, no `__init__` self-imports).
 4. Check layering.
-5. Run `tach check`.
+5. Run `tach check --interfaces` (enforces `[[interfaces]]` blocks — deep imports into a module's submodules fail CI).
 6. Run `bin/check_table_access`.
 
 Never hand-edit `tach.toml` — re-run `bin/sync_modules` after changing a module interface.

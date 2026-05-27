@@ -17,10 +17,11 @@ from app.domain.coding_agent import (
     ReviewContext,
     ReviewResult,
     ValidationResult,
-    _reset_plugins_for_tests,
+    clear_plugins,
     get_plugin,
     health_check_all,
-    register_coding_agent_plugin,
+    list_registered_plugins,
+    register_plugin,
     registered_plugin_ids,
     review,
     validate_config,
@@ -54,22 +55,22 @@ class _StubPlugin:
 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
-    _reset_plugins_for_tests()
+    clear_plugins()
     yield
-    _reset_plugins_for_tests()
+    clear_plugins()
 
 
 def test_register_and_get_plugin() -> None:
     plugin = _StubPlugin()
-    register_coding_agent_plugin(plugin)
+    register_plugin(plugin)
     assert get_plugin("stub") is plugin
     assert "stub" in registered_plugin_ids()
 
 
 def test_register_duplicate_raises() -> None:
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
     with pytest.raises(ValueError, match="already registered"):
-        register_coding_agent_plugin(_StubPlugin())
+        register_plugin(_StubPlugin())
 
 
 def test_get_unknown_plugin_raises() -> None:
@@ -81,7 +82,7 @@ def test_get_unknown_plugin_raises() -> None:
 async def test_review_dispatch() -> None:
     from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
 
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
 
     pr = VCSPullRequest(
         plugin_id="github",
@@ -115,7 +116,7 @@ async def test_review_dispatch() -> None:
 
 @pytest.mark.asyncio
 async def test_validate_config_dispatch() -> None:
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
     res = await validate_config("stub", {})
     assert res.valid is True
 
@@ -134,7 +135,35 @@ async def test_health_check_all_handles_plugin_exception() -> None:
         async def health_check(self) -> HealthStatus:
             raise RuntimeError("boom")
 
-    register_coding_agent_plugin(_Broken())
+    register_plugin(_Broken())
     out = await health_check_all()
     assert out["broken"].healthy is False
     assert "boom" in out["broken"].message
+
+
+def test_register_plugin_adds_and_is_retrievable() -> None:
+    plugin = _StubPlugin()
+    register_plugin(plugin)
+    assert get_plugin("stub") is plugin
+    assert "stub" in registered_plugin_ids()
+
+
+def test_list_registered_plugins_returns_insertion_order() -> None:
+    class _A:
+        meta = PluginMeta(id="aaa", type="coding_agent", display_name="A")
+
+    class _B:
+        meta = PluginMeta(id="bbb", type="coding_agent", display_name="B")
+
+    register_plugin(_A())
+    register_plugin(_B())
+    result = list_registered_plugins()
+    assert [p.meta.id for p in result] == ["aaa", "bbb"]
+
+
+def test_clear_plugins_empties_registry() -> None:
+    register_plugin(_StubPlugin())
+    assert len(list_registered_plugins()) == 1
+    clear_plugins()
+    assert list_registered_plugins() == []
+    assert registered_plugin_ids() == []

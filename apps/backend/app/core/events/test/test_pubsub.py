@@ -4,7 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.events import Event, EventFilter, _reset_for_tests, publish, subscribe
+from app.core.events import Event, EventFilter, publish, subscribe
+from app.core.events.service import _reset_for_tests
 
 
 class _SampleEvent(Event):

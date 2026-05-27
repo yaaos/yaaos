@@ -280,6 +280,15 @@ Assert on the **durable state production reads** — audit rows by kind, posted-
 - Outbound HTTP: routed to `apps/fake-github` via `GITHUB_API_BASE_URL`. Real plugin code paths run.
 - Coding-agent: `YAAOS_CODING_AGENT_STUB=1` swaps in `testing/stub_coding_agent`.
 
+### Module boundaries in tests
+
+Tests obey the same import rules as production code. Specifically:
+
+- Import only `__all__` exports — `from app.<module> import X`, never `from app.<module>.<submodule> import X`.
+- No `*Row` cross-module imports. If a test needs to inspect persisted state owned by another module, go through that module's public service query (e.g. `get_review_job(id, session=s)`), not by pulling the `Row` class directly.
+- No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` (which is excluded from tach analysis and never imported by production code).
+- Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
+
 ### DI over `@patch`
 
 `@patch` / `mock.patch` / `mocker.patch` banned by ruff TID251. Substitute dependencies by injection. Rare legitimate cases use a per-line `# noqa: TID251` with explanation.

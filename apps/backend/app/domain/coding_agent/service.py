@@ -30,24 +30,31 @@ from app.domain.coding_agent.types import (
 log = structlog.get_logger("coding_agent")
 
 
-_PLUGINS: dict[str, CodingAgentPlugin] = {}
+_registry: dict[str, CodingAgentPlugin] = {}
 
 
-def register_coding_agent_plugin(plugin: CodingAgentPlugin) -> None:
-    if plugin.meta.id in _PLUGINS:
+def register_plugin(plugin: CodingAgentPlugin) -> None:
+    """Register a coding-agent plugin. Raises ValueError if id already taken."""
+    if plugin.meta.id in _registry:
         raise ValueError(f"coding agent plugin {plugin.meta.id!r} already registered")
-    _PLUGINS[plugin.meta.id] = plugin
+    _registry[plugin.meta.id] = plugin
+
+
+def list_registered_plugins() -> list[CodingAgentPlugin]:
+    """Return registered plugins in insertion order."""
+    return list(_registry.values())
+
+
+def clear_plugins() -> None:
+    """Remove all registered plugins (use in test teardown)."""
+    _registry.clear()
 
 
 def get_plugin(plugin_id: str) -> CodingAgentPlugin:
     try:
-        return _PLUGINS[plugin_id]
+        return _registry[plugin_id]
     except KeyError as e:
         raise PluginNotFoundError(plugin_id) from e
-
-
-def _reset_plugins_for_tests() -> None:
-    _PLUGINS.clear()
 
 
 async def review(
@@ -152,7 +159,7 @@ async def validate_config(plugin_id: str, agent_config: dict[str, Any]) -> Valid
 
 async def health_check_all() -> dict[str, HealthStatus]:
     out: dict[str, HealthStatus] = {}
-    for plugin_id, plugin in _PLUGINS.items():
+    for plugin_id, plugin in _registry.items():
         try:
             out[plugin_id] = await plugin.health_check()
         except Exception as e:
@@ -161,9 +168,9 @@ async def health_check_all() -> dict[str, HealthStatus]:
 
 
 def registered_plugin_ids() -> list[str]:
-    return list(_PLUGINS.keys())
+    return list(_registry.keys())
 
 
 def list_plugin_metas() -> list[PluginMeta]:
     """Return `PluginMeta` for every registered coding-agent plugin, sorted by id."""
-    return [_PLUGINS[pid].meta for pid in sorted(_PLUGINS)]
+    return [_registry[pid].meta for pid in sorted(_registry)]

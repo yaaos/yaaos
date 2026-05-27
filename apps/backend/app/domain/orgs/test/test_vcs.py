@@ -6,10 +6,8 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
-from sqlalchemy import select
 
-from app.core.audit_log import Actor
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
@@ -90,17 +88,7 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
     assert reloaded.plugin_id == "github"
     assert reloaded.settings == {"installation_id": 999}
 
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "vcs.installed"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["vcs.installed"])
     assert len(rows) == 1
     assert rows[0].payload == {"plugin_id": "github"}
 
@@ -116,17 +104,7 @@ async def test_clear_vcs_removes_and_audits(seeded, db_session) -> None:
     assert state.plugin_id is None
     assert state.settings == {}
 
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "vcs.cleared"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
     assert len(rows) == 1
 
 
@@ -136,17 +114,7 @@ async def test_clear_vcs_noop_returns_false_and_no_audit(seeded, db_session) -> 
     actor = Actor.user(user_id=seeded["owner"].id)
     removed = await clear_vcs(db_session, org_id=org.id, actor=actor)
     assert removed is False
-    rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == org.id, AuditEntryRow.kind == "vcs.cleared"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
     assert rows == []
 
 

@@ -19,7 +19,7 @@ import pytest
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
     register_workflow_context_provider,
 )
 from app.domain.reviewer.commands import SecretsScan
@@ -48,7 +48,7 @@ def _cmd_ctx() -> CommandContext:
 @pytest.fixture(autouse=True)
 def _reset_context():
     yield
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
 
 
 async def test_secrets_scan_skips_when_diff_contains_aws_key() -> None:
@@ -142,7 +142,8 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
         async def fetch_diff(self, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")
 
-    from app.domain.vcs import _reset_for_tests, register_vcs_plugin  # noqa: PLC0415
+    from app.domain.vcs import register_vcs_plugin  # noqa: PLC0415
+    from app.domain.vcs.registry import _reset_for_tests  # noqa: PLC0415
 
     _reset_for_tests()
     register_vcs_plugin(_RaisingPlugin())  # type: ignore[arg-type]

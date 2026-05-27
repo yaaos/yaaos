@@ -18,19 +18,25 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway.types import (
     AgentCommand,
     AgentEvent,
+    AgentRef,
     HeartbeatRequest,
     HeartbeatResponse,
     StaleClaimError,
     WorkspaceEvent,
 )
 from app.core.tasks import enqueue
-from app.core.workspace.models import WorkspaceRow
+from app.core.workspace import (
+    get_workspace_claim_state,
+    get_workspace_command_state,
+    get_workspace_statuses,
+    update_workspace_status,
+)
 
 log = structlog.get_logger("core.agent_gateway")
 
@@ -59,8 +65,8 @@ def queue_depth(agent_id: UUID) -> int:
     return len(_queues.get(agent_id, ()))
 
 
-def _reset_queues_for_tests() -> None:
-    """Drop every in-memory queue and condition. Tests call this between runs."""
+def clear_queues() -> None:
+    """Drop every in-memory queue and condition."""
     _queues.clear()
     _conditions.clear()
 
@@ -151,16 +157,7 @@ async def record_heartbeat(
     if not reported_ids:
         return HeartbeatResponse(reconciled_at=datetime.now(UTC), forgotten_workspaces=())
 
-    rows = (
-        (
-            await session.execute(
-                select(WorkspaceRow.id, WorkspaceRow.status).where(WorkspaceRow.id.in_(reported_ids))
-            )
-        )
-        .tuples()
-        .all()
-    )
-    alive_or_known: dict[UUID, str] = {row[0]: row[1] for row in rows}
+    alive_or_known = await get_workspace_statuses(reported_ids, session)
     forgotten: list[UUID] = []
     for entry in request.workspaces:
         status = alive_or_known.get(entry.workspace_id)
@@ -190,19 +187,17 @@ async def record_agent_event(
 
     Required `session`; caller commits.
     """
-    # Look up the workspace holding this command. The Phase 3 single-flight
-    # claim writes `current_command_id` + `current_holder_workflow_id` on
-    # the workspace; the lookup chain is `event.command_id → workspaces →
+    # Look up the workspace holding this command. The single-flight claim
+    # writes `current_command_id` + `current_holder_workflow_id` on the
+    # workspace; the lookup chain is `event.command_id → workspaces →
     # current_holder_workflow_id → workflow_executions`.
-    ws = (
-        await session.execute(select(WorkspaceRow).where(WorkspaceRow.current_command_id == event.command_id))
-    ).scalar_one_or_none()
-    if ws is None:
+    claim = await get_workspace_claim_state(event.command_id, session)
+    if claim is None:
         raise StaleClaimError(f"no workspace holds command {event.command_id}")
-    if ws.current_holder_workflow_id is None:
+    if claim.current_holder_workflow_id is None:
         # Defensive: a claim without a workflow holder shouldn't exist —
         # treat as stale so the agent abandons silently.
-        raise StaleClaimError(f"workspace {ws.id} has no current_holder_workflow_id")
+        raise StaleClaimError(f"workspace {claim.workspace_id} has no current_holder_workflow_id")
 
     if not event.is_terminal():
         # Non-terminal events (progress) skip workflow-engine resumption —
@@ -214,13 +209,13 @@ async def record_agent_event(
         # through one unified subscriber surface.
         log.info(
             "agent.event.progress",
-            workspace_id=str(ws.id),
+            workspace_id=str(claim.workspace_id),
             command_id=str(event.command_id),
         )
         from app.core.sse_pubsub import channel_for  # noqa: PLC0415
         from app.core.sse_pubsub import publish as sse_publish  # noqa: PLC0415
 
-        channel = channel_for(str(ws.current_holder_workflow_id))
+        channel = channel_for(str(claim.current_holder_workflow_id))
         await sse_publish(channel, event.model_dump(mode="json"))
         return
 
@@ -232,7 +227,7 @@ async def record_agent_event(
     await enqueue(
         HANDLE_AGENT_EVENT,
         args={
-            "workflow_execution_id": str(ws.current_holder_workflow_id),
+            "workflow_execution_id": str(claim.current_holder_workflow_id),
             "agent_command_id": str(event.command_id),
             "outcome_label": event.outcome_label or "success",
             "outputs": dict(event.outputs),
@@ -249,14 +244,12 @@ async def record_workspace_event(
 ) -> None:
     """Update the workspace mirror from an agent-reported state change.
     Applies the same stale-claim guard as `record_agent_event`."""
-    ws = (
-        await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == event.workspace_id))
-    ).scalar_one_or_none()
-    if ws is None:
+    ws_cmd = await get_workspace_command_state(event.workspace_id, session)
+    if ws_cmd is None:
         raise StaleClaimError(f"unknown workspace {event.workspace_id}")
-    if ws.current_command_id != event.command_id and ws.current_command_id is not None:
+    if ws_cmd.current_command_id != event.command_id and ws_cmd.current_command_id is not None:
         raise StaleClaimError(
-            f"workspace {ws.id} command {ws.current_command_id} != event command {event.command_id}"
+            f"workspace {ws_cmd.workspace_id} command {ws_cmd.current_command_id} != event command {event.command_id}"
         )
 
     # Map agent-side workspace kind to control-plane status.
@@ -269,11 +262,11 @@ async def record_workspace_event(
         new_status = "destroy_failed"
 
     if new_status is not None:
-        await session.execute(update(WorkspaceRow).where(WorkspaceRow.id == ws.id).values(status=new_status))
+        await update_workspace_status(event.workspace_id, new_status, session)
 
     log.info(
         "agent.workspace_event",
-        workspace_id=str(ws.id),
+        workspace_id=str(ws_cmd.workspace_id),
         kind=event.kind,
         new_status=new_status,
     )
@@ -322,6 +315,76 @@ async def ensure_agent_row(
         row.last_heartbeat_at = now
         row.state = "reachable"
     return row.id
+
+
+async def pick_agent_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> AgentRef | None:
+    """Pick the least-loaded reachable agent for `org_id`.
+
+    Selects reachable pods (heartbeat within 90 s) and returns the one with the
+    smallest in-process queue depth; ties break on most-recent heartbeat so a
+    fresh pod beats a stale one when both are idle.
+
+    Returns `None` when no reachable pod exists for the org.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=90)
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow)
+                .where(
+                    WorkspaceAgentRow.org_id == org_id,
+                    WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .order_by(WorkspaceAgentRow.last_heartbeat_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+    best = min(
+        rows,
+        key=lambda r: (queue_depth(r.id), -(r.last_heartbeat_at.timestamp() if r.last_heartbeat_at else 0)),
+    )
+    return AgentRef(agent_id=best.id, agent_pod_id=best.agent_pod_id)
+
+
+async def has_any_reachable_agent(
+    *,
+    session: AsyncSession,
+) -> bool:
+    """Return `True` when at least one workspace-agent pod heartbeated within
+    the last 90 s — used by health-check callers to avoid cross-module Row
+    access.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=90)
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow.id)
+                .where(
+                    WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .limit(1)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return bool(rows)
 
 
 async def connection_status_for_org(

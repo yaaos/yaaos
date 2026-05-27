@@ -32,9 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.audit_log import Actor
-from app.core.auth import public_route
-from app.core.auth.context import org_id_var, user_id_var
-from app.core.auth.types import Action
+from app.core.auth import Action, org_id_var, public_route, user_id_var
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.oauth import OAuthError, build_authorize_url
@@ -49,7 +47,7 @@ from app.domain.integrations.types import (
     get_provider,
     known_providers,
 )
-from app.domain.sessions.dependencies import current_actor, require
+from app.domain.sessions import current_actor, require
 
 log = structlog.get_logger("integrations.web")
 

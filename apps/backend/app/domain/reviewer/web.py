@@ -12,8 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
+from app.core.auth import Action, org_id_var
 from app.core.database import session
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
@@ -23,7 +22,7 @@ from app.domain.reviewer.service import (
     all_conversations_view,
     list_findings_view,
 )
-from app.domain.sessions.dependencies import require
+from app.domain.sessions import require
 
 router = APIRouter()
 
@@ -142,7 +141,7 @@ async def _record_ack(finding_id: UUID, *, kind: str, rationale: str) -> dict[st
     """
     from sqlalchemy import select as _select  # noqa: PLC0415
 
-    from app.core.auth.context import user_id_var  # noqa: PLC0415
+    from app.core.auth import user_id_var  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
 
     org_id = _org()

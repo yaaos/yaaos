@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select, text
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_entity
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer.orphan_sweep import ORPHAN_REASON, _sweep_once
@@ -67,19 +67,7 @@ async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  
     assert rows[fresh] == "running"
 
     # Audit row with the orphan reason in payload.
-    audits = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.entity_kind == "ticket",
-                    AuditEntryRow.entity_id == stale,
-                    AuditEntryRow.kind == "ticket.status_changed",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    audits = await list_for_entity("ticket", stale, org_id=org.id, kinds=["ticket.status_changed"])
     assert len(audits) == 1
     assert audits[0].payload.get("reason") == ORPHAN_REASON
     assert audits[0].payload.get("to_status") == "failed"

@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from app.core.workspace import (
-    _reset_recovery_policies_for_tests,
+    clear_recovery_policies,
     get_recovery_policy,
     register_recovery_policy,
     registered_recovery_labels,
@@ -120,11 +120,11 @@ async def test_release_claim_with_wrong_command_id_is_noop(db_session) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_recovery() -> None:
-    _reset_recovery_policies_for_tests()
+    clear_recovery_policies()
     # Re-register the boot policy so other tests see it.
     register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")
     yield
-    _reset_recovery_policies_for_tests()
+    clear_recovery_policies()
     register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")
 
 

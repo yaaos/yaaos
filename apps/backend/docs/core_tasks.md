@@ -10,11 +10,13 @@ The taskiq broker is the single task registry; `@task` registers directly with `
 
 ## Public interface
 
-Exports `task`, `enqueue`, `TaskRef`, plus `OutboxEntryRow`, `drain_once`, `write` for the worker entrypoint and tests. See `apps/backend/app/core/tasks/__init__.py`.
+Exports `task`, `enqueue`, `TaskRef`. See `apps/backend/app/core/tasks/__init__.py`.
 
 - `@task(name, *, queue="default", max_retries=1)` — registers a task body with the broker; returns a `TaskRef` callers `enqueue` against. `queue` / `max_retries` ride as taskiq labels (no consumer today; future brokers / middleware pick them up without API churn).
 - `enqueue(task_ref, args, *, session)` — writes a `taskiq_enqueue` outbox row in the caller's session. Returns the row id. Required `session` — there is no fire-and-forget path.
 - `TaskRef` — frozen handle to a registered task name + queue + retry policy.
+
+The outbox model (`OutboxEntryRow`) and the drain primitives (`drain_once`, `write`) are private substrate in `app.core.tasks.models` and `app.core.tasks.drain` respectively. The worker entrypoint imports `drain_loop` directly from `app.core.tasks.drain`. Tests that need to drive the outbox in-process import from the submodules directly.
 
 ## Module architecture
 
@@ -60,3 +62,5 @@ Task bodies MUST tolerate duplicate delivery. The drain stamps `dispatched_at` o
 ## How it's tested
 
 `test/test_service.py` covers registry registration, double-register rejection, and `enqueue()` writing the expected outbox payload. `test/test_drain.py` covers `write()` + `drain_once()` with a stub dispatcher: insert, drain, stamp; failure leaves the row pending with `attempt` and `last_error` updated. The broker-wired dispatcher is exercised end-to-end against the dev Redis stack — see `apps/e2e/` for the full enqueue → drain → execute path.
+
+Cross-module service tests that exercise the outbox pump in-process import `drain_once` and `OutboxEntryRow` from their submodules (`app.core.tasks.drain`, `app.core.tasks.models`) rather than the package top-level — the top-level only re-exports the three public symbols (`task`, `enqueue`, `TaskRef`).

@@ -1,7 +1,8 @@
 ---
 name: yaaos-codebase-pattern-finder
 description: Wave 1 mapper for the yaaos-review pipeline. Identifies existing conventions, file organization, naming, and reusable utilities in the codebase that relate to the diff. Descriptive only — no critique. Outside the review pipeline, may also be used as a general convention-discovery agent.
-model: opus
+model: claude-haiku-4-5
+effort: medium
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

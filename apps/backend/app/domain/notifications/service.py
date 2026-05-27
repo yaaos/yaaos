@@ -61,9 +61,9 @@ async def record(
     body: str,
     ticket_id: UUID | None = None,
     session: AsyncSession,
-) -> NotificationRow | None:
+) -> Notification | None:
     """Idempotent write keyed on `(user_id, type, ticket_id)`. Returns the
-    new row, or `None` if a matching row already exists."""
+    new notification, or `None` if a matching row already exists."""
     if ticket_id is not None:
         existing = (
             await session.execute(
@@ -81,7 +81,7 @@ async def record(
     )
     session.add(row)
     await session.flush()
-    return row
+    return Notification.from_row(row)
 
 
 async def list_for_user(
@@ -92,7 +92,7 @@ async def list_for_user(
     org_id: UUID | None = None,
     types: list[str] | None = None,
     limit: int = 50,
-) -> list[NotificationRow]:
+) -> list[Notification]:
     stmt = (
         select(NotificationRow)
         .where(NotificationRow.user_id == user_id)
@@ -107,12 +107,13 @@ async def list_for_user(
         stmt = stmt.where(NotificationRow.org_id == org_id)
     if types:
         stmt = stmt.where(NotificationRow.type.in_(types))
-    return list((await session.execute(stmt)).scalars().all())
+    rows = list((await session.execute(stmt)).scalars().all())
+    return [Notification.from_row(r) for r in rows]
 
 
 async def popover_for_user(
     session: AsyncSession, *, user_id: UUID, limit: int = 10
-) -> tuple[list[NotificationRow], int]:
+) -> tuple[list[Notification], int]:
     """Latest N unread for the sidebar bell + the unread count."""
     rows_q = (
         select(NotificationRow)
@@ -125,10 +126,10 @@ async def popover_for_user(
     )
     rows = list((await session.execute(rows_q)).scalars().all())
     unread_count = len((await session.execute(count_q)).scalars().all())
-    return rows, unread_count
+    return [Notification.from_row(r) for r in rows], unread_count
 
 
-async def mark_read(session: AsyncSession, *, user_id: UUID, notification_id: UUID) -> NotificationRow | None:
+async def mark_read(session: AsyncSession, *, user_id: UUID, notification_id: UUID) -> Notification | None:
     row = (
         await session.execute(
             select(NotificationRow).where(
@@ -141,7 +142,7 @@ async def mark_read(session: AsyncSession, *, user_id: UUID, notification_id: UU
     if row.read_at is None:
         row.read_at = datetime.now(UTC)
         await session.flush()
-    return row
+    return Notification.from_row(row)
 
 
 async def mark_all_read(

@@ -17,19 +17,13 @@ in the worker process and are invoked with the kwargs the caller passed
 to `enqueue`.
 
 The outbox is a private substrate of this module — domain callers only
-see `task`, `enqueue`, `TaskRef`. `OutboxEntryRow` and `drain_once` are
-exported for tests and the worker entrypoint.
+see `task`, `enqueue`, `TaskRef`.
 """
 
-from app.core.tasks.drain import drain_once, write
-from app.core.tasks.models import OutboxEntryRow
 from app.core.tasks.service import TaskRef, enqueue, task
 
 __all__ = [
-    "OutboxEntryRow",
     "TaskRef",
-    "drain_once",
     "enqueue",
     "task",
-    "write",
 ]

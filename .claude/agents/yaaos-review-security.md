@@ -1,7 +1,8 @@
 ---
 name: yaaos-review-security
 description: Wave 2 reviewer in the yaaos-review pipeline. Security-category reviewer — uses the yaaos-security-review skill to evaluate the diff against OWASP-style risks and emit findings JSON.
-model: opus
+model: claude-opus-4-7
+effort: xhigh
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

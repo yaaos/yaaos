@@ -6,7 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.coding_agent import _PLUGINS as _CODING_AGENT_PLUGINS
+from app.domain.coding_agent import get_plugin as get_coding_agent_plugin
+from app.domain.coding_agent import registered_plugin_ids
 from app.domain.vcs.registry import _PLUGINS as _VCS_PLUGINS
 
 
@@ -16,7 +17,7 @@ def _ensure_plugins_registered() -> None:
     from app.plugins.claude_code.service import bootstrap as _cc_bootstrap  # noqa: PLC0415
     from app.plugins.github.service import bootstrap as _gh_bootstrap  # noqa: PLC0415
 
-    if "claude_code" not in _CODING_AGENT_PLUGINS:
+    if "claude_code" not in registered_plugin_ids():
         _cc_bootstrap()
     if "github" not in _VCS_PLUGINS:
         _gh_bootstrap()
@@ -47,7 +48,7 @@ def test_github_validate_settings_rejects_unknown_keys() -> None:
 
 
 def test_claude_code_install_url_is_none() -> None:
-    plugin = _CODING_AGENT_PLUGINS["claude_code"]
+    plugin = get_coding_agent_plugin("claude_code")
     # Stub wrapper may be active in test mode; unwrap to get the real plugin's value.
     real = getattr(plugin, "_wrapped", plugin)
     assert real.install_url(uuid4()) is None
@@ -55,8 +56,8 @@ def test_claude_code_install_url_is_none() -> None:
 
 def test_claude_code_validate_settings_substitutes_defaults_on_empty() -> None:
     """The picker's POST /api/coding-agents path calls validate_settings({});
-    Phase 10 fills in the code defaults so the install row starts populated."""
-    plugin = _CODING_AGENT_PLUGINS["claude_code"]
+    fills in the code defaults so the install row starts populated."""
+    plugin = get_coding_agent_plugin("claude_code")
     real = getattr(plugin, "_wrapped", plugin)
     result = real.validate_settings({})
     assert result["orchestrator"]["name"] == "Orchestrator"
@@ -64,7 +65,7 @@ def test_claude_code_validate_settings_substitutes_defaults_on_empty() -> None:
 
 
 def test_claude_code_validate_settings_rejects_unknown_keys() -> None:
-    plugin = _CODING_AGENT_PLUGINS["claude_code"]
+    plugin = get_coding_agent_plugin("claude_code")
     real = getattr(plugin, "_wrapped", plugin)
     with pytest.raises(ValueError):
         real.validate_settings({"rogue": 1, "orchestrator": {}, "agents": []})

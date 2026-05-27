@@ -8,7 +8,7 @@ Owns the `audit_entries` table and the API for writing and reading it. Domain mo
 
 ## Public interface
 
-Exports `AuditEntry`, `AuditEntryRow`, `AuditEntryNotFoundError`, generic `audit`, per-entity helpers (`audit_for_ticket`, `audit_for_pr`, `audit_for_lesson`, `audit_for_review_job`, `audit_for_webhook_event`, `audit_for_workspace`), and reads (`list_for_entity`, `get`). See `apps/backend/app/core/audit_log/__init__.py`.
+Exports `AuditEntry`, `AuditEntryNotFoundError`, generic `audit`, per-entity helpers (`audit_for_ticket`, `audit_for_pr`, `audit_for_lesson`, `audit_for_review_job`, `audit_for_webhook_event`, `audit_for_workspace`), and reads (`list_for_entity`, `list_for_org`, `get`). `AuditEntryRow` is the internal SQLAlchemy model and is not part of the public interface. See `apps/backend/app/core/audit_log/__init__.py`.
 
 No HTTP routes — the audit-log tab reads via a domain endpoint that delegates to `list_for_entity`.
 

@@ -39,6 +39,18 @@ class ByokDecryptError(ValueError):
     """Stored ciphertext could not be decrypted with the configured master key."""
 
 
+class ByokKey(BaseModel):
+    """Read-only value object representing one org/provider key entry.
+    Plaintext is never included — this carries only metadata."""
+
+    org_id: UUID
+    provider: str
+    last_validated_at: datetime | None = None
+    last_used_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_at: datetime | None = None
+
+
 # Validator registry — plugins register themselves at bootstrap time so
 # `core/byok` stays free of plugin imports. Each entry maps a `provider`
 # string to an `async (plaintext: str) -> bool` callable.
@@ -187,3 +199,26 @@ async def validate(
         session=session,
     )
     return ok
+
+
+async def list_keys_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> list[ByokKey]:
+    """Return metadata for all stored keys belonging to `org_id`.
+
+    No plaintext crosses this boundary — callers receive `ByokKey` value objects.
+    """
+    rows = (await session.execute(select(ByokKeyRow).where(ByokKeyRow.org_id == org_id))).scalars().all()
+    return [
+        ByokKey(
+            org_id=row.org_id,
+            provider=row.provider,
+            last_validated_at=row.last_validated_at,
+            last_used_at=row.last_used_at,
+            updated_at=row.updated_at,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]

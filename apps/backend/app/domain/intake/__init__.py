@@ -12,14 +12,18 @@ install lifecycle, or comments on existing tickets).
 """
 
 from app.domain.intake import web  # noqa: F401 — registers POST /api/intake/{type}
-from app.domain.intake.parsing import is_skippable_path, parse_rereview
+from app.domain.intake.parsing import (
+    is_mid_band_confirm,
+    is_skippable_path,
+    parse_rereview,
+    parse_yaaos_command,
+)
 from app.domain.intake.registry import (
     IntakeOutcome,
     IntakePrepared,
     IntakeRejectedError,
     IntakeSideEffect,
     IntakeType,
-    _reset_registry_for_tests,
     get_intake_type,
     register_intake_type,
     registered_intake_types,
@@ -33,10 +37,11 @@ __all__ = [
     "IntakeRejectedError",
     "IntakeSideEffect",
     "IntakeType",
-    "_reset_registry_for_tests",
     "get_intake_type",
+    "is_mid_band_confirm",
     "is_skippable_path",
     "parse_rereview",
+    "parse_yaaos_command",
     "register_intake_type",
     "registered_intake_types",
 ]

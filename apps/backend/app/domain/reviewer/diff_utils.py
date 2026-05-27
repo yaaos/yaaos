@@ -25,7 +25,7 @@ def is_skip_path(path: str) -> bool:
     deps, generated files, lockfiles, etc.)."""
     # Deferred import keeps the module-import path light + avoids any
     # circular-import risk with intake → reviewer at boot.
-    from app.domain.intake.parsing import is_skippable_path  # noqa: PLC0415
+    from app.domain.intake import is_skippable_path  # noqa: PLC0415
 
     return is_skippable_path(path)
 

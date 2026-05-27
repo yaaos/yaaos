@@ -10,8 +10,8 @@ yaaos's local copy of VCS-side PR state. Persists PR metadata (shas, branches, d
 
 Exported from `app/domain/pull_requests/__init__.py`:
 
-- Aggregate + state — `PullRequest`, `PRState` (`Literal["open", "closed", "merged"]`), `PullRequestRow`.
-- Operations — `upsert` (create/refresh from a `VCSPullRequest`), `update_state` (explicit transition), `get` (by UUID), `get_by_external` (by `(plugin_id, external_id)`).
+- Aggregate + state — `PullRequest`, `PRState` (`Literal["open", "closed", "merged"]`).
+- Operations — `upsert` (create/refresh from a `VCSPullRequest`), `update_state` (explicit transition), `get` (by UUID), `get_by_external` (by `(plugin_id, external_id)`), `list_by_ids` (batch read by id list).
 - Exceptions — `PullRequestNotFoundError`.
 
 No HTTP routes — the UI lists tickets, not PRs.
@@ -41,8 +41,9 @@ Updates the `state` column. No state-machine validation — VCS is source of tru
 
 - `get(pr_id, *, org_id)` — raises `PullRequestNotFoundError` if absent.
 - `get_by_external(plugin_id, external_id, *, org_id)` — returns `PullRequest | None`. Used by `intake` to check whether an event matches a tracked PR.
+- `list_by_ids(pr_ids)` — batch read; returns only the ids that exist, silently omitting missing ones. No org_id scoping — callers hold org context from the tickets they already fetched. Empty input short-circuits without a DB hit. Used by `tickets.list_tickets` to batch-enrich PR metadata.
 
-No list/filter API — the UI surfaces tickets, and direct PR queries are by id or external id.
+No filter/sort API — the UI surfaces tickets, and direct PR queries are by id or external id.
 
 ### Silent module
 
@@ -61,4 +62,6 @@ Publishes no events. User-visible state changes flow through `tickets.TicketStat
 
 ## How it's tested
 
-`app/domain/pull_requests/test/` is a package skeleton. Upsert/state/read paths are covered indirectly by `intake`'s integration tests driving real webhook payloads through `upsert` → `update_state` and asserting rows and audit-log entries.
+- `test_upsert_session.py` — session-ownership contract for `upsert` (insert + update paths, FK safety, missing ticket_id guard).
+- `test_service.py` — service tests (`@pytest.mark.service`) for `list_by_ids`: full match, empty input, unknown ids, partial match.
+- Upsert/state/read paths are also covered indirectly by `intake`'s integration tests driving real webhook payloads through `upsert` → `update_state`.

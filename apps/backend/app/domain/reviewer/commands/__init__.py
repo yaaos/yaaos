@@ -1078,17 +1078,16 @@ class PostFindings(_LocalReviewCommand):
         # already persisted in step 3 so they're not lost.
         posted = False
         if result.admitted:
-            from sqlalchemy import select as _select  # noqa: PLC0415
-
-            from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+            from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
+            from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
             from app.domain.reviewer.admission import (  # noqa: PLC0415
                 post_admitted_findings_to_vcs,
             )
 
-            async with db_session() as s:
-                pr_row = (
-                    await s.execute(_select(PullRequestRow).where(PullRequestRow.id == ticket_ctx.pr_id))
-                ).scalar_one_or_none()
+            try:
+                pr_row = await get_pull_request(ticket_ctx.pr_id, org_id=ticket_ctx.org_id)
+            except PullRequestNotFoundError:
+                pr_row = None
 
             if pr_row is None:
                 log.warning(
@@ -1414,15 +1413,15 @@ class PostReply(_LocalReviewCommand):
                     parent_external_id = msg.external_comment_id
                     break
 
-            # Look up the PR row for the external id. Required to call
+            # Look up the PR for the external id. Required to call
             # vcs.post_comment_reply.
-            from sqlalchemy import select as _select  # noqa: PLC0415
+            from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
+            from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
 
-            from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-
-            pr_row = (
-                await s.execute(_select(PullRequestRow).where(PullRequestRow.id == ticket_ctx.pr_id))
-            ).scalar_one_or_none()
+            try:
+                pr_row = await get_pull_request(ticket_ctx.pr_id, org_id=ticket_ctx.org_id)
+            except PullRequestNotFoundError:
+                pr_row = None
 
             external_comment_id = f"local-reply-{uuid4()}"  # fallback
             if parent_external_id is None or pr_row is None or parent_external_id.startswith("local-"):

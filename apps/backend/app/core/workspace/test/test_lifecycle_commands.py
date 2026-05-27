@@ -83,8 +83,8 @@ import pytest  # noqa: E402
 from app.core.plugin_kit import PluginMeta  # noqa: E402
 from app.core.workspace import (  # noqa: E402
     WorkspaceTicketContext,
-    _reset_providers_for_tests,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
+    clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -131,16 +131,16 @@ class _StubWorkspaceProvider:
 
 @pytest.fixture
 def _stub_workspace_plugin():
-    _reset_providers_for_tests()
+    clear_workspace_providers()
     register_workspace_provider(_StubWorkspaceProvider())
     yield
-    _reset_providers_for_tests()
+    clear_workspace_providers()
 
 
 @pytest.fixture(autouse=True)
 def _reset_workflow_context():
     yield
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
 
 
 async def test_provision_fails_without_registered_provider() -> None:

@@ -16,7 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.oauth import ProviderConfig
-from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations import create_credential
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.mcp_proxy.service import _hash as _hash_token
@@ -129,22 +129,18 @@ async def _seed_credential(
     allowed_tools: list[str] | None = None,
     last_refresh_status: str = "ok",
 ) -> None:
-    db_session.add(
-        McpCredentialRow(
-            org_id=org_id,
-            provider=provider,
-            encrypted_access_token="enc-access",
-            encrypted_refresh_token=None,
-            expires_at=datetime.now(UTC),
-            scopes=["read"],
-            allowed_tools=allowed_tools or [],
-            enabled=enabled,
-            upstream_identity=f"{provider}-bot",
-            last_refresh_status=last_refresh_status,
-            last_validated_at=datetime.now(UTC),
-        )
+    await create_credential(
+        db_session,
+        org_id=org_id,
+        provider=provider,
+        encrypted_access_token="enc-access",
+        expires_at=datetime.now(UTC),
+        scopes=["read"],
+        allowed_tools=allowed_tools or [],
+        enabled=enabled,
+        upstream_identity=f"{provider}-bot",
+        last_refresh_status=last_refresh_status,
     )
-    await db_session.flush()
 
 
 @pytest.mark.asyncio

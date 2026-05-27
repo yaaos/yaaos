@@ -15,7 +15,7 @@ from uuid import UUID
 
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace import Workspace
-from app.domain.coding_agent.types import (
+from app.domain.coding_agent import (
     AnswerQuestionContext,
     AnswerQuestionResult,
     FindingDraft,
@@ -170,18 +170,32 @@ def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[
     yielding the instance for setup + assertions. Restores prior registration
     on exit.
     """
-    from app.domain.coding_agent.service import _PLUGINS  # noqa: PLC0415
+    from app.domain.coding_agent import (  # noqa: PLC0415
+        clear_plugins,
+        list_registered_plugins,
+        register_plugin,
+    )
 
     fake = FakeCodingAgentPlugin(plugin_id=plugin_id)
-    prior = _PLUGINS.get(plugin_id)
-    _PLUGINS[plugin_id] = fake  # type: ignore[assignment]
+    # Snapshot existing registrations; replace target slot with fake.
+    snapshot = list_registered_plugins()
+    clear_plugins()
+    replaced = False
+    for p in snapshot:
+        if p.meta.id == plugin_id:
+            register_plugin(fake)  # type: ignore[arg-type]
+            replaced = True
+        else:
+            register_plugin(p)
+    if not replaced:
+        register_plugin(fake)  # type: ignore[arg-type]
     try:
         yield fake
     finally:
-        if prior is None:
-            _PLUGINS.pop(plugin_id, None)
-        else:
-            _PLUGINS[plugin_id] = prior
+        # Restore snapshot (drop fake, restore prior if it existed).
+        clear_plugins()
+        for p in snapshot:
+            register_plugin(p)
 
 
 __all__ = ["FakeCodingAgentPlugin", "register_fake_coding_agent"]

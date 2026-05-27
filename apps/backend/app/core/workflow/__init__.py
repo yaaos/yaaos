@@ -1,27 +1,23 @@
 """core/workflow — Workflow engine.
 
-Phase 1 (foundations) ships:
-- `Workflow`, `Step`, `RetryPolicy` typed data structures.
-- `WorkflowCommand` Protocol with three categories (Workspace / Local / HITL).
-- `Outcome` with success / failure / hitl_pending shapes + `append_steps`.
-- `WorkflowState` enum (`pending|running|awaiting_agent|awaiting_human|done|failed|cancelled`).
-- `WorkflowEngine` with workflow + command registries + `start(name, ticket_id, *, session)`.
-- Three registered `core/tasks` task names (`workflow.start_step`,
-  `workflow.handle_agent_event`, `workflow.route_workflow`) — bodies stubbed
-  until the next Phase 1 iteration.
-
 See `apps/backend/docs/core_workflow.md`.
 """
 
-from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.service import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
     START_STEP,
+    HitlHistoryEntry,
     WorkflowEngine,
-    _reset_for_tests,
+    WorkflowExecutionSummary,
+    get_awaiting_human_execution,
     get_engine,
+    get_execution_summary,
     handle_agent_event,
+    list_active_execution_ids,
+    list_all_execution_states,
+    list_executions_for_ticket,
+    list_hitl_history,
     request_cancel,
     resume_hitl,
     route_workflow,
@@ -53,9 +49,9 @@ __all__ = [
     "CommandCategory",
     "CommandContext",
     "CommandNotRegisteredError",
+    "HitlHistoryEntry",
     "Outcome",
     "OutcomeKind",
-    "PendingHumanDecisionRow",
     "RetryPolicy",
     "Step",
     "TerminalAction",
@@ -64,12 +60,17 @@ __all__ = [
     "WorkflowEngine",
     "WorkflowError",
     "WorkflowExecutionNotFoundError",
-    "WorkflowExecutionRow",
+    "WorkflowExecutionSummary",
     "WorkflowNotFoundError",
     "WorkflowState",
-    "_reset_for_tests",
+    "get_awaiting_human_execution",
     "get_engine",
+    "get_execution_summary",
     "handle_agent_event",
+    "list_active_execution_ids",
+    "list_all_execution_states",
+    "list_executions_for_ticket",
+    "list_hitl_history",
     "request_cancel",
     "resume_hitl",
     "route_workflow",

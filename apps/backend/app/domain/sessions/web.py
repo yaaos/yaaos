@@ -29,25 +29,29 @@ from pydantic import BaseModel
 
 from app.core.audit_log import Actor
 from app.core.audit_log import audit as audit_write
-from app.core.auth.auth_failure import auth_failure_response
-from app.core.auth.cookies import (
+from app.core.auth import (
+    AUTH_LIMIT,
     CSRF_COOKIE_NAME,
+    MUTATE_LIMIT,
     SESSION_COOKIE_NAME,
+    auth_failure_response,
     clear_cookie_attrs,
     csrf_cookie_attrs,
+    limiter,
     session_cookie_attrs,
 )
-from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.identity import sessions as session_lifecycle
-from app.domain.identity.providers import (
+from app.domain.identity import (
     ProviderError,
     get_provider,
     list_providers,
+    login_via_oauth,
 )
-from app.domain.identity.service import login_via_oauth
+from app.domain.identity import (
+    sessions as session_lifecycle,
+)
 from app.domain.sessions.dependencies import public_route
 
 log = structlog.get_logger("auth.web")
@@ -289,12 +293,10 @@ async def me(
     URL is selected; on routes that need it, the SPA adds `X-Org-Slug` from
     the URL path. 401 when there's no session.
     """
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
     from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+    from app.domain.integrations import list_broken_credentials_for_org  # noqa: PLC0415
+    from app.domain.orgs import Role as _Role  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
-    from app.domain.orgs.types import Role as _Role  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
@@ -313,27 +315,15 @@ async def me(
             broken: list[dict[str, str | None]] = []
             # Owners + Admins see broken integrations; Members get an empty list.
             if _Role(m.role).covers(_Role.ADMIN):
-                broken_rows = (
-                    (
-                        await s.execute(
-                            _select(McpCredentialRow).where(
-                                McpCredentialRow.org_id == org.id,
-                                McpCredentialRow.enabled.is_(True),
-                                McpCredentialRow.last_refresh_status == "failed",
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
+                broken_creds = await list_broken_credentials_for_org(s, org.id)
                 broken = [
                     {
-                        "provider": r.provider,
+                        "provider": c.provider,
                         "last_refresh_failed_at": (
-                            r.last_refresh_failed_at.isoformat() if r.last_refresh_failed_at else None
+                            c.last_refresh_failed_at.isoformat() if c.last_refresh_failed_at else None
                         ),
                     }
-                    for r in broken_rows
+                    for c in broken_creds
                 ]
             memberships_view.append(
                 {
@@ -392,27 +382,12 @@ async def sso_discover(request: Request, email: str) -> dict[str, Any]:
     if not domain:
         raise HTTPException(status_code=422, detail={"error": "invalid_email"})
 
-    from sqlalchemy import select  # noqa: PLC0415
+    from app.domain.orgs import find_saml_org_slug_for_domain  # noqa: PLC0415
 
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.orgs.models import OrgRow, SsoConfigRow  # noqa: PLC0415
-
-    async with db_session() as s:
-        # JSONB `?` operator: array contains string. Filter to enabled
-        # rows only — disabled configs shouldn't route logins.
-        row = (
-            await s.execute(
-                select(SsoConfigRow, OrgRow)
-                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
-                .where(SsoConfigRow.enabled.is_(True))
-                .where(SsoConfigRow.email_domains.op("?")(domain))
-                .limit(1)
-            )
-        ).first()
-    if row is None:
+    slug = await find_saml_org_slug_for_domain(domain)
+    if slug is None:
         return {"provider": "github"}
-    _, org = row
-    return {"provider": "saml", "saml_org_slug": org.slug}
+    return {"provider": "saml", "saml_org_slug": slug}
 
 
 # ── # TOTP enroll + verify ──────────────────────────────────

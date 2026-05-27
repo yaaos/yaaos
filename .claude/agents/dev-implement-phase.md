@@ -1,7 +1,8 @@
 ---
 name: dev-implement-phase
 description: Executes one phase of plan/ticket/<slug>/plan.md in an isolated context. Invoked by /dev-implement orchestrator. Not user-triggerable.
-model: sonnet
+model: claude-sonnet-4-6
+effort: high
 disable-model-invocation: true
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---

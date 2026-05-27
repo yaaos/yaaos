@@ -21,8 +21,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.sse_pubsub import _reset_for_tests as _reset_pubsub
 from app.core.sse_pubsub import channel_for, publish
+from app.core.sse_pubsub.service import _reset_for_tests as _reset_pubsub
 from app.domain.orgs.workspace_status_web import _activity_event_stream
 
 

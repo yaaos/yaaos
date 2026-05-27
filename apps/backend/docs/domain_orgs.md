@@ -11,8 +11,8 @@ Owns the tenancy boundary. Every non-user yaaos data row is `org_id`-scoped; thi
 Exported from `app/domain/orgs/__init__.py`:
 
 - Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`, `VcsState`, `CodingAgentInstall`.
-- Rows — `OrgRow`, `MembershipRow`, `InvitationRow`, `SsoConfigRow`, `OrgCodingAgentRow`.
-- Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`.
+- Lookups — `get_org(org_id) -> Org | None`; `find_saml_org_slug_for_domain(domain) -> str | None` (returns the org slug for the first enabled SSO config whose `email_domains` contains `domain`, or `None`).
+- Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`, `delete_expired_invitations() -> int`.
 - VCS — `get_vcs`, `set_vcs`, `clear_vcs`. One VCS per org; state lives on the `orgs` row.
 - Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
 - Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.

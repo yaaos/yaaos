@@ -15,10 +15,14 @@ Phase 5 ships:
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
+from app.core.agent_gateway.bearers import revoke_all_for_org
 from app.core.agent_gateway.service import (
-    _reset_queues_for_tests,
     claim_next,
+    clear_queues,
+    connection_status_for_org,
     enqueue_command,
+    has_any_reachable_agent,
+    pick_agent_for_org,
     queue_depth,
     record_agent_event,
     record_heartbeat,
@@ -26,9 +30,6 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
-)
-from app.core.agent_gateway.subscribers import (
-    _reset_for_tests as _reset_subscriber_registry_for_tests,
 )
 from app.core.agent_gateway.subscribers import (
     get_registry as get_subscriber_registry,
@@ -39,6 +40,7 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AgentEvent,
     AgentEventKind,
+    AgentRef,
     AuthBlock,
     CleanupWorkspaceCommand,
     CreateWorkspaceCommand,
@@ -66,6 +68,7 @@ __all__ = [
     "AgentCommandKind",
     "AgentEvent",
     "AgentEventKind",
+    "AgentRef",
     "AuthBlock",
     "CleanupWorkspaceCommand",
     "CreateWorkspaceCommand",
@@ -86,13 +89,16 @@ __all__ = [
     "WorkspaceEventKind",
     "WriteFilesCommand",
     "WriteFilesEntry",
-    "_reset_queues_for_tests",
-    "_reset_subscriber_registry_for_tests",
     "claim_next",
+    "clear_queues",
+    "connection_status_for_org",
     "enqueue_command",
     "get_subscriber_registry",
+    "has_any_reachable_agent",
+    "pick_agent_for_org",
     "queue_depth",
     "record_agent_event",
     "record_heartbeat",
     "record_workspace_event",
+    "revoke_all_for_org",
 ]

@@ -14,10 +14,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.audit_log import list_for_org
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
+from app.core.auth import Action, org_id_var
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions.dependencies import require
+from app.domain.sessions import require
 
 router = APIRouter()
 

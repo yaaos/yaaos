@@ -8,7 +8,29 @@ Owns `Workflow`, `Step`, `WorkflowCommand`, `Outcome`, and the three [`core/task
 
 ## Public interface
 
-Exports `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `OutcomeKind`, `CommandCategory`, `CommandContext`, `TerminalAction`, `WorkflowState`, `TERMINAL_STATES`, `WorkflowEngine`, `get_engine`, the SQLAlchemy rows `WorkflowExecutionRow` + `PendingHumanDecisionRow`, the task refs `START_STEP` / `HANDLE_AGENT_EVENT` / `ROUTE_WORKFLOW`, and the exception hierarchy (`WorkflowError`, `WorkflowNotFoundError`, `CommandNotRegisteredError`, `WorkflowExecutionNotFoundError`). See `app/core/workflow/__init__.py`.
+**Typed data:** `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `OutcomeKind`, `CommandCategory`, `CommandContext`, `TerminalAction`, `WorkflowState`, `TERMINAL_STATES`.
+
+**Engine:** `WorkflowEngine`, `get_engine`.
+
+**Task refs:** `START_STEP`, `HANDLE_AGENT_EVENT`, `ROUTE_WORKFLOW`.
+
+**Exceptions:** `WorkflowError`, `WorkflowNotFoundError`, `CommandNotRegisteredError`, `WorkflowExecutionNotFoundError`.
+
+**Admin ops:** `request_cancel(execution_id, *, session)`, `resume_hitl(execution_id, *, response, session)`.
+
+Tests import `_reset_for_tests` directly from `app.core.workflow.service` to clear the engine singleton between runs.
+
+**Read projections** (replace raw Row access for cross-module callers):
+- `WorkflowExecutionSummary` — frozen dataclass: `id`, `ticket_id`, `workflow_name`, `state`, `current_step_id`, `created_at`, `updated_at`.
+- `HitlHistoryEntry` — frozen dataclass: `id`, `workflow_execution_id`, `question_payload`, `resolution_payload`, `resolved_at`, `created_at`.
+- `list_executions_for_ticket(ticket_id, *, session)` → `list[WorkflowExecutionSummary]`, newest first.
+- `get_execution_summary(execution_id, *, session)` → `WorkflowExecutionSummary | None`.
+- `get_awaiting_human_execution(ticket_id, *, session)` → `WorkflowExecutionSummary | None` — most recent `awaiting_human` row.
+- `list_active_execution_ids(ticket_id, *, session)` → `list[UUID]` — non-terminal executions only.
+- `list_hitl_history(ticket_id, *, session)` → `list[HitlHistoryEntry]`, newest first.
+- `list_all_execution_states(*, session)` → `list[str]` — all state values; used for metrics aggregation.
+
+The SQLAlchemy rows (`WorkflowExecutionRow`, `PendingHumanDecisionRow`) are internal to this module. Cross-module callers use the projection ops above. See `app/core/workflow/__init__.py`.
 
 - `WorkflowEngine.register_workflow(wf)` — register a typed `Workflow`. Validates the entry-step id and inter-step transition targets. Forward references to unregistered commands are allowed here; `start()` validates them.
 - `WorkflowEngine.register_command(cmd)` — register a `WorkflowCommand` (Protocol) by its `kind`.

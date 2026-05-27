@@ -16,6 +16,10 @@ Wire types (mirror [`apps/backend/openapi/agent-api.yaml`](../openapi/agent-api.
 - `record_heartbeat(agent_id, request, *, session)` — bumps liveness + computes `forgotten_workspaces`.
 - `record_agent_event(event, *, session)` — applies the stale-claim guard; on terminal events, enqueues `workflow.handle_agent_event` in the outbox. On progress events, republishes to `activity:{workflow_execution_id}` via [`core/sse_pubsub`](core_sse_pubsub.md) so the SPA's SSE live-tail picks them up.
 - `record_workspace_event(event, *, session)` — updates the workspace mirror; same stale-claim guard.
+- `pick_agent_for_org(org_id, *, session)` — returns an `AgentRef` (least-loaded reachable pod for the org) or `None` when no pod is reachable. Load is in-process queue depth; ties break on most-recent heartbeat.
+- `has_any_reachable_agent(*, session)` — returns `True` when any pod heartbeated within the last 90 s; used for global health checks without exposing the Row.
+- `clear_queues()` — drop every in-memory queue and condition. Called by tests between runs.
+- `AgentRef` — value object returned by `pick_agent_for_org`: `agent_id` (row PK) + `agent_pod_id` (pod identity used for command dispatch).
 - Errors: `GatewayError`, `StaleClaimError` (→ 410), `UnauthorizedError` (→ 401).
 
 HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested under the project's `/api/` convention):
@@ -78,6 +82,6 @@ Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup
 
 ## How it's tested
 
-`test/test_service.py` covers: per-agent FIFO independence; immediate return when empty; long-poll wakes on enqueue; long-poll times out cleanly; heartbeat reconciliation reports unknown workspaces; terminal AgentEvent enqueues `workflow.handle_agent_event` with the resolved workflow id; progress events do NOT enqueue but DO publish to `activity:{workflow_execution_id}` for SSE live-tail; stale `command_id` raises `StaleClaimError`; workspace-state `ready` event transitions row to `active`; stale workspace event raises.
+`test/test_service.py` covers: per-agent FIFO independence; immediate return when empty; long-poll wakes on enqueue; long-poll times out cleanly; heartbeat reconciliation reports unknown workspaces; terminal AgentEvent enqueues `workflow.handle_agent_event` with the resolved workflow id; progress events do NOT enqueue but DO publish to `activity:{workflow_execution_id}` for SSE live-tail; stale `command_id` raises `StaleClaimError`; workspace-state `ready` event transitions row to `active`; stale workspace event raises; `pick_agent_for_org` returns `AgentRef` for a fresh pod, `None` for no agents / stale heartbeat / non-reachable state, and prefers the least-loaded pod; `has_any_reachable_agent` returns `True`/`False` based on 90-s cutoff. Tests call `clear_queues()` between runs to reset the in-memory dispatch state.
 
 Endpoint coverage rides on the service tests + the bearer-dep guards.

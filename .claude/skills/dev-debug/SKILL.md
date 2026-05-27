@@ -1,6 +1,8 @@
 ---
 name: dev-debug
 description: Slash command /dev-debug [slug] — diagnose a bug with code-grounded evidence. On user approval, auto-chain into dev-requirements (one-shot), dev-architect (interactive), and dev-plan (interactive) to create a fix ticket. Manual trigger only.
+model: claude-opus-4-7
+effort: xhigh
 ---
 
 # /dev-debug

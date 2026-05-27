@@ -205,6 +205,20 @@ async def get(pr_id: UUID, *, org_id: UUID) -> PullRequest:
     return PullRequest.from_row(row)
 
 
+async def list_by_ids(pr_ids: list[UUID]) -> list[PullRequest]:
+    """Return PullRequest objects for every id in *pr_ids* that exists.
+
+    Missing ids are silently omitted. Empty input short-circuits — no DB hit.
+    No org_id scoping: callers are expected to have already validated
+    org membership via the ticket they fetched.
+    """
+    if not pr_ids:
+        return []
+    async with db_session() as s:
+        rows = (await s.execute(select(PullRequestRow).where(PullRequestRow.id.in_(pr_ids)))).scalars().all()
+    return [PullRequest.from_row(r) for r in rows]
+
+
 async def get_by_external(plugin_id: str, external_id: str, *, org_id: UUID) -> PullRequest | None:
     async with db_session() as s:
         row = (

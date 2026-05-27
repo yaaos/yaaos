@@ -120,7 +120,8 @@ def registered_recovery_labels() -> list[str]:
     return sorted(_RECOVERY_POLICIES.keys())
 
 
-def _reset_recovery_policies_for_tests() -> None:
+def clear_recovery_policies() -> None:
+    """Clear all registered recovery policies."""
     _RECOVERY_POLICIES.clear()
 
 

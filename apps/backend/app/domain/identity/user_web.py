@@ -25,8 +25,7 @@ import structlog
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.auth.context import user_id_var
-from app.core.auth.rate_limit import MUTATE_LIMIT, limiter
+from app.core.auth import MUTATE_LIMIT, limiter, user_id_var
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
 
@@ -53,7 +52,7 @@ def _err(status: int, code: str) -> HTTPException:
 def _require_user():
     """Session-only auth: resolves the cookie → `user_id_var`. No org context.
     Lazy import because `domain/sessions` depends on `domain/identity`."""
-    from app.domain.sessions.dependencies import require_session  # noqa: PLC0415
+    from app.domain.sessions import require_session  # noqa: PLC0415
 
     return require_session
 

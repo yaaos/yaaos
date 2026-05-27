@@ -22,9 +22,7 @@ from pydantic import BaseModel
 
 from app.core.audit_log import Actor
 from app.core.audit_log import audit as audit_write
-from app.core.auth.context import org_id_var
-from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
-from app.core.auth.types import Action
+from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, limiter, org_id_var
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
@@ -179,7 +177,7 @@ async def sso_acs(
     next_path = f"/orgs/{slug}/dashboard"
     resp = RedirectResponse(next_path, status_code=303)
     if created is not None:
-        from app.core.auth.cookies import csrf_cookie_attrs, session_cookie_attrs  # noqa: PLC0415
+        from app.core.auth import csrf_cookie_attrs, session_cookie_attrs  # noqa: PLC0415
 
         max_age = get_settings().yaaos_session_lifetime_seconds
         resp.set_cookie(value=created.raw_token, **session_cookie_attrs(max_age_seconds=max_age))
@@ -200,7 +198,7 @@ def _verify_assertion(saml_response: str, idp_metadata_xml: str) -> dict | None:
 
 
 def _require_sso_configure():
-    from app.domain.sessions.dependencies import require  # noqa: PLC0415
+    from app.domain.sessions import require  # noqa: PLC0415
 
     return require(Action.SSO_CONFIGURE)
 
@@ -238,11 +236,11 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     `sso_config_changed` audit row + an `exempt_owner_set` row when
     the exempt-Owner pointer changed."""
     from app.core.audit_log import Actor  # noqa: PLC0415
-    from app.core.auth.context import user_id_var  # noqa: PLC0415
-    from app.domain.identity.totp import can_be_sso_exempt_owner  # noqa: PLC0415
+    from app.core.auth import user_id_var  # noqa: PLC0415
+    from app.domain.identity import can_be_sso_exempt_owner  # noqa: PLC0415
+    from app.domain.orgs import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
-    from app.domain.orgs.sso import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
-    from app.domain.sessions.dependencies import current_actor  # noqa: PLC0415
+    from app.domain.sessions import current_actor  # noqa: PLC0415
 
     org_id = org_id_var.get()
     assert org_id is not None

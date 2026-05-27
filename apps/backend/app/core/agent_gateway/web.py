@@ -43,7 +43,7 @@ from app.core.agent_gateway.types import (
     UnauthorizedError,
     WorkspaceEvent,
 )
-from app.core.auth.context import public_route
+from app.core.auth import public_route
 from app.core.database import session as db_session
 from app.core.sse_pubsub import channel_for
 from app.core.sse_pubsub import publish as sse_publish

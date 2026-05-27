@@ -1,26 +1,30 @@
 """core/workspace — provisioning + centralized lifecycle."""
 
+from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
 from app.core.workspace.dispatch import (
-    _reset_recovery_policies_for_tests,
+    clear_recovery_policies,
     get_recovery_policy,
     register_recovery_policy,
     registered_recovery_labels,
     release_claim,
     try_claim,
 )
-from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import (
-    _reset_providers_for_tests,
+    clear_workspace_providers,
     close_workspace,
     create_workspace,
     force_close_all,
     get_provider,
     get_workspace,
+    get_workspace_claim_state,
+    get_workspace_command_state,
     get_workspace_info,
+    get_workspace_statuses,
     health_check_all,
     register_workspace_provider,
     start_reaper,
     startup_recovery,
+    update_workspace_status,
     with_workspace,
 )
 from app.core.workspace.types import (
@@ -31,6 +35,8 @@ from app.core.workspace.types import (
     RepoRefForSpec,
     ResourceCaps,
     Workspace,
+    WorkspaceClaimState,
+    WorkspaceCommandState,
     WorkspaceDestroyError,
     WorkspaceError,
     WorkspaceExecError,
@@ -45,12 +51,13 @@ from app.core.workspace.types import (
 from app.core.workspace.workflow_context import (
     WorkflowContextProvider,
     WorkspaceTicketContext,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
     get_workflow_context_provider,
     register_workflow_context_provider,
 )
 
 __all__ = [
+    "ALL_LIFECYCLE_COMMANDS",
     "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",
@@ -59,6 +66,8 @@ __all__ = [
     "ResourceCaps",
     "WorkflowContextProvider",
     "Workspace",
+    "WorkspaceClaimState",
+    "WorkspaceCommandState",
     "WorkspaceDestroyError",
     "WorkspaceError",
     "WorkspaceExecError",
@@ -67,13 +76,12 @@ __all__ = [
     "WorkspaceNotFoundError",
     "WorkspaceProvider",
     "WorkspaceProvisionError",
-    "WorkspaceRow",
     "WorkspaceSpec",
     "WorkspaceStatus",
     "WorkspaceTicketContext",
-    "_reset_providers_for_tests",
-    "_reset_recovery_policies_for_tests",
-    "_reset_workflow_context_provider_for_tests",
+    "clear_recovery_policies",
+    "clear_workflow_context_provider",
+    "clear_workspace_providers",
     "close_workspace",
     "create_workspace",
     "force_close_all",
@@ -81,7 +89,10 @@ __all__ = [
     "get_recovery_policy",
     "get_workflow_context_provider",
     "get_workspace",
+    "get_workspace_claim_state",
+    "get_workspace_command_state",
     "get_workspace_info",
+    "get_workspace_statuses",
     "health_check_all",
     "register_recovery_policy",
     "register_workflow_context_provider",
@@ -91,5 +102,6 @@ __all__ = [
     "start_reaper",
     "startup_recovery",
     "try_claim",
+    "update_workspace_status",
     "with_workspace",
 ]

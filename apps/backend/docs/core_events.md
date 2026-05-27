@@ -8,7 +8,7 @@ Thin in-process transport. Domain modules `publish()` typed events; UI clients s
 
 ## Public interface
 
-Exports `Event`, `EventFilter`, `publish`, `publish_after_commit`, `subscribe`, `serialize_for_sse`, `stream_events_for_filter`, `subscriber_count`, `_reset_for_tests`. See `apps/backend/app/core/events/__init__.py`.
+Exports `Event`, `EventFilter`, `publish`, `publish_after_commit`, `subscribe`, `serialize_for_sse`, `stream_events_for_filter`, `subscriber_count`. See `apps/backend/app/core/events/__init__.py`.
 
 - `Event` — base Pydantic class; domain modules subclass.
 - `EventFilter` — subscriber filter (`ticket_id`, `kinds`).
@@ -72,4 +72,4 @@ None. Subscriber registry in-memory; reset on process restart.
 
 ## How it's tested
 
-`app/core/events/test/test_pubsub.py` covers the publish/subscribe contract — filter matching, queue overflow drop, unregistration on consumer exit. The SSE endpoint is exercised end-to-end against `TestClient`. `_reset_for_tests()` clears subscribers between cases.
+`app/core/events/test/test_pubsub.py` covers the publish/subscribe contract — filter matching, queue overflow drop, unregistration on consumer exit. The SSE endpoint is exercised end-to-end against `TestClient`. Tests import `_reset_for_tests` directly from `app.core.events.service` to clear subscribers between cases.

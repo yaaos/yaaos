@@ -14,7 +14,7 @@ from uuid import uuid4
 import pytest
 
 from app.core.events import Event, EventFilter, subscribe
-from app.core.events import _reset_for_tests as _reset_events
+from app.core.events.service import _reset_for_tests as _reset_events
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
@@ -24,9 +24,7 @@ from app.core.workflow import (
     Workflow,
     WorkflowEngine,
 )
-from app.core.workflow import (
-    _reset_for_tests as _reset_workflow,
-)
+from app.core.workflow.service import _reset_for_tests as _reset_workflow
 from app.plugins.github.intake_type import GithubIntakeType
 
 

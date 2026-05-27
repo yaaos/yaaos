@@ -14,8 +14,10 @@ from app.domain.coding_agent import (
     ReviewContext,
     ReviewResult,
     ValidationResult,
+    clear_plugins,
+    list_registered_plugins,
+    register_plugin,
 )
-from app.domain.coding_agent.service import _PLUGINS, _reset_plugins_for_tests
 from app.domain.vcs import Diff, VCSPullRequest
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
@@ -109,11 +111,13 @@ def test_meta_mirrors_wrapped() -> None:
 
 
 def test_wrap_all_is_idempotent() -> None:
-    _reset_plugins_for_tests()
+    clear_plugins()
     dummy = _DummyPlugin()
-    _PLUGINS["dummy"] = dummy
+    register_plugin(dummy)
     assert wrap_all_registered_plugins() == 1
-    assert isinstance(_PLUGINS["dummy"], StubCodingAgentPlugin)
+    plugins = list_registered_plugins()
+    assert len(plugins) == 1
+    assert isinstance(plugins[0], StubCodingAgentPlugin)
     # second call is a no-op — already wrapped
     assert wrap_all_registered_plugins() == 0
-    _reset_plugins_for_tests()
+    clear_plugins()

@@ -8,7 +8,7 @@ Owns the centralized lifecycle for every workspace yaaos creates. Defines the `W
 
 ## Public interface
 
-Exports value objects (`WorkspaceSpec`, `WorkspaceInfo`, `WorkspaceStatus`, `ResourceCaps`, `NetworkPolicy`, `RepoRefForSpec`, `CodingAgentCliResult`, `HealthStatus`), Protocols (`Workspace`, `WorkspaceProvider`), ORM row (`WorkspaceRow`), functions (`register_workspace_provider`, `get_provider`, `create_workspace`, `with_workspace`, `close_workspace`, `force_close_all`, `get_workspace_info`, `start_reaper`, `startup_recovery`, `health_check_all`), error types, and `_reset_providers_for_tests`. See `apps/backend/app/core/workspace/__init__.py`.
+Exports value objects (`WorkspaceSpec`, `WorkspaceInfo`, `WorkspaceStatus`, `WorkspaceClaimState`, `WorkspaceCommandState`, `ResourceCaps`, `NetworkPolicy`, `RepoRefForSpec`, `CodingAgentCliResult`, `HealthStatus`), Protocols (`Workspace`, `WorkspaceProvider`), functions (`register_workspace_provider`, `get_provider`, `create_workspace`, `with_workspace`, `close_workspace`, `force_close_all`, `get_workspace_info`, `get_workspace_claim_state`, `get_workspace_command_state`, `get_workspace_statuses`, `update_workspace_status`, `start_reaper`, `startup_recovery`, `health_check_all`, `clear_workspace_providers`, `clear_recovery_policies`, `clear_workflow_context_provider`), error types. See `apps/backend/app/core/workspace/__init__.py`.
 
 HTTP routes registered by the module under `/api/workspaces/*` (list, get, force-close, force-close-all, retry-destroy). The explicit `url_prefix` overrides the default `/api/workspace` to use the plural form.
 
@@ -74,7 +74,7 @@ After 3 failed retries the row sits in `destroy_failed` for operator attention.
 
 ### Provider registry
 
-Module-level `_PROVIDERS: dict[str, WorkspaceProvider]`. `register_workspace_provider(provider)` at plugin import (raises on duplicate id). `get_provider(provider_id)` looks up, raising `WorkspaceError` if missing. `_reset_providers_for_tests()` clears the dict.
+Module-level `_PROVIDERS: dict[str, WorkspaceProvider]`. `register_workspace_provider(provider)` at plugin import (raises on duplicate id). `get_provider(provider_id)` looks up, raising `WorkspaceError` if missing. `clear_workspace_providers()` clears the dict.
 
 `health_check_all()` aggregates `provider.health_check()` across the registry — drives the settings page's Plugin Health card. Errors become `HealthStatus(healthy=False, message=str(e))` rather than propagating.
 
@@ -106,7 +106,7 @@ The recovery-policy registry (`register_recovery_policy(failure_label=, command_
 
 ### Workflow-context callback
 
-`workflow_context.py` exposes a singleton `WorkflowContextProvider` Protocol that bridges `core/workspace` to `domain/tickets` without crossing the `core → domain` layer boundary. The domain layer registers a concrete reader at boot via `register_workflow_context_provider(provider)`; `ProvisionWorkspace.execute()` reads it via `get_workflow_context_provider()` and calls `await provider.get_workspace_ticket_context(ticket_id)` to fetch the ticket's `org_id`, `plugin_id`, `repo_external_id`, and `payload`. Registration is idempotent-replace so test reloads don't conflict; `_reset_workflow_context_provider_for_tests()` clears the singleton.
+`workflow_context.py` exposes a singleton `WorkflowContextProvider` Protocol that bridges `core/workspace` to `domain/tickets` without crossing the `core → domain` layer boundary. The domain layer registers a concrete reader at boot via `register_workflow_context_provider(provider)`; `ProvisionWorkspace.execute()` reads it via `get_workflow_context_provider()` and calls `await provider.get_workspace_ticket_context(ticket_id)` to fetch the ticket's `org_id`, `plugin_id`, `repo_external_id`, and `payload`. Registration is idempotent-replace so test reloads don't conflict; `clear_workflow_context_provider()` clears the singleton.
 
 The bridge is registered from [`domain/reviewer/__init__.py`](domain_reviewer.md) at module-import time, alongside the workflow + command registrations.
 

@@ -1,6 +1,8 @@
 ---
 name: dev-plan
 description: Slash command /dev-plan [slug] — translate plan/ticket/<slug>/architecture.md into a phased plan.md, sliced vertically. Manual trigger only.
+model: claude-opus-4-7
+effort: xhigh
 ---
 
 # /dev-plan

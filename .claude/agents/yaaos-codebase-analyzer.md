@@ -1,7 +1,8 @@
 ---
 name: yaaos-codebase-analyzer
 description: Wave 1 mapper for the yaaos-review pipeline. Deep-reads code to map dependency direction, imports, and call paths affected by a diff. Descriptive only — no critique. Outside the review pipeline, may also be used as a general implementation-tracing agent.
-model: opus
+model: claude-haiku-4-5
+effort: medium
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

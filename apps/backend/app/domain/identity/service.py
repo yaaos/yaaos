@@ -8,10 +8,13 @@ rules; provider plugins only produce a normalized `ProviderProfile`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity import repository as repo
+from app.domain.identity.models import OAuthIdentityRow, SessionRow, UserEmailRow, UserRow
 from app.domain.identity.providers import ProviderProfile
 from app.domain.identity.types import (
     EmailAlreadyLinkedError,
@@ -34,6 +37,10 @@ __all__ = [
     "User",
     "UserEmail",
     "UserNotFoundError",
+    "create_email",
+    "create_oauth_identity",
+    "create_session",
+    "create_user",
     "login_via_oauth",
 ]
 
@@ -98,3 +105,58 @@ async def login_via_oauth(
         return LoginResult(user=User.from_row(existing_user_row), newly_created=False)
 
     return LoginResult(user=None, newly_created=False)
+
+
+async def create_user(db: AsyncSession, *, display_name: str = "") -> UserRow:
+    """Insert a new user row and return it. The caller owns the transaction."""
+    return await repo.insert_user(db, display_name=display_name)
+
+
+async def create_email(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    email: str,
+    is_primary: bool = False,
+    verified: bool = False,
+) -> UserEmailRow:
+    """Insert an email row for `user_id` and return it. The caller owns the transaction."""
+    return await repo.add_email(db, user_id=user_id, email=email, is_primary=is_primary, verified=verified)
+
+
+async def create_oauth_identity(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    provider: str,
+    external_subject: str,
+    verified: bool = True,
+) -> OAuthIdentityRow:
+    """Insert an oauth_identity row for `user_id` and return it. The caller owns the transaction."""
+    return await repo.add_oauth_identity(
+        db, user_id=user_id, provider=provider, external_subject=external_subject, verified=verified
+    )
+
+
+async def create_session(
+    db: AsyncSession,
+    *,
+    token_hash: str,
+    user_id: UUID | None,
+    workspace_id: UUID | None,
+    csrf_token: str,
+    ip: str | None,
+    user_agent: str | None,
+    expires_at: datetime,
+) -> SessionRow:
+    """Insert a session row and return it. The caller owns the transaction."""
+    return await repo.insert_session(
+        db,
+        token_hash=token_hash,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        csrf_token=csrf_token,
+        ip=ip,
+        user_agent=user_agent,
+        expires_at=expires_at,
+    )

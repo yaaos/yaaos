@@ -1,7 +1,8 @@
 ---
 name: yaaos-adversary-architecture
 description: Wave 3 paired adversary in the yaaos-review pipeline. Challenges architecture findings from yaaos-review-architecture using the yaaos-adversarial-review skill. Context-asymmetric — does NOT read Wave 1 mapping files.
-model: opus
+model: claude-opus-4-7
+effort: xhigh
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

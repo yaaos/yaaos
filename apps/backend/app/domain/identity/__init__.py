@@ -1,12 +1,12 @@
 """domain/identity — users, emails, OAuth identities, sessions, TOTP."""
 
-from app.domain.identity import sessions, web
-from app.domain.identity.models import (
-    OAuthIdentityRow,
-    SessionRow,
-    UserEmailRow,
-    UserRow,
-    UserTotpSecretRow,
+from app.domain.identity import repository, sessions, totp
+from app.domain.identity.providers import (
+    ProviderError,
+    ProviderProfile,
+    get_provider,
+    list_providers,
+    register_provider,
 )
 from app.domain.identity.service import (
     EmailAlreadyLinkedError,
@@ -17,22 +17,36 @@ from app.domain.identity.service import (
     User,
     UserEmail,
     UserNotFoundError,
+    create_email,
+    create_oauth_identity,
+    create_session,
+    create_user,
+    login_via_oauth,
 )
+from app.domain.identity.totp import can_be_sso_exempt_owner, has_verified_totp
 
 __all__ = [
     "EmailAlreadyLinkedError",
     "OAuthIdentity",
-    "OAuthIdentityRow",
+    "ProviderError",
+    "ProviderProfile",
     "Session",
     "SessionNotFoundError",
-    "SessionRow",
     "TotpError",
     "User",
     "UserEmail",
-    "UserEmailRow",
     "UserNotFoundError",
-    "UserRow",
-    "UserTotpSecretRow",
+    "can_be_sso_exempt_owner",
+    "create_email",
+    "create_oauth_identity",
+    "create_session",
+    "create_user",
+    "get_provider",
+    "has_verified_totp",
+    "list_providers",
+    "login_via_oauth",
+    "register_provider",
+    "repository",
     "sessions",
-    "web",
+    "totp",
 ]

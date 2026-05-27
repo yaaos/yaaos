@@ -18,10 +18,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.audit_log import list_for_entity
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
+from app.core.auth import Action, org_id_var
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions.dependencies import require
+from app.domain.sessions import require
 from app.domain.tickets.service import (
     Ticket,
     TicketFilter,
@@ -140,12 +139,8 @@ async def hitl_respond(ticket_id: UUID, response: dict[str, Any]) -> dict[str, A
     Returns `{stage, next_state}` where `next_state` is the workflow
     state immediately after the resume.
     """
-    from sqlalchemy import desc as _desc  # noqa: PLC0415
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow import resume_hitl  # noqa: PLC0415
-    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+    from app.core.workflow import get_awaiting_human_execution, resume_hitl  # noqa: PLC0415
 
     org_id = _org()
     try:
@@ -154,26 +149,22 @@ async def hitl_respond(ticket_id: UUID, response: dict[str, Any]) -> dict[str, A
         raise HTTPException(status_code=404, detail="ticket not found")
 
     async with _db_session() as s:
-        wfx = (
-            await s.execute(
-                _select(WorkflowExecutionRow)
-                .where(
-                    WorkflowExecutionRow.ticket_id == ticket_id,
-                    WorkflowExecutionRow.state == "awaiting_human",
-                )
-                .order_by(_desc(WorkflowExecutionRow.created_at))
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        wfx = await get_awaiting_human_execution(ticket_id, session=s)
         if wfx is None:
             raise HTTPException(status_code=404, detail="no pending HITL on ticket")
         resolved = await resume_hitl(str(wfx.id), response=response, session=s)
         if not resolved:
             raise HTTPException(status_code=409, detail="HITL decision already resolved")
         await s.commit()
-        await s.refresh(wfx)
+        # Re-fetch the updated summary after commit so next_state is current.
+        from app.core.workflow import get_execution_summary  # noqa: PLC0415
 
-    return {"stage": wfx.workflow_name, "next_state": wfx.state}
+        refreshed = await get_execution_summary(wfx.id, session=s)
+
+    return {
+        "stage": wfx.workflow_name,
+        "next_state": refreshed.state if refreshed else wfx.state,
+    }
 
 
 @router.get("/{ticket_id}/hitl/history")
@@ -184,14 +175,8 @@ async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
     Joins `pending_human_decisions` against the ticket's
     `workflow_executions` rows. Newest exchange first.
     """
-    from sqlalchemy import desc as _desc  # noqa: PLC0415
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow.models import (  # noqa: PLC0415
-        PendingHumanDecisionRow,
-        WorkflowExecutionRow,
-    )
+    from app.core.workflow import list_hitl_history  # noqa: PLC0415
 
     org_id = _org()
     try:
@@ -200,32 +185,18 @@ async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
         raise HTTPException(status_code=404, detail="ticket not found")
 
     async with _db_session() as s:
-        wfx_ids_q = _select(WorkflowExecutionRow.id).where(WorkflowExecutionRow.ticket_id == ticket_id)
-        wfx_ids = (await s.execute(wfx_ids_q)).scalars().all()
-        if not wfx_ids:
-            return []
-        rows = (
-            (
-                await s.execute(
-                    _select(PendingHumanDecisionRow)
-                    .where(PendingHumanDecisionRow.workflow_execution_id.in_(wfx_ids))
-                    .order_by(_desc(PendingHumanDecisionRow.created_at))
-                )
-            )
-            .scalars()
-            .all()
-        )
+        entries = await list_hitl_history(ticket_id, session=s)
 
     return [
         {
-            "id": str(r.id),
-            "workflow_execution_id": str(r.workflow_execution_id),
-            "question_payload": r.question_payload,
-            "resolution_payload": r.resolution_payload,
-            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
-            "created_at": r.created_at.isoformat(),
+            "id": str(e.id),
+            "workflow_execution_id": str(e.workflow_execution_id),
+            "question_payload": e.question_payload,
+            "resolution_payload": e.resolution_payload,
+            "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+            "created_at": e.created_at.isoformat(),
         }
-        for r in rows
+        for e in entries
     ]
 
 
@@ -242,11 +213,8 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
        when the ticket's PR has an `author_login`; `kind="system"` when
        yaaos triggered the run with no human attribution.
     """
-    from sqlalchemy import desc as _desc  # noqa: PLC0415
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+    from app.core.workflow import list_executions_for_ticket  # noqa: PLC0415
 
     org_id = _org()
     try:
@@ -255,17 +223,7 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="ticket not found")
 
     async with _db_session() as s:
-        wfx_rows = (
-            (
-                await s.execute(
-                    _select(WorkflowExecutionRow)
-                    .where(WorkflowExecutionRow.ticket_id == ticket_id)
-                    .order_by(_desc(WorkflowExecutionRow.created_at))
-                )
-            )
-            .scalars()
-            .all()
-        )
+        wfx_summaries = await list_executions_for_ticket(ticket_id, session=s)
 
     stages = [
         {
@@ -279,7 +237,7 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
             ),
             "workflow_execution_id": str(w.id),
         }
-        for w in wfx_rows
+        for w in wfx_summaries
     ]
 
     builder: dict[str, Any] = (

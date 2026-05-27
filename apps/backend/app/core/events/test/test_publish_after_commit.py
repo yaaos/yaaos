@@ -12,10 +12,10 @@ import pytest
 from app.core.events import (
     Event,
     EventFilter,
-    _reset_for_tests,
     publish_after_commit,
     subscribe,
 )
+from app.core.events.service import _reset_for_tests
 
 
 class _SampleEvent(Event):

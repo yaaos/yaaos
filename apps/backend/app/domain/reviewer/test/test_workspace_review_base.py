@@ -24,8 +24,8 @@ from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext, Outcome
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_providers_for_tests,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
+    clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -83,13 +83,13 @@ def _default_ticket_ctx() -> WorkspaceTicketContext:
 
 @pytest.fixture
 def _stub_provider():
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     register_workspace_provider(_StubProvider())
     register_workflow_context_provider(_StaticContextProvider(_default_ticket_ctx()))
     yield
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
 
 def _ctx() -> CommandContext:
@@ -159,8 +159,8 @@ async def test_no_context_provider_returns_failure(db_session) -> None:  # type:
     """Workspace resolves but no WorkflowContextProvider is registered →
     Outcome.failure. Domain bootstrap is expected to install the provider;
     a missing one is a deployment misconfig, not a workflow input error."""
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     register_workspace_provider(_StubProvider())
     ws_id = uuid4()
     db_session.add(
@@ -180,15 +180,15 @@ async def test_no_context_provider_returns_failure(db_session) -> None:  # type:
         assert outcome.label == "failure"
         assert "no workflow_context provider" in (outcome.failure_reason or "")
     finally:
-        _reset_providers_for_tests()
+        clear_workspace_providers()
 
 
 async def test_ticket_not_found_returns_failure(db_session) -> None:  # type: ignore[no-untyped-def]
     """Workspace + provider both resolve but provider returns None for the
     ticket → Outcome.failure. The workflow can't proceed without ticket
     context."""
-    _reset_providers_for_tests()
-    _reset_workflow_context_provider_for_tests()
+    clear_workspace_providers()
+    clear_workflow_context_provider()
     register_workspace_provider(_StubProvider())
     register_workflow_context_provider(_StaticContextProvider(context=None))
     ws_id = uuid4()
@@ -209,8 +209,8 @@ async def test_ticket_not_found_returns_failure(db_session) -> None:  # type: ig
         assert outcome.label == "failure"
         assert "not found" in (outcome.failure_reason or "")
     finally:
-        _reset_providers_for_tests()
-        _reset_workflow_context_provider_for_tests()
+        clear_workspace_providers()
+        clear_workflow_context_provider()
 
 
 # ── Subclass contract — applies to all 5 Workspace reviewer commands ────

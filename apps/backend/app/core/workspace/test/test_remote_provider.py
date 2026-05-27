@@ -11,7 +11,8 @@ from app.core.agent_gateway import (
     AuthBlock,
     HeartbeatRequest,
     RepoRef,
-    _reset_queues_for_tests,
+    clear_queues,
+    pick_agent_for_org,
     queue_depth,
     record_heartbeat,
 )
@@ -23,15 +24,14 @@ from app.core.agent_gateway.service import (
 from app.core.workspace.remote_provider import (
     RemoteAgentWorkspaceProvider,
     dispatch_create_workspace,
-    pick_agent_for_org,
 )
 
 
 @pytest.fixture(autouse=True)
 def _isolate_queues() -> None:
-    _reset_queues_for_tests()
+    clear_queues()
     yield
-    _reset_queues_for_tests()
+    clear_queues()
 
 
 async def _seed_reachable_agent(
@@ -165,7 +165,7 @@ async def test_pick_agent_returns_recent_pod(db_session) -> None:
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.id == seeded.id
+    assert picked.agent_id == seeded.id
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_pick_agent_prefers_least_loaded_pod(db_session) -> None:
 
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.id == idle.id, "least-loaded pod should win despite older heartbeat"
+    assert picked.agent_id == idle.id, "least-loaded pod should win despite older heartbeat"
 
 
 @pytest.mark.asyncio
@@ -216,7 +216,7 @@ async def test_pick_agent_tie_breaks_on_recent_heartbeat(db_session) -> None:
 
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.id == fresh.id
+    assert picked.agent_id == fresh.id
 
 
 @pytest.mark.asyncio

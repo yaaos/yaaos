@@ -9,7 +9,7 @@ Front-doors every MCP request from a yaaos review. Owns `mcp_review_tokens` (per
 ## Public interface
 
 - `mint_token(review_id, *, session=None) -> str` — issues a 32-byte URL-safe random bearer; persists only `sha256(raw)` with `expires_at = created_at + 2h`. Raw returned exactly once.
-- `lookup_token(raw_token, *, session=None) -> McpReviewTokenRow | None` — sha256 the input, look up by primary key, return None if expired or missing.
+- `lookup_token(raw_token, *, session=None) -> McpToken | None` — sha256 the input, look up by primary key, return None if expired or missing. `McpToken` is a Pydantic value object with `review_id` and `expires_at`.
 - `revoke_token(review_id, *, session=None) -> int` — drop every token row for a review. Reviewer calls this before workspace teardown.
 - `sweep_expired(*, session=None) -> int` — periodic cleanup. Runs on the same hourly loop as the integrations health-check.
 - `record_broken_creds(review_id, provider)` / `consume_broken_creds(review_id) -> set[str]` — process-local tracker the proxy writes on every `not_connected` / `broken_creds` rejection and the reviewer drains at review-end to prefix the PR summary with a yellow warning callout.

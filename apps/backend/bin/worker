@@ -9,13 +9,31 @@ See `apps/backend/docs/core_tasks.md` for the architecture.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 
 def main() -> int:
-    # lazy: keep imports out of module load so `python bin/worker --help` is
-    # snappy and doesn't fail before the user sees an error message.
-    from app.core.tasks.worker import run  # noqa: PLC0415
+    # Side-effect imports: workflow commands + workspace providers + VCS
+    # plugins all register at import time. The worker dispatches workflow
+    # task bodies, which look up commands/workflows/providers via the
+    # registries — those registries are empty until the modules below load.
+    # Imported here (outside `core/tasks`) because `core` cannot depend on
+    # `plugins` or `testing` under layering rules.
+    import app.core.workflow  # noqa: F401
+    import app.domain.reviewer  # noqa: F401
+    import app.plugins.claude_code  # noqa: F401
+    import app.plugins.github  # noqa: F401
+    import app.plugins.in_memory_workspace  # noqa: F401
+
+    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+        from app.testing.stub_coding_agent import wrap_all_registered_plugins
+        from app.testing.stub_workspace import wrap_all_registered_workspace_providers
+
+        wrap_all_registered_plugins()
+        wrap_all_registered_workspace_providers()
+
+    from app.core.tasks.worker import run
 
     asyncio.run(run())
     return 0

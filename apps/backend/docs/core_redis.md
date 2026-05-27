@@ -8,7 +8,7 @@ Centralizes everything any other module needs from Redis: a loop-bound client (p
 
 ## Public interface
 
-Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`, `_reset_for_tests`. See `apps/backend/app/core/redis/__init__.py`.
+Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`. See `apps/backend/app/core/redis/__init__.py`.
 
 - `get_client()` — returns the Redis client bound to the current running event loop. Constructs on first call per loop. `decode_responses=False` (bytes).
 - `get_url()` — returns `settings.redis_url`. Single accessor so other modules don't read config directly.
@@ -16,7 +16,6 @@ Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`, `_res
 - `subscribe(channel) -> AsyncIterator[bytes]` — yields each subsequent message body; filters out subscribe/unsubscribe confirmations. Subscriber registers on first iteration, unregisters on iterator close.
 - `ping() -> bool` — `PING` against Redis; swallows exceptions.
 - `aclose()` — closes every cached client; idempotent.
-- `_reset_for_tests()` — synchronous singleton wipe for unit tests.
 
 No HTTP routes.
 

@@ -13,7 +13,7 @@ from uuid import uuid4
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
     register_workflow_context_provider,
 )
 from app.domain.reviewer.commands import ResolveFinding
@@ -38,14 +38,14 @@ class _StaticProvider:
 
 
 async def test_empty_verdict_is_noop_success() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ResolveFinding().execute({}, _ctx())
     assert outcome.label == "success"
     assert outcome.outputs.get("transitioned_to") is None
 
 
 async def test_missing_finding_id_is_noop_success() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ResolveFinding().execute(
         {"verdict": {"still_present": False, "confidence": 0.95}}, _ctx()
     )
@@ -54,7 +54,7 @@ async def test_missing_finding_id_is_noop_success() -> None:
 
 
 async def test_invalid_finding_id_returns_failure() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ResolveFinding().execute(
         {
             "verdict": {
@@ -70,7 +70,7 @@ async def test_invalid_finding_id_returns_failure() -> None:
 
 
 async def test_invalid_confidence_returns_failure() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ResolveFinding().execute(
         {
             "verdict": {
@@ -86,7 +86,7 @@ async def test_invalid_confidence_returns_failure() -> None:
 
 
 async def test_no_provider_registered_returns_failure() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ResolveFinding().execute(
         {
             "verdict": {
@@ -102,7 +102,7 @@ async def test_no_provider_registered_returns_failure() -> None:
 
 
 async def test_no_pr_link_is_noop_success() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     register_workflow_context_provider(
         _StaticProvider(
             context=WorkspaceTicketContext(
@@ -131,7 +131,7 @@ async def test_no_pr_link_is_noop_success() -> None:
 async def test_unknown_finding_is_noop_success(db_session) -> None:  # type: ignore[no-untyped-def]
     """pr_id present but the verdict's finding_id isn't in the aggregate
     (deleted, or stale upstream payload) → success-no-op."""
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     register_workflow_context_provider(
         _StaticProvider(
             context=WorkspaceTicketContext(

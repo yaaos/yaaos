@@ -109,7 +109,7 @@ async def test_me_exposes_broken_integrations_for_admins(db_session) -> None:
     """Admins (and Owners) see the org's broken MCP integrations; Members don't."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
-    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+    from app.domain.integrations import create_credential  # noqa: PLC0415
 
     admin = await identity_repo.insert_user(db_session, display_name="A")
     member = await identity_repo.insert_user(db_session, display_name="M")
@@ -120,20 +120,18 @@ async def test_me_exposes_broken_integrations_for_admins(db_session) -> None:
     await orgs_repo.insert_membership(
         db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
     )
-    db_session.add(
-        McpCredentialRow(
-            org_id=org.id,
-            provider="linear",
-            encrypted_access_token="enc",
-            encrypted_refresh_token=None,
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-            scopes=["read"],
-            allowed_tools=[],
-            enabled=True,
-            upstream_identity="bot",
-            last_refresh_status="failed",
-            last_refresh_failed_at=datetime.now(UTC),
-        )
+    await create_credential(
+        db_session,
+        org_id=org.id,
+        provider="linear",
+        encrypted_access_token="enc",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        scopes=["read"],
+        allowed_tools=[],
+        enabled=True,
+        upstream_identity="bot",
+        last_refresh_status="failed",
+        last_refresh_failed_at=datetime.now(UTC),
     )
     a_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     m_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)

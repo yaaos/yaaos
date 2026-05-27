@@ -21,11 +21,7 @@ import structlog
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from app.core.config import get_settings
-from app.domain.identity.providers import (
-    ProviderError,
-    ProviderProfile,
-    register_provider,
-)
+from app.domain.identity import ProviderError, ProviderProfile, register_provider
 
 log = structlog.get_logger("plugins.github.oauth")
 

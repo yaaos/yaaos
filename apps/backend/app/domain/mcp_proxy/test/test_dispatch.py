@@ -24,12 +24,12 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
-from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations import create_credential
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import (
     consume_broken_creds,
@@ -196,21 +196,18 @@ async def _seed_credential(
     allowed_tools: list[str] | None = None,
     expires_in_seconds: int = 3600,
 ):
-    row = McpCredentialRow(
+    row = await create_credential(
+        db_session,
         org_id=org_id,
         provider="stub_disp",
         encrypted_access_token=encrypt("upstream-access").decode(),
-        encrypted_refresh_token=None,
         expires_at=datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
         scopes=["read"],
         allowed_tools=allowed_tools or [],
         enabled=enabled,
         upstream_identity="stub-bot",
         last_refresh_status=last_refresh_status,
-        last_validated_at=datetime.now(UTC),
     )
-    db_session.add(row)
-    await db_session.flush()
     await db_session.commit()
     return row
 
@@ -236,18 +233,7 @@ async def test_dispatch_success_audits_and_calls_upstream(db_session, stub_provi
     assert r.status_code == 200, r.text
     assert r.json()["result"] == {"ok": True}
 
-    audits = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == review.org_id,
-                    AuditEntryRow.kind == "mcp.stub_disp.dispatched",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    audits = await list_for_org(org_id=review.org_id, actions=["mcp.stub_disp.dispatched"])
     assert len(audits) == 1
     payload = audits[0].payload
     assert payload["method"] == "tools/call"
@@ -277,18 +263,7 @@ async def test_ten_dispatches_write_ten_audit_rows(db_session, stub_provider, st
             )
             assert r.status_code == 200
 
-    audits = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == review.org_id,
-                    AuditEntryRow.kind == "mcp.stub_disp.dispatched",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    audits = await list_for_org(org_id=review.org_id, actions=["mcp.stub_disp.dispatched"])
     assert len(audits) == 10
 
 

@@ -172,6 +172,31 @@ class WorkspaceProvider(Protocol):
     async def health_check(self) -> HealthStatus: ...
 
 
+class WorkspaceClaimState(BaseModel):
+    """Projection returned by `get_workspace_claim_state`.
+
+    Contains only what `core/agent_gateway` needs to apply the stale-claim guard
+    and enqueue workflow-engine continuations — no ORM Row crosses the module
+    boundary.
+    """
+
+    workspace_id: UUID
+    current_holder_workflow_id: UUID | None
+    status: str
+
+
+class WorkspaceCommandState(BaseModel):
+    """Projection returned by `get_workspace_command_state`.
+
+    Contains only what `core/agent_gateway` needs to validate event ownership
+    and apply status updates — no ORM Row crosses the module boundary.
+    """
+
+    workspace_id: UUID
+    current_command_id: UUID | None
+    status: str
+
+
 class WorkspaceError(Exception):
     """Base for workspace errors."""
 

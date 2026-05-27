@@ -1,7 +1,8 @@
 ---
 name: yaaos-review-code
 description: Wave 2 reviewer in the yaaos-review pipeline. Code-category reviewer — uses the yaaos-code-review skill to evaluate the diff for correctness, blast radius, idempotency, transactions, migrations, tests, and pattern reuse, and emit findings JSON.
-model: opus
+model: claude-sonnet-4-6
+effort: high
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

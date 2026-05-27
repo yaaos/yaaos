@@ -11,7 +11,7 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.tasks.models import OutboxEntryRow
+from app.core.tasks.drain import drain_once
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
@@ -23,10 +23,10 @@ from app.core.workflow import (
     WorkflowCommand,
     WorkflowEngine,
     WorkflowError,
-    WorkflowExecutionRow,
     WorkflowNotFoundError,
     WorkflowState,
 )
+from app.core.workflow.models import WorkflowExecutionRow
 
 # ── A throwaway WorkflowCommand for registration tests ──────────────────
 
@@ -130,9 +130,36 @@ def test_get_workflow_unknown_raises() -> None:
         eng.get_workflow("ghost")
 
 
+async def _drain_via_broker(db_session) -> None:
+    """Drive outbox rows through their registered task bodies via the broker,
+    without reaching into outbox internals beyond the private submodule."""
+    from app.core.tasks.broker import get_broker  # noqa: PLC0415
+
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
+
+    for _ in range(50):
+        n = await drain_once(db_session, dispatcher=_dispatcher)
+        await db_session.commit()
+        if n == 0:
+            break
+
+
 @pytest.mark.asyncio
-async def test_start_creates_execution_row_and_enqueues_route_workflow(db_session) -> None:
+async def test_start_creates_execution_row_and_routes_to_done(db_session) -> None:
+    """Engine.start writes a workflow_executions row; draining the outbox
+    advances the single-step workflow to DONE — proving the initial
+    route_workflow task was enqueued correctly."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
     eng = _engine_with_workflow()
+    # Install as process singleton so task bodies (route_workflow, start_step)
+    # can look up the engine via get_engine().
+    svc._engine = eng
+
     ticket_id = str(uuid4())
     exec_id = await eng.start(
         workflow_name="demo",
@@ -153,17 +180,14 @@ async def test_start_creates_execution_row_and_enqueues_route_workflow(db_sessio
     assert row.step_state == {}
     assert row.otel_trace_context == "00-aabb-ccdd-01"
 
-    # The initial route_workflow task is in the outbox awaiting drain.
-    outbox = (
-        (await db_session.execute(select(OutboxEntryRow).where(OutboxEntryRow.kind == "taskiq_enqueue")))
-        .scalars()
-        .all()
-    )
-    assert any(
-        row.payload.get("task_name") == "workflow.route_workflow"
-        and row.payload.get("args", {}).get("workflow_execution_id") == exec_id
-        for row in outbox
-    )
+    # Draining proves the initial route_workflow task was enqueued and the
+    # single-step workflow completes.
+    await _drain_via_broker(db_session)
+
+    row = (
+        await db_session.execute(select(WorkflowExecutionRow).where(WorkflowExecutionRow.id == exec_id))
+    ).scalar_one()
+    assert row.state == WorkflowState.DONE.value
 
 
 @pytest.mark.asyncio

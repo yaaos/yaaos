@@ -1,5 +1,6 @@
 """domain/orgs — orgs, memberships, invitations, SSO config, VCS + coding-agents."""
 
+from app.domain.orgs import repository
 from app.domain.orgs.coding_agents import (
     CodingAgentAlreadyInstalledError,
     CodingAgentInstall,
@@ -9,6 +10,7 @@ from app.domain.orgs.coding_agents import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
+from app.domain.orgs.email import send_plain
 from app.domain.orgs.invitations import (
     InvitationExpiredError,
     InvitationInvalidError,
@@ -17,13 +19,6 @@ from app.domain.orgs.invitations import (
     change_role,
     invite,
     remove_member,
-)
-from app.domain.orgs.models import (
-    InvitationRow,
-    MembershipRow,
-    OrgCodingAgentRow,
-    OrgRow,
-    SsoConfigRow,
 )
 from app.domain.orgs.onboarding import (
     OnboardingStatus,
@@ -40,6 +35,17 @@ from app.domain.orgs.service import (
     OrgNotFoundError,
     Role,
     SsoConfig,
+    delete_expired_invitations,
+    find_saml_org_slug_for_domain,
+    get_org,
+)
+from app.domain.orgs.sso import (
+    SsoConfigError,
+    get_config,
+    register_assertion_verifier,
+    run_assertion_verifier,
+    sp_metadata_xml,
+    upsert_config,
 )
 from app.domain.orgs.vcs import (
     VcsState,
@@ -61,31 +67,37 @@ __all__ = [
     "InvitationError",
     "InvitationExpiredError",
     "InvitationInvalidError",
-    "InvitationRow",
     "InvitationUsedError",
     "Membership",
     "MembershipNotFoundError",
-    "MembershipRow",
     "OnboardingStatus",
     "Org",
-    "OrgCodingAgentRow",
     "OrgNotFoundError",
-    "OrgRow",
     "Role",
     "SsoConfig",
-    "SsoConfigRow",
+    "SsoConfigError",
     "VcsState",
     "accept_invitation",
     "change_role",
     "clear_vcs",
+    "delete_expired_invitations",
+    "find_saml_org_slug_for_domain",
+    "get_config",
     "get_onboarding_status",
+    "get_org",
     "get_vcs",
     "install_coding_agent",
     "invite",
     "list_coding_agents",
+    "register_assertion_verifier",
     "register_onboarding_contributor",
     "remove_member",
+    "repository",
+    "run_assertion_verifier",
+    "send_plain",
     "set_vcs",
+    "sp_metadata_xml",
     "uninstall_coding_agent",
     "update_coding_agent_settings",
+    "upsert_config",
 ]

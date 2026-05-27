@@ -11,7 +11,7 @@ from uuid import uuid4
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _reset_workflow_context_provider_for_tests,
+    clear_workflow_context_provider,
     register_workflow_context_provider,
 )
 from app.domain.reviewer.commands import ArchiveStaleFindings
@@ -37,14 +37,14 @@ class _StaticProvider:
 
 async def test_empty_input_returns_success_zero_archived() -> None:
     """No finding_ids in inputs → nothing to do, success-no-op."""
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ArchiveStaleFindings().execute({}, _ctx())
     assert outcome.label == "success"
     assert outcome.outputs.get("archived_count") == 0
 
 
 async def test_no_provider_registered_returns_failure() -> None:
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     outcome = await ArchiveStaleFindings().execute({"stale_finding_ids": [str(uuid4())]}, _ctx())
     assert outcome.label == "failure"
     assert "no workflow_context provider" in (outcome.failure_reason or "")
@@ -53,7 +53,7 @@ async def test_no_provider_registered_returns_failure() -> None:
 async def test_ticket_not_found_is_noop_success() -> None:
     """Provider returns None → success with archived_count=0. Workflow
     cleanup-after-failure shouldn't re-fail."""
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     register_workflow_context_provider(_StaticProvider(context=None))
     outcome = await ArchiveStaleFindings().execute({"stale_finding_ids": [str(uuid4())]}, _ctx())
     assert outcome.label == "success"
@@ -62,7 +62,7 @@ async def test_ticket_not_found_is_noop_success() -> None:
 
 async def test_no_pr_id_is_noop_success() -> None:
     """Ticket exists but isn't linked to a PR row yet → success-no-op."""
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     register_workflow_context_provider(
         _StaticProvider(
             context=WorkspaceTicketContext(
@@ -83,7 +83,7 @@ async def test_unknown_findings_are_skipped_not_failed(db_session) -> None:  # t
     """pr_id present but the listed finding_ids aren't in the aggregate
     (hard-deleted, or stale payload from upstream) → all skipped, success
     with archived_count=0 and skipped_count=len(input)."""
-    _reset_workflow_context_provider_for_tests()
+    clear_workflow_context_provider()
     pr_id = uuid4()
     org_id = uuid4()
     register_workflow_context_provider(

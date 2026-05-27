@@ -24,7 +24,7 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.tasks import drain_once
+from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
@@ -32,19 +32,18 @@ from app.core.workflow import (
     CommandCategory,
     CommandContext,
     Outcome,
-    PendingHumanDecisionRow,
     Step,
     TerminalAction,
     Workflow,
     WorkflowEngine,
-    WorkflowExecutionRow,
     WorkflowState,
-    _reset_for_tests,
     request_cancel,
     resume_hitl,
 )
-from app.core.workspace.dispatch import (
-    _reset_recovery_policies_for_tests,
+from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
+from app.core.workflow.service import _reset_for_tests
+from app.core.workspace import (
+    clear_recovery_policies,
     register_recovery_policy,
 )
 
@@ -680,7 +679,7 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
     recovery policy, the engine inserts the recovery command as an
     appended step that runs BEFORE the failed step retries. Recovery
     fires at most once per step instance."""
-    _reset_recovery_policies_for_tests()
+    clear_recovery_policies()
     register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
 
     review_calls: list[str] = []
@@ -736,7 +735,7 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
     """Second failure with the same recovery-eligible label after recovery
     has already run falls through to Tier-3 fail — no infinite loop."""
-    _reset_recovery_policies_for_tests()
+    clear_recovery_policies()
     register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
 
     review_calls: list[str] = []

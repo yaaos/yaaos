@@ -16,16 +16,15 @@ keeps freshly-inserted rows safe while their reviewer dispatch is in-flight.
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
 import structlog
-from sqlalchemy import and_, not_, select
-from sqlalchemy.sql import exists
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.domain import tickets
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
 
 log = structlog.get_logger("reviewer.orphan_sweep")
 
@@ -39,31 +38,49 @@ async def _sweep_once() -> int:
 
     cutoff = datetime.now(UTC) - timedelta(seconds=grace)
 
-    async with db_session() as s:
-        stmt = select(TicketRow.id, TicketRow.org_id).where(
-            and_(
-                TicketRow.status == "running",
-                TicketRow.created_at < cutoff,
-                not_(
-                    exists().where(
-                        and_(
-                            ReviewRow.pr_id == TicketRow.pr_id,
-                            TicketRow.pr_id.is_not(None),
-                        )
+    # Fetch running tickets older than the grace window via the public tickets
+    # surface. Each triple is (ticket_id, org_id, pr_id).
+    candidates = await tickets.list_running_older_than(cutoff)
+    if not candidates:
+        return 0
+
+    # Partition: tickets with a pr_id need a ReviewRow check (intra-reviewer
+    # model — no module boundary violation). Tickets without a pr_id are
+    # always orphan candidates.
+    pr_ids_to_ticket: dict[UUID, tuple[UUID, UUID]] = {}
+    no_pr_candidates: list[tuple[UUID, UUID]] = []
+    for ticket_id, org_id, pr_id in candidates:
+        if pr_id is not None:
+            pr_ids_to_ticket[pr_id] = (ticket_id, org_id)
+        else:
+            no_pr_candidates.append((ticket_id, org_id))
+
+    # Find which pr_ids already have a ReviewRow (those are not orphans).
+    covered_pr_ids: set[UUID] = set()
+    if pr_ids_to_ticket:
+        async with db_session() as s:
+            covered_pr_ids = {
+                r[0]
+                for r in (
+                    await s.execute(
+                        select(ReviewRow.pr_id).where(ReviewRow.pr_id.in_(list(pr_ids_to_ticket)))
                     )
-                ),
-            )
-        )
-        rows = (await s.execute(stmt)).all()
+                ).all()
+            }
+
+    orphans: list[tuple[UUID, UUID]] = list(no_pr_candidates)
+    for pr_id, (ticket_id, org_id) in pr_ids_to_ticket.items():
+        if pr_id not in covered_pr_ids:
+            orphans.append((ticket_id, org_id))
 
     failed = 0
-    for ticket_id, org_id in rows:
+    for ticket_id, org_id in orphans:
         try:
             await tickets.fail(ticket_id, reason=ORPHAN_REASON, org_id=org_id)
             failed += 1
         except Exception:
-            # `_transition` rejects terminal states (won), or another sweep
-            # process beat us. Either way, not fatal — log and move on.
+            # `_transition` rejects terminal states, or another sweep process
+            # beat us. Either way, not fatal — log and move on.
             log.warning("orphan_sweep.transition_failed", ticket_id=str(ticket_id))
     if failed:
         log.info("orphan_sweep.swept", count=failed)

@@ -20,8 +20,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.core.plugin_kit import PluginMeta
-from app.domain.vcs.registry import _PLUGINS
-from app.domain.vcs.types import (
+from app.domain.vcs import (
     Comment,
     Diff,
     FileSummary,
@@ -29,6 +28,7 @@ from app.domain.vcs.types import (
     ReviewPostResult,
     VCSPullRequest,
 )
+from app.domain.vcs.registry import _PLUGINS
 
 
 def _default_pr(external_id: str = "owner/repo#1", plugin_id: str = "github") -> VCSPullRequest:

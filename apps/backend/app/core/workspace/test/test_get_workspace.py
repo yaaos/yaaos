@@ -12,7 +12,7 @@ import pytest
 
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace import (
-    _reset_providers_for_tests,
+    clear_workspace_providers,
     get_workspace,
     register_workspace_provider,
 )
@@ -45,10 +45,10 @@ class _StubWorkspaceProvider:
 
 @pytest.fixture
 def _stub_provider():
-    _reset_providers_for_tests()
+    clear_workspace_providers()
     register_workspace_provider(_StubWorkspaceProvider())
     yield
-    _reset_providers_for_tests()
+    clear_workspace_providers()
 
 
 async def test_returns_none_for_missing_row(_stub_provider) -> None:
@@ -79,7 +79,7 @@ async def test_returns_none_when_plugin_state_unset(db_session, _stub_provider) 
 async def test_returns_none_when_provider_not_registered(db_session) -> None:  # type: ignore[no-untyped-def]
     """Row points to a provider id that's not currently registered —
     deployment-level misconfig. Caller surfaces as failure."""
-    _reset_providers_for_tests()
+    clear_workspace_providers()
     ws_id = uuid4()
     db_session.add(
         WorkspaceRow(

@@ -54,14 +54,6 @@ from app.domain.reviewer.llm import (
     classify_reply,
 )
 from app.domain.reviewer.lock import acquire_pr_lock
-from app.domain.reviewer.models import (
-    AcknowledgmentDecisionRow,
-    CommentMessageRow,
-    CommentThreadRow,
-    FindingObservationRow,
-    FindingRow,
-    ReviewRow,
-)
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
@@ -79,6 +71,7 @@ from app.domain.reviewer.service import (
     ThreadMessageView,
     ThreadView,
     VerifyFixAction,
+    aggregate_findings_by_prs,
     all_conversations_view,
     apply_classified_reply,
     apply_stale_check_result,
@@ -86,6 +79,8 @@ from app.domain.reviewer.service import (
     compute_acceptance_rate,
     compute_resolved_without_edit_rate,
     dispatch_events,
+    find_pr_id_by_external_comment_id,
+    get_org_id_for_review,
     get_review,
     get_thread,
     is_off_topic_message,
@@ -129,7 +124,6 @@ __all__ = [
     "VERIFY_OBSERVE_THRESHOLD",
     "AckKind",
     "AcknowledgmentDecision",
-    "AcknowledgmentDecisionRow",
     "AdmissionDrop",
     "AgentReplyPosted",
     "AggregateRepository",
@@ -138,10 +132,8 @@ __all__ = [
     "ClassifyReplyOutput",
     "CodeAnchor",
     "CommentMessage",
-    "CommentMessageRow",
     "CommentReplyReceived",
     "CommentThread",
-    "CommentThreadRow",
     "ConversationView",
     "Debounce",
     "DomainEvent",
@@ -150,11 +142,9 @@ __all__ = [
     "FindingAnchorUpdated",
     "FindingFingerprint",
     "FindingObservation",
-    "FindingObservationRow",
     "FindingRaised",
     "FindingReObserved",
     "FindingResolutionDetected",
-    "FindingRow",
     "FindingStaleDetected",
     "FindingState",
     "FindingStateChanged",
@@ -169,7 +159,6 @@ __all__ = [
     "ReviewJob",
     "ReviewJobInput",
     "ReviewRequested",
-    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -187,6 +176,7 @@ __all__ = [
     "TriggerInputs",
     "VerifyFixAction",
     "acquire_pr_lock",
+    "aggregate_findings_by_prs",
     "all_conversations_view",
     "apply_classified_reply",
     "apply_stale_check_result",
@@ -197,6 +187,8 @@ __all__ = [
     "compute_resolved_without_edit_rate",
     "decide_trigger",
     "dispatch_events",
+    "find_pr_id_by_external_comment_id",
+    "get_org_id_for_review",
     "get_review",
     "get_thread",
     "handle_developer_reply",
@@ -219,7 +211,7 @@ class _TicketWorkflowContextProvider:
     by `_register_workflows()` at module import."""
 
     async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        from app.domain.tickets.service import get_workspace_ticket_context  # noqa: PLC0415
+        from app.domain.tickets import get_workspace_ticket_context  # noqa: PLC0415
 
         return await get_workspace_ticket_context(ticket_id)
 
@@ -234,29 +226,13 @@ async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-unty
     Returns the number of workflow rows that were transitioned to
     `cancelled` (or had `cancel_requested` set, depending on engine state).
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
     from app.core.database import session as db_session  # noqa: PLC0415
-    from app.core.workflow import (  # noqa: PLC0415
-        TERMINAL_STATES,
-        WorkflowExecutionRow,
-        WorkflowState,
-        request_cancel,
-    )
+    from app.core.workflow import list_active_execution_ids, request_cancel  # noqa: PLC0415
 
     cancelled = 0
     async with db_session() as s:
-        rows = (
-            await s.execute(
-                select(WorkflowExecutionRow.id, WorkflowExecutionRow.state).where(
-                    WorkflowExecutionRow.ticket_id == ticket_id,
-                    WorkflowExecutionRow.state.notin_([st.value for st in TERMINAL_STATES]),
-                )
-            )
-        ).all()
-        for wfx_id, state in rows:
-            if WorkflowState(state) in TERMINAL_STATES:
-                continue
+        active_ids = await list_active_execution_ids(ticket_id, session=s)
+        for wfx_id in active_ids:
             if await request_cancel(str(wfx_id), session=s):
                 cancelled += 1
         if cancelled:
@@ -313,8 +289,10 @@ def _register_workflows() -> None:
     read ticket fields. Called at import time; idempotent on re-import
     (tests reset the engine)."""
     from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
-    from app.core.workspace import register_workflow_context_provider  # noqa: PLC0415
-    from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
+    from app.core.workspace import (  # noqa: PLC0415
+        ALL_LIFECYCLE_COMMANDS,
+        register_workflow_context_provider,
+    )
     from app.domain.reviewer.commands import (  # noqa: PLC0415
         ALL_LOCAL_COMMANDS,
         ALL_WORKSPACE_COMMANDS,

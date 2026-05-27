@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,13 @@ log = structlog.get_logger("domain.mcp_proxy")
 
 
 REVIEW_TOKEN_TTL = timedelta(hours=2)
+
+
+class McpToken(BaseModel):
+    """Value object returned by `lookup_token`. Represents a valid, non-expired bearer."""
+
+    review_id: UUID
+    expires_at: datetime
 
 
 def _hash(raw: str) -> str:
@@ -60,8 +68,8 @@ async def lookup_token(
     raw_token: str,
     *,
     session: AsyncSession,
-) -> McpReviewTokenRow | None:
-    """Return the row matching `raw_token` if not expired; None otherwise.
+) -> McpToken | None:
+    """Return a `McpToken` for `raw_token` if not expired; None otherwise.
     Raw tokens never live in the DB — we hash and look up by primary key."""
     token_hash = _hash(raw_token)
     row = (
@@ -71,7 +79,7 @@ async def lookup_token(
         return None
     if row.expires_at < datetime.now(UTC):
         return None
-    return row
+    return McpToken(review_id=row.review_id, expires_at=row.expires_at)
 
 
 async def revoke_token(

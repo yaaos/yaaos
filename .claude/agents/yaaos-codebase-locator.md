@@ -1,7 +1,8 @@
 ---
 name: yaaos-codebase-locator
 description: Wave 1 mapper for the yaaos-review pipeline. Locates files, directories, and components relevant to a diff. Returns structured file listings grouped by purpose — never reads file contents, never critiques. Outside the review pipeline, may also be used as a general file-discovery agent.
-model: sonnet
+model: claude-haiku-4-5
+effort: low
 disable-model-invocation: true
 tools: Read, Grep, Glob, Write
 ---

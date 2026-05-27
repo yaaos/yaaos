@@ -1,17 +1,16 @@
-"""Service entry-points for `domain/orgs`.
-
-Skeleton at Phase 1 — concrete invite/accept/role flows ship in Phase 6.
-Re-exports the public types so callers import from `app.domain.orgs`.
-"""
+"""Service entry-points for `domain/orgs`."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import BaseModel
+from sqlalchemy import delete as sql_delete
 
+from app.core.database import session as db_session
 from app.domain.orgs.models import InvitationRow, MembershipRow, OrgRow, SsoConfigRow
+from app.domain.orgs.repository import get_org as _repo_get_org
 from app.domain.orgs.types import (
     InsufficientRoleError,
     InvitationError,
@@ -27,6 +26,7 @@ class Org(BaseModel):
     display_name: str
     archived_at: datetime | None
     created_at: datetime
+    workspace_provider: str | None
 
     @classmethod
     def from_row(cls, row: OrgRow) -> Org:
@@ -36,6 +36,7 @@ class Org(BaseModel):
             display_name=row.display_name,
             archived_at=row.archived_at,
             created_at=row.created_at,
+            workspace_provider=row.workspace_provider,
         )
 
 
@@ -99,6 +100,55 @@ class SsoConfig(BaseModel):
         )
 
 
+async def get_org(org_id: UUID) -> Org | None:
+    """Return the `Org` value object for *org_id*, or ``None`` if not found."""
+    async with db_session() as s:
+        row = await _repo_get_org(s, org_id)
+    return Org.from_row(row) if row is not None else None
+
+
+async def delete_expired_invitations() -> int:
+    """Delete all unaccepted, past-expiry invitations. Returns the count deleted."""
+    async with db_session() as s:
+        result = await s.execute(
+            sql_delete(InvitationRow)
+            .where(
+                InvitationRow.expires_at < datetime.now(UTC),
+                InvitationRow.accepted_at.is_(None),
+            )
+            .returning(InvitationRow.id)
+        )
+        n = len(result.all())
+        await s.commit()
+        return n
+
+
+async def find_saml_org_slug_for_domain(domain: str) -> str | None:
+    """Return the org slug for the SAML SSO config that covers *domain*, or
+    ``None`` when no enabled config matches.
+
+    Scans enabled `sso_configs` rows whose `email_domains` JSONB array contains
+    *domain* (case-sensitive; callers must normalize before calling). Returns the
+    first match — at most one enabled config per domain is expected.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(SsoConfigRow, OrgRow)
+                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
+                .where(SsoConfigRow.enabled.is_(True))
+                .where(SsoConfigRow.email_domains.op("?")(domain))
+                .limit(1)
+            )
+        ).first()
+    if row is None:
+        return None
+    _, org = row
+    return org.slug
+
+
 __all__ = [
     "InsufficientRoleError",
     "Invitation",
@@ -109,4 +159,7 @@ __all__ = [
     "OrgNotFoundError",
     "Role",
     "SsoConfig",
+    "delete_expired_invitations",
+    "find_saml_org_slug_for_domain",
+    "get_org",
 ]

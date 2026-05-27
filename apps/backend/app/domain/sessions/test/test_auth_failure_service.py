@@ -21,7 +21,7 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI
 from sqlalchemy import select
 
-from app.core.audit_log.models import AuditEntryRow
+from app.core.audit_log import list_for_entity
 from app.core.auth import AuthMiddleware
 from app.core.auth.auth_failure import register_handler
 from app.core.auth.types import Action
@@ -160,19 +160,7 @@ async def test_org_scoped_idle_timeout_clears_cookies_and_writes_audit(seeded, d
     _assert_cookies_cleared(resp)
 
     # Audit row must be present.
-    audit_rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.org_id == seeded["org"].id,
-                    AuditEntryRow.entity_kind == "user",
-                    AuditEntryRow.kind == "logout",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    audit_rows = await list_for_entity("user", seeded["user"].id, org_id=seeded["org"].id, kinds=["logout"])
     assert len(audit_rows) == 1, f"expected 1 idle-timeout audit row, got {len(audit_rows)}"
     assert audit_rows[0].payload == {"kind": "idle_timeout"}
     assert audit_rows[0].entity_id == seeded["user"].id

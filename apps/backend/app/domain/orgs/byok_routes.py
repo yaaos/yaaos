@@ -21,15 +21,12 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from app.core import byok as byok_service
-from app.core.auth.context import org_id_var
-from app.core.auth.types import Action
-from app.core.byok.models import ByokKeyRow
+from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions.dependencies import current_actor, require
+from app.domain.sessions import current_actor, require
 
 log = structlog.get_logger("byok.web")
 
@@ -65,20 +62,17 @@ async def list_providers() -> list[ProviderStatus]:
     if org_id is None:
         raise _err(400, "no_org_context")
     async with db_session() as s:
-        rows = {
-            r.provider: r
-            for r in (await s.execute(select(ByokKeyRow).where(ByokKeyRow.org_id == org_id))).scalars().all()
-        }
+        keys = {k.provider: k for k in await byok_service.list_keys_for_org(org_id, session=s)}
     out: list[ProviderStatus] = []
     for prov in _known_providers():
-        r = rows.get(prov)
+        k = keys.get(prov)
         out.append(
             ProviderStatus(
                 provider=prov,
-                status="configured" if r is not None else "not_set",
-                last_validated_at=r.last_validated_at if r else None,
-                last_used_at=r.last_used_at if r else None,
-                updated_at=r.updated_at if r else None,
+                status="configured" if k is not None else "not_set",
+                last_validated_at=k.last_validated_at if k else None,
+                last_used_at=k.last_used_at if k else None,
+                updated_at=k.updated_at if k else None,
             )
         )
     return out

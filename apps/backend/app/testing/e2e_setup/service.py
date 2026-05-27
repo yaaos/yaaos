@@ -181,27 +181,26 @@ async def seed_broken_integration(*, org_slug: str, provider: str = "linear") ->
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.core.secrets import encrypt  # noqa: PLC0415
-    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+    from app.domain.integrations import create_credential  # noqa: PLC0415
     from app.domain.orgs.models import OrgRow  # noqa: PLC0415
 
     async with db_session() as s:
         org = (await s.execute(select(OrgRow).where(OrgRow.slug == org_slug))).scalar_one_or_none()
         if org is None:
             raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
-        s.add(
-            McpCredentialRow(
-                org_id=org.id,
-                provider=provider,
-                encrypted_access_token=encrypt("stub-access").decode(),
-                encrypted_refresh_token=None,
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-                scopes=["read"],
-                allowed_tools=[],
-                enabled=True,
-                upstream_identity=f"{provider}-bot",
-                last_refresh_status="failed",
-                last_refresh_failed_at=datetime.now(UTC),
-            )
+        await create_credential(
+            s,
+            org_id=org.id,
+            provider=provider,
+            encrypted_access_token=encrypt("stub-access").decode(),
+            encrypted_refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            scopes=["read"],
+            allowed_tools=[],
+            enabled=True,
+            upstream_identity=f"{provider}-bot",
+            last_refresh_status="failed",
+            last_refresh_failed_at=datetime.now(UTC),
         )
         await s.commit()
 
@@ -230,33 +229,26 @@ async def seed_bootstrap_owner(
     `(email, external_subject, org_slug)`. The provider defaults to
     `github`; tests using the `oauth_test` stub pass `provider="test"`
     so the subsequent test-stub login matches by identity."""
-    from datetime import UTC, datetime  # noqa: PLC0415
     from uuid import uuid4 as _uuid4  # noqa: PLC0415
 
-    from app.domain.identity.models import OAuthIdentityRow, UserEmailRow, UserRow  # noqa: PLC0415
+    from app.domain.identity import service as identity_svc  # noqa: PLC0415
     from app.domain.orgs.models import MembershipRow, OrgRow  # noqa: PLC0415
 
     async with db_session() as s:
-        user = UserRow(id=_uuid4(), display_name=display_name)
-        s.add(user)
-        await s.flush()
-        s.add(
-            UserEmailRow(
-                id=_uuid4(),
-                user_id=user.id,
-                email=email.lower(),
-                is_primary=True,
-                verified_at=datetime.now(UTC),
-            )
+        user = await identity_svc.create_user(s, display_name=display_name)
+        await identity_svc.create_email(
+            s,
+            user_id=user.id,
+            email=email.lower(),
+            is_primary=True,
+            verified=True,
         )
-        s.add(
-            OAuthIdentityRow(
-                id=_uuid4(),
-                user_id=user.id,
-                provider=provider,
-                external_subject=str(github_id),
-                verified_at=datetime.now(UTC),
-            )
+        await identity_svc.create_oauth_identity(
+            s,
+            user_id=user.id,
+            provider=provider,
+            external_subject=str(github_id),
+            verified=True,
         )
         org = OrgRow(id=_uuid4(), slug=org_slug, display_name=org_slug)
         s.add(org)
@@ -279,42 +271,32 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
     `yaaos_session` cookie to `raw_session_token` and the backend resolves
     the session normally."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
-    from uuid import uuid4 as _uuid4  # noqa: PLC0415
 
     from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.identity.models import (  # noqa: PLC0415
-        SessionRow,
-        UserEmailRow,
-        UserRow,
-    )
+    from app.domain.identity import service as identity_svc  # noqa: PLC0415
 
     async with db_session() as s:
         existing = await identity_repo.find_user_by_email(s, email)
         if existing is not None:
             user = existing
         else:
-            user = UserRow(id=_uuid4(), display_name=email.split("@", 1)[0])
-            s.add(user)
-            await s.flush()
-            s.add(
-                UserEmailRow(
-                    id=_uuid4(),
-                    user_id=user.id,
-                    email=email.lower(),
-                    is_primary=True,
-                    verified_at=datetime.now(UTC),
-                )
-            )
-        s.add(
-            SessionRow(
-                token_hash=identity_repo.hash_token(raw_session_token),
+            user = await identity_svc.create_user(s, display_name=email.split("@", 1)[0])
+            await identity_svc.create_email(
+                s,
                 user_id=user.id,
-                workspace_id=None,
-                csrf_token="e2e-csrf",
-                ip=None,
-                user_agent="e2e",
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                email=email.lower(),
+                is_primary=True,
+                verified=True,
             )
+        await identity_svc.create_session(
+            s,
+            token_hash=identity_repo.hash_token(raw_session_token),
+            user_id=user.id,
+            workspace_id=None,
+            csrf_token="e2e-csrf",
+            ip=None,
+            user_agent="e2e",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
         await s.commit()
         return str(user.id)

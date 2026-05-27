@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.domain.identity import sessions
 from app.domain.identity.models import UserTotpSecretRow
-from app.domain.orgs.models import InvitationRow
+from app.domain.orgs import delete_expired_invitations
 
 log = structlog.get_logger("identity.cleanup")
 
@@ -28,18 +28,7 @@ UNVERIFIED_TOTP_TTL = timedelta(hours=24)
 
 
 async def _purge_expired_invitations() -> int:
-    async with db_session() as s:
-        result = await s.execute(
-            sql_delete(InvitationRow)
-            .where(
-                InvitationRow.expires_at < datetime.now(UTC),
-                InvitationRow.accepted_at.is_(None),
-            )
-            .returning(InvitationRow.id)
-        )
-        n = len(result.all())
-        await s.commit()
-        return n
+    return await delete_expired_invitations()
 
 
 async def _purge_stale_unverified_totp_secrets() -> int:

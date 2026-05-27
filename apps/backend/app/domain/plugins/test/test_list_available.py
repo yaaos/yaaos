@@ -20,12 +20,12 @@ from app.domain.sessions import web as _auth_web  # noqa: F401
 @pytest.fixture(autouse=True)
 def _ensure_plugins_registered() -> None:
     """Re-register plugins if a prior test cleared the registries."""
-    from app.domain.coding_agent.service import _PLUGINS as _CA_PLUGINS  # noqa: PLC0415
+    from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
     from app.domain.vcs.registry import _PLUGINS as _V_PLUGINS  # noqa: PLC0415
     from app.plugins.claude_code.service import bootstrap as _cc_bootstrap  # noqa: PLC0415
     from app.plugins.github.service import bootstrap as _gh_bootstrap  # noqa: PLC0415
 
-    if "claude_code" not in _CA_PLUGINS:
+    if "claude_code" not in _ca_ids():
         _cc_bootstrap()
     if "github" not in _V_PLUGINS:
         _gh_bootstrap()
