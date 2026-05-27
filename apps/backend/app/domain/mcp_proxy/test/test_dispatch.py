@@ -29,7 +29,7 @@ from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
-from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations import create_credential
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import (
     consume_broken_creds,
@@ -196,21 +196,18 @@ async def _seed_credential(
     allowed_tools: list[str] | None = None,
     expires_in_seconds: int = 3600,
 ):
-    row = McpCredentialRow(
+    row = await create_credential(
+        db_session,
         org_id=org_id,
         provider="stub_disp",
         encrypted_access_token=encrypt("upstream-access").decode(),
-        encrypted_refresh_token=None,
         expires_at=datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
         scopes=["read"],
         allowed_tools=allowed_tools or [],
         enabled=enabled,
         upstream_identity="stub-bot",
         last_refresh_status=last_refresh_status,
-        last_validated_at=datetime.now(UTC),
     )
-    db_session.add(row)
-    await db_session.flush()
     await db_session.commit()
     return row
 

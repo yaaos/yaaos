@@ -1,14 +1,12 @@
-"""domain/integrations — per-(org, provider) hosted-MCP OAuth credentials.
+"""domain/integrations — per-(org, provider) hosted-MCP OAuth credentials."""
 
-Phase 1: service surface (connect_callback / get / clear / validate /
-update_allowlist). Advisory-lock-guarded `refresh` ships in a later sub-phase.
-"""
-
-from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.service import (
+    McpCredential,
     clear,
     connect_callback,
+    create_credential,
     get,
+    list_broken_credentials_for_org,
     update_allowlist,
     validate,
 )
@@ -29,14 +27,16 @@ __all__ = [
     "IntegrationError",
     "IntegrationNotConnectedError",
     "IntegrationProvider",
-    "McpCredentialRow",
+    "McpCredential",
     "ProviderConfig",
     "ProviderNotRegisteredError",
     "clear",
     "connect_callback",
+    "create_credential",
     "get",
     "get_provider",
     "known_providers",
+    "list_broken_credentials_for_org",
     "register_provider",
     "update_allowlist",
     "validate",

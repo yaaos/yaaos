@@ -289,10 +289,8 @@ async def me(
     URL is selected; on routes that need it, the SPA adds `X-Org-Slug` from
     the URL path. 401 when there's no session.
     """
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
     from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+    from app.domain.integrations import list_broken_credentials_for_org  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
     from app.domain.orgs.types import Role as _Role  # noqa: PLC0415
 
@@ -313,27 +311,15 @@ async def me(
             broken: list[dict[str, str | None]] = []
             # Owners + Admins see broken integrations; Members get an empty list.
             if _Role(m.role).covers(_Role.ADMIN):
-                broken_rows = (
-                    (
-                        await s.execute(
-                            _select(McpCredentialRow).where(
-                                McpCredentialRow.org_id == org.id,
-                                McpCredentialRow.enabled.is_(True),
-                                McpCredentialRow.last_refresh_status == "failed",
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
+                broken_creds = await list_broken_credentials_for_org(s, org.id)
                 broken = [
                     {
-                        "provider": r.provider,
+                        "provider": c.provider,
                         "last_refresh_failed_at": (
-                            r.last_refresh_failed_at.isoformat() if r.last_refresh_failed_at else None
+                            c.last_refresh_failed_at.isoformat() if c.last_refresh_failed_at else None
                         ),
                     }
-                    for r in broken_rows
+                    for c in broken_creds
                 ]
             memberships_view.append(
                 {

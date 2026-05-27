@@ -27,7 +27,7 @@ from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
-from app.domain.integrations.models import McpCredentialRow
+from app.domain.integrations import create_credential
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
@@ -137,22 +137,19 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
     )
     db_session.add(review)
     await db_session.flush()
-    db_session.add(
-        McpCredentialRow(
-            org_id=org.id,
-            provider="stub_pipeline",
-            encrypted_access_token=encrypt("upstream-access").decode(),
-            encrypted_refresh_token=None,
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-            scopes=["read"],
-            allowed_tools=[],
-            enabled=True,
-            upstream_identity="stub-bot",
-            last_refresh_status="failed",
-            last_refresh_failed_at=datetime.now(UTC),
-        )
+    await create_credential(
+        db_session,
+        org_id=org.id,
+        provider="stub_pipeline",
+        encrypted_access_token=encrypt("upstream-access").decode(),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        scopes=["read"],
+        allowed_tools=[],
+        enabled=True,
+        upstream_identity="stub-bot",
+        last_refresh_status="failed",
+        last_refresh_failed_at=datetime.now(UTC),
     )
-    await db_session.flush()
     raw = await mint_token(review.id, session=db_session)
     await db_session.commit()
     return review, raw

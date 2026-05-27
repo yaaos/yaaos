@@ -15,6 +15,9 @@ Exported from `app/domain/integrations/__init__.py`:
 - `clear(session, *, org_id, provider, actor) -> bool` — deletes the row, audits `mcp.<provider>.disconnected`.
 - `validate(session, *, org_id, provider, actor) -> bool` — calls the provider's `validate(access_token)`. On success flips `last_refresh_status="ok"` + clears `last_refresh_failed_at`; on failure flips `"failed"` + stamps the failure time. Audits `mcp.<provider>.validated`.
 - `update_allowlist(session, *, org_id, provider, allowed_tools, actor)` — replaces the per-tool allowlist, audits `mcp.<provider>.allowlist_updated`.
+- `list_broken_credentials_for_org(session, org_id) -> list[McpCredential]` — returns `McpCredential` value objects for all enabled credentials where `last_refresh_status == "failed"`. Used by `domain/sessions/web` to surface the broken-integrations banner to Admins/Owners.
+- `create_credential(session, *, org_id, provider, encrypted_access_token, expires_at, scopes, ...) -> McpCredentialRow` — inserts a new credential row with the supplied fields. Intended for seed helpers and test fixtures that need a known state without going through OAuth.
+- `McpCredential` — Pydantic value object exposing: `org_id`, `provider`, `enabled`, `last_refresh_status`, `last_refresh_failed_at`, `upstream_identity`.
 - `IntegrationProvider` Protocol — `provider_id`, `config: ProviderConfig`, `validate(access_token) -> bool`.
 - `register_provider(provider)` / `get_provider(provider_id)` / `known_providers()` — bootstrap-time registry that keeps `domain/integrations` free of plugin imports.
 - Errors: `IntegrationError`, `ProviderNotRegisteredError`, `IntegrationNotConnectedError`, `BrokenCredentialsError`.
@@ -40,7 +43,7 @@ An hourly health-check loop (`scheduler.run_scheduler_loop`) is spawned via the 
 
 ## How it's tested
 
-- `app/domain/integrations/test/test_service.py` round-trips `connect_callback` / `clear` / `validate` / `update_allowlist` against a stubbed `IntegrationProvider` registered into `_REGISTRY`.
+- `app/domain/integrations/test/test_service.py` round-trips `connect_callback` / `clear` / `validate` / `update_allowlist` / `list_broken_credentials_for_org` against a stubbed `IntegrationProvider` registered into `_REGISTRY`. The `list_broken_credentials_for_org` case seeds enabled-failed, enabled-ok, and disabled-failed rows; asserts only the enabled-failed row appears.
 - `app/domain/integrations/test/test_endpoints.py` drives every HTTP route (incl. auth triplet: 401 / 403 / 404 / success).
 - `app/domain/integrations/test/test_scheduler.py` covers the hourly health-check: success keeps status `"ok"`; failure flips status + audits + emails owners; 24h dedup suppresses repeat emails; post-window resend fires again (also `@pytest.mark.service`).
 - **Service test** `app/domain/integrations/test/test_broken_creds_chain_service.py` (`@pytest.mark.service`) drives the cross-module chain end-to-end: scheduler flips a credential to `"failed"`, audits, emails the Owner; the next review's proxy dispatch returns `broken_creds` and the reviewer's `_prefix_broken_creds_warning` composes the GitHub callout.

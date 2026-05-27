@@ -4,21 +4,22 @@ This module owns `mcp_credentials`. Provider plugins (`plugins/linear`,
 `plugins/notion`) register themselves with `register_provider(...)` at
 boot; this service consumes the registry and stays free of plugin imports.
 
-Service surface (Phase 1):
+Public ops:
 
-- `get(org_id, provider)` — return the row or None.
-- `connect_callback(provider, code, state, org_id, redirect_uri, actor)` —
+- `get(session, org_id, provider)` — return the row or None.
+- `connect_callback(session, *, provider, code, org_id, redirect_uri, actor, upstream_identity=None)` —
   exchange the code via `core/oauth`, persist encrypted tokens, audit
   `mcp.<provider>.connected`.
-- `clear(org_id, provider, actor)` — delete the row, audit
+- `clear(session, *, org_id, provider, actor)` — delete the row, audit
   `mcp.<provider>.disconnected`.
-- `validate(org_id, provider, actor)` — call the plugin's `validate(...)`,
+- `validate(session, *, org_id, provider, actor)` — call the plugin's `validate(...)`,
   flip `last_refresh_status`, audit `mcp.<provider>.validated`.
-- `update_allowlist(org_id, provider, allowed_tools, actor)` — replace the
+- `update_allowlist(session, *, org_id, provider, allowed_tools, actor)` — replace the
   per-tool allowlist, audit `mcp.<provider>.allowlist_updated`.
-
-Advisory-lock-guarded `refresh` ships in a later sub-phase along with the
-broken-creds surfacing path.
+- `list_broken_credentials_for_org(session, org_id)` — return enabled credentials
+  where `last_refresh_status == "failed"` as `McpCredential` value objects.
+- `create_credential(session, *, org_id, provider, ...)` — insert a new credential row
+  (used by seed/test helpers that need a known state without going through OAuth).
 """
 
 from __future__ import annotations
@@ -43,6 +44,17 @@ from app.domain.integrations.types import (
 )
 
 log = structlog.get_logger("domain.integrations")
+
+
+class McpCredential(BaseModel):
+    """Value object — a single (org, provider) MCP credential. Read-only view."""
+
+    org_id: UUID
+    provider: str
+    enabled: bool
+    last_refresh_status: str | None
+    last_refresh_failed_at: datetime | None
+    upstream_identity: str | None
 
 
 class _ConnectedPayload(BaseModel):
@@ -230,4 +242,69 @@ async def update_allowlist(
         org_id=org_id,
         session=session,
     )
+    return row
+
+
+async def list_broken_credentials_for_org(
+    session: AsyncSession,
+    org_id: UUID,
+) -> list[McpCredential]:
+    """Return enabled credentials with `last_refresh_status == "failed"` for *org_id*."""
+    rows = (
+        (
+            await session.execute(
+                select(McpCredentialRow).where(
+                    McpCredentialRow.org_id == org_id,
+                    McpCredentialRow.enabled.is_(True),
+                    McpCredentialRow.last_refresh_status == "failed",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        McpCredential(
+            org_id=r.org_id,
+            provider=r.provider,
+            enabled=r.enabled,
+            last_refresh_status=r.last_refresh_status,
+            last_refresh_failed_at=r.last_refresh_failed_at,
+            upstream_identity=r.upstream_identity,
+        )
+        for r in rows
+    ]
+
+
+async def create_credential(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    provider: str,
+    encrypted_access_token: str,
+    encrypted_refresh_token: str | None = None,
+    expires_at: datetime,
+    scopes: list[str],
+    allowed_tools: list[str] | None = None,
+    enabled: bool = True,
+    upstream_identity: str | None = None,
+    last_refresh_status: str | None = None,
+    last_refresh_failed_at: datetime | None = None,
+) -> McpCredentialRow:
+    """Insert a new `mcp_credentials` row and flush. Intended for seed/test helpers."""
+    row = McpCredentialRow(
+        org_id=org_id,
+        provider=provider,
+        encrypted_access_token=encrypted_access_token,
+        encrypted_refresh_token=encrypted_refresh_token,
+        expires_at=expires_at,
+        scopes=scopes,
+        allowed_tools=allowed_tools or [],
+        enabled=enabled,
+        upstream_identity=upstream_identity,
+        last_refresh_status=last_refresh_status,
+        last_refresh_failed_at=last_refresh_failed_at,
+    )
+    session.add(row)
+    await session.flush()
     return row

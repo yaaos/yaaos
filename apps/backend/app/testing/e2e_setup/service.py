@@ -181,27 +181,26 @@ async def seed_broken_integration(*, org_slug: str, provider: str = "linear") ->
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.core.secrets import encrypt  # noqa: PLC0415
-    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+    from app.domain.integrations import create_credential  # noqa: PLC0415
     from app.domain.orgs.models import OrgRow  # noqa: PLC0415
 
     async with db_session() as s:
         org = (await s.execute(select(OrgRow).where(OrgRow.slug == org_slug))).scalar_one_or_none()
         if org is None:
             raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
-        s.add(
-            McpCredentialRow(
-                org_id=org.id,
-                provider=provider,
-                encrypted_access_token=encrypt("stub-access").decode(),
-                encrypted_refresh_token=None,
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-                scopes=["read"],
-                allowed_tools=[],
-                enabled=True,
-                upstream_identity=f"{provider}-bot",
-                last_refresh_status="failed",
-                last_refresh_failed_at=datetime.now(UTC),
-            )
+        await create_credential(
+            s,
+            org_id=org.id,
+            provider=provider,
+            encrypted_access_token=encrypt("stub-access").decode(),
+            encrypted_refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            scopes=["read"],
+            allowed_tools=[],
+            enabled=True,
+            upstream_identity=f"{provider}-bot",
+            last_refresh_status="failed",
+            last_refresh_failed_at=datetime.now(UTC),
         )
         await s.commit()
 
