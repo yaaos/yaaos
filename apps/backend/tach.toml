@@ -293,7 +293,6 @@ from = ["app.core.auth"]
 expose = [
   "ByokDecryptError",
   "ByokKey",
-  "ByokKeyRow",
   "clear",
   "get",
   "get_validator",

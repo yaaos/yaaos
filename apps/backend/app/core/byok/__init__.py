@@ -1,6 +1,5 @@
 """core/byok — bring-your-own-key storage for external LLM providers."""
 
-from app.core.byok.models import ByokKeyRow
 from app.core.byok.service import (
     ByokDecryptError,
     ByokKey,
@@ -17,7 +16,6 @@ from app.core.byok.service import (
 __all__ = [
     "ByokDecryptError",
     "ByokKey",
-    "ByokKeyRow",
     "clear",
     "get",
     "get_validator",
