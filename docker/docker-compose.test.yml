@@ -67,7 +67,7 @@ services:
       timeout: 2s
       retries: 30
 
-  yaaos:
+  web:
     image: yaaos-web-test
     build:
       context: ..
@@ -142,7 +142,7 @@ services:
     # reviewer-agent seeding run from FastAPI's lifespan hook. CMD comes
     # from the Dockerfile `web` stage.
 
-  yaaos-worker:
+  worker:
     image: yaaos-worker-test
     build:
       context: ..
