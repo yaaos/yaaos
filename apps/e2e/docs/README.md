@@ -1,6 +1,6 @@
 # e2e
 
-> Playwright suite that drives the full test stack from the browser.
+> Playwright suite that drives the full test stack from the browser. 
 
 ## Purpose
 
