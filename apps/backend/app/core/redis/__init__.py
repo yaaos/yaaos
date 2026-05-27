@@ -7,7 +7,7 @@ that `core/tasks/broker.py` passes to taskiq, raw pub/sub helpers that
 """
 
 from app.core.redis.pubsub import publish, subscribe
-from app.core.redis.service import aclose, get_client, get_url, ping
+from app.core.redis.service import aclose, get_client, get_url, ping, shutdown
 
 __all__ = [
     "aclose",
@@ -15,5 +15,11 @@ __all__ = [
     "get_url",
     "ping",
     "publish",
+    "shutdown",
     "subscribe",
 ]
+
+from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook
+
+register_web_shutdown_hook(shutdown)
+register_worker_shutdown_hook(shutdown)

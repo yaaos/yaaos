@@ -19,6 +19,11 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.shutdown_registry import (  # noqa: F401
+    ShutdownHook,
+    iter_worker_shutdown_hooks,
+    register_worker_shutdown_hook,
+)
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import write as outbox_write
 
@@ -80,7 +85,11 @@ def _reset_for_tests() -> None:
     """Save the broker's task registry and clear it — used by tests that
     register synthetic tasks. Pair every call with `_restore_after_tests()`
     so cross-test invariants (real module-level registrations) are
-    preserved. Idempotent — repeated saves clobber the snapshot."""
+    preserved. Idempotent — repeated saves clobber the snapshot.
+
+    Alias for `shutdown()` broker-drop + snapshot-clear path (tests call
+    this name; production calls `shutdown()`).
+    """
     global _REGISTRY_SNAPSHOT
     registry = get_broker().local_task_registry
     _REGISTRY_SNAPSHOT = dict(registry)
@@ -96,3 +105,22 @@ def _restore_after_tests() -> None:
     registry.clear()
     registry.update(_REGISTRY_SNAPSHOT)
     _REGISTRY_SNAPSHOT = None
+
+
+async def shutdown() -> None:
+    """Gracefully shut down the taskiq broker connection.
+
+    Called by the process shutdown registries during web/worker teardown.
+    Calls the broker's own async `shutdown()` to close its connections.
+    Does NOT drop the `_broker` singleton — keeping the object means task
+    registrations (set at import time via `@task`) remain valid; only the
+    connection is torn down. Does NOT touch `_REGISTRY_SNAPSHOT` — that is
+    managed exclusively by the test isolation helpers.
+    """
+    import contextlib as _contextlib  # noqa: PLC0415
+
+    from app.core.tasks.broker import get_broker as _get_broker  # noqa: PLC0415
+
+    _broker = _get_broker()
+    with _contextlib.suppress(Exception):
+        await _broker.shutdown()

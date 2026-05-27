@@ -328,6 +328,30 @@ Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; back
 
 Don't wrap every domain function — noise hurts more than detail helps.
 
+## Module lifecycle — `shutdown()` convention
+
+Every runtime-state module exposes a public `async def shutdown()` in `__all__`. Naming is uniform; internals may delegate to library-conventional names (`aclose` for Redis, `dispose` for SQLAlchemy, taskiq broker close). Modules self-register at import time (after `__all__` is defined) with the relevant process registry by calling `register_web_shutdown_hook(shutdown)` and/or `register_worker_shutdown_hook(shutdown)` from `app.core.shutdown_registry`.
+
+Categorization rule:
+- Web-presence only (SSE, WebSocket) → register with web registry.
+- Worker-presence only → register with worker registry.
+- Shared infra (redis, database, events, tasks) → register with both.
+
+The registries live in `app.core.shutdown_registry` (a zero-dependency standalone module) to avoid circular imports between modules that import each other.
+
+## Two process lifecycles, two registries
+
+Web and worker are separate OS processes with separate shutdown cadences. `app.core.shutdown_registry` owns both:
+
+- `register_web_shutdown_hook` / `iter_web_shutdown_hooks` — used by the web process.
+- `register_worker_shutdown_hook` / `iter_worker_shutdown_hooks` — used by the worker process.
+
+Both registries are re-exported from `core.webserver` and `core.tasks` for convenience; the canonical source is `app.core.shutdown_registry`.
+
+FastAPI lifespan teardown (in `core/webserver/app_factory.py`) iterates `iter_web_shutdown_hooks()` in reverse order. Worker runtime teardown (in `core/tasks/runtime.py`) iterates `iter_worker_shutdown_hooks()` in reverse order. Reverse order means the most-recently-registered (most-dependent) modules shut down first.
+
+Both loops wrap each hook call in `try/except` (web) or `contextlib.suppress` (worker) so one failing hook does not abort the sequence.
+
 ## Bootstrap composition order
 
 `app/main.py` is load-bearing. If steps 3–4 swap with 6 you'll mount a router before its module has registered or subscribe to an event before the bus exists. Don't reorder.
@@ -341,3 +365,5 @@ Don't wrap every domain function — noise hurts more than detail helps.
 7. Plugins — `in_memory_workspace`, `claude_code`, `github`.
 8. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 9. Build the FastAPI app — `webserver.create_app()`.
+
+Each module imported in steps 2–7 appends its `shutdown()` hook to the relevant process registry as a side effect of import. By step 9, all hooks are registered before `create_app()` wires them into the lifespan.

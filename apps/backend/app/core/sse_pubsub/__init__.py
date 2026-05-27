@@ -10,6 +10,7 @@ from app.core.sse_pubsub.service import (
     channel_for,
     get_pubsub,
     publish,
+    shutdown,
     subscribe,
     subscriber_count,
 )
@@ -19,6 +20,11 @@ __all__ = [
     "channel_for",
     "get_pubsub",
     "publish",
+    "shutdown",
     "subscribe",
     "subscriber_count",
 ]
+
+from app.core.shutdown_registry import register_web_shutdown_hook
+
+register_web_shutdown_hook(shutdown)

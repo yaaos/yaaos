@@ -20,10 +20,28 @@ The outbox is a private substrate of this module — domain callers only
 see `task`, `enqueue`, `TaskRef`.
 """
 
-from app.core.tasks.service import TaskRef, enqueue, task
+from app.core.shutdown_registry import (
+    ShutdownHook,
+    iter_worker_shutdown_hooks,
+    register_web_shutdown_hook,
+    register_worker_shutdown_hook,
+)
+from app.core.tasks.service import (
+    TaskRef,
+    enqueue,
+    shutdown,
+    task,
+)
 
 __all__ = [
+    "ShutdownHook",
     "TaskRef",
     "enqueue",
+    "iter_worker_shutdown_hooks",
+    "register_worker_shutdown_hook",
+    "shutdown",
     "task",
 ]
+
+register_web_shutdown_hook(shutdown)
+register_worker_shutdown_hook(shutdown)

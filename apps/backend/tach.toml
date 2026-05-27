@@ -6,7 +6,7 @@ exclude = [".venv", "test", "app/testing"]
 
 [[modules]]
 path = "app.core.agent_gateway"
-depends_on = ["app.core.auth", "app.core.database", "app.core.redis", "app.core.sse_pubsub", "app.core.tasks", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.redis", "app.core.shutdown_registry", "app.core.sse_pubsub", "app.core.tasks", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.audit_log"
@@ -26,11 +26,11 @@ depends_on = []
 
 [[modules]]
 path = "app.core.database"
-depends_on = ["app.core.config"]
+depends_on = ["app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.events"
-depends_on = ["app.core.auth", "app.core.webserver"]
+depends_on = ["app.core.auth", "app.core.shutdown_registry", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.llm"
@@ -50,7 +50,7 @@ depends_on = []
 
 [[modules]]
 path = "app.core.redis"
-depends_on = ["app.core.config"]
+depends_on = ["app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.saml"
@@ -62,15 +62,15 @@ depends_on = ["app.core.config"]
 
 [[modules]]
 path = "app.core.sse_pubsub"
-depends_on = ["app.core.redis"]
+depends_on = ["app.core.redis", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.tasks"
-depends_on = ["app.core.database", "app.core.observability", "app.core.redis", "app.core.workflow"]
+depends_on = ["app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.workflow"]
 
 [[modules]]
 path = "app.core.webserver"
-depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis"]
+depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.workflow"
@@ -224,6 +224,7 @@ expose = [
   "record_heartbeat",
   "record_workspace_event",
   "revoke_all_for_org",
+  "shutdown",
 ]
 from = ["app.core.agent_gateway"]
 
@@ -320,6 +321,7 @@ expose = [
   "ping",
   "session",
   "set_test_session_override",
+  "shutdown",
 ]
 from = ["app.core.database"]
 
@@ -330,6 +332,7 @@ expose = [
   "publish",
   "publish_after_commit",
   "serialize_for_sse",
+  "shutdown",
   "stream_events_for_filter",
   "subscribe",
   "subscriber_count",
@@ -387,6 +390,7 @@ expose = [
   "get_url",
   "ping",
   "publish",
+  "shutdown",
   "subscribe",
 ]
 from = ["app.core.redis"]
@@ -411,21 +415,35 @@ expose = [
   "channel_for",
   "get_pubsub",
   "publish",
+  "shutdown",
   "subscribe",
   "subscriber_count",
 ]
 from = ["app.core.sse_pubsub"]
 
 [[interfaces]]
-expose = ["TaskRef", "enqueue", "task"]
+expose = [
+  "ShutdownHook",
+  "TaskRef",
+  "enqueue",
+  "iter_worker_shutdown_hooks",
+  "register_worker_shutdown_hook",
+  "shutdown",
+  "task",
+]
 from = ["app.core.tasks"]
 
 [[interfaces]]
 expose = [
   "RouteSpec",
+  "ShutdownHook",
   "create_app",
+  "iter_web_shutdown_hooks",
+  "iter_worker_shutdown_hooks",
   "mount_specs",
   "register_routes",
+  "register_web_shutdown_hook",
+  "register_worker_shutdown_hook",
 ]
 from = ["app.core.webserver"]
 

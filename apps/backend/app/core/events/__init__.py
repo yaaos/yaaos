@@ -7,6 +7,7 @@ from app.core.events.service import (
     publish,
     publish_after_commit,
     serialize_for_sse,
+    shutdown,
     stream_events_for_filter,
     subscribe,
     subscriber_count,
@@ -18,7 +19,13 @@ __all__ = [
     "publish",
     "publish_after_commit",
     "serialize_for_sse",
+    "shutdown",
     "stream_events_for_filter",
     "subscribe",
     "subscriber_count",
 ]
+
+from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook
+
+register_web_shutdown_hook(shutdown)
+register_worker_shutdown_hook(shutdown)

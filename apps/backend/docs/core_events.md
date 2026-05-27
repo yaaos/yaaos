@@ -8,13 +8,14 @@ Thin in-process transport. Domain modules `publish()` typed events; UI clients s
 
 ## Public interface
 
-Exports `Event`, `EventFilter`, `publish`, `publish_after_commit`, `subscribe`, `serialize_for_sse`, `stream_events_for_filter`, `subscriber_count`. See `apps/backend/app/core/events/__init__.py`.
+Exports `Event`, `EventFilter`, `publish`, `publish_after_commit`, `subscribe`, `serialize_for_sse`, `stream_events_for_filter`, `subscriber_count`, `shutdown`. See `apps/backend/app/core/events/__init__.py`.
 
 - `Event` — base Pydantic class; domain modules subclass.
 - `EventFilter` — subscriber filter (`ticket_id`, `kinds`).
 - `publish(event)` — fire-and-forget dispatch to matching subscribers.
 - `publish_after_commit(session, event)` — canonical helper for write-path code: stash on `session.info`, flush via a SQLAlchemy `after_commit` listener. Commit publishes; rollback discards. Use this whenever the event is tied to a transaction the caller owns.
 - `subscribe(filter)` — async iterator over matching events; auto-unregisters on consumer exit.
+- `shutdown()` — clears all in-memory subscribers; self-registered with both web and worker shutdown registries at import time.
 
 HTTP route registered by the module:
 - `GET /api/events` — SSE stream. Query params: `ticket_id` (UUID), `kinds` (repeatable). Registered from `core/events/web.py`.
@@ -72,4 +73,4 @@ None. Subscriber registry in-memory; reset on process restart.
 
 ## How it's tested
 
-`app/core/events/test/test_pubsub.py` covers the publish/subscribe contract — filter matching, queue overflow drop, unregistration on consumer exit. The SSE endpoint is exercised end-to-end against `TestClient`. Tests import `_reset_for_tests` directly from `app.core.events.service` to clear subscribers between cases.
+`app/core/events/test/test_pubsub.py` covers the publish/subscribe contract — filter matching, queue overflow drop, unregistration on consumer exit. The SSE endpoint is exercised end-to-end against `TestClient`. Tests import `_reset_for_tests` directly from `app.core.events.service` to clear subscribers between cases. `shutdown()` smoke tests live in `app/core/events/test/test_shutdown.py`.

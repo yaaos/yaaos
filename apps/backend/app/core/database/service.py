@@ -988,3 +988,9 @@ async def dispose() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
+
+
+async def shutdown() -> None:
+    """Async alias for `dispose()`. Called by the process shutdown registries
+    during web/worker teardown. Idempotent."""
+    await dispose()

@@ -30,6 +30,7 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
+    shutdown,
 )
 from app.core.agent_gateway.subscribers import (
     get_registry as get_subscriber_registry,
@@ -101,4 +102,9 @@ __all__ = [
     "record_heartbeat",
     "record_workspace_event",
     "revoke_all_for_org",
+    "shutdown",
 ]
+
+from app.core.shutdown_registry import register_web_shutdown_hook
+
+register_web_shutdown_hook(shutdown)

@@ -8,13 +8,14 @@ DB infrastructure layer every other module sits on. Owns the async engine and se
 
 ## Public interface
 
-Exports `Base`, `get_engine`, `get_sessionmaker`, `session`, `ping`, `ensure_schema_migrations_table`, `migrate`, `dispose`, `set_test_session_override`. See `apps/backend/app/core/database/__init__.py`.
+Exports `Base`, `get_engine`, `get_sessionmaker`, `session`, `ping`, `ensure_schema_migrations_table`, `migrate`, `dispose`, `shutdown`, `set_test_session_override`. See `apps/backend/app/core/database/__init__.py`.
 
 - `Base` — declarative base; module models inherit.
 - `session()` — async context manager yielding `AsyncSession`; caller decides commit/rollback. When a test override is installed, returns the override (so production code's `async with session() as s:` runs inside the test's transaction).
 - `ping()` — `SELECT 1`, returns `bool`. Drives `/api/health`; swallows exceptions.
 - `migrate()` — applies un-applied migrations. Idempotent.
-- `dispose()` — shutdown hook; closes engine, clears singletons.
+- `dispose()` — closes engine, clears singletons.
+- `shutdown()` — async alias for `dispose()`; self-registered with both web and worker shutdown registries at import time.
 - `set_test_session_override(s)` — install (or clear) a fixture-bound `AsyncSession` so every production `session()` call routes to it. Used exclusively by the `db_session` test fixture.
 
 No HTTP routes.
@@ -45,9 +46,9 @@ The `_apply_create_all` migration explicitly imports every module's `models` so 
 
 Concurrent callers are serialized by a Postgres session-scoped advisory lock (`_MIGRATION_LOCK_KEY`) acquired on a dedicated connection that spans the whole call. The web process and worker both run `migrate()` on startup — and prod web will scale to multiple instances — so without the lock both readers can see an empty `applied` set, race on the DDL, and crash on the duplicate `INSERT INTO schema_migrations`. Followers block on the lock and re-read `applied` once they acquire it, finding everything already done. Session-scoped (not `pg_advisory_xact_lock`) because per-migration commits are separate transactions; the lock must outlive each. If a PgBouncer-style transaction-pooling proxy is ever placed in front of Postgres, this lock breaks (session affinity is lost between statements) — either bypass the pooler for `migrate()` or switch the lock primitive.
 
-### `dispose()`
+### `dispose()` / `shutdown()`
 
-Called on shutdown. `engine.dispose()` and resets `_engine`/`_sessionmaker` to `None`, so the next request constructs a fresh engine (used by tests that swap DB URLs).
+`dispose()` calls `engine.dispose()` and resets `_engine`/`_sessionmaker` to `None`, so the next call constructs a fresh engine (used by tests that swap DB URLs). `shutdown()` is the async wrapper registered with both web and worker shutdown registries at import time — no explicit caller required. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
 ## Data owned
 

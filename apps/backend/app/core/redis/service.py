@@ -79,6 +79,12 @@ async def aclose() -> None:
             await client.aclose()
 
 
+async def shutdown() -> None:
+    """Async alias for `aclose()`. Called by the process shutdown registries
+    during web/worker teardown. Idempotent."""
+    await aclose()
+
+
 def _reset_for_tests() -> None:
     """Synchronous singleton wipe for unit tests that don't have an event
     loop running. Drops references without closing — relies on Python GC

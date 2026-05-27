@@ -24,7 +24,7 @@ import structlog
 from taskiq.receiver import Receiver
 
 from app.core import database, observability
-from app.core import redis as redis_client
+from app.core.shutdown_registry import iter_worker_shutdown_hooks
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_loop
 
@@ -102,9 +102,8 @@ async def run() -> None:
     for t in pending:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await t
-    with contextlib.suppress(Exception):
-        await broker.shutdown()
-    with contextlib.suppress(Exception):
-        await redis_client.aclose()
-    await database.dispose()
+    # Shut down all registered worker-process modules in reverse-registration order.
+    for hook in reversed(iter_worker_shutdown_hooks()):
+        with contextlib.suppress(Exception):
+            await hook()
     log.info("tasks.worker.stopped")

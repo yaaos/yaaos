@@ -29,9 +29,16 @@ def get_broker() -> AsyncBroker:
     return _broker
 
 
-def _reset_for_tests() -> None:
-    """Drop the cached broker singleton. Tests that construct their own
-    broker (or skip the broker entirely) call this in teardown.
+def shutdown() -> None:
+    """Drop the cached broker singleton.
+
+    Called from `core.tasks.shutdown()` during process teardown, and by
+    tests that construct their own broker (or skip the broker entirely).
     """
     global _broker
     _broker = None
+
+
+def _reset_for_tests() -> None:
+    """Alias for `shutdown()`. Existing tests call this name."""
+    shutdown()

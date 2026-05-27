@@ -19,6 +19,7 @@ Wire types (mirror [`apps/backend/openapi/agent-api.yaml`](../openapi/agent-api.
 - `pick_agent_for_org(org_id, *, session)` — returns an `AgentRef` (least-loaded reachable pod for the org) or `None` when no pod is reachable. Load is in-process queue depth; ties break on most-recent heartbeat.
 - `has_any_reachable_agent(*, session)` — returns `True` when any pod heartbeated within the last 90 s; used for global health checks without exposing the Row.
 - `clear_queues()` — drop every in-memory queue and condition. Called by tests between runs.
+- `shutdown()` — drops the `SubscriberRegistry` singleton; self-registered with the web shutdown registry at import time (web only — the worker process doesn't handle agent WebSocket connections).
 - `AgentRef` — value object returned by `pick_agent_for_org`: `agent_id` (row PK) + `agent_pod_id` (pod identity used for command dispatch).
 - Errors: `GatewayError`, `StaleClaimError` (→ 410), `UnauthorizedError` (→ 401).
 

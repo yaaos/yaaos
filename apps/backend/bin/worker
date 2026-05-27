@@ -33,7 +33,7 @@ def main() -> int:
         wrap_all_registered_plugins()
         wrap_all_registered_workspace_providers()
 
-    from app.core.tasks.worker import run
+    from app.core.tasks.runtime import run
 
     asyncio.run(run())
     return 0

@@ -65,7 +65,13 @@ async def subscribe(filter: EventFilter) -> AsyncIterator[Event]:
         _subscribers.pop(sub_id, None)
 
 
+async def shutdown() -> None:
+    """Clear the subscriber registry. Called by the process shutdown registries."""
+    _subscribers.clear()
+
+
 def _reset_for_tests() -> None:
+    """Alias for the sync side of `shutdown()`. Tests call this name."""
     _subscribers.clear()
 
 

@@ -10,11 +10,13 @@ The taskiq broker is the single task registry; `@task` registers directly with `
 
 ## Public interface
 
-Exports `task`, `enqueue`, `TaskRef`. See `apps/backend/app/core/tasks/__init__.py`.
+Exports `task`, `enqueue`, `TaskRef`, `ShutdownHook`, `shutdown`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks`. See `apps/backend/app/core/tasks/__init__.py`.
 
 - `@task(name, *, queue="default", max_retries=1)` — registers a task body with the broker; returns a `TaskRef` callers `enqueue` against. `queue` / `max_retries` ride as taskiq labels (no consumer today; future brokers / middleware pick them up without API churn).
 - `enqueue(task_ref, args, *, session)` — writes a `taskiq_enqueue` outbox row in the caller's session. Returns the row id. Required `session` — there is no fire-and-forget path.
 - `TaskRef` — frozen handle to a registered task name + queue + retry policy.
+- `shutdown()` — calls the broker object's own async `shutdown()` (closes connections). Does NOT drop the broker singleton — task registrations set at import time remain intact. Re-exported from `core/shutdown_registry` registration side-effect.
+- `ShutdownHook`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks` — re-exported from `core/shutdown_registry`.
 
 The outbox model (`OutboxEntryRow`) and the drain primitives (`drain_once`, `write`) are private substrate in `app.core.tasks.models` and `app.core.tasks.drain` respectively. The worker entrypoint imports `drain_loop` directly from `app.core.tasks.drain`. Tests that need to drive the outbox in-process import from the submodules directly.
 
@@ -29,13 +31,13 @@ The outbox model (`OutboxEntryRow`) and the drain primitives (`drain_once`, `wri
 
 ### Worker process
 
-`apps/backend/bin/worker` boots one event loop racing three tasks via `asyncio.wait(..., FIRST_COMPLETED)`:
+`apps/backend/app/core/tasks/runtime.py` (entry point via `apps/backend/bin/worker`) boots one event loop racing three tasks via `asyncio.wait(..., FIRST_COMPLETED)`:
 
 - `drain_loop(broker)` — Postgres → Redis pump (lives in `drain.py`). Sleeps ~100ms between empty polls; immediately re-polls when a batch had work. Per-batch transaction so a crash mid-batch redispatches at-most a batch's worth of rows on restart.
 - `Receiver.listen(stop)` — taskiq's consumer loop. Pops tasks from Redis, invokes the registered body. Exits when the `stop` event is set.
 - `stop.wait()` — fires on SIGTERM/SIGINT and normally wins the race, triggering graceful shutdown of the other two.
 
-The broker URL comes from [`core/redis.get_url()`](core_redis.md) — taskiq-redis takes a URL (not a client) so this is a thin accessor on top of `settings.redis_url`. Shutdown order: `broker.shutdown()` → `redis.aclose()` → `database.dispose()`.
+The broker URL comes from [`core/redis.get_url()`](core_redis.md) — taskiq-redis takes a URL (not a client) so this is a thin accessor on top of `settings.redis_url`. After the stop signal wins, the runtime iterates `iter_worker_shutdown_hooks()` in reverse registration order to teardown all registered resources. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
 `drain_loop` and the taskiq receiver each catch their own errors, so the worker scaffolding normally sees only the stop-signal task finish first. If a defect lets one escape, the worker logs `tasks.worker.child_crashed` with the traceback before tearing down — the process still exits and the supervisor restarts it. Without this the exception would be silently discarded when the `Task` is garbage-collected.
 
@@ -63,4 +65,4 @@ Task bodies MUST tolerate duplicate delivery. The drain stamps `dispatched_at` o
 
 `test/test_service.py` covers registry registration, double-register rejection, and `enqueue()` writing the expected outbox payload. `test/test_drain.py` covers `write()` + `drain_once()` with a stub dispatcher: insert, drain, stamp; failure leaves the row pending with `attempt` and `last_error` updated. The broker-wired dispatcher is exercised end-to-end against the dev Redis stack — see `apps/e2e/` for the full enqueue → drain → execute path.
 
-Cross-module service tests that exercise the outbox pump in-process import `drain_once` and `OutboxEntryRow` from their submodules (`app.core.tasks.drain`, `app.core.tasks.models`) rather than the package top-level — the top-level only re-exports the three public symbols (`task`, `enqueue`, `TaskRef`).
+Cross-module service tests that exercise the outbox pump in-process import `drain_once` and `OutboxEntryRow` from their submodules (`app.core.tasks.drain`, `app.core.tasks.models`) rather than the package top-level — the top-level only re-exports the public symbols (`task`, `enqueue`, `TaskRef`, `shutdown`, `ShutdownHook`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks`).
