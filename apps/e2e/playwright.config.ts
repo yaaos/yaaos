@@ -10,7 +10,11 @@ export default defineConfig({
   use: {
     baseURL: process.env.YAAOS_BASE_URL ?? "http://localhost:58080",
     extraHTTPHeaders: { Accept: "application/json,text/html" },
-    actionTimeout: 10_000,
+    // 30s — covers /api/testing/reset under heavy worker background load
+    // (reaper + heartbeat hit every 1s in the test compose; on Linux CI
+    // they keep DB connections busy enough that the per-table DELETE in
+    // truncate_all_tables can take several seconds).
+    actionTimeout: 30_000,
     navigationTimeout: 15_000,
   },
 });
