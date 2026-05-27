@@ -8,10 +8,6 @@ VCS plugin because they share credentials, settings, and the test stack.
 
 from app.plugins.github import web  # noqa: F401 — registers install-state read routes
 from app.plugins.github.intake_type import GithubIntakeType
-from app.plugins.github.models import (
-    GitHubAppInstallationRow,
-    GitHubWebhookEventRow,
-)
 from app.plugins.github.oauth import GitHubOAuthProvider, bootstrap_oauth
 from app.plugins.github.service import (
     GitHubPlugin,
@@ -23,10 +19,8 @@ from app.plugins.github.service import (
 )
 
 __all__ = [
-    "GitHubAppInstallationRow",
     "GitHubOAuthProvider",
     "GitHubPlugin",
-    "GitHubWebhookEventRow",
     "GithubIntakeType",
     "bootstrap",
     "bootstrap_oauth",

@@ -915,20 +915,13 @@ expose = [
 from = ["app.domain.vcs"]
 
 [[interfaces]]
-expose = [
-  "ClaudeCodePlugin",
-  "ClaudeCodeSettingsRow",
-  "bootstrap",
-  "get_plugin",
-]
+expose = ["ClaudeCodePlugin", "bootstrap", "get_plugin"]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]
 expose = [
-  "GitHubAppInstallationRow",
   "GitHubOAuthProvider",
   "GitHubPlugin",
-  "GitHubWebhookEventRow",
   "GithubIntakeType",
   "bootstrap",
   "bootstrap_oauth",
