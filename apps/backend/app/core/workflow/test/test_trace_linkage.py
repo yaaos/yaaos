@@ -38,7 +38,17 @@ from app.core.workflow import (
     get_engine,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
+
+
+@pytest.fixture(autouse=True)
+def _isolated_engine():  # type: ignore[no-untyped-def]
+    """Ensure each test gets a fresh workflow engine singleton."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    prior = svc._engine
+    svc._engine = None
+    yield
+    svc._engine = prior
 
 
 @pytest.fixture
@@ -102,7 +112,6 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
     `traceparent` passed at workflow start. Drive a two-Local-step
     workflow under one upstream span and assert every emitted span
     carries the same trace_id."""
-    _reset_for_tests()
     eng = get_engine()
     eng.register_command(_NoopLocal())
     workflow = Workflow(
@@ -117,45 +126,41 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
     eng.register_workflow(workflow)
 
     tracer = trace.get_tracer("trace-linkage-test")
-    try:
-        with tracer.start_as_current_span("intake-upstream") as upstream:
-            upstream_trace_id = upstream.get_span_context().trace_id
-            from app.core.observability import current_traceparent  # noqa: PLC0415
+    with tracer.start_as_current_span("intake-upstream") as upstream:
+        upstream_trace_id = upstream.get_span_context().trace_id
+        from app.core.observability import current_traceparent  # noqa: PLC0415
 
-            wfx_id = await eng.start(
-                workflow_name="trace-linkage-test",
-                ticket_id=str(uuid4()),
-                traceparent=current_traceparent(),
-                session=db_session,
-            )
-            await db_session.commit()
-
-        await _drain(db_session)
-
-        # Workflow reached DONE.
-        wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
-        assert wfx.state == WorkflowState.DONE.value
-
-        # Inspect the spans that fired during the workflow run.
-        spans = in_memory_spans.get_finished_spans()
-        workflow_span_names = {
-            "workflow.start_step",
-            "workflow.route_workflow",
-        }
-        emitted_workflow_spans = [s for s in spans if s.name in workflow_span_names]
-        # Two steps x (start_step + route_workflow) = at least 4 task-body spans.
-        assert len(emitted_workflow_spans) >= 4, (
-            f"expected >=4 workflow task-body spans, got {[s.name for s in emitted_workflow_spans]}"
+        wfx_id = await eng.start(
+            workflow_name="trace-linkage-test",
+            ticket_id=str(uuid4()),
+            traceparent=current_traceparent(),
+            session=db_session,
         )
+        await db_session.commit()
 
-        # Critically: every workflow task-body span shares the upstream trace_id.
-        for span in emitted_workflow_spans:
-            assert span.context.trace_id == upstream_trace_id, (
-                f"span {span.name!r} has trace_id {span.context.trace_id:032x}, "
-                f"expected {upstream_trace_id:032x}"
-            )
-    finally:
-        _reset_for_tests()
+    await _drain(db_session)
+
+    # Workflow reached DONE.
+    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    assert wfx.state == WorkflowState.DONE.value
+
+    # Inspect the spans that fired during the workflow run.
+    spans = in_memory_spans.get_finished_spans()
+    workflow_span_names = {
+        "workflow.start_step",
+        "workflow.route_workflow",
+    }
+    emitted_workflow_spans = [s for s in spans if s.name in workflow_span_names]
+    # Two steps x (start_step + route_workflow) = at least 4 task-body spans.
+    assert len(emitted_workflow_spans) >= 4, (
+        f"expected >=4 workflow task-body spans, got {[s.name for s in emitted_workflow_spans]}"
+    )
+
+    # Critically: every workflow task-body span shares the upstream trace_id.
+    for span in emitted_workflow_spans:
+        assert span.context.trace_id == upstream_trace_id, (
+            f"span {span.name!r} has trace_id {span.context.trace_id:032x}, expected {upstream_trace_id:032x}"
+        )
 
 
 async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_session) -> None:  # type: ignore[no-untyped-def]
@@ -163,7 +168,6 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     `traceparent` — the agent's terminal-event ingestion is part of the
     same trace, not a new one. Drive a Workspace step on `remote_agent`
     + inject the terminal event under the upstream span."""
-    _reset_for_tests()
     eng = get_engine()
 
     class _NoopWs:
@@ -189,49 +193,46 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     eng.register_workflow(workflow)
 
     tracer = trace.get_tracer("trace-linkage-ws-test")
-    try:
-        with tracer.start_as_current_span("intake-upstream") as upstream:
-            upstream_trace_id = upstream.get_span_context().trace_id
-            from app.core.observability import current_traceparent  # noqa: PLC0415
+    with tracer.start_as_current_span("intake-upstream") as upstream:
+        upstream_trace_id = upstream.get_span_context().trace_id
+        from app.core.observability import current_traceparent  # noqa: PLC0415
 
-            wfx_id = await eng.start(
-                workflow_name="trace-linkage-ws",
-                ticket_id=str(uuid4()),
-                workspace_provider="remote_agent",
-                traceparent=current_traceparent(),
-                session=db_session,
-            )
-            await db_session.commit()
-            await _drain(db_session)
+        wfx_id = await eng.start(
+            workflow_name="trace-linkage-ws",
+            ticket_id=str(uuid4()),
+            workspace_provider="remote_agent",
+            traceparent=current_traceparent(),
+            session=db_session,
+        )
+        await db_session.commit()
+        await _drain(db_session)
 
-            # Now AWAITING_AGENT. Inject the terminal event UNDER the same
-            # upstream span — exactly what `core/agent_gateway.handle_event`
-            # would do when capturing `traceparent` from the AgentEvent.
-            wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
-            from app.core.tasks import enqueue  # noqa: PLC0415
-            from app.core.workflow.service import HANDLE_AGENT_EVENT  # noqa: PLC0415
-
-            await enqueue(
-                HANDLE_AGENT_EVENT,
-                args={
-                    "workflow_execution_id": wfx_id,
-                    "agent_command_id": str(wfx.pending_agent_command_id),
-                    "outcome_label": "success",
-                    "outputs": {},
-                    "traceparent": current_traceparent(),
-                },
-                session=db_session,
-            )
-            await db_session.commit()
-            await _drain(db_session)
-
+        # Now AWAITING_AGENT. Inject the terminal event UNDER the same
+        # upstream span — exactly what `core/agent_gateway.handle_event`
+        # would do when capturing `traceparent` from the AgentEvent.
         wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
-        assert wfx.state == WorkflowState.DONE.value
+        from app.core.tasks import enqueue  # noqa: PLC0415
+        from app.core.workflow.service import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
-        spans = in_memory_spans.get_finished_spans()
-        handle_spans = [s for s in spans if s.name == "workflow.handle_agent_event"]
-        assert len(handle_spans) >= 1
-        for span in handle_spans:
-            assert span.context.trace_id == upstream_trace_id
-    finally:
-        _reset_for_tests()
+        await enqueue(
+            HANDLE_AGENT_EVENT,
+            args={
+                "workflow_execution_id": wfx_id,
+                "agent_command_id": str(wfx.pending_agent_command_id),
+                "outcome_label": "success",
+                "outputs": {},
+                "traceparent": current_traceparent(),
+            },
+            session=db_session,
+        )
+        await db_session.commit()
+        await _drain(db_session)
+
+    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    assert wfx.state == WorkflowState.DONE.value
+
+    spans = in_memory_spans.get_finished_spans()
+    handle_spans = [s for s in spans if s.name == "workflow.handle_agent_event"]
+    assert len(handle_spans) >= 1
+    for span in handle_spans:
+        assert span.context.trace_id == upstream_trace_id

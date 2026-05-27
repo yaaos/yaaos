@@ -29,7 +29,6 @@ from app.core.workflow import (
     WorkflowState,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.domain.intake import (
     IntakePrepared,
     IntakeRejectedError,
@@ -76,11 +75,13 @@ class _NoopLocal:
 
 
 @pytest_asyncio.fixture
-async def stub_intake(db_session):
+async def stub_intake(db_session):  # type: ignore[no-untyped-def]
     """Spin up an isolated engine + the stub intake type. The workflow has
     one Local step that completes immediately, so the workflow path is
     exercised end-to-end without needing a Workspace dispatcher."""
-    _reset_for_tests()
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    svc._engine = None
     _reset_registry_for_tests()
 
     eng = WorkflowEngine()
@@ -115,7 +116,7 @@ async def stub_intake(db_session):
     import app.domain.intake as intake_mod  # noqa: PLC0415
 
     importlib.reload(intake_mod)
-    _reset_for_tests()
+    svc._engine = None
 
 
 def _app() -> FastAPI:

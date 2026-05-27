@@ -29,7 +29,6 @@ from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import Outcome, WorkflowState, get_engine
 from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     WorkspaceTicketContext,
     clear_workflow_context_provider,
@@ -87,8 +86,10 @@ class _StaticWorkflowContextProvider:
 
 
 @pytest.fixture
-def _registered_engine():
-    _reset_for_tests()
+def _registered_engine():  # type: ignore[no-untyped-def]
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    svc._engine = None
     clear_workspace_providers()
     clear_workflow_context_provider()
 
@@ -101,7 +102,7 @@ def _registered_engine():
         eng.register_command(cmd)
     eng.register_workflow(pr_review_v1)
     yield eng
-    _reset_for_tests()
+    svc._engine = None
     clear_workspace_providers()
     clear_workflow_context_provider()
 
@@ -250,12 +251,13 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
     PostFindings (real body) → admission → CleanupWorkspace. After the
     workflow ends DONE, FindingRow rows exist for the PR.
     """
+    import app.core.workflow.service as svc  # noqa: PLC0415
     from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
     from app.domain.tickets.models import TicketRow  # noqa: PLC0415
 
-    _reset_for_tests()
+    svc._engine = None
     clear_workspace_providers()
     clear_workflow_context_provider()
 
@@ -427,7 +429,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
         assert rows[0].rule_id == "spy_rule"
         assert rows[0].title == "Spy finding"
     finally:
-        _reset_for_tests()
+        svc._engine = None
         clear_workspace_providers()
         clear_workflow_context_provider()
 

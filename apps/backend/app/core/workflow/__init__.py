@@ -18,10 +18,13 @@ from app.core.workflow.service import (
     list_all_execution_states,
     list_executions_for_ticket,
     list_hitl_history,
+    register_workflow,
     request_cancel,
     resume_hitl,
     route_workflow,
+    scoped_workflow,
     start_step,
+    unregister_workflow,
 )
 from app.core.workflow.types import (
     TERMINAL_STATES,
@@ -71,8 +74,11 @@ __all__ = [
     "list_all_execution_states",
     "list_executions_for_ticket",
     "list_hitl_history",
+    "register_workflow",
     "request_cancel",
     "resume_hitl",
     "route_workflow",
+    "scoped_workflow",
     "start_step",
+    "unregister_workflow",
 ]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,13 +42,42 @@ def register_plugin(plugin: CodingAgentPlugin) -> None:
     _registry[plugin.meta.id] = plugin
 
 
+# Alias with the naming convention used by scoped_* helpers.
+register_coding_agent_plugin = register_plugin
+
+
+def unregister_coding_agent_plugin(plugin_id: str) -> None:
+    """Remove a coding-agent plugin from the registry. No-op if not registered."""
+    _registry.pop(plugin_id, None)
+
+
+@contextmanager
+def scoped_coding_agent(plugin: CodingAgentPlugin) -> Iterator[CodingAgentPlugin]:
+    """Context manager: install *plugin* for the duration of the block, then
+    restore the prior entry (if any) on exit — even if an exception is raised.
+
+    If *plugin.meta.id* is already registered, the prior entry is saved and
+    replaced; on exit the prior entry is restored. If the id was not registered,
+    the plugin is simply unregistered on exit."""
+    prior = _registry.get(plugin.meta.id)
+    _registry[plugin.meta.id] = plugin
+    try:
+        yield plugin
+    finally:
+        if prior is None:
+            _registry.pop(plugin.meta.id, None)
+        else:
+            _registry[plugin.meta.id] = prior
+
+
 def list_registered_plugins() -> list[CodingAgentPlugin]:
     """Return registered plugins in insertion order."""
     return list(_registry.values())
 
 
 def clear_plugins() -> None:
-    """Remove all registered plugins (use in test teardown)."""
+    """Remove all registered plugins. Used by testing helpers that manage
+    full registry snapshots (e.g. `register_fake_coding_agent`)."""
     _registry.clear()
 
 

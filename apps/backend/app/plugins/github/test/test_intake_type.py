@@ -24,7 +24,6 @@ from app.core.workflow import (
     Workflow,
     WorkflowEngine,
 )
-from app.core.workflow.service import _reset_for_tests as _reset_workflow
 from app.plugins.github.intake_type import GithubIntakeType
 
 
@@ -39,11 +38,13 @@ class _NoopLocal:
 
 
 @pytest.fixture
-def _stub_pr_review_engine():
+def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
     """Register a one-step `pr_review_v1` workflow so `_prepare_pr_review`'s
     `engine.start(workflow_name="pr_review_v1", ...)` resolves without
     pulling in the full reviewer command set."""
-    _reset_workflow()
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    svc._engine = None
     eng = WorkflowEngine()
     eng.register_command(_NoopLocal())
     eng.register_workflow(
@@ -60,11 +61,9 @@ def _stub_pr_review_engine():
             entry_step_id="only",
         )
     )
-    import app.core.workflow.service as svc  # noqa: PLC0415
-
     svc._engine = eng
     yield eng
-    _reset_workflow()
+    svc._engine = None
 
 
 def _pr_opened_payload() -> dict:

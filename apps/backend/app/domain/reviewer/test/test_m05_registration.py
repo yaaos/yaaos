@@ -23,10 +23,9 @@ from app.domain.reviewer.workflows import ALL_WORKFLOWS
 
 @pytest.fixture(autouse=True)
 def _ensure_registered() -> None:
-    """Tests in this file run AFTER `domain.reviewer` has been imported (the
-    `web.py` import chain pulls it in). A previous test in the suite may
-    have called `_reset_for_tests()` on the workflow engine, blowing the
-    registry away. Re-import the module to re-trigger registration."""
+    """Tests in this file run after `domain.reviewer` has been imported (the
+    `web.py` import chain pulls it in). A previous test may have replaced the
+    workflow engine singleton. Re-import the module to re-trigger registration."""
     import app.domain.reviewer as _r  # noqa: PLC0415
 
     importlib.reload(_r)

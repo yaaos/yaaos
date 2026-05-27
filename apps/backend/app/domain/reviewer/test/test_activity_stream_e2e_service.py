@@ -31,7 +31,6 @@ from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
 from app.core.workflow import WorkflowState, get_engine
 from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     WorkspaceTicketContext,
     clear_workflow_context_provider,
@@ -82,8 +81,10 @@ class _StaticCtxProvider:
 
 
 @pytest.fixture
-def _engine_with_in_memory():
-    _reset_for_tests()
+def _engine_with_in_memory():  # type: ignore[no-untyped-def]
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    svc._engine = None
     clear_workspace_providers()
     clear_workflow_context_provider()
     _reset_pubsub()
@@ -95,7 +96,7 @@ def _engine_with_in_memory():
         eng.register_command(cmd)
     eng.register_workflow(pr_review_v1)
     yield eng
-    _reset_for_tests()
+    svc._engine = None
     clear_workspace_providers()
     clear_workflow_context_provider()
     _reset_pubsub()

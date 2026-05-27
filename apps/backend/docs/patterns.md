@@ -343,6 +343,17 @@ Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; back
 
 Don't wrap every domain function — noise hurts more than detail helps.
 
+## `scoped_*` context managers for import-time registries
+
+Modules with import-time registries expose `register_*`, `unregister_*`, and `scoped_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception.
+
+Modules with this pattern today: `core.workflow` (`scoped_workflow`), `domain.vcs` (`scoped_vcs_plugin`), `domain.coding_agent` (`scoped_coding_agent`).
+
+Rules:
+- No wholesale-wipe between tests (`_reset_for_tests` / `clear_plugins`). Test exactly what you need, clean it up with the scoped helper.
+- `unregister_*` is a no-op if the id is absent — safe to call in finally blocks.
+- `scoped_*` registers on entry, unregisters on exit. The yielded value is the same object passed in.
+
 ## Module lifecycle — `shutdown()` convention
 
 Every runtime-state module exposes a public `async def shutdown()` in `__all__`. Naming is uniform; internals may delegate to library-conventional names (`aclose` for Redis, `dispose` for SQLAlchemy, taskiq broker close). Modules self-register at import time (after `__all__` is defined) with the relevant process registry by calling `register_web_shutdown_hook(shutdown)` and/or `register_worker_shutdown_hook(shutdown)` from `app.core.shutdown_registry`.

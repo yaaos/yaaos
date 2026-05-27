@@ -479,10 +479,13 @@ expose = [
   "list_all_execution_states",
   "list_executions_for_ticket",
   "list_hitl_history",
+  "register_workflow",
   "request_cancel",
   "resume_hitl",
   "route_workflow",
+  "scoped_workflow",
   "start_step",
+  "unregister_workflow",
 ]
 from = ["app.core.workflow"]
 
@@ -582,11 +585,14 @@ expose = [
   "incremental_review",
   "list_plugin_metas",
   "list_registered_plugins",
+  "register_coding_agent_plugin",
   "register_plugin",
   "registered_plugin_ids",
   "review",
   "schema_appendix",
+  "scoped_coding_agent",
   "stale_check",
+  "unregister_coding_agent_plugin",
   "validate_config",
   "verify_fix",
 ]
@@ -924,6 +930,8 @@ expose = [
   "list_plugin_metas",
   "register_vcs_plugin",
   "registered_plugin_ids",
+  "scoped_vcs_plugin",
+  "unregister_vcs_plugin",
 ]
 from = ["app.domain.vcs"]
 

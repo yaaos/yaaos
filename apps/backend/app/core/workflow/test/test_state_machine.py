@@ -41,7 +41,6 @@ from app.core.workflow import (
     resume_hitl,
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     clear_recovery_policies,
     register_recovery_policy,
@@ -181,16 +180,16 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
 
 
 @pytest.fixture(autouse=True)
-def _reset_engine() -> None:
-    _reset_for_tests()
+def _reset_engine():  # type: ignore[no-untyped-def]
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    prior = svc._engine
+    svc._engine = None
     yield
-    _reset_for_tests()
+    svc._engine = prior
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:
-    from app.core.workflow.service import _engine  # noqa: PLC0415
-
-    _ = _engine
     eng = WorkflowEngine()
     for c in commands:
         eng.register_command(c)

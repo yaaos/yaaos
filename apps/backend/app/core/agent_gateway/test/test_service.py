@@ -175,6 +175,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
     """A terminal AgentEvent for a Workspace step causes the workflow to
     advance: record_agent_event enqueues handle_agent_event, and draining
     that task drives the workflow to DONE."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
     from app.core.tasks.broker import get_broker  # noqa: PLC0415
     from app.core.workflow import (  # noqa: PLC0415
         CommandCategory,
@@ -186,9 +187,8 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         get_engine,
     )
     from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
-    from app.core.workflow.service import _reset_for_tests  # noqa: PLC0415
 
-    _reset_for_tests()
+    svc._engine = None
 
     class _NoopWs:
         kind = "NoopWs"
@@ -215,8 +215,6 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             entry_step_id="ws",
         )
     )
-    import app.core.workflow.service as svc  # noqa: PLC0415
-
     svc._engine = eng
 
     exec_id = await eng.start(
@@ -286,13 +284,14 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
     assert wfx.state == WorkflowState.DONE.value
     assert wfx.pending_agent_command_id is None
 
-    _reset_for_tests()
+    svc._engine = None
 
 
 @pytest.mark.asyncio
 async def test_progress_event_does_not_advance_workflow(db_session) -> None:
     """A PROGRESS AgentEvent does not advance the workflow — the execution
     stays in AWAITING_AGENT after the event is processed."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
     from app.core.tasks.broker import get_broker  # noqa: PLC0415
     from app.core.workflow import (  # noqa: PLC0415
         CommandCategory,
@@ -304,9 +303,8 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         get_engine,
     )
     from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
-    from app.core.workflow.service import _reset_for_tests  # noqa: PLC0415
 
-    _reset_for_tests()
+    svc._engine = None
 
     class _NoopWs2:
         kind = "NoopWs2"
@@ -333,8 +331,6 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             entry_step_id="ws",
         )
     )
-    import app.core.workflow.service as svc  # noqa: PLC0415
-
     svc._engine = eng
 
     exec_id = await eng.start(
@@ -399,7 +395,7 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.AWAITING_AGENT.value, "progress event must not advance the workflow"
 
-    _reset_for_tests()
+    svc._engine = None
 
 
 @pytest.mark.asyncio
