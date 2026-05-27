@@ -10,7 +10,7 @@ Owns the `lessons` table, CRUD exposed to the UI, the retrieval API used by `rev
 
 Exported from `app/domain/lessons/__init__.py`:
 
-- Types — `Lesson`, `LessonRow`.
+- Types — `Lesson`.
 - Operations — `create`, `list_for_repo`, `list_all`, `get`, `update`, `delete`.
 - Exceptions — `LessonNotFoundError`, `LessonValidationError`.
 
@@ -35,7 +35,7 @@ Lessons are scoped by `(plugin_id, repo_external_id)`. No yaaos-side `repos` tab
 
 ### `Lesson` model
 
-Pydantic view of the row. `Lesson.from_row(row)` converts a `LessonRow`. Schema in `app/domain/lessons/models.py`.
+Pydantic view of the row. `Lesson.from_row(row)` converts a `LessonRow` (internal to `service.py`). Schema in `app/domain/lessons/models.py`.
 
 ### Validation
 

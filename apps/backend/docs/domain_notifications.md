@@ -10,7 +10,7 @@ Owns the `notifications` table + read/write API for the SPA's bell + inbox. Idem
 
 Exported from `app/domain/notifications/__init__.py`:
 
-- Types — `Notification`, `NotificationRow`.
+- Types — `Notification`.
 - Service — `record(...)`, `list_for_user(...)`, `popover_for_user(...)`, `mark_read(...)`, `mark_all_read(...)`.
 
 HTTP routes (`/api/notifications`):
@@ -28,7 +28,7 @@ All four endpoints classify as `RouteSecurity.USER_SCOPED` (cross-org). The pref
 
 ### Entities
 
-- `NotificationRow` (`notifications` table) — `(user_id, org_id, type, ticket_id?, title, body, read_at?, created_at)`.
+- `notifications` table — `(user_id, org_id, type, ticket_id?, title, body, read_at?, created_at)`. Public value object: `Notification`.
 - The `type` column is freeform text — today the writers emit `hitl_waiting`, `ticket_completed`, `ticket_failed`; future workflow transitions slot in without a migration.
 
 ### Key indexes
@@ -38,9 +38,9 @@ All four endpoints classify as `RouteSecurity.USER_SCOPED` (cross-org). The pref
 
 ### Core flows
 
-- **Record.** `record(user_id, org_id, type, title, body, ticket_id?, session)` — idempotent by `(user_id, type, ticket_id)`. Re-emitting the same workflow transition is a no-op (returns `None`).
-- **Read.** `list_for_user(...)` filters by `read_state` (`all` / `unread` / `read`), optional `org_id`, optional `types`. `popover_for_user(...)` returns the latest N unread items + the unread count for the sidebar bell.
-- **Mark read.** `mark_read(notification_id)` flips `read_at` to now if null (idempotent). `mark_all_read(org_id?, types?)` does a single bulk UPDATE.
+- **Record.** `record(...) -> Notification | None` — idempotent by `(user_id, type, ticket_id)`. Re-emitting the same workflow transition is a no-op (returns `None`).
+- **Read.** `list_for_user(...) -> list[Notification]` filters by `read_state` (`all` / `unread` / `read`), optional `org_id`, optional `types`. `popover_for_user(...) -> tuple[list[Notification], int]` returns the latest N unread items + the unread count for the sidebar bell.
+- **Mark read.** `mark_read(...) -> Notification | None` flips `read_at` to now if null (idempotent). `mark_all_read(org_id?, types?) -> int` does a single bulk UPDATE; returns the row count.
 
 ### No workflow subscribers wired today
 

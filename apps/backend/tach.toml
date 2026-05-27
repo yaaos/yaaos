@@ -652,7 +652,6 @@ from = ["app.domain.integrations"]
 expose = [
   "Lesson",
   "LessonNotFoundError",
-  "LessonRow",
   "LessonValidationError",
   "create",
   "delete",
@@ -665,7 +664,7 @@ from = ["app.domain.lessons"]
 
 [[interfaces]]
 expose = [
-  "McpReviewTokenRow",
+  "McpToken",
   "REVIEW_TOKEN_TTL",
   "consume_broken_creds",
   "lookup_token",
@@ -679,7 +678,6 @@ from = ["app.domain.mcp_proxy"]
 [[interfaces]]
 expose = [
   "Notification",
-  "NotificationRow",
   "list_for_user",
   "mark_all_read",
   "mark_read",

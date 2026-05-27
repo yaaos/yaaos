@@ -79,9 +79,7 @@ async def list_(
             types=types,
             limit=limit,
         )
-    return JSONResponse(
-        content=[notif_service.Notification.from_row(r).model_dump(mode="json") for r in rows]
-    )
+    return JSONResponse(content=[r.model_dump(mode="json") for r in rows])
 
 
 @router.post("/{notification_id}/read")
@@ -97,8 +95,7 @@ async def mark_read(
         if row is None:
             return JSONResponse(status_code=404, content={"error": "notification not found"})
         await s.commit()
-        await s.refresh(row)
-    return JSONResponse(content=notif_service.Notification.from_row(row).model_dump(mode="json"))
+    return JSONResponse(content=row.model_dump(mode="json"))
 
 
 @router.post("/mark-read")
@@ -126,7 +123,7 @@ async def popover(
         rows, unread = await notif_service.popover_for_user(s, user_id=user_id, limit=10)
     return JSONResponse(
         content={
-            "items": [notif_service.Notification.from_row(r).model_dump(mode="json") for r in rows],
+            "items": [r.model_dump(mode="json") for r in rows],
             "unread_count": unread,
         }
     )
