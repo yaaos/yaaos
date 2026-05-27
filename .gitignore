@@ -241,9 +241,10 @@ apps/web/src/core/api/generated/
 # uv
 .venv/
 
-# Test report outputs (pytest-reportlog, vitest JSON reporter) consumed by RWX
+# Test report outputs (pytest-reportlog, vitest + playwright JSON reporters) consumed by RWX
 apps/backend/tmp/
 apps/web/tmp/
+apps/e2e/tmp/
 
 # Claude Code runtime artifacts. The lockfile coordinates CronCreate
 # ownership across sessions in the same project; everything else under

@@ -209,3 +209,9 @@ tasks:
       pnpm install --frozen-lockfile
       pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
       apps/e2e/bin/ci
+    outputs:
+      test-results:
+        - path: apps/e2e/tmp/playwright.json
+          options:
+            language: JavaScript
+            framework: Playwright

@@ -6,7 +6,8 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 60_000,
-  reporter: [["list"]],
+  // JSON reporter feeds RWX's Tests tab (Captain parses Playwright JSON).
+  reporter: [["list"], ["json", { outputFile: "tmp/playwright.json" }]],
   use: {
     baseURL: process.env.YAAOS_BASE_URL ?? "http://localhost:58080",
     extraHTTPHeaders: { Accept: "application/json,text/html" },
