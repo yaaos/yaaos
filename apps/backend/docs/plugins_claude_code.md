@@ -9,6 +9,7 @@ Adapter for [Claude Code](https://docs.claude.com/en/docs/claude-code), the only
 ## Public interface
 
 - Singleton `ClaudeCodePlugin` registered into `domain/coding_agent` at `bootstrap()`; also registers `anthropic_key_set` onboarding contributor, the `anthropic` BYOK validator (`byok_validator.validate_anthropic_key`), and installs subagent definitions.
+- `set_api_key(session, *, org_id, encrypted_anthropic_api_key) -> None` — shape (a) public primitive to write/update the `claude_code_settings` row with a pre-encrypted key. Upserts on `org_id` (UNIQUE), so a second call updates rather than duplicates. Callers encrypt via `cryptography.fernet.Fernet`; this function only stores bytes. See [patterns.md § Service-fn session-handling convention](patterns.md).
 - settings model in `settings_schema.py`: orchestrator + sub-agents validated as a single Pydantic tree — agents list bounded to 1..8, sub-agent names unique within `agents`, name length ≤ 64, `model`/`version`/`effort` checked against the enums in `defaults.py`. The plugin's `validate_settings({})` substitutes the code defaults so the picker's install path doesn't have to pre-populate the JSONB.
 - Side-effect import of `web.py` wires HTTP routes (prefix `/api/claude_code`) and an `on_startup` hook:
   - `POST /api_key` (`public_route`) — set/rotate the Anthropic key (setup flow; BYOK at `/api/api-keys/anthropic` supersedes for per-org storage).

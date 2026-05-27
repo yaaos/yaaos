@@ -11,6 +11,7 @@ from app.core.database.service import (
     session,
     set_test_session_override,
     shutdown,
+    truncate_all_tables,
 )
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "session",
     "set_test_session_override",
     "shutdown",
+    "truncate_all_tables",
 ]
 
 from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit_log import Actor, audit
 from app.core.database import session as db_session
 from app.domain.orgs.models import InvitationRow, MembershipRow, OrgRow, SsoConfigRow
 from app.domain.orgs.repository import get_org as _repo_get_org
@@ -100,6 +102,76 @@ class SsoConfig(BaseModel):
         )
 
 
+class _OrgCreatedPayload(BaseModel):
+    slug: str
+    display_name: str
+
+
+class _MembershipCreatedPayload(BaseModel):
+    role: str
+
+
+async def create_org(
+    session: AsyncSession,
+    *,
+    slug: str,
+    display_name: str,
+    actor: Actor = Actor.system(),
+) -> Org:
+    """Insert a new org row. Emits ``org.created`` audit entry.
+
+    Shape (a) — takes ``session`` first positional; never commits. Caller
+    composes with sibling writes inside one ``async with db_session()`` block.
+    See `apps/backend/docs/patterns.md` § Service-fn session-handling convention.
+    """
+    row = OrgRow(id=uuid4(), slug=slug, display_name=display_name)
+    session.add(row)
+    await session.flush()
+    await audit(
+        "org",
+        row.id,
+        "org.created",
+        _OrgCreatedPayload(slug=slug, display_name=display_name),
+        actor,
+        org_id=row.id,
+        session=session,
+    )
+    return Org.from_row(row)
+
+
+async def create_membership(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    org_id: UUID,
+    role: Role,
+    handle: str,
+    actor: Actor = Actor.system(),
+) -> Membership:
+    """Insert a membership row directly, bypassing the invitation flow.
+
+    Intended for bootstrap-style setup where the owner is already known
+    (e.g. the admin onboarding path or e2e seeding). Emits
+    ``membership.created`` audit entry.
+
+    Shape (a) — takes ``session`` first positional; never commits.
+    See `apps/backend/docs/patterns.md` § Service-fn session-handling convention.
+    """
+    row = MembershipRow(user_id=user_id, org_id=org_id, role=role.value, handle=handle)
+    session.add(row)
+    await session.flush()
+    await audit(
+        "org",
+        org_id,
+        "membership.created",
+        _MembershipCreatedPayload(role=role.value),
+        actor,
+        org_id=org_id,
+        session=session,
+    )
+    return Membership.from_row(row)
+
+
 async def get_org(org_id: UUID) -> Org | None:
     """Return the `Org` value object for *org_id*, or ``None`` if not found."""
     async with db_session() as s:
@@ -159,6 +231,8 @@ __all__ = [
     "OrgNotFoundError",
     "Role",
     "SsoConfig",
+    "create_membership",
+    "create_org",
     "delete_expired_invitations",
     "find_saml_org_slug_for_domain",
     "get_org",

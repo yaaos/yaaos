@@ -14,6 +14,7 @@ from app.plugins.github.service import (
     bootstrap,
     get_plugin,
     mark_webhook_processed,
+    record_app_install,
     record_webhook_event,
     verify_webhook_signature,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "bootstrap_oauth",
     "get_plugin",
     "mark_webhook_processed",
+    "record_app_install",
     "record_webhook_event",
     "verify_webhook_signature",
 ]

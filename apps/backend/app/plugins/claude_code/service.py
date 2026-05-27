@@ -992,6 +992,34 @@ async def _onboarding_anthropic_key_set(org_id: UUID) -> bool:
     return healthy
 
 
+async def set_api_key(session, *, org_id: UUID, encrypted_anthropic_api_key: bytes) -> None:
+    """Write or update the ``claude_code_settings`` row for *org_id*.
+
+    Accepts a pre-encrypted value (callers use ``cryptography.fernet.Fernet``
+    to encrypt). A second call updates rather than duplicates — upserts on
+    ``org_id`` which is UNIQUE.
+
+    Shape (a) — takes ``session`` first positional; never commits. Caller
+    composes with sibling writes inside one ``async with db_session()`` block.
+    See ``apps/backend/docs/patterns.md`` § Service-fn session-handling convention.
+    """
+    from uuid import uuid4 as _uuid4  # noqa: PLC0415
+
+    row = (
+        await session.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        row = ClaudeCodeSettingsRow(
+            id=_uuid4(),
+            org_id=org_id,
+            encrypted_anthropic_api_key=encrypted_anthropic_api_key,
+        )
+        session.add(row)
+    else:
+        row.encrypted_anthropic_api_key = encrypted_anthropic_api_key
+    await session.flush()
+
+
 async def _set_anthropic_key(org_id: UUID, raw_key: SecretStr) -> None:
     """Encrypt + upsert the Anthropic key on `claude_code_settings`."""
     from uuid import uuid4  # noqa: PLC0415

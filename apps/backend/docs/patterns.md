@@ -120,6 +120,21 @@ Rules:
 - Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract.
 - `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
 
+### Service-fn session-handling convention
+
+Two valid shapes for service functions:
+
+- **Shape (a) — takes `session` first positional, never commits.** Use when real callers compose the function with sibling writes inside one `async with db_session() as s:` block (e.g. creating an org + membership + install in a single transaction). Signature: `async def create_org(session: AsyncSession, *, slug: str, ...) -> Org`.
+- **Shape (b) — opens own session, returns value.** Use for single-row writes or read-only fetches that never need to compose with other writes in the same transaction. Signature: `async def get_org(org_id: UUID) -> Org | None`. `lessons.create` follows shape (b) — callers seed it standalone.
+
+Pick shape (a) only when callers genuinely compose with sibling writes. Don't add a `session` parameter speculatively. The rule above (service modules never call `db_session()` themselves) applies only to shape (a) functions; shape (b) functions are orchestrators-in-disguise and are the exceptions that own their own session.
+
+### e2e seed paths use public APIs
+
+`app/testing/e2e_setup` chains real public service-layer calls — no `*Row` constructors, no cross-module model imports. Deliberate consequence: seeds emit the same audit rows and events as production writes, acting as a free smoke test for the full call path.
+
+The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call it from within an `async with db_session() as s:` block followed by `await s.commit()`.
+
 ### Idempotent migrations
 
 `core/database.migration_helpers` wraps `op.*` with idempotent variants (`create_table_if_not_exists`, `add_column_if_not_exists`, `create_index_if_not_exists`, `drop_column_if_exists`). Every migration uses these helpers; re-running a half-applied migration is always safe.

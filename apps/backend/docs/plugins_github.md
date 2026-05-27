@@ -12,6 +12,7 @@ Owns: App authentication (RS256 JWT → installation token), the webhook receive
 
 - Singleton `GitHubPlugin` registered into `domain/vcs` at `bootstrap()`; also registers the `github_app_installed` onboarding contributor.
 - `GitHubOAuthProvider` registered into `domain/identity` at `bootstrap_oauth()` when the OAuth App's `client_id` + `client_secret` are configured.
+- `record_app_install(session, *, org_id, install_external_id, account_login, status="active") -> None` — shape (a) public primitive to insert a `github_app_installations` row. Callers compose it inside their own `db_session()` block. Use for admin-onboarding or e2e seeding where the installation is already known. See [patterns.md § Service-fn session-handling convention](patterns.md).
 - Side-effect import of `web.py` wires HTTP routes (prefix `/api/github`):
   - `POST /webhook` — GitHub event receiver.
   - `GET /installation` — two-state response driving the Settings UI.

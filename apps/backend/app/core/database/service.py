@@ -981,6 +981,43 @@ async def _apply_pending() -> None:
             )
 
 
+async def truncate_all_tables(session) -> None:
+    """Truncate every table in ``Base.metadata`` in reverse-FK order.
+
+    Emits a single ``TRUNCATE … RESTART IDENTITY CASCADE`` so sequences
+    reset and FK chains cascade in one DDL statement.
+
+    Callers must ensure all model modules have been imported (so their
+    tables are registered on ``Base.metadata``) before calling this. The
+    ``app/testing/e2e_setup`` module handles that for the test reset path
+    by importing every model module at the top of its file.
+    """
+    tables = ", ".join(f'"{t.name}"' for t in reversed(Base.metadata.sorted_tables))
+    if not tables:
+        return
+    # ── nosemgrep justification ──────────────────────────────────────
+    # Suppressing
+    #   python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    # because the f-string is provably injection-free here:
+    #
+    # 1. Every value interpolated into the SQL is a `Table.name` from
+    #    SQLAlchemy model declarations in our own codebase
+    #    (`__tablename__ = "comment_messages"` and friends, resolved
+    #    at module-import time before any request ever runs).
+    # 2. No request data, query string, header, env var, or DB
+    #    lookup feeds this string.
+    # 3. The rule's suggested fix (`or_()` / `and_()` / Core
+    #    constructs) doesn't apply: TRUNCATE is DDL, not a SELECT/
+    #    UPDATE/DELETE expression, so there is no Core-level builder.
+    # 4. This is intended as a test-reset primitive only.
+    # ─────────────────────────────────────────────────────────────────
+    await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            f"TRUNCATE {tables} RESTART IDENTITY CASCADE"
+        )
+    )
+
+
 async def dispose() -> None:
     """Close the engine — used on shutdown."""
     global _engine, _sessionmaker

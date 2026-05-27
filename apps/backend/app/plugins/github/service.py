@@ -441,6 +441,35 @@ class GitHubPlugin:
         return
 
 
+async def record_app_install(
+    session,
+    *,
+    org_id: UUID,
+    install_external_id: str,
+    account_login: str,
+    status: str = "active",
+) -> None:
+    """Insert a ``github_app_installations`` row.
+
+    Shape (a) — takes ``session`` first positional; never commits. Caller
+    composes with sibling writes inside one ``async with db_session()`` block.
+    See ``apps/backend/docs/patterns.md`` § Service-fn session-handling convention.
+
+    Raises nothing on duplicate ``install_external_id`` — callers that need
+    idempotency should call ``upsert_installation`` instead.
+    """
+    session.add(
+        GitHubAppInstallationRow(
+            id=uuid4(),
+            org_id=org_id,
+            install_external_id=install_external_id,
+            account_login=account_login,
+            status=status,
+        )
+    )
+    await session.flush()
+
+
 async def upsert_installation(
     *,
     install_external_id: str,

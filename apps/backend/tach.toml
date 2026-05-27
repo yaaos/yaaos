@@ -322,6 +322,7 @@ expose = [
   "session",
   "set_test_session_override",
   "shutdown",
+  "truncate_all_tables",
 ]
 from = ["app.core.database"]
 
@@ -720,6 +721,8 @@ expose = [
   "accept_invitation",
   "change_role",
   "clear_vcs",
+  "create_membership",
+  "create_org",
   "delete_expired_invitations",
   "find_saml_org_slug_for_domain",
   "get_config",
@@ -925,7 +928,12 @@ expose = [
 from = ["app.domain.vcs"]
 
 [[interfaces]]
-expose = ["ClaudeCodePlugin", "bootstrap", "get_plugin"]
+expose = [
+  "ClaudeCodePlugin",
+  "bootstrap",
+  "get_plugin",
+  "set_api_key",
+]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]
@@ -937,6 +945,7 @@ expose = [
   "bootstrap_oauth",
   "get_plugin",
   "mark_webhook_processed",
+  "record_app_install",
   "record_webhook_event",
   "verify_webhook_signature",
 ]
