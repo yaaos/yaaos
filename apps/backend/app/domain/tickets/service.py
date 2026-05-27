@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket
@@ -424,6 +425,86 @@ async def list_tickets(
     if filter.sort == "findings_count":
         out.sort(key=lambda t: t.findings_count, reverse=True)
     return out
+
+
+async def upsert_ticket_for_pr(
+    *,
+    org_id: UUID,
+    source_external_id: str,
+    title: str,
+    description: str | None,
+    repo_external_id: str,
+    plugin_id: str,
+    idempotency_key: str,
+    payload: dict,
+    session: AsyncSession,
+) -> tuple[UUID | None, bool]:
+    """Race-safe ticket INSERT for a GitHub PR-opened-style event.
+
+    Uses INSERT … ON CONFLICT DO NOTHING on `(org_id, source, source_external_id)`.
+    Returns `(ticket_id, created)`.  On conflict (race loser), returns
+    `(None, False)` — the caller should exit without doing further work.
+    Caller commits; never commits here.
+    """
+    new_id = uuid4()
+    stmt = (
+        pg_insert(TicketRow)
+        .values(
+            id=new_id,
+            org_id=org_id,
+            source="github_pr",
+            source_external_id=source_external_id,
+            title=title,
+            description=description,
+            status="running",
+            plugin_id=plugin_id,
+            repo_external_id=repo_external_id,
+            pr_id=None,
+            type="github_pr",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            current_workflow_execution_id=None,
+        )
+        .on_conflict_do_nothing(index_elements=["org_id", "source", "source_external_id"])
+        .returning(TicketRow.id)
+    )
+    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
+    if inserted_id is None:
+        return None, False
+    return inserted_id, True
+
+
+async def attach_pr_to_ticket(
+    ticket_id: UUID,
+    *,
+    pr_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Back-fill `pr_id` on a ticket that was inserted without it.
+
+    The `WHERE pr_id IS NULL` guard makes the op idempotent: if a concurrent
+    caller already set `pr_id`, this is a safe no-op.  Caller commits.
+    """
+    await session.execute(
+        update(TicketRow).where(TicketRow.id == ticket_id, TicketRow.pr_id.is_(None)).values(pr_id=pr_id)
+    )
+
+
+async def set_workflow_execution(
+    ticket_id: UUID,
+    *,
+    workflow_execution_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Stamp the workflow execution id onto the ticket after engine.start().
+
+    Caller commits.
+    """
+    await session.execute(
+        update(TicketRow)
+        .where(TicketRow.id == ticket_id)
+        .values(current_workflow_execution_id=workflow_execution_id)
+    )
 
 
 async def complete(ticket_id: UUID, *, org_id: UUID) -> None:

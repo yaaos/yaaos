@@ -1,7 +1,6 @@
 """domain/tickets — yaaos's unit of work."""
 
 from app.domain.tickets import web  # noqa: F401
-from app.domain.tickets.models import TicketRow
 from app.domain.tickets.service import (
     InvalidTicketTransition,
     Ticket,
@@ -10,6 +9,7 @@ from app.domain.tickets.service import (
     TicketStatus,
     TicketStatusChanged,
     abandon,
+    attach_pr_to_ticket,
     attach_workflow_execution,
     complete,
     create,
@@ -19,6 +19,8 @@ from app.domain.tickets.service import (
     get_by_pr,
     get_payload,
     list_tickets,
+    set_workflow_execution,
+    upsert_ticket_for_pr,
 )
 
 __all__ = [
@@ -26,10 +28,10 @@ __all__ = [
     "Ticket",
     "TicketFilter",
     "TicketNotFoundError",
-    "TicketRow",
     "TicketStatus",
     "TicketStatusChanged",
     "abandon",
+    "attach_pr_to_ticket",
     "attach_workflow_execution",
     "complete",
     "create",
@@ -39,4 +41,6 @@ __all__ = [
     "get_by_pr",
     "get_payload",
     "list_tickets",
+    "set_workflow_execution",
+    "upsert_ticket_for_pr",
 ]

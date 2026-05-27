@@ -664,10 +664,10 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 #   "Ticket",
 #   "TicketFilter",
 #   "TicketNotFoundError",
-#   "TicketRow",
 #   "TicketStatus",
 #   "TicketStatusChanged",
 #   "abandon",
+#   "attach_pr_to_ticket",
 #   "attach_workflow_execution",
 #   "complete",
 #   "create",
@@ -677,6 +677,8 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 #   "get_by_pr",
 #   "get_payload",
 #   "list_tickets",
+#   "set_workflow_execution",
+#   "upsert_ticket_for_pr",
 # ]
 
 [[modules]]

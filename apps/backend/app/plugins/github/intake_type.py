@@ -42,7 +42,6 @@ from uuid import UUID, uuid4
 import structlog
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket, audit_for_webhook_event
@@ -264,7 +263,11 @@ class GithubIntakeType:
         commit atomically. Filters forks and bot authors with an audit row
         (no ticket created in that case)."""
         from app.domain import pull_requests  # noqa: PLC0415
-        from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+        from app.domain.tickets import (  # noqa: PLC0415
+            attach_pr_to_ticket,
+            set_workflow_execution,
+            upsert_ticket_for_pr,
+        )
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
@@ -299,46 +302,27 @@ class GithubIntakeType:
         }
         idempotency_key = delivery or f"github_pr:{vcs_pr.external_id}"
 
-        new_ticket_id = uuid4()
-        stmt = (
-            pg_insert(TicketRow)
-            .values(
-                id=new_ticket_id,
-                org_id=org_id,
-                source="github_pr",
-                source_external_id=vcs_pr.external_id,
-                title=vcs_pr.title,
-                description=vcs_pr.body,
-                status="running",
-                plugin_id=vcs_pr.plugin_id,
-                repo_external_id=repo_full,
-                pr_id=None,
-                type="github_pr",
-                idempotency_key=idempotency_key,
-                payload=ticket_payload,
-                current_workflow_execution_id=None,
-            )
-            .on_conflict_do_nothing(index_elements=["org_id", "source", "source_external_id"])
-            .returning(TicketRow.id)
+        ticket_id, created = await upsert_ticket_for_pr(
+            org_id=org_id,
+            source_external_id=vcs_pr.external_id,
+            title=vcs_pr.title,
+            description=vcs_pr.body,
+            repo_external_id=repo_full,
+            plugin_id=vcs_pr.plugin_id,
+            idempotency_key=idempotency_key,
+            payload=ticket_payload,
+            session=session,
         )
-        inserted_id = (await session.execute(stmt)).scalar_one_or_none()
-        if inserted_id is None:
+        if not created:
             # Loser of the race. The winner owns the workflow start; we exit clean.
             return IntakeSideEffect(detail="duplicate_ticket")
-        ticket_id = inserted_id
 
         # PR upsert runs on the endpoint's session — same transaction as the
         # ticket insert above, so the FK on `pull_requests.ticket_id`
         # resolves before commit.
         upserted_pr = await pull_requests.upsert(vcs_pr, ticket_id=ticket_id, org_id=org_id, session=session)
 
-        from sqlalchemy import update as sql_update  # noqa: PLC0415
-
-        await session.execute(
-            sql_update(TicketRow)
-            .where(TicketRow.id == ticket_id, TicketRow.pr_id.is_(None))
-            .values(pr_id=upserted_pr.id)
-        )
+        await attach_pr_to_ticket(ticket_id, pr_id=upserted_pr.id, session=session)
 
         await audit_for_ticket(
             ticket_id,
@@ -350,8 +334,7 @@ class GithubIntakeType:
         )
 
         # Broadcast the ticket-creation status change so the SSE subscriber
-        # invalidates the tickets list query. Mirrors `tickets.create_for_pr`
-        # — both insert with status="running" and previous_status=None.
+        # invalidates the tickets list query.
         from app.core.events import publish_after_commit  # noqa: PLC0415
         from app.domain.tickets.service import TicketStatusChanged  # noqa: PLC0415
 
@@ -382,10 +365,8 @@ class GithubIntakeType:
             ticket_payload=dict(ticket_payload),
             session=session,
         )
-        await session.execute(
-            sql_update(TicketRow)
-            .where(TicketRow.id == ticket_id)
-            .values(current_workflow_execution_id=UUID(workflow_execution_id))
+        await set_workflow_execution(
+            ticket_id, workflow_execution_id=UUID(workflow_execution_id), session=session
         )
 
         log.info(
