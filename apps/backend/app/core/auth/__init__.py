@@ -7,9 +7,15 @@ the X-Org-Slug requirement for ORG_SCOPED routes and the default-deny
 post-response guard.
 """
 
+from app.core.auth.auth_failure import (
+    AuthFailure,
+    auth_failure_response,
+    register_handler,
+)
 from app.core.auth.context import (
     actor_id_var,
     actor_kind_var,
+    bind_request_structlog_vars,
     current_actor_kind,
     current_org_id,
     current_user_id,
@@ -29,6 +35,7 @@ from app.core.auth.cookies import (
     session_cookie_attrs,
 )
 from app.core.auth.middleware import AuthMiddleware
+from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.auth.types import (
     ORG_SCOPED_PREFIXES,
     PUBLIC_EXACT,
@@ -44,8 +51,10 @@ from app.core.auth.types import (
 )
 
 __all__ = [
+    "AUTH_LIMIT",
     "CSRF_COOKIE_NAME",
     "CSRF_HEADER_NAME",
+    "MUTATE_LIMIT",
     "ORG_SCOPED_PREFIXES",
     "PUBLIC_EXACT",
     "PUBLIC_PREFIXES",
@@ -55,10 +64,13 @@ __all__ = [
     "USER_SCOPED_METHOD_EXACT",
     "USER_SCOPED_PREFIXES",
     "Action",
+    "AuthFailure",
     "AuthMiddleware",
     "RouteSecurity",
     "actor_id_var",
     "actor_kind_var",
+    "auth_failure_response",
+    "bind_request_structlog_vars",
     "classify_route",
     "clear_cookie_attrs",
     "csrf_cookie_attrs",
@@ -66,9 +78,11 @@ __all__ = [
     "current_org_id",
     "current_user_id",
     "is_org_scoped_path",
+    "limiter",
     "org_context",
     "org_id_var",
     "public_route",
+    "register_handler",
     "require_org_context",
     "route_security_resolved",
     "session_cookie_attrs",

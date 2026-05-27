@@ -22,8 +22,7 @@ import structlog
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.auth import Action, org_id_var, user_id_var
-from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
+from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, limiter, org_id_var, user_id_var
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.identity import repository as identity_repo

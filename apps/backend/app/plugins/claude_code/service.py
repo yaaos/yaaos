@@ -51,34 +51,34 @@ from app.domain.coding_agent import (
     VerifyFixResult,
     register_coding_agent_plugin,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     AnswerQuestionDto as _AnswerQuestionDto,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     FindingDraftList as _FindingDraftList,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     StaleCheckDto as _StaleCheckDto,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     VerifyFixDto as _VerifyFixDto,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     assemble_answer_question_prompt as _assemble_answer_question_prompt,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     assemble_review_prompt as _assemble_review_prompt,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     assemble_stale_check_prompt as _assemble_stale_check_prompt,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     assemble_verify_fix_prompt as _assemble_verify_fix_prompt,
 )
-from app.domain.coding_agent.prompts import (
+from app.domain.coding_agent import (
     schema_appendix as _schema_appendix,
 )
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow

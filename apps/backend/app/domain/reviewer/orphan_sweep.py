@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.domain import tickets
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 log = structlog.get_logger("reviewer.orphan_sweep")
 

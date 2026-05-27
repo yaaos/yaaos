@@ -43,7 +43,7 @@ def _verify(saml_response: str, _idp_metadata_xml: str) -> dict | None:
 
 def bootstrap() -> None:
     """Register the test-stub verifier in `domain/orgs.sso`."""
-    from app.domain.orgs.sso import register_assertion_verifier  # noqa: PLC0415
+    from app.domain.orgs import register_assertion_verifier  # noqa: PLC0415
 
     register_assertion_verifier(_verify)
 

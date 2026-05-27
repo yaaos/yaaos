@@ -336,7 +336,7 @@ class GithubIntakeType:
         # Broadcast the ticket-creation status change so the SSE subscriber
         # invalidates the tickets list query.
         from app.core.events import publish_after_commit  # noqa: PLC0415
-        from app.domain.tickets.service import TicketStatusChanged  # noqa: PLC0415
+        from app.domain.tickets import TicketStatusChanged  # noqa: PLC0415
 
         publish_after_commit(
             session,
@@ -451,7 +451,7 @@ class GithubIntakeType:
         session: AsyncSession,
     ) -> IntakeOutcome:
         from app.domain import pull_requests, reviewer, tickets  # noqa: PLC0415
-        from app.domain.intake.parsing import parse_yaaos_command  # noqa: PLC0415
+        from app.domain.intake import parse_yaaos_command  # noqa: PLC0415
 
         comment = payload.get("comment") or {}
         user = comment.get("user") or {}

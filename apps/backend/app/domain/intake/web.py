@@ -98,7 +98,7 @@ async def post_intake(request: Request, type: str = Path(...)) -> JSONResponse:
             )
 
         from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.domain.orgs.models import OrgRow  # noqa: PLC0415
+        from app.domain.orgs import OrgRow  # noqa: PLC0415
 
         # Resolve the org's workspace provider so the engine routes Workspace
         # commands correctly. Null/missing → in_memory (POC default).

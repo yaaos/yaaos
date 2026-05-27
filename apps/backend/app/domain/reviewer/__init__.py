@@ -54,6 +54,7 @@ from app.domain.reviewer.llm import (
     classify_reply,
 )
 from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
@@ -158,6 +159,7 @@ __all__ = [
     "ReviewJob",
     "ReviewJobInput",
     "ReviewRequested",
+    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -209,7 +211,7 @@ class _TicketWorkflowContextProvider:
     by `_register_workflows()` at module import."""
 
     async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        from app.domain.tickets.service import get_workspace_ticket_context  # noqa: PLC0415
+        from app.domain.tickets import get_workspace_ticket_context  # noqa: PLC0415
 
         return await get_workspace_ticket_context(ticket_id)
 
@@ -303,8 +305,10 @@ def _register_workflows() -> None:
     read ticket fields. Called at import time; idempotent on re-import
     (tests reset the engine)."""
     from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
-    from app.core.workspace import register_workflow_context_provider  # noqa: PLC0415
-    from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
+    from app.core.workspace import (  # noqa: PLC0415
+        ALL_LIFECYCLE_COMMANDS,
+        register_workflow_context_provider,
+    )
     from app.domain.reviewer.commands import (  # noqa: PLC0415
         ALL_LOCAL_COMMANDS,
         ALL_WORKSPACE_COMMANDS,

@@ -512,7 +512,7 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     if not stale_orgs:
         return
 
-    from app.core.agent_gateway import bearers  # noqa: PLC0415
+    from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org  # noqa: PLC0415
 
     for (org_id,) in stale_orgs:
         rows = (
@@ -545,7 +545,7 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
             )
         # Revoke every active bearer for the org — agents will re-exchange
         # when they come back online.
-        await bearers.revoke_all_for_org(org_id, "agent_loss", session=s)
+        await _revoke_all_for_org(org_id, "agent_loss", session=s)
         log.warning("workspace.failsafe_agent_loss", org_id=str(org_id), expired_count=len(rows))
 
 

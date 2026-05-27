@@ -99,7 +99,7 @@ async def handle_developer_reply(
 
     # Mid-band confirmation path (plan §6.4 step 4) — if the immediately prior
     # yaaos message asked for a confirm, "confirm" finalizes the ack.
-    from app.domain.intake.parsing import is_mid_band_confirm  # noqa: PLC0415
+    from app.domain.intake import is_mid_band_confirm  # noqa: PLC0415
 
     if is_mid_band_confirm(body) and await _last_message_was_confirm_request(thread_row.id):
         await _finalize_mid_band_ack(

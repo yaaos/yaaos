@@ -29,7 +29,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
-from app.core.agent_gateway.service import connection_status_for_org
+from app.core.agent_gateway import connection_status_for_org
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.sse_pubsub import channel_for
@@ -93,7 +93,7 @@ async def stream_workflow_activity(
         # Resolve the owning org via the ticket so cross-org reads are
         # rejected even when the SPA hands the same slug + a borrowed
         # workflow id.
-        from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+        from app.domain.tickets import TicketRow  # noqa: PLC0415
 
         ticket = await s.get(TicketRow, wfx.ticket_id)
         if ticket is None or ticket.org_id != org_id:

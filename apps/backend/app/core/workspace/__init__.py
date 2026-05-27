@@ -1,5 +1,6 @@
 """core/workspace — provisioning + centralized lifecycle."""
 
+from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
 from app.core.workspace.dispatch import (
     _reset_recovery_policies_for_tests,
     get_recovery_policy,
@@ -51,6 +52,7 @@ from app.core.workspace.workflow_context import (
 )
 
 __all__ = [
+    "ALL_LIFECYCLE_COMMANDS",
     "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",

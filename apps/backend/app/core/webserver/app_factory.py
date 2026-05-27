@@ -150,7 +150,7 @@ def _install_middleware(app: FastAPI) -> None:
 
     # Slow-request log — forensic trail for intermittent hangs. Wraps every
     # request; emits one warn line per request taking >500ms.
-    from app.core.observability.slow_request import SlowRequestLogMiddleware  # noqa: PLC0415
+    from app.core.observability import SlowRequestLogMiddleware  # noqa: PLC0415
 
     app.add_middleware(SlowRequestLogMiddleware)
 
@@ -163,7 +163,7 @@ def _install_middleware(app: FastAPI) -> None:
         from slowapi.errors import RateLimitExceeded  # noqa: PLC0415
         from slowapi.middleware import SlowAPIMiddleware  # noqa: PLC0415
 
-        from app.core.auth.rate_limit import limiter as _limiter  # noqa: PLC0415
+        from app.core.auth import limiter as _limiter  # noqa: PLC0415
 
         app.state.limiter = _limiter
         app.add_middleware(SlowAPIMiddleware)
@@ -172,7 +172,7 @@ def _install_middleware(app: FastAPI) -> None:
     # AuthFailure → 401 with cleared yaaos_session + yaaos_csrf cookies.
     # Registered before the catch-all Exception handler below so it gets
     # first crack at the typed subclass.
-    from app.core.auth.auth_failure import register_handler as _register_auth_failure  # noqa: PLC0415
+    from app.core.auth import register_handler as _register_auth_failure  # noqa: PLC0415
 
     _register_auth_failure(app)
 

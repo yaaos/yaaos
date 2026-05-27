@@ -65,7 +65,7 @@ async def run() -> None:
     # Import each module whose `@task` decorators register task bodies
     # with the broker. The decorator runs at import time and calls
     # `broker.task(...)` — no separate bind step needed.
-    import app.core.workflow.service  # noqa: F401, PLC0415
+    import app.core.workflow  # noqa: F401, PLC0415
 
     log.info("tasks.worker.booting", broker=type(broker).__name__)
 

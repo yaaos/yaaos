@@ -27,9 +27,8 @@ from app.domain.identity import repository as identity_repo
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.types import get_provider
 from app.domain.mcp_proxy import sweep_expired
-from app.domain.orgs import Role
+from app.domain.orgs import Role, send_plain
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.email import send_plain
 
 log = structlog.get_logger("integrations.scheduler")
 

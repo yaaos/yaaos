@@ -143,8 +143,10 @@ async def hitl_respond(ticket_id: UUID, response: dict[str, Any]) -> dict[str, A
     from sqlalchemy import select as _select  # noqa: PLC0415
 
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow import resume_hitl  # noqa: PLC0415
-    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+    from app.core.workflow import (  # noqa: PLC0415
+        WorkflowExecutionRow,
+        resume_hitl,
+    )
 
     org_id = _org()
     try:
@@ -187,7 +189,7 @@ async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
     from sqlalchemy import select as _select  # noqa: PLC0415
 
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow.models import (  # noqa: PLC0415
+    from app.core.workflow import (  # noqa: PLC0415
         PendingHumanDecisionRow,
         WorkflowExecutionRow,
     )
@@ -245,7 +247,7 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
     from sqlalchemy import select as _select  # noqa: PLC0415
 
     from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+    from app.core.workflow import WorkflowExecutionRow  # noqa: PLC0415
 
     org_id = _org()
     try:

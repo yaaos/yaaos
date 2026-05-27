@@ -43,10 +43,9 @@ from app.core.auth import public_route
 from app.core.database import session as db_session
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.integrations import get_provider
-from app.domain.integrations import service as integ
+from app.domain.integrations import get, get_provider
 from app.domain.mcp_proxy.service import lookup_token, record_broken_creds
-from app.domain.reviewer.models import ReviewRow
+from app.domain.reviewer import ReviewRow
 
 log = structlog.get_logger("mcp_proxy.web")
 
@@ -135,7 +134,7 @@ async def dispatch(
             )
         org_id = review.org_id
 
-        credential = await integ.get(s, org_id, server)
+        credential = await get(s, org_id, server)
         if credential is None or not credential.enabled:
             record_broken_creds(review_id, server)
             return JSONResponse(

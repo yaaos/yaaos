@@ -26,7 +26,7 @@ from app.core.database import session as db_session
 from app.core.events import EventFilter, subscribe
 from app.core.observability import spawn
 from app.domain.notifications import service as notif_service
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 if TYPE_CHECKING:
     from app.domain.tickets import TicketStatusChanged

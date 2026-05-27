@@ -40,9 +40,9 @@ from app.core.agent_gateway import (
     CleanupWorkspaceCommand,
     CreateWorkspaceCommand,
     RepoRef,
+    WorkspaceAgentRow,
     enqueue_command,
 )
-from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
     CodingAgentCliResult,

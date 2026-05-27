@@ -16,13 +16,13 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request
 from app.core.audit_log import Actor, ActorKind
 from app.core.auth import (
     Action,
+    AuthFailure,
     actor_id_var,
     actor_kind_var,
     org_id_var,
     route_security_resolved,
     user_id_var,
 )
-from app.core.auth.auth_failure import AuthFailure
 from app.core.database import session as db_session
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import Membership, Role
@@ -146,7 +146,7 @@ def require(action: Action) -> Callable[..., None]:
         from datetime import datetime as _datetime  # noqa: PLC0415
         from datetime import timedelta as _timedelta  # noqa: PLC0415
 
-        from app.core.auth.types import SESSION_IDLE_TIMEOUT  # noqa: PLC0415
+        from app.core.auth import SESSION_IDLE_TIMEOUT  # noqa: PLC0415
 
         token = request.cookies.get("yaaos_session")
         if token:
@@ -185,9 +185,9 @@ def require(action: Action) -> Callable[..., None]:
         # have `sso_satisfied_for_org_id == org_id` within the 8h TTL.
         # Break-glass: the exempt Owner bypasses this AND must have a
         # verified TOTP secret (Phase 11 helper).
+        from app.domain.identity import has_verified_totp  # noqa: PLC0415
         from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
-        from app.domain.identity.totp import has_verified_totp  # noqa: PLC0415
-        from app.domain.orgs.sso import get_config  # noqa: PLC0415
+        from app.domain.orgs import get_config  # noqa: PLC0415
 
         async with db_session() as s:
             cfg = await get_config(s, org_id=org_row.id)
@@ -234,7 +234,7 @@ def require(action: Action) -> Callable[..., None]:
         route_security_resolved.set("org_scoped")
         # Bind structlog so log lines + the inner handler carry the identity.
         # Middleware unbinds at request end.
-        from app.core.auth.context import bind_request_structlog_vars  # noqa: PLC0415
+        from app.core.auth import bind_request_structlog_vars  # noqa: PLC0415
 
         bind_request_structlog_vars()
         # Best-effort: touch the session row so `last_seen_at` reflects

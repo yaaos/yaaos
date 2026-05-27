@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.domain.identity import sessions
 from app.domain.identity.models import UserTotpSecretRow
-from app.domain.orgs.service import delete_expired_invitations
+from app.domain.orgs import delete_expired_invitations
 
 log = structlog.get_logger("identity.cleanup")
 

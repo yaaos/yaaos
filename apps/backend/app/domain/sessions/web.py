@@ -30,24 +30,28 @@ from pydantic import BaseModel
 from app.core.audit_log import Actor
 from app.core.audit_log import audit as audit_write
 from app.core.auth import (
+    AUTH_LIMIT,
     CSRF_COOKIE_NAME,
+    MUTATE_LIMIT,
     SESSION_COOKIE_NAME,
+    auth_failure_response,
     clear_cookie_attrs,
     csrf_cookie_attrs,
+    limiter,
     session_cookie_attrs,
 )
-from app.core.auth.auth_failure import auth_failure_response
-from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.identity import sessions as session_lifecycle
-from app.domain.identity.providers import (
+from app.domain.identity import (
     ProviderError,
     get_provider,
     list_providers,
+    login_via_oauth,
 )
-from app.domain.identity.service import login_via_oauth
+from app.domain.identity import (
+    sessions as session_lifecycle,
+)
 from app.domain.sessions.dependencies import public_route
 
 log = structlog.get_logger("auth.web")
@@ -381,7 +385,7 @@ async def sso_discover(request: Request, email: str) -> dict[str, Any]:
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.orgs.models import OrgRow, SsoConfigRow  # noqa: PLC0415
+    from app.domain.orgs import OrgRow, SsoConfigRow  # noqa: PLC0415
 
     async with db_session() as s:
         # JSONB `?` operator: array contains string. Filter to enabled
