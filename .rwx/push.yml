@@ -13,16 +13,24 @@ base:
   image: ubuntu:24.04
   config: rwx/base 1.0.2
 
+# Tool-cache vault. Each install-running task (web-ci, e2e-ci) declares
+# its own tool-cache name; RWX preserves the post-install workspace
+# state across runs of that same task so `pnpm install` and Playwright's
+# browser download don't re-download on every push. The vault scopes
+# what reads/writes the cache (protected-branch isolation).
+tool-cache:
+  vault: yaaos_main
+
 # Per the RWX CI reference (https://www.rwx.com/docs/guides/ci): toolchain
-# installs MUST be their own top-level tasks so RWX caches each install
-# layer separately and reuses it across runs (inlining `call: ...` inside
-# a CI task's `run:` would force a fresh install on every cache miss).
+# installs (python, nodejs, golang) are their own top-level tasks so RWX
+# caches each install layer separately.
 #
-# Each CI task `filter:` is its own app dir + lockfile/config + this
-# push.yml — so changes outside the filter set don't bust its cache.
-#
-# We group each toolchain task directly above its single consumer so the
-# file reads top-to-bottom by app.
+# Filters intentionally do NOT include `.rwx/push.yml` — RWX already
+# hashes each task's own definition into its cache key, so an edit to
+# this file invalidates only the task whose YAML actually changed.
+# Including the file in every filter would invalidate every task on any
+# config edit (which is what was making backend-ci / agent-ci re-run
+# unnecessarily).
 
 tasks:
   - key: code
@@ -68,7 +76,6 @@ tasks:
       - pyproject.toml
       - uv.lock
       - docker/docker-compose.test.yml
-      - .rwx/push.yml
     docker: true
     # Docker is on only so `docker compose` can bring up postgres + redis
     # services. The test runner itself runs natively on the Ubuntu agent.
@@ -101,42 +108,25 @@ tasks:
     with:
       node-version: "22.11.0"
 
-  - key: pnpm-install
-    use: [code, nodejs]
-    # Workspace-wide pnpm install. node_modules at every workspace
-    # package + pnpm's content-addressable store are baked into this
-    # task's layer. `web-ci`, `e2e-ci`, and `playwright-install` all
-    # `use:` this so the install runs once per lockfile change, not once
-    # per CI task per push.
-    filter:
-      - .npmrc
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - apps/*/package.json
-      - .rwx/push.yml
-    run: |
-      set -e
-      corepack enable
-      corepack prepare pnpm@9.12.3 --activate
-      pnpm install --frozen-lockfile
-
   - key: web-ci
-    use: [code, nodejs, python, pnpm-install]
+    use: [code, nodejs, python]
+    tool-cache: ci-web-pnpm
     filter:
       - apps/web/**
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - .npmrc
       - .semgrepignore
-      - .rwx/push.yml
     # `python` is `use:`d here so semgrep (run from apps/web/bin/ci) is
-    # available. `pnpm-install` provides node_modules; corepack-enabled
-    # `pnpm` shim comes from the nodejs distribution.
+    # available. `tool-cache` preserves node_modules across runs of this
+    # task — pnpm's incremental install reuses the prior state.
     run: |
       set -e
       pip install --quiet semgrep
       corepack enable
+      corepack prepare pnpm@9.12.3 --activate
+      pnpm install --frozen-lockfile
       cd apps/web && bin/ci
     outputs:
       test-results:
@@ -157,7 +147,6 @@ tasks:
     filter:
       - apps/agent/**
       - apps/backend/openapi/agent-api.yaml
-      - .rwx/push.yml
     # Go is hermetic — runs natively. Tooling installed inline:
     # golangci-lint (official install script, v2.x), govulncheck
     # (go install), semgrep (pip). CGO + race detector work on Ubuntu's
@@ -174,22 +163,9 @@ tasks:
 
   # ─── e2e ────────────────────────────────────────────────────────────
 
-  - key: playwright-install
-    use: [code, nodejs, pnpm-install]
-    # Cache the Playwright browser binaries (~/.cache/ms-playwright/).
-    # Keyed on apps/e2e/package.json so a Playwright version bump
-    # re-fetches; otherwise this task is a cache hit across pushes.
-    filter:
-      - apps/e2e/package.json
-      - pnpm-lock.yaml
-      - .rwx/push.yml
-    run: |
-      set -e
-      corepack enable
-      pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
-
   - key: e2e-ci
-    use: [code, nodejs, pnpm-install, playwright-install]
+    use: [code, nodejs]
+    tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
     # backend (web + worker images), web (SPA baked into the image), the
     # three fake-* services, the compose file itself, and workspace
@@ -206,16 +182,19 @@ tasks:
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - .npmrc
       - pyproject.toml
       - uv.lock
-      - .rwx/push.yml
     docker: true
     # Docker is on so `apps/e2e/bin/ci` can `docker compose up --build`
     # the test stack. Playwright runs natively on the Ubuntu agent.
-    # `pnpm-install` + `playwright-install` are cached layers shared
-    # across pushes; only the compose-stack rebuild + the suite itself
-    # are uncached cost.
+    # `tool-cache` preserves node_modules + ~/.cache/ms-playwright/ from
+    # the previous run of this task, so pnpm install and the chromium
+    # download are incremental.
     run: |
       set -e
       corepack enable
+      corepack prepare pnpm@9.12.3 --activate
+      pnpm install --frozen-lockfile
+      pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
       apps/e2e/bin/ci
