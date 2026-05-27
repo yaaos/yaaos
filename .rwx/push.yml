@@ -17,9 +17,16 @@ base:
 # its own tool-cache name; RWX preserves the post-install workspace
 # state across runs of that same task so `pnpm install` and Playwright's
 # browser download don't re-download on every push. The vault scopes
-# what reads/writes the cache (protected-branch isolation).
+# what reads/writes the cache.
+#
+# The `yaaos` vault is configured for `JackKora/yaaos:*` (every branch
+# can read AND write), so feature-branch pushes also benefit from and
+# contribute to the cache. The RWX-default pattern of scoping to `main`
+# (read-only for feature branches) exists to guard against malicious
+# PRs poisoning the cache; we accept that risk for the convenience of
+# fast feature-branch CI.
 tool-cache:
-  vault: yaaos_main
+  vault: yaaos
 
 # Per the RWX CI reference (https://www.rwx.com/docs/guides/ci): toolchain
 # installs (python, nodejs, golang) are their own top-level tasks so RWX
