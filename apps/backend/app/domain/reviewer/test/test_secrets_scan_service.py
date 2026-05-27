@@ -142,7 +142,8 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
         async def fetch_diff(self, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")
 
-    from app.domain.vcs import _reset_for_tests, register_vcs_plugin  # noqa: PLC0415
+    from app.domain.vcs import register_vcs_plugin  # noqa: PLC0415
+    from app.domain.vcs.registry import _reset_for_tests  # noqa: PLC0415
 
     _reset_for_tests()
     register_vcs_plugin(_RaisingPlugin())  # type: ignore[arg-type]

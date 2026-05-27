@@ -898,7 +898,6 @@ expose = [
   "VCSRateLimitError",
   "VCSTransientError",
   "VCSValidationError",
-  "_reset_for_tests",
   "get_installation_token",
   "get_plugin",
   "is_registered",

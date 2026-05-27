@@ -1,7 +1,6 @@
 """domain/vcs — abstract types + plugin Protocol for VCS providers."""
 
 from app.domain.vcs.registry import (
-    _reset_for_tests,
     get_installation_token,
     get_plugin,
     is_registered,
@@ -69,7 +68,6 @@ __all__ = [
     "VCSRateLimitError",
     "VCSTransientError",
     "VCSValidationError",
-    "_reset_for_tests",
     "get_installation_token",
     "get_plugin",
     "is_registered",
