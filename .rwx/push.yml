@@ -101,8 +101,27 @@ tasks:
     with:
       node-version: "22.11.0"
 
+  - key: pnpm-install
+    use: [code, nodejs]
+    # Workspace-wide pnpm install. node_modules at every workspace
+    # package + pnpm's content-addressable store are baked into this
+    # task's layer. `web-ci`, `e2e-ci`, and `playwright-install` all
+    # `use:` this so the install runs once per lockfile change, not once
+    # per CI task per push.
+    filter:
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - apps/*/package.json
+      - .rwx/push.yml
+    run: |
+      set -e
+      corepack enable
+      corepack prepare pnpm@9.12.3 --activate
+      pnpm install --frozen-lockfile
+
   - key: web-ci
-    use: [code, nodejs, python]
+    use: [code, nodejs, python, pnpm-install]
     filter:
       - apps/web/**
       - package.json
@@ -111,13 +130,12 @@ tasks:
       - .semgrepignore
       - .rwx/push.yml
     # `python` is `use:`d here so semgrep (run from apps/web/bin/ci) is
-    # available. corepack lives in the node distribution above.
+    # available. `pnpm-install` provides node_modules; corepack-enabled
+    # `pnpm` shim comes from the nodejs distribution.
     run: |
       set -e
       pip install --quiet semgrep
       corepack enable
-      corepack prepare pnpm@9.12.3 --activate
-      pnpm install --frozen-lockfile
       cd apps/web && bin/ci
     outputs:
       test-results:
@@ -155,8 +173,22 @@ tasks:
 
   # ─── e2e ────────────────────────────────────────────────────────────
 
+  - key: playwright-install
+    use: [code, nodejs, pnpm-install]
+    # Cache the Playwright browser binaries (~/.cache/ms-playwright/).
+    # Keyed on apps/e2e/package.json so a Playwright version bump
+    # re-fetches; otherwise this task is a cache hit across pushes.
+    filter:
+      - apps/e2e/package.json
+      - pnpm-lock.yaml
+      - .rwx/push.yml
+    run: |
+      set -e
+      corepack enable
+      pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
+
   - key: e2e-ci
-    use: [code, nodejs]
+    use: [code, nodejs, pnpm-install, playwright-install]
     # Broad filter: e2e exercises the integrated test compose stack —
     # backend (web + worker images), web (SPA baked into the image), the
     # three fake-* services, the compose file itself, and workspace
@@ -179,10 +211,10 @@ tasks:
     docker: true
     # Docker is on so `apps/e2e/bin/ci` can `docker compose up --build`
     # the test stack. Playwright runs natively on the Ubuntu agent.
+    # `pnpm-install` + `playwright-install` are cached layers shared
+    # across pushes; only the compose-stack rebuild + the suite itself
+    # are uncached cost.
     run: |
       set -e
       corepack enable
-      corepack prepare pnpm@9.12.3 --activate
-      pnpm install --frozen-lockfile
-      pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
       apps/e2e/bin/ci
