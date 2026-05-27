@@ -173,6 +173,7 @@ tasks:
   # ─── e2e ────────────────────────────────────────────────────────────
 
   - key: e2e-ci
+    if: ${{ mint.run.git.branch == 'main' }}
     use: [code, nodejs]
     tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
