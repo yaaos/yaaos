@@ -137,10 +137,10 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
-    # No seed script in CMD — e2e specs drive their own preconditions via
+    # No seed script — e2e specs drive their own preconditions via
     # `/api/testing/*` (see app/testing/e2e_setup). Migrations + built-in
-    # reviewer-agent seeding run from FastAPI's lifespan hook.
-    command: ["python", "apps/backend/app/web.py"]
+    # reviewer-agent seeding run from FastAPI's lifespan hook. CMD comes
+    # from the Dockerfile `web` stage.
 
   yaaos-worker:
     image: yaaos-worker-test
@@ -177,4 +177,3 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["python", "apps/backend/app/worker.py"]
