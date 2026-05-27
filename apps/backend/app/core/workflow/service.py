@@ -21,6 +21,8 @@ model`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -598,6 +600,166 @@ async def resume_hitl(
         session=session,
     )
     return True
+
+
+# ── Read projections ────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class WorkflowExecutionSummary:
+    """Narrow read projection of a `workflow_executions` row. Consumers that
+    need execution state for display or routing use this; they never receive
+    the SQLAlchemy row directly."""
+
+    id: UUID
+    ticket_id: UUID
+    workflow_name: str
+    state: str
+    current_step_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class HitlHistoryEntry:
+    """One HITL exchange (question + optional resolution). Projected from
+    `pending_human_decisions` without exposing the SQLAlchemy row."""
+
+    id: UUID
+    workflow_execution_id: UUID
+    question_payload: dict[str, Any]
+    resolution_payload: dict[str, Any] | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+
+def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
+    return WorkflowExecutionSummary(
+        id=row.id,
+        ticket_id=row.ticket_id,
+        workflow_name=row.workflow_name,
+        state=row.state,
+        current_step_id=row.current_step_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def list_executions_for_ticket(
+    ticket_id: UUID, *, session: AsyncSession
+) -> list[WorkflowExecutionSummary]:
+    """Return all workflow executions for one ticket, newest first."""
+    from sqlalchemy import desc  # noqa: PLC0415
+
+    rows = (
+        (
+            await session.execute(
+                select(WorkflowExecutionRow)
+                .where(WorkflowExecutionRow.ticket_id == ticket_id)
+                .order_by(desc(WorkflowExecutionRow.created_at))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_project_execution(r) for r in rows]
+
+
+async def get_execution_summary(
+    execution_id: UUID, *, session: AsyncSession
+) -> WorkflowExecutionSummary | None:
+    """Look up a single execution by id. Returns None when not found."""
+    row = await session.get(WorkflowExecutionRow, execution_id)
+    if row is None:
+        return None
+    return _project_execution(row)
+
+
+async def get_awaiting_human_execution(
+    ticket_id: UUID, *, session: AsyncSession
+) -> WorkflowExecutionSummary | None:
+    """Return the most recent `awaiting_human` execution for a ticket, or
+    None if no execution is currently paused for HITL input."""
+    from sqlalchemy import desc  # noqa: PLC0415
+
+    row = (
+        await session.execute(
+            select(WorkflowExecutionRow)
+            .where(
+                WorkflowExecutionRow.ticket_id == ticket_id,
+                WorkflowExecutionRow.state == WorkflowState.AWAITING_HUMAN.value,
+            )
+            .order_by(desc(WorkflowExecutionRow.created_at))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return _project_execution(row)
+
+
+async def list_active_execution_ids(ticket_id: UUID, *, session: AsyncSession) -> list[UUID]:
+    """Return ids of all non-terminal executions for a ticket.
+
+    Non-terminal: any state not in `TERMINAL_STATES`."""
+    rows = (
+        (
+            await session.execute(
+                select(WorkflowExecutionRow.id).where(
+                    WorkflowExecutionRow.ticket_id == ticket_id,
+                    WorkflowExecutionRow.state.notin_([st.value for st in TERMINAL_STATES]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def list_hitl_history(ticket_id: UUID, *, session: AsyncSession) -> list[HitlHistoryEntry]:
+    """All HITL exchanges for a ticket's executions, newest first."""
+    from sqlalchemy import desc  # noqa: PLC0415
+
+    wfx_ids = (
+        (
+            await session.execute(
+                select(WorkflowExecutionRow.id).where(WorkflowExecutionRow.ticket_id == ticket_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not wfx_ids:
+        return []
+    rows = (
+        (
+            await session.execute(
+                select(PendingHumanDecisionRow)
+                .where(PendingHumanDecisionRow.workflow_execution_id.in_(wfx_ids))
+                .order_by(desc(PendingHumanDecisionRow.created_at))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        HitlHistoryEntry(
+            id=r.id,
+            workflow_execution_id=r.workflow_execution_id,
+            question_payload=r.question_payload,
+            resolution_payload=r.resolution_payload,
+            resolved_at=r.resolved_at,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+async def list_all_execution_states(*, session: AsyncSession) -> list[str]:
+    """Return the `state` value for every execution row. Used for org-scoped
+    metrics aggregation — callers group and count by state value."""
+    return list((await session.execute(select(WorkflowExecutionRow.state))).scalars().all())
 
 
 # ── Internal helpers ────────────────────────────────────────────────────

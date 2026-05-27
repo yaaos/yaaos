@@ -32,17 +32,16 @@ from app.core.workflow import (
     CommandCategory,
     CommandContext,
     Outcome,
-    PendingHumanDecisionRow,
     Step,
     TerminalAction,
     Workflow,
     WorkflowEngine,
-    WorkflowExecutionRow,
     WorkflowState,
     _reset_for_tests,
     request_cancel,
     resume_hitl,
 )
+from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workspace.dispatch import (
     _reset_recovery_policies_for_tests,
     register_recovery_policy,

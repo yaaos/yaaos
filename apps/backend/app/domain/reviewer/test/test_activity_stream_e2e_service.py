@@ -31,7 +31,8 @@ from app.core.sse_pubsub import (
 )
 from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
-from app.core.workflow import WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow import WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workspace import (
     WorkspaceTicketContext,
     _reset_providers_for_tests,

@@ -226,29 +226,13 @@ async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-unty
     Returns the number of workflow rows that were transitioned to
     `cancelled` (or had `cancel_requested` set, depending on engine state).
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
     from app.core.database import session as db_session  # noqa: PLC0415
-    from app.core.workflow import (  # noqa: PLC0415
-        TERMINAL_STATES,
-        WorkflowExecutionRow,
-        WorkflowState,
-        request_cancel,
-    )
+    from app.core.workflow import list_active_execution_ids, request_cancel  # noqa: PLC0415
 
     cancelled = 0
     async with db_session() as s:
-        rows = (
-            await s.execute(
-                select(WorkflowExecutionRow.id, WorkflowExecutionRow.state).where(
-                    WorkflowExecutionRow.ticket_id == ticket_id,
-                    WorkflowExecutionRow.state.notin_([st.value for st in TERMINAL_STATES]),
-                )
-            )
-        ).all()
-        for wfx_id, state in rows:
-            if WorkflowState(state) in TERMINAL_STATES:
-                continue
+        active_ids = await list_active_execution_ids(ticket_id, session=s)
+        for wfx_id in active_ids:
             if await request_cancel(str(wfx_id), session=s):
                 cancelled += 1
         if cancelled:

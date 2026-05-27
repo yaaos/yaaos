@@ -179,12 +179,11 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         Step,
         TerminalAction,
         Workflow,
-        WorkflowExecutionRow,
         WorkflowState,
         _reset_for_tests,
         get_engine,
     )
-    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415, F811
+    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
 
     _reset_for_tests()
 
@@ -298,11 +297,11 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         Step,
         TerminalAction,
         Workflow,
-        WorkflowExecutionRow,
         WorkflowState,
         _reset_for_tests,
         get_engine,
     )
+    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
 
     _reset_for_tests()
 

@@ -35,7 +35,7 @@ from app.core.database import session as db_session
 from app.core.sse_pubsub import channel_for
 from app.core.sse_pubsub import subscribe as sse_subscribe
 from app.core.webserver import RouteSpec, register_routes
-from app.core.workflow import WorkflowExecutionRow
+from app.core.workflow import get_execution_summary
 from app.domain.sessions import require
 
 router = APIRouter()
@@ -87,7 +87,7 @@ async def stream_workflow_activity(
     if org_id is None:
         raise _err(400, "no_org_context")
     async with db_session() as s:
-        wfx = await s.get(WorkflowExecutionRow, workflow_execution_id)
+        wfx = await get_execution_summary(workflow_execution_id, session=s)
         if wfx is None:
             raise _err(404, "workflow_execution_not_found")
         # Resolve the owning org via the ticket so cross-org reads are

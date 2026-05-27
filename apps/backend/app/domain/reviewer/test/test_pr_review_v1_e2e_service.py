@@ -27,7 +27,8 @@ from sqlalchemy import select
 from app.core.plugin_kit import PluginMeta
 from app.core.tasks.drain import drain_once
 from app.core.tasks.models import OutboxEntryRow
-from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow import Outcome, WorkflowState, _reset_for_tests, get_engine
+from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workspace import (
     WorkspaceTicketContext,
     _reset_providers_for_tests,

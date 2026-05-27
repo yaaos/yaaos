@@ -23,10 +23,10 @@ from app.core.workflow import (
     WorkflowCommand,
     WorkflowEngine,
     WorkflowError,
-    WorkflowExecutionRow,
     WorkflowNotFoundError,
     WorkflowState,
 )
+from app.core.workflow.models import WorkflowExecutionRow
 
 # ── A throwaway WorkflowCommand for registration tests ──────────────────
 

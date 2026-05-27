@@ -28,10 +28,10 @@ from app.core.workflow import (
     TerminalAction,
     Workflow,
     WorkflowEngine,
-    WorkflowExecutionRow,
     WorkflowState,
     _reset_for_tests,
 )
+from app.core.workflow.models import WorkflowExecutionRow
 from app.domain.intake import (
     IntakePrepared,
     IntakeRejectedError,
