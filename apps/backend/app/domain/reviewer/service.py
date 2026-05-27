@@ -390,6 +390,26 @@ async def get_review(review_id: uuid.UUID, *, org_id: uuid.UUID) -> Review:
     return _review_from_row(row)
 
 
+async def get_org_id_for_review(review_id: uuid.UUID) -> uuid.UUID | None:
+    """Return the org_id for *review_id*, or ``None`` when the review is absent.
+
+    Use when the caller does not yet know the org — e.g. the MCP proxy
+    resolving tenancy from a review bearer token. Callers that already know the
+    org should use `get_review(review_id, org_id=...)` which applies the org
+    scope.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (
+            await s.execute(select(ReviewRow.org_id).where(ReviewRow.id == review_id))
+        ).scalar_one_or_none()
+    return row
+
+
 async def list_findings_for_pr(
     pr_id: uuid.UUID, *, org_id: uuid.UUID, include_terminal: bool = False
 ) -> list[FindingView]:

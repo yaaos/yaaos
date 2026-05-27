@@ -93,9 +93,9 @@ async def stream_workflow_activity(
         # Resolve the owning org via the ticket so cross-org reads are
         # rejected even when the SPA hands the same slug + a borrowed
         # workflow id.
-        from app.domain.tickets import TicketRow  # noqa: PLC0415
+        from app.domain.tickets import get_by_id as get_ticket_by_id  # noqa: PLC0415
 
-        ticket = await s.get(TicketRow, wfx.ticket_id)
+        ticket = await get_ticket_by_id(wfx.ticket_id)
         if ticket is None or ticket.org_id != org_id:
             raise _err(404, "workflow_execution_not_found")
     return StreamingResponse(

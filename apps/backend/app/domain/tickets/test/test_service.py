@@ -1,7 +1,8 @@
 """Service-level tests for ticket lifecycle ops.
 
 Covers: upsert_ticket_for_pr (idempotency + race-safe insert),
-attach_pr_to_ticket (pr_id IS NULL guard), and set_workflow_execution.
+attach_pr_to_ticket (pr_id IS NULL guard), set_workflow_execution,
+get_by_id, and list_running_older_than.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import pytest
 
 from app.domain.tickets import (
     attach_pr_to_ticket,
+    get_by_id,
+    list_running_older_than,
     set_workflow_execution,
     upsert_ticket_for_pr,
 )
@@ -179,3 +182,100 @@ async def test_set_workflow_execution(db_session) -> None:  # type: ignore[no-un
     async with db_session.begin_nested():
         row = (await db_session.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one()
     assert row.current_workflow_execution_id == workflow_execution_id
+
+
+@pytest.mark.service
+async def test_get_by_id_returns_ticket(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Happy path: get_by_id returns the Ticket without org_id filter."""
+    org_id = uuid4()
+    source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
+
+    ticket_id, _ = await upsert_ticket_for_pr(
+        org_id=org_id,
+        source_external_id=source_external_id,
+        title="get-by-id PR",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"delivery-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+    assert ticket_id is not None
+
+    ticket = await get_by_id(ticket_id)
+    assert ticket is not None
+    assert ticket.id == ticket_id
+    assert ticket.org_id == org_id
+    assert ticket.title == "get-by-id PR"
+
+
+@pytest.mark.service
+async def test_get_by_id_returns_none_when_missing(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Unknown UUID returns None."""
+    result = await get_by_id(uuid4())
+    assert result is None
+
+
+@pytest.mark.service
+async def test_list_running_older_than_filters_correctly(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Returns only running tickets older than cutoff; skips fresh ones."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from sqlalchemy import text  # noqa: PLC0415
+
+    org_id = uuid4()
+
+    # Stale running ticket (created 10 minutes ago)
+    stale_id, _ = await upsert_ticket_for_pr(
+        org_id=org_id,
+        source_external_id=f"r/{uuid4().hex}",
+        title="stale",
+        description=None,
+        repo_external_id="r",
+        plugin_id="github",
+        idempotency_key=f"k-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+    assert stale_id is not None
+    # Back-date the stale ticket to 10 minutes ago
+    stale_created_at = datetime.now(UTC) - timedelta(minutes=10)
+    await db_session.execute(
+        text("UPDATE tickets SET created_at = :ts WHERE id = :id"),
+        {"ts": stale_created_at, "id": stale_id},
+    )
+    await db_session.commit()
+
+    # Fresh running ticket with its created_at left as the DB default (NOW()).
+    # The cutoff is set AFTER the stale ticket's back-dated timestamp so only
+    # the stale ticket falls before it.
+    fresh_id, _ = await upsert_ticket_for_pr(
+        org_id=org_id,
+        source_external_id=f"r/{uuid4().hex}",
+        title="fresh",
+        description=None,
+        repo_external_id="r",
+        plugin_id="github",
+        idempotency_key=f"k-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+    assert fresh_id is not None
+
+    # cutoff is set between the two tickets' timestamps: after the stale
+    # ticket (created_at = 10 min ago) and before the fresh one (NOW()).
+    # Use a 5-minute boundary so the stale ticket (10 min old) is definitely
+    # older, and the fresh ticket (just inserted) is definitely newer.
+    cutoff = datetime.now(UTC) - timedelta(minutes=5)
+
+    results = await list_running_older_than(cutoff)
+    result_ids = {r[0] for r in results}
+    assert stale_id in result_ids
+    assert fresh_id not in result_ids
+    # verify pr_id slot is present (may be None for tickets without pr)
+    stale_result = next(r for r in results if r[0] == stale_id)
+    assert len(stale_result) == 3  # (ticket_id, org_id, pr_id)

@@ -123,6 +123,32 @@ async def delete_expired_invitations() -> int:
         return n
 
 
+async def find_saml_org_slug_for_domain(domain: str) -> str | None:
+    """Return the org slug for the SAML SSO config that covers *domain*, or
+    ``None`` when no enabled config matches.
+
+    Scans enabled `sso_configs` rows whose `email_domains` JSONB array contains
+    *domain* (case-sensitive; callers must normalize before calling). Returns the
+    first match — at most one enabled config per domain is expected.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(SsoConfigRow, OrgRow)
+                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
+                .where(SsoConfigRow.enabled.is_(True))
+                .where(SsoConfigRow.email_domains.op("?")(domain))
+                .limit(1)
+            )
+        ).first()
+    if row is None:
+        return None
+    _, org = row
+    return org.slug
+
+
 __all__ = [
     "InsufficientRoleError",
     "Invitation",
@@ -134,5 +160,6 @@ __all__ = [
     "Role",
     "SsoConfig",
     "delete_expired_invitations",
+    "find_saml_org_slug_for_domain",
     "get_org",
 ]

@@ -20,7 +20,6 @@ from app.domain.orgs.invitations import (
     invite,
     remove_member,
 )
-from app.domain.orgs.models import MembershipRow, OrgCodingAgentRow, OrgRow, SsoConfigRow
 from app.domain.orgs.onboarding import (
     OnboardingStatus,
     get_onboarding_status,
@@ -37,6 +36,7 @@ from app.domain.orgs.service import (
     Role,
     SsoConfig,
     delete_expired_invitations,
+    find_saml_org_slug_for_domain,
     get_org,
 )
 from app.domain.orgs.sso import (
@@ -70,21 +70,18 @@ __all__ = [
     "InvitationUsedError",
     "Membership",
     "MembershipNotFoundError",
-    "MembershipRow",
     "OnboardingStatus",
     "Org",
-    "OrgCodingAgentRow",
     "OrgNotFoundError",
-    "OrgRow",
     "Role",
     "SsoConfig",
     "SsoConfigError",
-    "SsoConfigRow",
     "VcsState",
     "accept_invitation",
     "change_role",
     "clear_vcs",
     "delete_expired_invitations",
+    "find_saml_org_slug_for_domain",
     "get_config",
     "get_onboarding_status",
     "get_org",

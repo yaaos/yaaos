@@ -1,4 +1,4 @@
-"""Service-layer tests for `domain/orgs` — `get_org` and `delete_expired_invitations`."""
+"""Service-layer tests for `domain/orgs` — `get_org`, `delete_expired_invitations`, `find_saml_org_slug_for_domain`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.orgs import delete_expired_invitations, get_org
+from app.domain.orgs import delete_expired_invitations, find_saml_org_slug_for_domain, get_org
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role
 
@@ -114,3 +114,53 @@ async def test_delete_expired_invitations_zero_when_none_expired(db_session) -> 
 
     count = await delete_expired_invitations()
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# find_saml_org_slug_for_domain
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_saml_org_slug_for_domain_returns_slug(db_session) -> None:
+    """Happy path: enabled config whose domain list contains the queried domain."""
+    from app.domain.orgs.sso import upsert_config  # noqa: PLC0415
+
+    org = await orgs_repo.insert_org(db_session, slug="saml-domain-org")
+    await upsert_config(
+        db_session,
+        org_id=org.id,
+        idp_metadata_xml="<md/>",
+        enabled=True,
+        email_domains=["example.com"],
+    )
+    await db_session.commit()
+
+    slug = await find_saml_org_slug_for_domain("example.com")
+    assert slug == "saml-domain-org"
+
+
+@pytest.mark.asyncio
+async def test_find_saml_org_slug_for_domain_returns_none_when_disabled(db_session) -> None:
+    """Disabled config must not match."""
+    from app.domain.orgs.sso import upsert_config  # noqa: PLC0415
+
+    org = await orgs_repo.insert_org(db_session, slug="saml-disabled-org")
+    await upsert_config(
+        db_session,
+        org_id=org.id,
+        idp_metadata_xml="<md/>",
+        enabled=False,
+        email_domains=["disabled.example.com"],
+    )
+    await db_session.commit()
+
+    result = await find_saml_org_slug_for_domain("disabled.example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_find_saml_org_slug_for_domain_returns_none_when_no_match(db_session) -> None:
+    """Unknown domain returns None."""
+    result = await find_saml_org_slug_for_domain(f"unknown-{uuid4().hex}.example.com")
+    assert result is None

@@ -21,7 +21,6 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
 
 from app.core.auth import public_route
 from app.core.database import session as db_session
@@ -98,12 +97,12 @@ async def post_intake(request: Request, type: str = Path(...)) -> JSONResponse:
             )
 
         from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.domain.orgs import OrgRow  # noqa: PLC0415
+        from app.domain.orgs import get_org  # noqa: PLC0415
 
         # Resolve the org's workspace provider so the engine routes Workspace
         # commands correctly. Null/missing → in_memory (POC default).
-        org_row = (await s.execute(select(OrgRow).where(OrgRow.id == prepared.org_id))).scalar_one_or_none()
-        workspace_provider = (org_row.workspace_provider if org_row is not None else None) or "in_memory"
+        org = await get_org(prepared.org_id)
+        workspace_provider = (org.workspace_provider if org is not None else None) or "in_memory"
 
         engine = get_engine()
         workflow_execution_id = await engine.start(

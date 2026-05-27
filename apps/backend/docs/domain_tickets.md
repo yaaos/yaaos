@@ -14,7 +14,7 @@ Exported from `app/domain/tickets/__init__.py`:
 - `TicketFilter` — list filter (`repo_external_ids`, `author_logins`, `created_after`, `created_before`, `statuses`).
 - `TicketStatus` — `Literal["running", "hitl", "done", "failed", "cancelled"]` (collapse).
 - `TicketStatusChanged` — published on every transition (subclass of `core.events.Event`).
-- Service — `create` (intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `upsert_ticket_for_pr`, `attach_pr_to_ticket`, `set_workflow_execution`, `get`, `get_by_pr`, `list_tickets`, `complete`, `abandon`, `fail`, `attach_workflow_execution`.
+- Service — `create` (intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `upsert_ticket_for_pr`, `attach_pr_to_ticket`, `set_workflow_execution`, `get`, `get_by_id` (unscoped fetch — use when org is unknown), `get_by_pr`, `list_tickets`, `list_running_older_than(cutoff) -> list[tuple[ticket_id, org_id, pr_id | None]]` (system sweep helper), `complete`, `abandon`, `fail`, `attach_workflow_execution`.
 - Exceptions — `TicketNotFoundError`, `InvalidTicketTransition`.
 
 columns on `tickets`: `type` (`pr_review` default), `idempotency_key` (sparse-unique), `payload` (JSONB), `current_workflow_execution_id` (soft pointer into `workflow_executions`). Created by migration `016_tickets_m05_columns`.

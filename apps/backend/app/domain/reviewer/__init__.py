@@ -54,7 +54,6 @@ from app.domain.reviewer.llm import (
     classify_reply,
 )
 from app.domain.reviewer.lock import acquire_pr_lock
-from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
@@ -81,6 +80,7 @@ from app.domain.reviewer.service import (
     compute_resolved_without_edit_rate,
     dispatch_events,
     find_pr_id_by_external_comment_id,
+    get_org_id_for_review,
     get_review,
     get_thread,
     is_off_topic_message,
@@ -159,7 +159,6 @@ __all__ = [
     "ReviewJob",
     "ReviewJobInput",
     "ReviewRequested",
-    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -189,6 +188,7 @@ __all__ = [
     "decide_trigger",
     "dispatch_events",
     "find_pr_id_by_external_comment_id",
+    "get_org_id_for_review",
     "get_review",
     "get_thread",
     "handle_developer_reply",

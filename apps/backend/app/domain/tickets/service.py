@@ -334,6 +334,38 @@ async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
     return Ticket.from_row(row) if row is not None else None
 
 
+async def get_by_id(ticket_id: UUID) -> Ticket | None:
+    """Return the `Ticket` for *ticket_id* without an org_id filter, or ``None``.
+
+    Use when the caller does not yet know the org (e.g. resolving org context
+    from a ticket reference). Callers that DO know the org should use `get`
+    which applies the org scope.
+    """
+    async with db_session() as s:
+        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
+    return Ticket.from_row(row) if row is not None else None
+
+
+async def list_running_older_than(cutoff: datetime) -> list[tuple[UUID, UUID, UUID | None]]:
+    """Return `(ticket_id, org_id, pr_id)` triples for every `running` ticket
+    created before *cutoff*.
+
+    Does not filter by org — intended for system sweeps that process all orgs.
+    `pr_id` is ``None`` for tickets not yet linked to a PR. Callers perform any
+    secondary domain checks (e.g. review-row existence) before acting.
+    """
+    async with db_session() as s:
+        rows = (
+            await s.execute(
+                select(TicketRow.id, TicketRow.org_id, TicketRow.pr_id).where(
+                    TicketRow.status == "running",
+                    TicketRow.created_at < cutoff,
+                )
+            )
+        ).all()
+    return [(r[0], r[1], r[2]) for r in rows]
+
+
 async def list_tickets(
     filter: TicketFilter,
     *,

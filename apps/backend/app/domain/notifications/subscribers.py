@@ -20,13 +20,12 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
 
 from app.core.database import session as db_session
 from app.core.events import EventFilter, subscribe
 from app.core.observability import spawn
 from app.domain.notifications import service as notif_service
-from app.domain.tickets import TicketRow
+from app.domain.tickets import get_by_id as get_ticket_by_id
 
 if TYPE_CHECKING:
     from app.domain.tickets import TicketStatusChanged
@@ -76,12 +75,11 @@ async def _handle_status_change(event: TicketStatusChanged) -> None:
     if notif_type is None or event.ticket_id is None:
         return
 
+    ticket = await get_ticket_by_id(event.ticket_id)
+    if ticket is None:
+        return
+
     async with db_session() as s:
-        ticket = (
-            await s.execute(select(TicketRow).where(TicketRow.id == event.ticket_id))
-        ).scalar_one_or_none()
-        if ticket is None:
-            return
         members = await _list_active_member_ids(s, org_id=ticket.org_id)
         title = _TITLE_TEMPLATE[notif_type]
         body = ticket.title

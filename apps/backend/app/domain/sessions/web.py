@@ -382,27 +382,12 @@ async def sso_discover(request: Request, email: str) -> dict[str, Any]:
     if not domain:
         raise HTTPException(status_code=422, detail={"error": "invalid_email"})
 
-    from sqlalchemy import select  # noqa: PLC0415
+    from app.domain.orgs import find_saml_org_slug_for_domain  # noqa: PLC0415
 
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.orgs import OrgRow, SsoConfigRow  # noqa: PLC0415
-
-    async with db_session() as s:
-        # JSONB `?` operator: array contains string. Filter to enabled
-        # rows only — disabled configs shouldn't route logins.
-        row = (
-            await s.execute(
-                select(SsoConfigRow, OrgRow)
-                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
-                .where(SsoConfigRow.enabled.is_(True))
-                .where(SsoConfigRow.email_domains.op("?")(domain))
-                .limit(1)
-            )
-        ).first()
-    if row is None:
+    slug = await find_saml_org_slug_for_domain(domain)
+    if slug is None:
         return {"provider": "github"}
-    _, org = row
-    return {"provider": "saml", "saml_org_slug": org.slug}
+    return {"provider": "saml", "saml_org_slug": slug}
 
 
 # ── # TOTP enroll + verify ──────────────────────────────────
