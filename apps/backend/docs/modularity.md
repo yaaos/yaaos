@@ -48,7 +48,7 @@ Each subdirectory of a layer is a module. Conventional files:
 
 - Absolute imports only. No relative imports across module boundaries.
 - Module-level imports only.
-- Other modules import only what's in `__init__.py`'s `__all__`. Importing internals across boundaries is rejected by `tach check --interfaces` in CI.
+- Other modules import only what's in `__init__.py`'s `__all__`. The canonical form is `from app.<module> import X`. Deep imports (`from app.<module>.<submodule> import X`) from outside the module are rejected by `tach check --interfaces` in CI — only symbols in the `expose` list (derived from `__all__` by `bin/sync_modules`) are reachable across boundaries.
 
 ## Plugin Protocols
 
