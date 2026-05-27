@@ -49,7 +49,7 @@ from app.domain.coding_agent import (
     ValidationResult,
     VerifyFixContext,
     VerifyFixResult,
-    register_coding_agent_plugin,
+    register_plugin,
 )
 from app.domain.coding_agent import (
     AnswerQuestionDto as _AnswerQuestionDto,
@@ -1053,7 +1053,7 @@ def bootstrap() -> None:
     from app.plugins.claude_code.byok_validator import validate_anthropic_key  # noqa: PLC0415
     from app.plugins.claude_code.installer import install_subagents  # noqa: PLC0415
 
-    register_coding_agent_plugin(_plugin)
+    register_plugin(_plugin)
     register_onboarding_contributor("anthropic_key_set", _onboarding_anthropic_key_set)
     # BYOK: the `/api/api-keys/anthropic/validate` endpoint dispatches to this
     # callable so core/byok stays free of provider-specific HTTP.

@@ -17,7 +17,7 @@ Exported from `app/domain/coding_agent/__init__.py`:
 - Shared types — `InvocationStatus`, `InvocationTelemetry`, `ValidationResult`, `HealthStatus`, `ActivityEvent`, `OnActivity`, `Severity`, `FindingAnchor`, `FindingDraft`.
 - Per-mode contexts/results — `ReviewContext`/`ReviewResult`, `IncrementalReviewContext`/`IncrementalReviewResult`, `VerifyFixContext`/`VerifyFixResult`, `StaleCheckContext`/`StaleCheckResult`, `AnswerQuestionContext`/`AnswerQuestionResult`. The answer-question context also exports `PriorThreadMessage` for the conversation-history field.
 - Protocol — `CodingAgentPlugin`.
-- Registry/dispatch — `register_coding_agent_plugin`, `get_plugin`, `registered_plugin_ids`, `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check_all`, `_reset_plugins_for_tests`, `_PLUGINS`.
+- Registry/dispatch — `register_plugin`, `get_plugin`, `registered_plugin_ids`, `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check_all`, `_reset_plugins_for_tests`, `_PLUGINS`.
 - Exceptions — `CodingAgentError`, `PluginNotFoundError`, `CodingAgentCacheMiss`.
 
 No HTTP routes.
@@ -63,7 +63,7 @@ Plugins (today: `plugins/claude_code`) read these at bootstrap, wrap them in the
 
 ### Registry + dispatch (`service.py`)
 
-Process-global `_PLUGINS` keyed by `plugin.meta.id`. `register_coding_agent_plugin` rejects duplicates. `review` is a thin wrapper that resolves the plugin, forwards the call, and emits an `agent.reviewed` log line carrying telemetry. No retry, no fallback — caller policy. `health_check_all` converts any raised exception to an unhealthy `HealthStatus`. `_reset_plugins_for_tests()` clears the registry.
+Process-global `_PLUGINS` keyed by `plugin.meta.id`. `register_plugin` rejects duplicates. `review` is a thin wrapper that resolves the plugin, forwards the call, and emits an `agent.reviewed` log line carrying telemetry. No retry, no fallback — caller policy. `health_check_all` converts any raised exception to an unhealthy `HealthStatus`. `_reset_plugins_for_tests()` clears the registry.
 
 ### Failure model
 

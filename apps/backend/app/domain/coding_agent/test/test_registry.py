@@ -21,7 +21,6 @@ from app.domain.coding_agent import (
     get_plugin,
     health_check_all,
     list_registered_plugins,
-    register_coding_agent_plugin,
     register_plugin,
     registered_plugin_ids,
     review,
@@ -63,15 +62,15 @@ def _reset() -> None:
 
 def test_register_and_get_plugin() -> None:
     plugin = _StubPlugin()
-    register_coding_agent_plugin(plugin)
+    register_plugin(plugin)
     assert get_plugin("stub") is plugin
     assert "stub" in registered_plugin_ids()
 
 
 def test_register_duplicate_raises() -> None:
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
     with pytest.raises(ValueError, match="already registered"):
-        register_coding_agent_plugin(_StubPlugin())
+        register_plugin(_StubPlugin())
 
 
 def test_get_unknown_plugin_raises() -> None:
@@ -83,7 +82,7 @@ def test_get_unknown_plugin_raises() -> None:
 async def test_review_dispatch() -> None:
     from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
 
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
 
     pr = VCSPullRequest(
         plugin_id="github",
@@ -117,7 +116,7 @@ async def test_review_dispatch() -> None:
 
 @pytest.mark.asyncio
 async def test_validate_config_dispatch() -> None:
-    register_coding_agent_plugin(_StubPlugin())
+    register_plugin(_StubPlugin())
     res = await validate_config("stub", {})
     assert res.valid is True
 
@@ -136,7 +135,7 @@ async def test_health_check_all_handles_plugin_exception() -> None:
         async def health_check(self) -> HealthStatus:
             raise RuntimeError("boom")
 
-    register_coding_agent_plugin(_Broken())
+    register_plugin(_Broken())
     out = await health_check_all()
     assert out["broken"].healthy is False
     assert "boom" in out["broken"].message

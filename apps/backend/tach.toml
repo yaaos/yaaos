@@ -563,7 +563,6 @@ expose = [
   "incremental_review",
   "list_plugin_metas",
   "list_registered_plugins",
-  "register_coding_agent_plugin",
   "register_plugin",
   "registered_plugin_ids",
   "review",

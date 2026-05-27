@@ -40,11 +40,6 @@ def register_plugin(plugin: CodingAgentPlugin) -> None:
     _registry[plugin.meta.id] = plugin
 
 
-# Legacy alias kept so existing callers using the longer name still work.
-def register_coding_agent_plugin(plugin: CodingAgentPlugin) -> None:
-    register_plugin(plugin)
-
-
 def list_registered_plugins() -> list[CodingAgentPlugin]:
     """Return registered plugins in insertion order."""
     return list(_registry.values())
