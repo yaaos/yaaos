@@ -369,10 +369,10 @@ class GithubIntakeType:
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.
         from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.domain.orgs.models import OrgRow  # noqa: PLC0415
+        from app.domain.orgs import get_org  # noqa: PLC0415
 
-        org_row = (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one_or_none()
-        workspace_provider = (org_row.workspace_provider if org_row is not None else None) or "in_memory"
+        org = await get_org(org_id)
+        workspace_provider = (org.workspace_provider if org is not None else None) or "in_memory"
 
         workflow_execution_id = await get_engine().start(
             workflow_name="pr_review_v1",
