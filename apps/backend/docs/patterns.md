@@ -120,6 +120,21 @@ Rules:
 - Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract.
 - `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
 
+### Service-fn session-handling convention
+
+Two valid shapes for service functions:
+
+- **Shape (a) — takes `session` first positional, never commits.** Use when real callers compose the function with sibling writes inside one `async with db_session() as s:` block (e.g. creating an org + membership + install in a single transaction). Signature: `async def create_org(session: AsyncSession, *, slug: str, ...) -> Org`.
+- **Shape (b) — opens own session, returns value.** Use for single-row writes or read-only fetches that never need to compose with other writes in the same transaction. Signature: `async def get_org(org_id: UUID) -> Org | None`. `lessons.create` follows shape (b) — callers seed it standalone.
+
+Pick shape (a) only when callers genuinely compose with sibling writes. Don't add a `session` parameter speculatively. The rule above (service modules never call `db_session()` themselves) applies only to shape (a) functions; shape (b) functions are orchestrators-in-disguise and are the exceptions that own their own session.
+
+### e2e seed paths use public APIs
+
+`app/testing/e2e_setup` chains real public service-layer calls — no `*Row` constructors, no cross-module model imports. Deliberate consequence: seeds emit the same audit rows and events as production writes, acting as a free smoke test for the full call path.
+
+The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call it from within an `async with db_session() as s:` block followed by `await s.commit()`.
+
 ### Idempotent migrations
 
 `core/database.migration_helpers` wraps `op.*` with idempotent variants (`create_table_if_not_exists`, `add_column_if_not_exists`, `create_index_if_not_exists`, `drop_column_if_exists`). Every migration uses these helpers; re-running a half-applied migration is always safe.
@@ -134,7 +149,7 @@ Alembic CLI is only used for `alembic revision --autogenerate -m "..."`. Direct 
 
 Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a workflow. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
 
-`@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (in `apps/backend/bin/worker`) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits. The outbox table is private to `core/tasks` — domain modules never import it directly.
+`@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (in `apps/backend/app/worker.py`) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits. The outbox table is private to `core/tasks` — domain modules never import it directly.
 
 Task bodies must be idempotent — a drain crash between dispatch and `dispatched_at` stamp can redispatch. Bodies look up state from DB (don't carry "do this once" semantics in the args).
 
@@ -282,12 +297,15 @@ Assert on the **durable state production reads** — audit rows by kind, posted-
 
 ### Module boundaries in tests
 
-Tests obey the same import rules as production code. Specifically:
+Tests obey the **same import rules as production code** — enforced by `tach check --interfaces` in CI, which covers `app/testing/` as well as production code. Violations fail CI.
 
-- Import only `__all__` exports — `from app.<module> import X`, never `from app.<module>.<submodule> import X`.
-- No `*Row` cross-module imports. If a test needs to inspect persisted state owned by another module, go through that module's public service query (e.g. `get_review_job(id, session=s)`), not by pulling the `Row` class directly.
-- No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` (which is excluded from tach analysis and never imported by production code).
+- Import only `__all__` exports — `from app.<module> import X`, never `from app.<module>.<submodule> import X` across module boundaries. Within a module's own test directory, direct submodule imports are allowed.
+- No `*Row` types in cross-module imports. If a test in module B needs to inspect persisted state owned by module A, use module A's targeted public read function (e.g. `get_token_by_hash`, `get_session_by_hash`) or assert on the observable outcome instead.
+- No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` — but `app/testing/` is itself tach-governed; it may only import from `__all__`-gated module paths.
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
+- Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead. Two flavors by reach:
+  - **Cross-module reach** (module A's tests reset module B's state) → public symbol in B's `__all__` and tach interface. Example: `sse_pubsub.reset_pubsub()` — called from reviewer / orgs / agent_gateway tests.
+  - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in B's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Examples: `redis._reset_clients_for_tests`, `agent_gateway.subscribers._reset_subscriber_singleton_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
 
 ### DI over `@patch`
 
@@ -328,9 +346,70 @@ Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; back
 
 Don't wrap every domain function — noise hurts more than detail helps.
 
+## `scoped_*` context managers for import-time registries
+
+Modules with import-time registries expose `register_*`, `unregister_*`, and `scoped_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception.
+
+Modules with this pattern today: `core.workflow` (`scoped_engine`, `scoped_workflow`), `domain.vcs` (`scoped_vcs_plugin`), `domain.coding_agent` (`scoped_coding_agent`), `core.tasks` (`scoped_task_registration`).
+
+`core.workflow.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It saves the current engine, creates a fresh one, yields it, then restores the prior one on exit — replacing the former `svc._engine = None; eng = get_engine(); svc._engine = eng; ... svc._engine = None` pattern.
+
+Rules:
+- No wholesale-wipe between tests. Test exactly what you need, clean it up with the scoped helper.
+- `unregister_*` is a no-op if the id is absent — safe to call in finally blocks.
+- `scoped_*` registers on entry, unregisters on exit. The yielded value is the same object passed in.
+- `scoped_task_registration(task_ref)` is the tasks variant: call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
+
+## Subscription self-cleanup (async generator pattern)
+
+`core.events.subscribe()` is the canonical example of an async generator whose `finally` clause does its own cleanup. The generator registers a subscriber queue on entry; `finally` pops it on any consumer exit — normal return, `break`, exception, or `aclose()`. Callers never call an explicit `unsubscribe()`.
+
+Preferred test shapes for consuming one event then exiting:
+- `async for ev in subscribe(filter): ...; return` — `return` exits the coroutine; the event loop's async-gen finalizer schedules `aclose()`. Yield one event-loop tick (`await asyncio.sleep(0)`) after the consumer finishes if the test asserts `subscriber_count() == 0`.
+- `async with aclosing(subscribe(filter)) as gen: ev = await gen.__anext__()` — `aclosing.__aexit__` awaits `gen.aclose()` synchronously, so cleanup is guaranteed before the `async with` block exits. Preferred when early exit is needed and the test asserts cleanup immediately.
+
+Use this pattern over a `register/unregister` pair whenever the consumer naturally iterates — the single-seam generator is simpler and harder to misuse.
+
+## Module lifecycle — `shutdown()` convention
+
+Every runtime-state module exposes a public `async def shutdown()` in `__all__`. Naming is uniform; internals may delegate to library-conventional names (`aclose` for Redis, `dispose` for SQLAlchemy, taskiq broker close). Modules self-register at import time (after `__all__` is defined) with the relevant process registry by calling `register_web_shutdown_hook(shutdown)` and/or `register_worker_shutdown_hook(shutdown)` from `app.core.shutdown_registry`.
+
+Categorization rule:
+- Web-presence only (SSE, WebSocket) → register with web registry.
+- Worker-presence only → register with worker registry.
+- Shared infra (redis, database, events, tasks) → register with both.
+
+The registries live in `app.core.shutdown_registry` (a zero-dependency standalone module) to avoid circular imports between modules that import each other.
+
+## Two process lifecycles, two registries
+
+Web and worker are separate OS processes with separate shutdown cadences. `app.core.shutdown_registry` owns both:
+
+- `register_web_shutdown_hook` / `iter_web_shutdown_hooks` — used by the web process.
+- `register_worker_shutdown_hook` / `iter_worker_shutdown_hooks` — used by the worker process.
+
+Both registries are re-exported from `core.webserver` and `core.tasks` for convenience; the canonical source is `app.core.shutdown_registry`.
+
+FastAPI lifespan teardown (in `core/webserver/app_factory.py`) iterates `iter_web_shutdown_hooks()` in reverse order. Worker runtime teardown (in `core/tasks/runtime.py`) iterates `iter_worker_shutdown_hooks()` in reverse order. Reverse order means the most-recently-registered (most-dependent) modules shut down first.
+
+`app/web.py` and `app/worker.py` pin the foundational shutdown order by explicitly importing `app.core.database` and `app.core.redis` near the top of step 2, before any module that depends on them. That guarantees those two register their hooks first and therefore shut down last — anything imported transitively later (tasks, sse_pubsub, agent_gateway) shuts down before them. Don't rely on transitive imports for hook ordering; pin the ones that matter.
+
+Both loops wrap each hook call in `try/except` (web) or `contextlib.suppress` (worker) so one failing hook does not abort the sequence.
+
+## Composition roots — `app/web.py` and `app/worker.py`
+
+Both composition roots live inside `app/` so they're importable as regular Python modules and testable without exec tricks.
+
+- `app/web.py` — web process entry. Same bootstrap import order as before (see § Bootstrap composition order). Ends with `app = webserver.create_app()`. When run directly (`python apps/backend/app/web.py`) the `if __name__ == "__main__"` block calls `uvicorn.run(...)` with all server flags in Python — no flags scattered across Dockerfile CMDs.
+- `app/worker.py` — worker process entry. Side-effect imports (workflow commands, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
+
+Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["python", "apps/backend/app/worker.py"]`. tini is PID 1 (image-level `ENTRYPOINT ["/usr/bin/tini", "--"]`) and forwards SIGTERM to the Python child, triggering graceful shutdown via the Phase-1 shutdown registries.
+
+`bin/worker` is gone — that path now lives at `app/worker.py`.
+
 ## Bootstrap composition order
 
-`app/main.py` is load-bearing. If steps 3–4 swap with 6 you'll mount a router before its module has registered or subscribe to an event before the bus exists. Don't reorder.
+`app/web.py` is load-bearing. If steps 3–4 swap with 6 you'll mount a router before its module has registered or subscribe to an event before the bus exists. Don't reorder.
 
 1. Load environment — `app.core.config`.
 2. Configure core infra — `app.core.database`, `app.core.observability`.
@@ -341,3 +420,5 @@ Don't wrap every domain function — noise hurts more than detail helps.
 7. Plugins — `in_memory_workspace`, `claude_code`, `github`.
 8. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 9. Build the FastAPI app — `webserver.create_app()`.
+
+Each module imported in steps 2–7 appends its `shutdown()` hook to the relevant process registry as a side effect of import. By step 9, all hooks are registered before `create_app()` wires them into the lifespan.

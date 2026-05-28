@@ -8,7 +8,7 @@ Centralizes everything any other module needs from Redis: a loop-bound client (p
 
 ## Public interface
 
-Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`. See `apps/backend/app/core/redis/__init__.py`.
+Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`, `shutdown`. See `apps/backend/app/core/redis/__init__.py`.
 
 - `get_client()` — returns the Redis client bound to the current running event loop. Constructs on first call per loop. `decode_responses=False` (bytes).
 - `get_url()` — returns `settings.redis_url`. Single accessor so other modules don't read config directly.
@@ -16,6 +16,7 @@ Exports `get_client`, `get_url`, `publish`, `subscribe`, `ping`, `aclose`. See `
 - `subscribe(channel) -> AsyncIterator[bytes]` — yields each subsequent message body; filters out subscribe/unsubscribe confirmations. Subscriber registers on first iteration, unregisters on iterator close.
 - `ping() -> bool` — `PING` against Redis; swallows exceptions.
 - `aclose()` — closes every cached client; idempotent.
+- `shutdown()` — async alias for `aclose()`; self-registered with both web and worker shutdown registries at import time.
 
 No HTTP routes.
 
@@ -23,7 +24,7 @@ No HTTP routes.
 
 ### Per-loop client cache
 
-redis-py's async client binds its connection pool to the event loop where the first command ran. Reusing one client across loops (web request loop vs worker loop vs `TestClient` portal loop) fails with "Future attached to a different loop". `_clients: dict[int, Redis]` keyed by `id(asyncio.get_running_loop())` gives each loop its own client transparently. The cost is one extra Redis connection per loop — negligible at POC.
+redis-py's async client binds its connection pool to the event loop where the first command ran. Reusing one client across loops (web request loop vs worker loop vs `TestClient` portal loop) fails with "Future attached to a different loop". `_clients: dict[int, Redis]` keyed by `id(asyncio.get_running_loop())` gives each loop its own client transparently. The cost is one extra Redis connection per loop — negligible.
 
 ### Bytes everywhere
 
@@ -31,8 +32,7 @@ redis-py's async client binds its connection pool to the event loop where the fi
 
 ### Lifecycle
 
-- **Web process** — `get_client()` constructs on first request. No explicit shutdown today; the engine teardown in `core/database.dispose()` is the only lifecycle hook, and Redis connections close cleanly when the process exits.
-- **Worker process** — [`core/tasks/worker.run()`](core_tasks.md) calls `aclose()` after `broker.shutdown()` and before `database.dispose()`.
+`core/redis` self-registers `shutdown()` with both the web and worker shutdown registries at import time. In both processes it is called by the registry loop during teardown — no explicit caller required. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
 ## Data owned
 

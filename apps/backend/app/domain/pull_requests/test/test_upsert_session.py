@@ -18,8 +18,8 @@ import pytest
 from sqlalchemy import select
 
 from app.domain import pull_requests
-from app.domain.pull_requests.models import PullRequestRow
-from app.domain.tickets.models import TicketRow
+from app.domain.pull_requests import PullRequestRow
+from app.domain.tickets import TicketRow
 from app.domain.vcs import VCSPullRequest
 
 

@@ -20,20 +20,20 @@ def main() -> int:
     # registries — those registries are empty until the modules below load.
     # Imported here (outside `core/tasks`) because `core` cannot depend on
     # `plugins` or `testing` under layering rules.
-    import app.core.workflow  # noqa: F401
-    import app.domain.reviewer  # noqa: F401
-    import app.plugins.claude_code  # noqa: F401
-    import app.plugins.github  # noqa: F401
-    import app.plugins.in_memory_workspace  # noqa: F401
+    import app.core.workflow  # noqa: PLC0415
+    import app.domain.reviewer  # noqa: PLC0415
+    import app.plugins.claude_code  # noqa: PLC0415
+    import app.plugins.github  # noqa: PLC0415
+    import app.plugins.in_memory_workspace  # noqa: F401, PLC0415
 
     if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
-        from app.testing.stub_coding_agent import wrap_all_registered_plugins
-        from app.testing.stub_workspace import wrap_all_registered_workspace_providers
+        from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415
+        from app.testing.stub_workspace import wrap_all_registered_workspace_providers  # noqa: PLC0415
 
         wrap_all_registered_plugins()
         wrap_all_registered_workspace_providers()
 
-    from app.core.tasks.worker import run
+    from app.core.tasks.runtime import run  # noqa: PLC0415
 
     asyncio.run(run())
     return 0

@@ -16,11 +16,10 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
-from app.core.auth import AuthMiddleware
-from app.core.auth.types import Action
+from app.core.auth import Action, AuthMiddleware
 from app.domain.identity import repository as identity_repo
+from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.types import Role
 from app.domain.sessions import public_route, require
 
 

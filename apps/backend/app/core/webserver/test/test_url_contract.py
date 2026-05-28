@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-import app.main  # noqa: F401 — side-effect: every module registers its RouteSpec
+import app.web  # noqa: F401 — side-effect: every module registers its RouteSpec
 from app.core.webserver import mount_specs
 
 # (method, path) tuples that external systems (SPA, GitHub App callback,

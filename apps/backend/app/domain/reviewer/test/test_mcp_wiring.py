@@ -13,18 +13,15 @@ from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import select
 
 from app.core.oauth import ProviderConfig
-from app.domain.integrations import create_credential
-from app.domain.integrations.types import _REGISTRY
-from app.domain.mcp_proxy.models import McpReviewTokenRow
-from app.domain.mcp_proxy.service import _hash as _hash_token
+from app.domain.integrations import _REGISTRY, create_credential
+from app.domain.mcp_proxy import get_token_by_hash, hash_token
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests.models import PullRequestRow
+from app.domain.pull_requests import PullRequestRow
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 def _stub_config() -> ProviderConfig:
@@ -201,8 +198,7 @@ async def test_connected_provider_mints_token_and_surfaces_servers(db_session, s
     assert "get_issue" in providers["linear_stub"]["known_read_tools"]
 
     # The minted token is persisted with its sha256 hash and tagged to review_id.
-    token_hash = _hash_token(payload["token"])
-    row = (
-        await db_session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
-    ).scalar_one()
+    token_hash = hash_token(payload["token"])
+    row = await get_token_by_hash(token_hash, session=db_session)
+    assert row is not None
     assert row.review_id == review.id

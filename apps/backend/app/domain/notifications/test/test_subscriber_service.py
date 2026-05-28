@@ -19,9 +19,9 @@ from sqlalchemy import select, text
 from app.domain.identity import repository as identity_repo
 from app.domain.notifications.models import NotificationRow
 from app.domain.notifications.subscribers import _handle_status_change
+from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.types import Role
-from app.domain.tickets.service import TicketStatusChanged
+from app.domain.tickets import TicketStatusChanged
 
 
 @pytest_asyncio.fixture

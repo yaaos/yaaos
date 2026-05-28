@@ -9,6 +9,7 @@ from app.core.workspace.dispatch import (
     release_claim,
     try_claim,
 )
+from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import (
     clear_workspace_providers,
     close_workspace,
@@ -21,9 +22,13 @@ from app.core.workspace.service import (
     get_workspace_info,
     get_workspace_statuses,
     health_check_all,
+    is_workspace_provider_registered,
+    list_workspace_providers,
     register_workspace_provider,
+    scoped_workspace_provider,
     start_reaper,
     startup_recovery,
+    unregister_workspace_provider,
     update_workspace_status,
     with_workspace,
 )
@@ -76,6 +81,7 @@ __all__ = [
     "WorkspaceNotFoundError",
     "WorkspaceProvider",
     "WorkspaceProvisionError",
+    "WorkspaceRow",
     "WorkspaceSpec",
     "WorkspaceStatus",
     "WorkspaceTicketContext",
@@ -94,14 +100,18 @@ __all__ = [
     "get_workspace_info",
     "get_workspace_statuses",
     "health_check_all",
+    "is_workspace_provider_registered",
+    "list_workspace_providers",
     "register_recovery_policy",
     "register_workflow_context_provider",
     "register_workspace_provider",
     "registered_recovery_labels",
     "release_claim",
+    "scoped_workspace_provider",
     "start_reaper",
     "startup_recovery",
     "try_claim",
+    "unregister_workspace_provider",
     "update_workspace_status",
     "with_workspace",
 ]

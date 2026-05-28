@@ -1,16 +1,5 @@
 # Working in this repo
 
-## Current phase: POC
-
-yaaos at M01 is a **proof of concept**, not production-grade software. The goal of M01 is to prove the system works end-to-end. Production hardening comes after the POC is real.
-
-What this means in practice:
-
-- **Default to simpler implementations** when designing modules. Don't add hooks for production-only concerns (graceful shutdown protocols, exhaustive retry strategies, performance optimization, multi-region, compliance hooks).
-- **Don't dwell on low-probability edge cases.** Pick a reasonable default and move on.
-- **Foundational discipline IS appropriate to invest in now** — modularity rules, test discipline, observability hooks, the patterns in `plan/milestones/<active>/patterns.md`. These make POC→production migration easier.
-- The distinction: **build the SHAPE production-grade, but skip the FILL until needed.** Module boundaries, interfaces, and test discipline now. Production-strength implementation of every interface, later.
-
 ## Folder roles — never mix tenses
 
 - `docs/` — **present tense.** How the code works *today*. If it isn't built, it doesn't go here.

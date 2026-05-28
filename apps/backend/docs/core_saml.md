@@ -9,7 +9,7 @@ Single home for SAML SP mechanics. absorbed the `plugins/saml` adapter + the SP-
 ## Public interface
 
 - `is_available() -> bool` — True when `python3-saml` imports cleanly. Local-dev envs without `libxmlsec1` get False.
-- `generate_sp_keypair() -> (bytes, str)` — POC placeholder: random secret encrypted via `core/secrets` + `"POC-PLACEHOLDER-CERT"`. Real `cryptography.hazmat` RSA swaps in here without touching `domain/orgs/sso`.
+- `generate_sp_keypair() -> (bytes, str)` — placeholder: random secret encrypted via `core/secrets` + `"POC-PLACEHOLDER-CERT"` string. Real `cryptography.hazmat` RSA swaps in here without touching `domain/orgs/sso`.
 - `verify_assertion(saml_response, idp_metadata_xml) -> dict | None` — the callable `domain/orgs/sso` registers. Returns None when the library can't load OR the parse fails.
 - `parse_assertion(xml, settings_dict) -> dict` — lower-level. Raises `SamlNotAvailableError` when the library isn't importable.
 

@@ -80,7 +80,7 @@ build-backend = "hatchling.build"
 packages = ["app"]
 # `app/testing/` is the test-scaffolding layer (stubs, future recorders).
 # Excluded from wheel builds so production distributions physically cannot
-# enable stub mode — the conditional import in app/main.py fails loud.
+# enable stub mode — the conditional import in app/web.py fails loud.
 # The Docker image still copies everything via apps/backend/; a separate
 # Dockerfile stage or .dockerignore is the right tool for image-level
 # exclusion (out of scope for this change).

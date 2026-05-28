@@ -70,9 +70,3 @@ def register_routes(spec: RouteSpec) -> None:
 def get_specs() -> dict[str, RouteSpec]:
     """Internal — used by the app factory to mount routers + run lifecycle hooks."""
     return _specs
-
-
-def _reset_for_tests() -> None:
-    """Test-only: clear the registry between tests that exercise registration."""
-    _specs.clear()
-    _claimed_prefixes.clear()

@@ -32,7 +32,7 @@ from app.domain.sessions import web as _auth_web  # noqa: F401
 @pytest.fixture(autouse=True)
 def _ensure_claude_code_registered() -> None:
     from app.domain.coding_agent import registered_plugin_ids  # noqa: PLC0415
-    from app.plugins.claude_code.service import bootstrap  # noqa: PLC0415
+    from app.plugins.claude_code import bootstrap  # noqa: PLC0415
 
     if "claude_code" not in registered_plugin_ids():
         bootstrap()

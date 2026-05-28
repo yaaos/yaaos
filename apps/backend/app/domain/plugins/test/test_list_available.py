@@ -10,8 +10,8 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
+from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.types import Role
 from app.domain.plugins import list_available
 from app.domain.plugins import web as _plugins_web  # noqa: F401
 from app.domain.sessions import web as _auth_web  # noqa: F401
@@ -21,9 +21,9 @@ from app.domain.sessions import web as _auth_web  # noqa: F401
 def _ensure_plugins_registered() -> None:
     """Re-register plugins if a prior test cleared the registries."""
     from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
-    from app.domain.vcs.registry import _PLUGINS as _V_PLUGINS  # noqa: PLC0415
-    from app.plugins.claude_code.service import bootstrap as _cc_bootstrap  # noqa: PLC0415
-    from app.plugins.github.service import bootstrap as _gh_bootstrap  # noqa: PLC0415
+    from app.domain.vcs import _PLUGINS as _V_PLUGINS  # noqa: PLC0415
+    from app.plugins.claude_code import bootstrap as _cc_bootstrap  # noqa: PLC0415
+    from app.plugins.github import bootstrap as _gh_bootstrap  # noqa: PLC0415
 
     if "claude_code" not in _ca_ids():
         _cc_bootstrap()

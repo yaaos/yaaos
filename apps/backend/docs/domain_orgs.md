@@ -12,12 +12,13 @@ Exported from `app/domain/orgs/__init__.py`:
 
 - Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`, `VcsState`, `CodingAgentInstall`.
 - Lookups — `get_org(org_id) -> Org | None`; `find_saml_org_slug_for_domain(domain) -> str | None` (returns the org slug for the first enabled SSO config whose `email_domains` contains `domain`, or `None`).
+- Bootstrap primitives — `create_org(session, *, slug, display_name, actor) -> Org`; `create_membership(session, *, user_id, org_id, role, handle, actor) -> Membership`. Shape (a) session-taking fns; never commit. Emit `org.created` / `membership.created` audit entries. Use for admin-onboarding or seed paths where the org owner is already known (no invitation token needed). See [patterns.md § Service-fn session-handling convention](patterns.md).
 - Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`, `delete_expired_invitations() -> int`.
 - VCS — `get_vcs`, `set_vcs`, `clear_vcs`. One VCS per org; state lives on the `orgs` row.
 - Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
 - Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.
 
-HTTP routes (registered side-effect via `web.py`, mounted from `main.py` to break the `domain.orgs ↔ domain.sessions` import cycle):
+HTTP routes (registered side-effect via `web.py`, mounted from `app/web.py` to break the `domain.orgs ↔ domain.sessions` import cycle):
 
 | Method | Path | Action |
 |---|---|---|
@@ -94,7 +95,7 @@ Both write `membership/role_changed` or `membership/removed` audit entries with 
 
 ### Import-cycle break
 
-`domain.orgs.web` imports `domain.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `domain.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/main.py` after both modules have finished loading.
+`domain.orgs.web` imports `domain.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `domain.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/web.py` after both modules have finished loading.
 
 ## Data owned
 

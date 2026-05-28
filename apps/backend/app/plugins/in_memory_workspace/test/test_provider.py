@@ -22,7 +22,6 @@ import pytest
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace import RepoRefForSpec, WorkspaceProvisionError, WorkspaceSpec
 from app.domain import vcs
-from app.domain.vcs import registry as vcs_registry
 from app.plugins.in_memory_workspace import get_provider
 
 
@@ -72,11 +71,9 @@ def _make_bare_repo_with_commit() -> tuple[str, str, str]:
 def _register_fake_github(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Register a fake github vcs plugin for the duration of one test."""
     del monkeypatch
-    vcs_registry._reset_for_tests()
     fake = _FakeGitHubPlugin()
-    vcs.register_vcs_plugin(fake)
-    yield fake
-    vcs_registry._reset_for_tests()
+    with vcs.scoped_vcs_plugin(fake):  # type: ignore[arg-type]
+        yield fake
 
 
 @pytest.mark.asyncio

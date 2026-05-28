@@ -21,8 +21,8 @@ from app.domain.sessions import web as _auth_web  # noqa: F401
 @pytest.fixture(autouse=True)
 def _ensure_github_registered() -> None:
     """Re-register the github plugin if a prior test cleared the registry."""
-    from app.domain.vcs.registry import _PLUGINS  # noqa: PLC0415
-    from app.plugins.github.service import bootstrap  # noqa: PLC0415
+    from app.domain.vcs import _PLUGINS  # noqa: PLC0415
+    from app.plugins.github import bootstrap  # noqa: PLC0415
 
     if "github" not in _PLUGINS:
         bootstrap()
@@ -188,7 +188,7 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
 
     from sqlalchemy import select as _select  # noqa: PLC0415
 
-    from app.plugins.github.models import GitHubAppInstallationRow  # noqa: PLC0415
+    from app.plugins.github import GitHubAppInstallationRow  # noqa: PLC0415
 
     actor = Actor.user(user_id=seeded["owner"].id)
     await set_vcs(

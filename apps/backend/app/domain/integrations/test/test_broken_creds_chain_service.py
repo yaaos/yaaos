@@ -31,15 +31,12 @@ from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
+from app.domain.orgs import Role, get_test_inbox
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.email import get_test_inbox
-from app.domain.orgs.types import Role
-from app.domain.pull_requests.models import PullRequestRow
-from app.domain.reviewer.mcp_wiring import (
-    prefix_broken_creds_warning as _prefix_broken_creds_warning,
-)
-from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
+from app.domain.pull_requests import PullRequestRow
+from app.domain.reviewer import ReviewRow
+from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
+from app.domain.tickets import TicketRow
 
 
 def _config() -> ProviderConfig:

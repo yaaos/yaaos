@@ -23,14 +23,14 @@ import pytest
 from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext, Outcome
 from app.core.workspace import (
+    WorkspaceRow,
+    WorkspaceStatus,
     WorkspaceTicketContext,
     clear_workflow_context_provider,
     clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
-from app.core.workspace.models import WorkspaceRow
-from app.core.workspace.types import WorkspaceStatus
 from app.domain.reviewer.commands import CodeReview
 
 

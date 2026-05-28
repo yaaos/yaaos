@@ -87,9 +87,17 @@ def get_pubsub() -> RedisPubsub:
     return _singleton
 
 
-def _reset_for_tests() -> None:
-    """Drop the singleton. Tests call this in setup/teardown to keep
-    state from leaking between cases."""
+async def shutdown() -> None:
+    """Drop the singleton. Called by the web-process shutdown registry."""
+    global _singleton
+    if _singleton is not None:
+        await _singleton.aclose()
+    _singleton = None
+
+
+def reset_pubsub() -> None:
+    """Drop the singleton synchronously. For test isolation only — production
+    code uses the async `shutdown()` via the web shutdown registry."""
     global _singleton
     _singleton = None
 

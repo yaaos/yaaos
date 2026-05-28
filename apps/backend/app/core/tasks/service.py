@@ -12,13 +12,19 @@ commits, the task is durable; if it rolls back, the task never existed.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.shutdown_registry import (  # noqa: F401
+    ShutdownHook,
+    iter_worker_shutdown_hooks,
+    register_worker_shutdown_hook,
+)
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import write as outbox_write
 
@@ -73,26 +79,36 @@ async def enqueue(
     return await outbox_write(session, kind="taskiq_enqueue", payload=payload)
 
 
-_REGISTRY_SNAPSHOT: dict[str, Any] | None = None
+@contextmanager
+def scoped_task_registration(task_ref: TaskRef) -> Iterator[TaskRef]:
+    """Context manager for temporary task registrations in tests.
+
+    Expects `task_ref` to have just been registered with the broker (e.g.
+    by calling `@task(...)` inside the test body). On exit, removes the
+    named entry from the broker's registry — so the same name can be
+    re-registered in a subsequent test without the duplicate-name guard
+    firing.
+    """
+    try:
+        yield task_ref
+    finally:
+        get_broker().local_task_registry.pop(task_ref.name, None)
 
 
-def _reset_for_tests() -> None:
-    """Save the broker's task registry and clear it — used by tests that
-    register synthetic tasks. Pair every call with `_restore_after_tests()`
-    so cross-test invariants (real module-level registrations) are
-    preserved. Idempotent — repeated saves clobber the snapshot."""
-    global _REGISTRY_SNAPSHOT
-    registry = get_broker().local_task_registry
-    _REGISTRY_SNAPSHOT = dict(registry)
-    registry.clear()
+async def shutdown() -> None:
+    """Gracefully shut down the taskiq broker connection.
 
+    Called by the process shutdown registries during web/worker teardown.
+    Calls the broker's own async `shutdown()` to close its connections.
+    Does NOT drop the `_broker` singleton — keeping the object means task
+    registrations (set at import time via `@task`) remain valid; only the
+    connection is torn down. Does NOT touch `_REGISTRY_SNAPSHOT` — that is
+    managed exclusively by the test isolation helpers.
+    """
+    import contextlib as _contextlib  # noqa: PLC0415
 
-def _restore_after_tests() -> None:
-    """Counterpart to `_reset_for_tests()`. No-op if nothing was saved."""
-    global _REGISTRY_SNAPSHOT
-    if _REGISTRY_SNAPSHOT is None:
-        return
-    registry = get_broker().local_task_registry
-    registry.clear()
-    registry.update(_REGISTRY_SNAPSHOT)
-    _REGISTRY_SNAPSHOT = None
+    from app.core.tasks.broker import get_broker as _get_broker  # noqa: PLC0415
+
+    _broker = _get_broker()
+    with _contextlib.suppress(Exception):
+        await _broker.shutdown()

@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.core.tasks.drain import drain_once, write
+from app.core.tasks import drain_once
+from app.core.tasks.drain import write
 from app.core.tasks.models import OutboxEntryRow
 
 

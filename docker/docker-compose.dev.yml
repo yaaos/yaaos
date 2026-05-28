@@ -43,7 +43,7 @@ services:
       - "1025:1025"
       - "8025:8025"
 
-  app:
+  web:
     image: yaaos-web
     build:
       context: ..
@@ -161,15 +161,15 @@ services:
       context: ../apps/agent
       dockerfile: Dockerfile
     environment:
-      YAAOS_BACKEND_URL: http://app:8080
+      YAAOS_BACKEND_URL: http://web:8080
       YAAOS_AGENT_VERSION: dev
       YAAOS_SIGNED_STS_REQUEST: placeholder-dev
     depends_on:
-      app:
+      web:
         condition: service_started
 
   # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
-  # on the `app` service to `http://otel-collector:4317` to wire it up.
+  # on the `web` service to `http://otel-collector:4317` to wire it up.
   #
   # otel-collector:
   #   image: otel/opentelemetry-collector-contrib:latest

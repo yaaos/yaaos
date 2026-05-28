@@ -1,6 +1,7 @@
 """domain/lessons — per-repo lessons."""
 
 from app.domain.lessons import web  # noqa: F401
+from app.domain.lessons.models import LessonRow
 from app.domain.lessons.service import (
     Lesson,
     LessonNotFoundError,
@@ -16,6 +17,7 @@ from app.domain.lessons.service import (
 __all__ = [
     "Lesson",
     "LessonNotFoundError",
+    "LessonRow",
     "LessonValidationError",
     "create",
     "delete",

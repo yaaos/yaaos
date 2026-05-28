@@ -13,6 +13,8 @@ Front-doors every MCP request from a yaaos review. Owns `mcp_review_tokens` (per
 - `revoke_token(review_id, *, session=None) -> int` — drop every token row for a review. Reviewer calls this before workspace teardown.
 - `sweep_expired(*, session=None) -> int` — periodic cleanup. Runs on the same hourly loop as the integrations health-check.
 - `record_broken_creds(review_id, provider)` / `consume_broken_creds(review_id) -> set[str]` — process-local tracker the proxy writes on every `not_connected` / `broken_creds` rejection and the reviewer drains at review-end to prefix the PR summary with a yellow warning callout.
+- `hash_token(raw_token) -> str` — sha256 hex of a raw bearer. Used by callers that need to verify a stored hash against a known raw token.
+- `get_token_by_hash(token_hash, *, session) -> McpReviewTokenRow | None` — targeted read for asserting on the persisted token row after minting.
 - `POST /api/mcp/{review_id}/{server}` — the FastAPI router (public_route, bearer-authenticated). Handles JSON-RPC over POST; SSE upgrade not needed because the fake stack + production hosted MCPs return plain JSON-RPC.
 
 ## Module architecture

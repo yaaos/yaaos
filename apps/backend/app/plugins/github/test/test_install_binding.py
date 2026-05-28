@@ -103,8 +103,8 @@ async def seeded_owner(db_session):
     `/install/start` route needs to exercise role gating (Owner-only)."""
     from app.domain.identity import repository as identity_repo  # noqa: PLC0415
     from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.domain.orgs import Role  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
-    from app.domain.orgs.types import Role  # noqa: PLC0415
 
     owner = await identity_repo.insert_user(db_session, display_name="O")
     admin = await identity_repo.insert_user(db_session, display_name="A")

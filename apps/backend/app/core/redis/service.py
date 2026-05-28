@@ -79,9 +79,14 @@ async def aclose() -> None:
             await client.aclose()
 
 
-def _reset_for_tests() -> None:
-    """Synchronous singleton wipe for unit tests that don't have an event
-    loop running. Drops references without closing — relies on Python GC
-    + redis-py's own connection cleanup. Use `aclose()` from inside async
-    test teardown when an event loop is available."""
+async def shutdown() -> None:
+    """Async alias for `aclose()`. Called by the process shutdown registries
+    during web/worker teardown. Idempotent."""
+    await aclose()
+
+
+def _reset_clients_for_tests() -> None:
+    """Drop the per-loop client cache without closing. Intra-module test
+    helper — reach for it via direct submodule import from this module's
+    own `test/` directory. Not part of the public interface."""
     _clients.clear()

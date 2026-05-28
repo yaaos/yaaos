@@ -29,8 +29,7 @@ from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
-from app.domain.integrations import create_credential
-from app.domain.integrations.types import _REGISTRY
+from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import (
     consume_broken_creds,
     mint_token,
@@ -41,9 +40,9 @@ from app.domain.mcp_proxy import (
 )
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests.models import PullRequestRow
-from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
+from app.domain.pull_requests import PullRequestRow
+from app.domain.reviewer import ReviewRow
+from app.domain.tickets import TicketRow
 
 # Every test in this file drives the MCP proxy end-to-end (real Postgres via
 # `db_session`, stub IntegrationProvider in `_REGISTRY`, stub upstream via

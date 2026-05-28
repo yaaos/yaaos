@@ -11,6 +11,7 @@ from app.domain.integrations.service import (
     validate,
 )
 from app.domain.integrations.types import (
+    _REGISTRY,
     BrokenCredentialsError,
     IntegrationError,
     IntegrationNotConnectedError,
@@ -23,6 +24,7 @@ from app.domain.integrations.types import (
 )
 
 __all__ = [
+    "_REGISTRY",
     "BrokenCredentialsError",
     "IntegrationError",
     "IntegrationNotConnectedError",

@@ -17,6 +17,8 @@ from app.domain.identity.service import (
     User,
     UserEmail,
     UserNotFoundError,
+    _delete_user_artifacts_for_tests,
+    _set_session_last_seen_for_tests,
     create_email,
     create_oauth_identity,
     create_session,
@@ -24,6 +26,10 @@ from app.domain.identity.service import (
     login_via_oauth,
 )
 from app.domain.identity.totp import can_be_sso_exempt_owner, has_verified_totp
+
+# NOTE: `identity.user_web` is not imported here to avoid circular imports at
+# load time. It appears in `__all__` so tach allows side-effect imports from
+# `app/web.py` and tests that do `from app.domain.identity import user_web`.
 
 __all__ = [
     "EmailAlreadyLinkedError",
@@ -36,6 +42,8 @@ __all__ = [
     "User",
     "UserEmail",
     "UserNotFoundError",
+    "_delete_user_artifacts_for_tests",
+    "_set_session_last_seen_for_tests",
     "can_be_sso_exempt_owner",
     "create_email",
     "create_oauth_identity",
@@ -49,4 +57,5 @@ __all__ = [
     "repository",
     "sessions",
     "totp",
+    "user_web",
 ]

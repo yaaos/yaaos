@@ -21,6 +21,8 @@ model`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -618,6 +620,10 @@ class WorkflowExecutionSummary:
     current_step_id: str | None
     created_at: datetime
     updated_at: datetime
+    # Set while the execution waits for an agent event (AWAITING_AGENT state).
+    # Tests that need to seed a WorkspaceRow with the matching command_id read
+    # this field rather than reaching into workflow_executions directly.
+    pending_agent_command_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -642,6 +648,7 @@ def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
         current_step_id=row.current_step_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        pending_agent_command_id=row.pending_agent_command_id,
     )
 
 
@@ -1144,15 +1151,58 @@ _engine: WorkflowEngine | None = None
 
 
 def get_engine() -> WorkflowEngine:
-    """Process-singleton engine. Tests call `_reset_for_tests()` between runs."""
+    """Process-singleton engine."""
     global _engine
     if _engine is None:
         _engine = WorkflowEngine()
     return _engine
 
 
-def _reset_for_tests() -> None:
-    """Drop the process-singleton. The three task bodies stay registered
-    in `core/tasks` regardless — they're module-import side effects."""
+def register_workflow(wf: Workflow) -> None:
+    """Register a workflow spec on the process-singleton engine."""
+    get_engine().register_workflow(wf)
+
+
+def unregister_workflow(workflow_name: str, version: int) -> None:
+    """Remove a workflow from the process-singleton engine by name + version."""
+    key = (workflow_name, version)
+    get_engine()._workflows.pop(key, None)
+
+
+@contextmanager
+def scoped_engine() -> Iterator[WorkflowEngine]:
+    """Context manager: swap in a fresh engine for the duration of the block.
+
+    The prior engine (if any) is restored on exit — even if an exception is
+    raised. Intended for tests that need to register custom commands or
+    workflows in isolation without contaminating the process-singleton engine.
+    """
     global _engine
-    _engine = None
+    saved = _engine
+    _engine = WorkflowEngine()
+    try:
+        yield _engine
+    finally:
+        _engine = saved
+
+
+@contextmanager
+def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
+    """Context manager: install *wf* on the process-singleton engine for the
+    duration of the block, then restore the prior entry (if any) on exit —
+    even if an exception is raised.
+
+    If the same (name, version) pair is already registered, the prior entry is
+    saved and replaced; on exit it is restored. If it was not registered, the
+    workflow is simply unregistered on exit."""
+    key = (wf.name, wf.version)
+    engine = get_engine()
+    prior = engine._workflows.get(key)
+    engine._workflows[key] = wf
+    try:
+        yield wf
+    finally:
+        if prior is None:
+            engine._workflows.pop(key, None)
+        else:
+            engine._workflows[key] = prior

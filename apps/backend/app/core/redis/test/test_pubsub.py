@@ -7,15 +7,15 @@ import uuid
 
 import pytest
 
-from app.core.redis import publish, subscribe
-from app.core.redis import service as redis_service
+from app.core.redis import aclose, publish, subscribe
+from app.core.redis.service import _reset_clients_for_tests
 
 
 @pytest.fixture(autouse=True)
 async def _isolate():
-    redis_service._reset_for_tests()
+    _reset_clients_for_tests()
     yield
-    await redis_service.aclose()
+    await aclose()
 
 
 def _unique_channel() -> str:

@@ -8,7 +8,7 @@ Logging + tracing bootstrap. Configures structlog once at process start (console
 
 ## Public interface
 
-- `configure()` — initialize structlog + OTel SDK. Idempotent. Called once from `main.py` at boot.
+- `configure()` — initialize structlog + OTel SDK. Idempotent. Called once from `app/web.py` (and `app/worker.py`) at boot.
 - `get_logger(name=None)` — returns a bound structlog logger. Used in place of `logging.getLogger`.
 - `spawn(name, coro)` — fire-and-forget background work. Wraps `asyncio.create_task` with a try/except that logs `spawn.crashed`. The wrapped task is retained in a module-level set so the GC doesn't collect it mid-flight.
 - `active_task_count()` — test helper; number of pending spawned tasks.
@@ -26,7 +26,7 @@ Reads `settings.log_level` and `settings.yaaos_env`. Processor chain: `merge_con
 
 `_configure_otel` (called from `configure()` regardless of endpoint):
 
-- Builds a `TracerProvider` with `service.name` set per role: `settings.otel_service_name_app` (web process, default `yaaos-app`) or `settings.otel_service_name_worker` (taskiq worker, default `yaaos-worker`). `configure(role=...)` picks the field — `app/main.py` calls it with `"app"`, `app/core/tasks/worker.py` with `"worker"`.
+- Builds a `TracerProvider` with `service.name` set per role: `settings.otel_service_name_app` (web process, default `yaaos-app`) or `settings.otel_service_name_worker` (taskiq worker, default `yaaos-worker`). `configure(role=...)` picks the field — `app/web.py` calls it with `"app"`, `app/core/tasks/runtime.py` with `"worker"`.
 - Sets `TraceContextTextMapPropagator` as the global propagator so W3C `traceparent` headers cross every HTTP boundary by default.
 - Attaches a `BatchSpanProcessor(OTLPSpanExporter(endpoint))` **only when** `otel_exporter_otlp_endpoint` is set. Without an endpoint, spans are still created and discarded — code that emits spans never needs feature flags.
 - Runs `FastAPIInstrumentor().instrument()` + `SQLAlchemyInstrumentor().instrument()`. Both calls swallow "already instrumented" errors so test reloads stay benign.

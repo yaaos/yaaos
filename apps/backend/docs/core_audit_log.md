@@ -44,7 +44,7 @@ Optional `session` joins the caller's transaction (helper adds + flushes; caller
 
 `get(entry_id, *, org_id)` returns one entry or raises `AuditEntryNotFoundError`. Used for deep-linking.
 
-`purge_older_than(cutoff)` deletes rows with `created_at < cutoff`. The daily retention task in `domain/identity.scheduler` calls this with `datetime.now(UTC) - AUDIT_LOG_RETENTION` (`AUDIT_LOG_RETENTION = timedelta(days=15)`, exported from `core/audit_log`). Lowered from 30d — MCP dispatch writes one audit row per JSON-RPC method and is the dominant volume contributor; 15d keeps the storage envelope bounded for the POC.
+`purge_older_than(cutoff)` deletes rows with `created_at < cutoff`. The daily retention task in `domain/identity.scheduler` calls this with `datetime.now(UTC) - AUDIT_LOG_RETENTION` (`AUDIT_LOG_RETENTION = timedelta(days=15)`, exported from `core/audit_log`). Lowered from 30d — MCP dispatch writes one audit row per JSON-RPC method and is the dominant volume contributor; 15d keeps the storage envelope bounded.
 
 ### What it does not do
 

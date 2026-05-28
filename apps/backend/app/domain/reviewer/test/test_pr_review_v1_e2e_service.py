@@ -25,20 +25,17 @@ import pytest
 from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
-from app.core.tasks.drain import drain_once
-from app.core.tasks.models import OutboxEntryRow
-from app.core.workflow import Outcome, WorkflowState, get_engine
-from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
+from app.core.tasks import OutboxEntryRow, drain_once
+from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, scoped_engine
 from app.core.workspace import (
+    WorkspaceRow,
+    WorkspaceStatus,
     WorkspaceTicketContext,
     clear_workflow_context_provider,
     clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
-from app.core.workspace.models import WorkspaceRow
-from app.core.workspace.types import WorkspaceStatus
 from app.domain.reviewer.commands import (
     ALL_LOCAL_COMMANDS,
     ALL_WORKSPACE_COMMANDS,
@@ -87,21 +84,18 @@ class _StaticWorkflowContextProvider:
 
 
 @pytest.fixture
-def _registered_engine():
-    _reset_for_tests()
+def _registered_engine():  # type: ignore[no-untyped-def]
+    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
+
     clear_workspace_providers()
     clear_workflow_context_provider()
-
     register_workspace_provider(_StubWorkspaceProvider())
-    eng = get_engine()
     # Register lifecycle + reviewer commands (mirrors domain/reviewer bootstrap).
-    from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
-
-    for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-        eng.register_command(cmd)
-    eng.register_workflow(pr_review_v1)
-    yield eng
-    _reset_for_tests()
+    with scoped_engine() as eng:
+        for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
+            eng.register_command(cmd)
+        eng.register_workflow(pr_review_v1)
+        yield eng
     clear_workspace_providers()
     clear_workflow_context_provider()
 
@@ -109,7 +103,7 @@ def _registered_engine():
 async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int:
     """Drain outbox until empty. Re-dispatches `taskiq_enqueue` rows into
     the matching task body via the broker's task registry."""
-    from app.core.tasks.broker import get_broker  # noqa: PLC0415
+    from app.core.tasks import get_broker  # noqa: PLC0415
 
     total = 0
     for _ in range(max_iterations):
@@ -155,7 +149,7 @@ async def _advance_pending_agent_event(  # type: ignore[no-untyped-def]
     DONE).
     """
     from app.core.tasks import enqueue  # noqa: PLC0415
-    from app.core.workflow.service import HANDLE_AGENT_EVENT  # noqa: PLC0415
+    from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
     wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
     assert wfx is not None
@@ -250,12 +244,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
     PostFindings (real body) → admission → CleanupWorkspace. After the
     workflow ends DONE, FindingRow rows exist for the PR.
     """
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
+    from app.domain.pull_requests import PullRequestRow  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
-    from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+    from app.domain.tickets import TicketRow  # noqa: PLC0415
 
-    _reset_for_tests()
     clear_workspace_providers()
     clear_workflow_context_provider()
 
@@ -376,23 +369,19 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
             return Outcome.success(outputs={"draft_findings": [spy_finding]})
 
     # 5. Register the workflow + commands with the spy override.
-    eng = get_engine()
-    from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
-
-    for cmd in ALL_LIFECYCLE_COMMANDS:
-        eng.register_command(cmd)
-    eng.register_command(_SpyCodeReview())  # overrides stub CodeReview
-    for cmd in ALL_LOCAL_COMMANDS:
-        eng.register_command(cmd)
-    # Skip the rest of ALL_WORKSPACE_COMMANDS (CodeReview replaced; others
-    # not referenced in pr_review_v1).
-    eng.register_workflow(pr_review_v1)
-
-    # Register stub VCS plugin so PostFindings' GitHub-post step has
-    # somewhere to post.
+    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
-    try:
+    with scoped_engine() as eng:
+        for cmd in ALL_LIFECYCLE_COMMANDS:
+            eng.register_command(cmd)
+        eng.register_command(_SpyCodeReview())  # overrides stub CodeReview
+        for cmd in ALL_LOCAL_COMMANDS:
+            eng.register_command(cmd)
+        # Skip the rest of ALL_WORKSPACE_COMMANDS (CodeReview replaced; others
+        # not referenced in pr_review_v1).
+        eng.register_workflow(pr_review_v1)
+
         # 6. Kick off + drain.
         with register_stub_vcs(plugin_id="github"):
             wfx_id = await eng.start(
@@ -426,10 +415,9 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
         assert len(rows) == 1
         assert rows[0].rule_id == "spy_rule"
         assert rows[0].title == "Spy finding"
-    finally:
-        _reset_for_tests()
-        clear_workspace_providers()
-        clear_workflow_context_provider()
+
+    clear_workspace_providers()
+    clear_workflow_context_provider()
 
 
 async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered_engine) -> None:  # type: ignore[no-untyped-def]

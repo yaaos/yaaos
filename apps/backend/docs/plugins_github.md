@@ -12,6 +12,7 @@ Owns: App authentication (RS256 JWT → installation token), the webhook receive
 
 - Singleton `GitHubPlugin` registered into `domain/vcs` at `bootstrap()`; also registers the `github_app_installed` onboarding contributor.
 - `GitHubOAuthProvider` registered into `domain/identity` at `bootstrap_oauth()` when the OAuth App's `client_id` + `client_secret` are configured.
+- `record_app_install(session, *, org_id, install_external_id, account_login, status="active") -> None` — shape (a) public primitive to insert a `github_app_installations` row. Callers compose it inside their own `db_session()` block. Use for admin-onboarding or e2e seeding where the installation is already known. See [patterns.md § Service-fn session-handling convention](patterns.md).
 - Side-effect import of `web.py` wires HTTP routes (prefix `/api/github`):
   - `POST /webhook` — GitHub event receiver.
   - `GET /installation` — two-state response driving the Settings UI.
@@ -67,7 +68,7 @@ Two-step (`service.py`):
 
 1. Read raw body (signature verification needs unaltered bytes).
 2. HMAC-verify `X-Hub-Signature-256` against `yaaos_github_app_webhook_secret`. Missing or invalid → `401`.
-3. Parse JSON. Resolve `org_id` via `github_app_installations` lookup on `payload.installation.id`. `installation.created` events fall back to `DEFAULT_ORG_ID` (single-tenant POC); every other event rejects as `bad_request` when no install row matches.
+3. Parse JSON. Resolve `org_id` via `github_app_installations` lookup on `payload.installation.id`. `installation.created` events fall back to `DEFAULT_ORG_ID` (single-tenant); every other event rejects as `bad_request` when no install row matches.
 4. **Idempotency** — `record_webhook_event` keyed on `X-GitHub-Delivery`. Duplicate → `IntakeSideEffect(detail="duplicate")`, endpoint commits a no-op and returns 200.
 5. **Branch on event + action** inside `GithubIntakeType.handle()`:
    - `pull_request.opened|reopened|ready_for_review` → filter forks / bots / drafts (writing `webhook_event.filtered`); race-safe ticket+PR upsert; `engine.start("pr_review_v1", …)` — all on the endpoint's session, single transaction.

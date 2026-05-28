@@ -10,19 +10,35 @@ on:
       commit-sha: ${{ event.git.sha }}
 
 base:
-  image: ubuntu:24.04
-  config: rwx/base 1.0.2
+  os: ubuntu 24.04
+  tag: 1.2
+  arch: arm64
+
+# Tool-cache vault. Each install-running task (web-ci, e2e-ci) declares
+# its own tool-cache name; RWX preserves the post-install workspace
+# state across runs of that same task so `pnpm install` and Playwright's
+# browser download don't re-download on every push. The vault scopes
+# what reads/writes the cache.
+#
+# The `yaaos` vault is configured for `JackKora/yaaos:*` (every branch
+# can read AND write), so feature-branch pushes also benefit from and
+# contribute to the cache. The RWX-default pattern of scoping to `main`
+# (read-only for feature branches) exists to guard against malicious
+# PRs poisoning the cache; we accept that risk for the convenience of
+# fast feature-branch CI.
+tool-cache:
+  vault: yaaos
 
 # Per the RWX CI reference (https://www.rwx.com/docs/guides/ci): toolchain
-# installs MUST be their own top-level tasks so RWX caches each install
-# layer separately and reuses it across runs (inlining `call: ...` inside
-# a CI task's `run:` would force a fresh install on every cache miss).
+# installs (python, nodejs, golang) are their own top-level tasks so RWX
+# caches each install layer separately.
 #
-# Each CI task `filter:` is its own app dir + lockfile/config + this
-# push.yml — so changes outside the filter set don't bust its cache.
-#
-# We group each toolchain task directly above its single consumer so the
-# file reads top-to-bottom by app.
+# Filters intentionally do NOT include `.rwx/push.yml` — RWX already
+# hashes each task's own definition into its cache key, so an edit to
+# this file invalidates only the task whose YAML actually changed.
+# Including the file in every filter would invalidate every task on any
+# config edit (which is what was making backend-ci / agent-ci re-run
+# unnecessarily).
 
 tasks:
   - key: code
@@ -68,12 +84,12 @@ tasks:
       - pyproject.toml
       - uv.lock
       - docker/docker-compose.test.yml
-      - .rwx/push.yml
-    docker: true
+    docker: preserve-data
     # Docker is on only so `docker compose` can bring up postgres + redis
-    # services. The test runner itself runs natively on the Ubuntu agent.
+    # services. The test runner itself runs natively on the agent.
     # Compose maps postgres → host :55432 and redis → host :56379 (see
-    # docker-compose.test.yml).
+    # docker-compose.test.yml). `preserve-data` keeps the pulled postgres
+    # and redis images in the Docker daemon's store across runs.
     run: |
       set -e
       # Capture compose file as an absolute path BEFORE any `cd`, so the
@@ -103,15 +119,17 @@ tasks:
 
   - key: web-ci
     use: [code, nodejs, python]
+    tool-cache: ci-web-pnpm
     filter:
       - apps/web/**
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - .npmrc
       - .semgrepignore
-      - .rwx/push.yml
     # `python` is `use:`d here so semgrep (run from apps/web/bin/ci) is
-    # available. corepack lives in the node distribution above.
+    # available. `tool-cache` preserves node_modules across runs of this
+    # task — pnpm's incremental install reuses the prior state.
     run: |
       set -e
       pip install --quiet semgrep
@@ -138,7 +156,6 @@ tasks:
     filter:
       - apps/agent/**
       - apps/backend/openapi/agent-api.yaml
-      - .rwx/push.yml
     # Go is hermetic — runs natively. Tooling installed inline:
     # golangci-lint (official install script, v2.x), govulncheck
     # (go install), semgrep (pip). CGO + race detector work on Ubuntu's
@@ -152,3 +169,49 @@ tasks:
       go install golang.org/x/vuln/cmd/govulncheck@latest
       pip install --quiet semgrep
       cd apps/agent && bin/ci
+
+  # ─── e2e ────────────────────────────────────────────────────────────
+
+  - key: e2e-ci
+    if: ${{ mint.run.git.branch == 'main' }}
+    use: [code, nodejs]
+    tool-cache: ci-e2e-pnpm
+    # Broad filter: e2e exercises the integrated test compose stack —
+    # backend (web + worker images), web (SPA baked into the image), the
+    # three fake-* services, the compose file itself, and workspace
+    # lockfiles. Agent-only changes don't trigger this; agent isn't part
+    # of the e2e stack.
+    filter:
+      - apps/backend/**
+      - apps/web/**
+      - apps/e2e/**
+      - apps/fake-github/**
+      - apps/fake-linear/**
+      - apps/fake-notion/**
+      - docker/docker-compose.test.yml
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .npmrc
+      - pyproject.toml
+      - uv.lock
+    docker: preserve-data
+    # Docker is on so `apps/e2e/bin/ci` can `docker compose up --build`
+    # the test stack. Playwright runs natively on the agent.
+    # `tool-cache` preserves node_modules + ~/.cache/ms-playwright/
+    # across runs; `preserve-data` keeps the Docker daemon's built
+    # images + build cache, so unchanged layers in the web/worker/fake-*
+    # images don't need to rebuild on every push.
+    run: |
+      set -e
+      corepack enable
+      corepack prepare pnpm@9.12.3 --activate
+      pnpm install --frozen-lockfile
+      pnpm --filter @yaaos/e2e exec playwright install --with-deps chromium
+      apps/e2e/bin/ci
+    outputs:
+      test-results:
+        - path: apps/e2e/tmp/playwright.json
+          options:
+            language: JavaScript
+            framework: Playwright

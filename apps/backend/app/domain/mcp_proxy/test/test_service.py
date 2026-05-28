@@ -15,9 +15,9 @@ from app.domain.orgs import repository as orgs_repo
 
 
 async def _seed_review(db_session) -> tuple:
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-    from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
-    from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+    from app.domain.pull_requests import PullRequestRow  # noqa: PLC0415
+    from app.domain.reviewer import ReviewRow  # noqa: PLC0415
+    from app.domain.tickets import TicketRow  # noqa: PLC0415
 
     user = await identity_repo.insert_user(db_session, display_name="U")
     org = await orgs_repo.insert_org(db_session, slug="mcp-test")

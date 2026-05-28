@@ -1,7 +1,8 @@
 """Stub workspace provider for offline tests.
 
 Mirrors the existing `testing/stub_coding_agent` pattern: `wrap_all_registered_workspace_providers`
-walks `core.workspace._PROVIDERS` and swaps every entry for a `StubWorkspaceProvider`.
+walks the registered providers via the public registry helpers and swaps every
+entry for a `StubWorkspaceProvider`.
 
 The stub:
 - `provision()` creates an empty tempdir + marker file (NO git clone, no vcs lookup).
@@ -122,18 +123,25 @@ class StubWorkspaceProvider:
 
 
 def wrap_all_registered_workspace_providers() -> int:
-    """Replace every entry in `core.workspace._PROVIDERS` with a stub wrapping it.
+    """Replace every registered workspace provider with a stub wrapping it.
 
-    Idempotent. Called from `app/main.py` when `YAAOS_WORKSPACE_STUB` is set
+    Idempotent. Called from `app/web.py` when `YAAOS_WORKSPACE_STUB` is set
     (mirrors how stub_coding_agent's wrap is wired).
     """
-    from app.core.workspace.service import _PROVIDERS  # noqa: PLC0415 — registry access
+    from app.core.workspace import (  # noqa: PLC0415
+        clear_workspace_providers,
+        list_workspace_providers,
+        register_workspace_provider,
+    )
 
+    originals = list_workspace_providers()
     count = 0
-    for plugin_id, real in list(_PROVIDERS.items()):
+    clear_workspace_providers()
+    for real in originals:
         if isinstance(real, StubWorkspaceProvider):
-            continue
-        _PROVIDERS[plugin_id] = StubWorkspaceProvider(wrapped=real)
-        count += 1
+            register_workspace_provider(real)
+        else:
+            register_workspace_provider(StubWorkspaceProvider(wrapped=real))
+            count += 1
     log.info("stub_workspace.wrapped_all", count=count)
     return count

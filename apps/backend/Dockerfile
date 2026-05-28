@@ -34,7 +34,7 @@ FROM python:3.13-slim-bookworm AS backend
 #     to do the actual review. POC trade-off — when M02+ moves agents into
 #     Docker workspaces, the CLI moves with them and this layer goes away.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+    && apt-get install -y --no-install-recommends git ca-certificates curl gnupg tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
@@ -79,6 +79,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8080
 
+# tini as PID 1: forwards SIGTERM to the Python child and reaps orphaned
+# sub-processes (Claude Code CLI, git clone). Both role stages inherit this.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
 # Default CMD lives on the per-role stages below (`web`, `worker`).
 # Building the bare `backend` target should never be done in production;
 # always target `web` or `worker`.
@@ -88,10 +92,7 @@ EXPOSE 8080
 # ────────────────────────────────────────────────────────────────────────
 FROM backend AS web
 
-# `--ws-ping-interval=30 --ws-ping-timeout=10` keeps the WorkspaceAgent
-# activity WebSocket alive behind ALB/nginx idle-timeouts (typically 60s);
-# see docs/setup.md § Networking.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${YAAOS_PORT:-8080} --app-dir apps/backend --ws-ping-interval=30 --ws-ping-timeout=10
+CMD ["python", "apps/backend/app/web.py"]
 
 # ────────────────────────────────────────────────────────────────────────
 # Stage 3b: yaaos-worker — taskiq consumer + outbox drain process
@@ -100,4 +101,4 @@ CMD uvicorn app.main:app --host 0.0.0.0 --port ${YAAOS_PORT:-8080} --app-dir app
 # ────────────────────────────────────────────────────────────────────────
 FROM backend AS worker
 
-CMD ["python", "apps/backend/bin/worker"]
+CMD ["python", "apps/backend/app/worker.py"]

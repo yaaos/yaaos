@@ -13,7 +13,7 @@ Exported from `app/domain/vcs/__init__.py`:
 - **Types** — `RepoRef`, `VCSPullRequest`, `Diff`, `FileSummary`, `Comment`, `Review`, `Finding`, `FindingSnippetLine`, `ReviewPostResult`, `Severity`, `ReviewState`.
 - **Events** — `VCSEvent`, `VCSEventBase`, `PullRequestReadyForReview`, `PullRequestSynchronized`, `PullRequestClosed`, `PullRequestReopened`, `CommentCreated`, `ReactionAdded`.
 - **Protocol** — `VCSPlugin`.
-- **Registry** — `register_vcs_plugin`, `get_plugin`, `is_registered`, `registered_plugin_ids`, `get_installation_token`, `_reset_for_tests`.
+- **Registry** — `register_vcs_plugin`, `unregister_vcs_plugin`, `scoped_vcs_plugin`, `get_plugin`, `is_registered`, `registered_plugin_ids`, `get_installation_token`. See [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
 - **Exceptions** — `VCSError`, `VCSAuthError`, `VCSNotFoundError`, `VCSPermissionError`, `VCSRateLimitError`, `VCSTransientError`, `VCSValidationError`, `PluginNotFoundError`.
 
 No HTTP routes — type-only.
@@ -48,7 +48,7 @@ A plugin exposes a `meta: PluginMeta` attribute plus async methods:
 
 ### Registry (`registry.py`)
 
-Process-global dict `_PLUGINS` keyed by `plugin.meta.id`. One singleton per plugin per process, constructed at bootstrap. `register_vcs_plugin` rejects duplicates; `get_plugin` raises `PluginNotFoundError` on miss; `get_installation_token(plugin_id, org_id)` is the top-level dispatcher workspace plugins use; `_reset_for_tests()` clears the registry.
+Process-global dict `_PLUGINS` keyed by `plugin.meta.id`. One singleton per plugin per process, constructed at bootstrap. `register_vcs_plugin` rejects duplicates; `unregister_vcs_plugin(plugin_id)` removes one entry (no-op if absent); `scoped_vcs_plugin(plugin)` is the test-safe context manager; `get_plugin` raises `PluginNotFoundError` on miss; `get_installation_token(plugin_id, org_id)` is the top-level dispatcher workspace plugins use.
 
 ### Exception contract
 

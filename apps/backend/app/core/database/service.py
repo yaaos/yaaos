@@ -526,7 +526,7 @@ async def _apply_create_all_mcp(conn) -> None:  # type: ignore[no-untyped-def]
 async def _apply_create_outbox_entries(conn) -> None:  # type: ignore[no-untyped-def]
     """DB-atomic outbound message queue table.
 
-     Backs `core/outbox.write()` + the drain loop in `apps/backend/bin/worker`.
+     Backs `core/outbox.write()` + the drain loop in `apps/backend/app/worker.py`.
      Future phases add their own migrations as more tables come online
     . Idempotent.
     """
@@ -981,6 +981,47 @@ async def _apply_pending() -> None:
             )
 
 
+async def truncate_all_tables(session) -> None:
+    """Empty every table in ``Base.metadata`` in reverse-FK order.
+
+    Issues per-table ``DELETE FROM`` statements instead of a single
+    ``TRUNCATE … CASCADE``. DELETE takes only ``RowExclusive`` locks, so
+    it does not block on lingering ``AccessShare`` readers from a
+    previous request — SSE subscribers, agent-gateway WebSockets, or
+    background tasks still holding open transactions. TRUNCATE requires
+    ``AccessExclusive`` on every table it touches and was causing the
+    e2e reset endpoint to deadlock between specs.
+
+    All yaaos primary keys are UUIDs, so no sequence-reset step is
+    needed.
+
+    Callers must ensure all model modules have been imported (so their
+    tables are registered on ``Base.metadata``) before calling this. The
+    ``app/testing/e2e_setup`` module handles that for the test reset path
+    by importing every model module at the top of its file.
+    """
+    if not get_settings().is_non_prod:
+        raise RuntimeError("truncate_all_tables is non-prod only")
+    tables = list(reversed(Base.metadata.sorted_tables))
+    if not tables:
+        return
+    # Set a short lock_timeout so that if a stuck connection is somehow
+    # holding a conflicting row lock the reset fails fast with a clear
+    # PostgresError instead of timing out at the HTTP layer.
+    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    for table in tables:
+        # `table.name` comes from SQLAlchemy model declarations in this
+        # repo (resolved at import time before any request runs). No
+        # request data feeds these names, so f-string interpolation is
+        # injection-free. SQLAlchemy Core has no DELETE-without-where
+        # builder for raw tables, so `text(...)` is the simplest fit.
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                f'DELETE FROM "{table.name}"'
+            )
+        )
+
+
 async def dispose() -> None:
     """Close the engine — used on shutdown."""
     global _engine, _sessionmaker
@@ -988,3 +1029,9 @@ async def dispose() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
+
+
+async def shutdown() -> None:
+    """Async alias for `dispose()`. Called by the process shutdown registries
+    during web/worker teardown. Idempotent."""
+    await dispose()

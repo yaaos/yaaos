@@ -5,17 +5,11 @@ from uuid import uuid4
 import pytest
 
 from app.core.events import Event, EventFilter, publish, subscribe
-from app.core.events.service import _reset_for_tests
 
 
 class _SampleEvent(Event):
     kind: Literal["sample"] = "sample"
     source_module: Literal["test"] = "test"
-
-
-@pytest.fixture(autouse=True)
-def _clear_subs() -> None:
-    _reset_for_tests()
 
 
 @pytest.mark.asyncio

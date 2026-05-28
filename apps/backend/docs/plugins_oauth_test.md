@@ -18,7 +18,7 @@ Lets backend integration tests + the Playwright E2E suite drive the real `/api/a
 
 The `service.py` module asserts `get_settings().yaaos_env == "test"` at the top of the file. Importing this module from a `dev` or `prod` process raises `AssertionError` immediately — defense-in-depth so the stub can never accidentally accept real users.
 
-`main.py` only imports `plugins.oauth_test` when `yaaos_env == "test"`. The conftest sets `YAAOS_ENV=test` before any app import so the suite picks it up. The Playwright "Sign in (test)" button is only rendered when the providers endpoint reports `test` in its list — which only happens in the test env.
+`app/web.py` only imports `plugins.oauth_test` when `yaaos_env == "test"`. The conftest sets `YAAOS_ENV=test` before any app import so the suite picks it up. The Playwright "Sign in (test)" button is only rendered when the providers endpoint reports `test` in its list — which only happens in the test env.
 
 ### Authorization URL
 

@@ -46,7 +46,7 @@ def _enumerate_org_scoped_routes() -> list[tuple[str, str]]:
     that classifies as `RouteSecurity.ORG_SCOPED`. Templated paths get a
     synthetic UUID so the fixture can probe them."""
 
-    from app.core.webserver.registry import get_specs  # noqa: PLC0415
+    from app.core.webserver import get_specs  # noqa: PLC0415
 
     out: list[tuple[str, str]] = []
     for spec in get_specs().values():

@@ -27,17 +27,16 @@ from app.core.auth import AuthMiddleware
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.domain.identity import repository as identity_repo
-from app.domain.integrations import create_credential
-from app.domain.integrations.types import _REGISTRY
+from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests.models import PullRequestRow
+from app.domain.pull_requests import PullRequestRow
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
 )
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 def _config() -> ProviderConfig:

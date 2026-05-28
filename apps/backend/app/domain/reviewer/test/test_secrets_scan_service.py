@@ -23,7 +23,7 @@ from app.core.workspace import (
     register_workflow_context_provider,
 )
 from app.domain.reviewer.commands import SecretsScan
-from app.domain.vcs.types import Diff
+from app.domain.vcs import Diff
 from app.testing.stub_vcs import register_stub_vcs
 
 
@@ -142,12 +142,9 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
         async def fetch_diff(self, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")
 
-    from app.domain.vcs import register_vcs_plugin  # noqa: PLC0415
-    from app.domain.vcs.registry import _reset_for_tests  # noqa: PLC0415
+    from app.domain.vcs import scoped_vcs_plugin  # noqa: PLC0415
 
-    _reset_for_tests()
-    register_vcs_plugin(_RaisingPlugin())  # type: ignore[arg-type]
-    try:
+    with scoped_vcs_plugin(_RaisingPlugin()):  # type: ignore[arg-type]
         register_workflow_context_provider(
             _StaticCtxProvider(
                 WorkspaceTicketContext(
@@ -164,5 +161,3 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
 
         assert outcome.label == "success"
         assert outcome.outputs.get("rule_id") is None
-    finally:
-        _reset_for_tests()

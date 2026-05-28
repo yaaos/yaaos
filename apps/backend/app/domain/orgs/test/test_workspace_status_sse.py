@@ -21,16 +21,15 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.sse_pubsub import channel_for, publish
-from app.core.sse_pubsub.service import _reset_for_tests as _reset_pubsub
+from app.core.sse_pubsub import channel_for, publish, reset_pubsub
 from app.domain.orgs.workspace_status_web import _activity_event_stream
 
 
 @pytest.fixture(autouse=True)
 def _isolate_pubsub() -> None:
-    _reset_pubsub()
+    reset_pubsub()
     yield
-    _reset_pubsub()
+    reset_pubsub()
 
 
 @pytest.mark.asyncio

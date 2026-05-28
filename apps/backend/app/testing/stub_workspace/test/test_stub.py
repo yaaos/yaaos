@@ -10,9 +10,10 @@ import pytest
 from app.core.workspace import (
     RepoRefForSpec,
     WorkspaceSpec,
+    clear_workspace_providers,
+    get_provider,
     register_workspace_provider,
 )
-from app.core.workspace.service import _PROVIDERS, clear_workspace_providers
 from app.plugins.in_memory_workspace import get_provider as get_in_process_provider
 from app.testing.stub_workspace import (
     StubWorkspaceProvider,
@@ -31,14 +32,15 @@ def _reset_registry() -> None:
 async def test_wrap_all_swaps_registered_providers() -> None:
     real = get_in_process_provider()
     register_workspace_provider(real)
-    assert _PROVIDERS["in_process"] is real
+    assert get_provider("in_process") is real
 
     count = wrap_all_registered_workspace_providers()
     assert count == 1
-    assert isinstance(_PROVIDERS["in_process"], StubWorkspaceProvider)
+    wrapped = get_provider("in_process")
+    assert isinstance(wrapped, StubWorkspaceProvider)
     # meta is preserved end-to-end.
-    assert _PROVIDERS["in_process"].meta.id == "in_process"
-    assert _PROVIDERS["in_process"].meta.display_name == "In-Process Workspace"
+    assert wrapped.meta.id == "in_process"
+    assert wrapped.meta.display_name == "In-Process Workspace"
 
 
 @pytest.mark.asyncio

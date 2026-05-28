@@ -16,8 +16,7 @@ from app.core.events import (
     EventFilter,
     subscribe,
 )
-from app.core.events.service import _reset_for_tests as _reset_events
-from app.core.tasks.drain import drain_once
+from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
@@ -25,11 +24,10 @@ from app.core.workflow import (
     Step,
     TerminalAction,
     Workflow,
-    WorkflowEngine,
+    WorkflowExecutionRow,
     WorkflowState,
+    scoped_engine,
 )
-from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.domain.intake import (
     IntakePrepared,
     IntakeRejectedError,
@@ -37,7 +35,7 @@ from app.domain.intake import (
 )
 from app.domain.intake import web as _intake_web  # noqa: F401 — registers routes
 from app.domain.intake.registry import _reset_registry_for_tests
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 class _StubIntakeType:
@@ -76,37 +74,33 @@ class _NoopLocal:
 
 
 @pytest_asyncio.fixture
-async def stub_intake(db_session):
+async def stub_intake(db_session):  # type: ignore[no-untyped-def]
     """Spin up an isolated engine + the stub intake type. The workflow has
     one Local step that completes immediately, so the workflow path is
     exercised end-to-end without needing a Workspace dispatcher."""
-    _reset_for_tests()
     _reset_registry_for_tests()
 
-    eng = WorkflowEngine()
-    eng.register_command(_NoopLocal())
-    eng.register_workflow(
-        Workflow(
-            name="stub_pr_v1",
-            version=1,
-            steps=(
-                Step(
-                    id="only",
-                    command_kind="Noop",
-                    transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+    with scoped_engine() as eng:
+        eng.register_command(_NoopLocal())
+        eng.register_workflow(
+            Workflow(
+                name="stub_pr_v1",
+                version=1,
+                steps=(
+                    Step(
+                        id="only",
+                        command_kind="Noop",
+                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+                    ),
                 ),
-            ),
-            entry_step_id="only",
+                entry_step_id="only",
+            )
         )
-    )
-    import app.core.workflow.service as svc  # noqa: PLC0415
 
-    svc._engine = eng
+        org_id = uuid4()
+        register_intake_type(_StubIntakeType(org_id))
 
-    org_id = uuid4()
-    register_intake_type(_StubIntakeType(org_id))
-
-    yield {"org_id": org_id}
+        yield {"org_id": org_id}
 
     # Restore real intake registry (re-import re-registers github_pr).
     _reset_registry_for_tests()
@@ -115,7 +109,6 @@ async def stub_intake(db_session):
     import app.domain.intake as intake_mod  # noqa: PLC0415
 
     importlib.reload(intake_mod)
-    _reset_for_tests()
 
 
 def _app() -> FastAPI:
@@ -178,7 +171,7 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
 
     # Draining the enqueued route_workflow task drives the single-step
     # workflow to DONE — proves the task was enqueued correctly at intake.
-    from app.core.tasks.broker import get_broker  # noqa: PLC0415
+    from app.core.tasks import get_broker  # noqa: PLC0415
 
     async def _dispatcher(kind: str, payload: dict) -> None:
         assert kind == "taskiq_enqueue"
@@ -201,7 +194,6 @@ async def test_happy_path_publishes_ticket_status_changed_event(db_session, stub
     """Intake-created tickets must broadcast TicketStatusChanged so the SSE
     subscriber invalidates the list query — otherwise the row is invisible
     in the UI until something else nudges the cache."""
-    _reset_events()
     seen: list[Event] = []
 
     async def consume() -> None:

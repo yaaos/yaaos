@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from app.core.config import get_settings
-from app.domain.identity.providers import ProviderError
+from app.domain.identity import ProviderError
 from app.plugins.github.oauth import GitHubOAuthProvider
 
 

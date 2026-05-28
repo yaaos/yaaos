@@ -19,7 +19,7 @@ import asyncio
 import pytest
 from structlog.testing import capture_logs
 
-from app.core.tasks.worker import _log_done_task_exceptions
+from app.core.tasks.runtime import _log_done_task_exceptions
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from app.domain.pull_requests.models import PullRequestRow
+from app.domain.pull_requests import PullRequestRow
 from app.domain.reviewer.admission import (
     admit_raw_findings,
     post_admitted_findings_to_vcs,
@@ -21,7 +21,7 @@ from app.domain.reviewer.admission import (
 from app.domain.reviewer.aggregate import RawFinding
 from app.domain.reviewer.models import CommentMessageRow, FindingRow
 from app.domain.reviewer.types import CodeAnchor, FindingFingerprint
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 from app.testing.stub_vcs import register_stub_vcs
 
 

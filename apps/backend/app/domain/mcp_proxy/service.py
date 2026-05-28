@@ -42,7 +42,8 @@ class McpToken(BaseModel):
     expires_at: datetime
 
 
-def _hash(raw: str) -> str:
+def hash_token(raw: str) -> str:
+    """SHA-256 hex of a raw MCP token. The DB stores only the hash."""
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -55,7 +56,7 @@ async def mint_token(
     the DB sees only the sha256 hash."""
     raw = secrets.token_urlsafe(32)
     row = McpReviewTokenRow(
-        token_hash=_hash(raw),
+        token_hash=hash_token(raw),
         review_id=review_id,
         expires_at=datetime.now(UTC) + REVIEW_TOKEN_TTL,
     )
@@ -71,7 +72,7 @@ async def lookup_token(
 ) -> McpToken | None:
     """Return a `McpToken` for `raw_token` if not expired; None otherwise.
     Raw tokens never live in the DB — we hash and look up by primary key."""
-    token_hash = _hash(raw_token)
+    token_hash = hash_token(raw_token)
     row = (
         await session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
     ).scalar_one_or_none()
@@ -80,6 +81,19 @@ async def lookup_token(
     if row.expires_at < datetime.now(UTC):
         return None
     return McpToken(review_id=row.review_id, expires_at=row.expires_at)
+
+
+async def get_token_by_hash(
+    token_hash: str,
+    *,
+    session: AsyncSession,
+) -> McpReviewTokenRow | None:
+    """Return the `McpReviewTokenRow` for `token_hash`, or None if absent.
+    Targeted read for tests that need to assert on the persisted token row
+    after minting without importing the Row type directly."""
+    return (
+        await session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
+    ).scalar_one_or_none()
 
 
 async def revoke_token(

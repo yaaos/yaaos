@@ -12,13 +12,13 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from app.core.auth import AuthMiddleware
+from app.domain.identity import _set_session_last_seen_for_tests
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
-from app.domain.identity.models import SessionRow
+from app.domain.orgs import OrgRow
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401
-from app.domain.orgs.models import OrgRow
 from app.domain.orgs.types import Role
 from app.domain.sessions import web as _auth_web  # noqa: F401
 
@@ -384,10 +384,11 @@ async def test_patch_org_ignores_unrelated_keys(seeded, db_session) -> None:
 
 async def _backdate_session_last_seen(db_session, *, token_hash: str, minutes_ago: int) -> None:
     """Test helper: rewrite a session row's `last_seen_at` to simulate idleness."""
-    row = (
-        await db_session.execute(select(SessionRow).where(SessionRow.token_hash == token_hash))
-    ).scalar_one()
-    row.last_seen_at = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    await _set_session_last_seen_for_tests(
+        db_session,
+        token_hash=token_hash,
+        last_seen_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+    )
     await db_session.commit()
 
 

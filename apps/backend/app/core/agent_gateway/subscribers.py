@@ -198,6 +198,15 @@ def get_registry() -> SubscriberRegistry:
     return _singleton
 
 
-def _reset_for_tests() -> None:
+async def shutdown() -> None:
+    """Drop the subscriber registry singleton. Called by the web-process shutdown registry."""
+    global _singleton
+    _singleton = None
+
+
+def _reset_subscriber_singleton_for_tests() -> None:
+    """Drop the subscriber-registry singleton synchronously. Intra-module test
+    helper — reach for it via direct submodule import from this module's own
+    `test/` directory. Not part of the public interface."""
     global _singleton
     _singleton = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import warnings
 from collections.abc import AsyncIterator
@@ -32,6 +33,20 @@ os.environ.setdefault("YAAOS_HEARTBEAT_INTERVAL_SECONDS", "1")
 def _quiet_pydantic_warnings() -> None:
     """Suppress noisy pydantic deprecation warnings during tests."""
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic.*")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _shutdown_runtime_at_session_end():
+    """Run registered shutdown hooks once at session teardown.
+
+    Suppresses "pending task" warnings and exercises the prod shutdown
+    path as a smoke test. Runs regardless of test marker.
+    """
+    yield
+    from app.testing.lifecycle import shutdown_runtime  # noqa: PLC0415
+
+    # pytest-asyncio event loop is already torn down here; asyncio.run() creates a fresh loop for cleanup.
+    asyncio.run(shutdown_runtime())
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -76,7 +91,7 @@ def _ensure_plugins_registered() -> None:
     entries (wrapped by `stub_coding_agent` + `stub_workspace`) present
     regardless of test ordering. Idempotent + cheap.
     """
-    from app.core.workspace.service import _PROVIDERS as _WS  # noqa: PLC0415
+    from app.core.workspace import is_workspace_provider_registered  # noqa: PLC0415
     from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
     from app.domain.vcs.registry import _PLUGINS as _VCS  # noqa: PLC0415
 
@@ -88,7 +103,7 @@ def _ensure_plugins_registered() -> None:
         from app.plugins.github.service import bootstrap as _gh  # noqa: PLC0415
 
         _gh()
-    if "in_process" not in _WS:
+    if not is_workspace_provider_registered("in_process"):
         from app.plugins.in_memory_workspace.service import bootstrap as _ws  # noqa: PLC0415
 
         _ws()

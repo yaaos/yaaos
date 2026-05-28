@@ -61,8 +61,8 @@ async def test_short_scenario_finding_dropped(db_session) -> None:  # type: igno
     Wrapper threads that drop through to `result.drops`. Even drops trigger
     a Review row INSERT (so the run is auditable), so the test needs a
     real PR row to satisfy the FK."""
-    from app.domain.pull_requests.models import PullRequestRow  # noqa: PLC0415
-    from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+    from app.domain.pull_requests import PullRequestRow  # noqa: PLC0415
+    from app.domain.tickets import TicketRow  # noqa: PLC0415
 
     org_id = uuid4()
     ticket_id = uuid4()

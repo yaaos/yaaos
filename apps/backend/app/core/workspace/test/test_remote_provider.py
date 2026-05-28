@@ -11,15 +11,13 @@ from app.core.agent_gateway import (
     AuthBlock,
     HeartbeatRequest,
     RepoRef,
+    WorkspaceAgentRow,
     clear_queues,
+    connection_status_for_org,
+    ensure_agent_row,
     pick_agent_for_org,
     queue_depth,
     record_heartbeat,
-)
-from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.core.agent_gateway.service import (
-    connection_status_for_org,
-    ensure_agent_row,
 )
 from app.core.workspace.remote_provider import (
     RemoteAgentWorkspaceProvider,
@@ -173,11 +171,7 @@ async def test_pick_agent_prefers_least_loaded_pod(db_session) -> None:
     """Two reachable pods, both within the heartbeat cutoff. The one
     with the smaller in-process queue depth wins, regardless of which
     has the more recent heartbeat. Multi-pod load balancing."""
-    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
-    from app.core.agent_gateway.types import (  # noqa: PLC0415
-        AuthBlock,
-        CleanupWorkspaceCommand,
-    )
+    from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command  # noqa: PLC0415
 
     org_id = uuid4()
     busy = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)

@@ -24,24 +24,23 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.tasks.drain import drain_once
-from app.core.tasks.models import OutboxEntryRow
+from app.core.tasks import OutboxEntryRow, drain_once
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
     CommandCategory,
     CommandContext,
     Outcome,
+    PendingHumanDecisionRow,
     Step,
     TerminalAction,
     Workflow,
     WorkflowEngine,
+    WorkflowExecutionRow,
     WorkflowState,
     request_cancel,
     resume_hitl,
 )
-from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workflow.service import _reset_for_tests
 from app.core.workspace import (
     clear_recovery_policies,
     register_recovery_policy,
@@ -144,7 +143,7 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
     """Pull `taskiq_enqueue` rows out of the outbox and re-dispatch them
     into the matching task body via the broker's task registry. Loops until
     the outbox is empty or `max_iterations` hit (a runaway loop is a bug)."""
-    from app.core.tasks.broker import get_broker  # noqa: PLC0415
+    from app.core.tasks import get_broker  # noqa: PLC0415
 
     total = 0
     for _ in range(max_iterations):
@@ -181,16 +180,16 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
 
 
 @pytest.fixture(autouse=True)
-def _reset_engine() -> None:
-    _reset_for_tests()
+def _reset_engine():  # type: ignore[no-untyped-def]
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    prior = svc._engine
+    svc._engine = None
     yield
-    _reset_for_tests()
+    svc._engine = prior
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:
-    from app.core.workflow.service import _engine  # noqa: PLC0415
-
-    _ = _engine
     eng = WorkflowEngine()
     for c in commands:
         eng.register_command(c)

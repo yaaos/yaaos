@@ -11,7 +11,7 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.tasks.drain import drain_once
+from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
@@ -133,7 +133,7 @@ def test_get_workflow_unknown_raises() -> None:
 async def _drain_via_broker(db_session) -> None:
     """Drive outbox rows through their registered task bodies via the broker,
     without reaching into outbox internals beyond the private submodule."""
-    from app.core.tasks.broker import get_broker  # noqa: PLC0415
+    from app.core.tasks import get_broker  # noqa: PLC0415
 
     async def _dispatcher(kind: str, payload: dict) -> None:
         assert kind == "taskiq_enqueue"

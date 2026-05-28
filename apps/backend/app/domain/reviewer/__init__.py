@@ -54,6 +54,8 @@ from app.domain.reviewer.llm import (
     classify_reply,
 )
 from app.domain.reviewer.lock import acquire_pr_lock
+from app.domain.reviewer.mcp_wiring import prefix_broken_creds_warning
+from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
@@ -159,6 +161,7 @@ __all__ = [
     "ReviewJob",
     "ReviewJobInput",
     "ReviewRequested",
+    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -199,6 +202,7 @@ __all__ = [
     "list_findings_for_pr",
     "list_findings_view",
     "list_reviews_for_pr",
+    "prefix_broken_creds_warning",
     "review_summary",
     "start_incremental_review",
     "start_pr_review",

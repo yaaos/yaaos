@@ -18,17 +18,17 @@ from app.core.sse_pubsub import (
     channel_for,
     get_pubsub,
     publish,
+    reset_pubsub,
     subscribe,
     subscriber_count,
 )
-from app.core.sse_pubsub.service import _reset_for_tests
 
 
 @pytest.fixture(autouse=True)
 async def _isolate_singleton():
-    _reset_for_tests()
+    reset_pubsub()
     yield
-    _reset_for_tests()
+    reset_pubsub()
 
 
 def _unique_channel() -> str:

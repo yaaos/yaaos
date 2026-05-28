@@ -155,7 +155,7 @@ Tests register a fake plugin via [`testing/fake_coding_agent`](testing_fake_codi
 `FindingState` (per finding, per PR) — plan §3:
 
 - `open`
-- `acknowledged` (terminal in this PR for POC; `acknowledged → open` is deferred per plan §11)
+- `acknowledged` (terminal today; `acknowledged → open` not yet implemented)
 - `resolved_confirmed` (terminal)
 - `resolved_unverified` (terminal)
 - `stale` (terminal)

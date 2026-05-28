@@ -8,14 +8,14 @@ import pytest
 
 from app.domain.coding_agent import get_plugin as get_coding_agent_plugin
 from app.domain.coding_agent import registered_plugin_ids
-from app.domain.vcs.registry import _PLUGINS as _VCS_PLUGINS
+from app.domain.vcs import _PLUGINS as _VCS_PLUGINS
 
 
 @pytest.fixture(autouse=True)
 def _ensure_plugins_registered() -> None:
     """Re-register plugins if a prior test cleared the registries."""
-    from app.plugins.claude_code.service import bootstrap as _cc_bootstrap  # noqa: PLC0415
-    from app.plugins.github.service import bootstrap as _gh_bootstrap  # noqa: PLC0415
+    from app.plugins.claude_code import bootstrap as _cc_bootstrap  # noqa: PLC0415
+    from app.plugins.github import bootstrap as _gh_bootstrap  # noqa: PLC0415
 
     if "claude_code" not in registered_plugin_ids():
         _cc_bootstrap()

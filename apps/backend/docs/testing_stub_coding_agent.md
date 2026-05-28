@@ -4,14 +4,14 @@
 
 ## Purpose
 
-Test-only `CodingAgentPlugin`. When `YAAOS_CODING_AGENT_STUB` is set, `app/main.py` calls `wrap_all_registered_plugins()`, which walks `domain/coding_agent`'s registry and replaces every entry with a `StubCodingAgentPlugin` wrapping the real one. Consumer side unchanged — `coding_agent.review("claude_code", ...)` returns the same `ReviewResult` shape; no CLI spawn, no Anthropic call. Lives in the `testing/` layer (above `plugins/`) so it can know plugin specifics that production code cannot. Excluded from production wheel builds.
+Test-only `CodingAgentPlugin`. When `YAAOS_CODING_AGENT_STUB` is set, `app/web.py` calls `wrap_all_registered_plugins()`, which walks `domain/coding_agent`'s registry and replaces every entry with a `StubCodingAgentPlugin` wrapping the real one. Consumer side unchanged — `coding_agent.review("claude_code", ...)` returns the same `ReviewResult` shape; no CLI spawn, no Anthropic call. Lives in the `testing/` layer (above `plugins/`) so it can know plugin specifics that production code cannot. Excluded from production wheel builds.
 
 ## Public interface
 
 - `StubCodingAgentPlugin`
 - `wrap_all_registered_plugins`
 
-No HTTP routes. No `bootstrap()` — testing layer is wired from `app/main.py` based on env var state, not import-time side effects.
+No HTTP routes. No `bootstrap()` — testing layer is wired from `app/web.py` based on env var state, not import-time side effects.
 
 ## Module architecture
 

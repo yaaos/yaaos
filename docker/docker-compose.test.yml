@@ -67,7 +67,7 @@ services:
       timeout: 2s
       retries: 30
 
-  yaaos:
+  web:
     image: yaaos-web-test
     build:
       context: ..
@@ -137,17 +137,12 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
-    # No seed script in CMD — e2e specs drive their own preconditions via
+    # No seed script — e2e specs drive their own preconditions via
     # `/api/testing/*` (see app/testing/e2e_setup). Migrations + built-in
-    # reviewer-agent seeding run from FastAPI's lifespan hook.
-    command:
-      [
-        "sh",
-        "-c",
-        "uvicorn app.main:app --host 0.0.0.0 --port 8080 --app-dir apps/backend",
-      ]
+    # reviewer-agent seeding run from FastAPI's lifespan hook. CMD comes
+    # from the Dockerfile `web` stage.
 
-  yaaos-worker:
+  worker:
     image: yaaos-worker-test
     build:
       context: ..
@@ -182,9 +177,3 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command:
-      [
-        "sh",
-        "-c",
-        "cd apps/backend && python bin/worker",
-      ]

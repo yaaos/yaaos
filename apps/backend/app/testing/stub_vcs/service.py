@@ -21,6 +21,7 @@ from uuid import UUID
 
 from app.core.plugin_kit import PluginMeta
 from app.domain.vcs import (
+    _PLUGINS,
     Comment,
     Diff,
     FileSummary,
@@ -28,7 +29,6 @@ from app.domain.vcs import (
     ReviewPostResult,
     VCSPullRequest,
 )
-from app.domain.vcs.registry import _PLUGINS
 
 
 def _default_pr(external_id: str = "owner/repo#1", plugin_id: str = "github") -> VCSPullRequest:
@@ -170,7 +170,7 @@ def register_stub_vcs(*, plugin_id: str = "github") -> Iterator[StubVCSPlugin]:
     """Context manager: swap the registered VCS plugin for a `StubVCSPlugin`,
     yield the stub for state setup + assertions, restore on exit.
 
-    If `plugin_id` is already registered (the real plugin from `app.main`'s
+    If `plugin_id` is already registered (the real plugin from `app.web`'s
     bootstrap), the prior entry is saved + restored. If not, the slot is
     removed on exit.
     """

@@ -17,18 +17,18 @@ from sqlalchemy import select
 from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext
 from app.core.workspace import (
+    WorkspaceRow,
+    WorkspaceStatus,
     WorkspaceTicketContext,
     clear_workflow_context_provider,
     clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
-from app.core.workspace.models import WorkspaceRow
-from app.core.workspace.types import WorkspaceStatus
-from app.domain.pull_requests.models import PullRequestRow
+from app.domain.pull_requests import PullRequestRow
 from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 class _StubWorkspaceProvider:

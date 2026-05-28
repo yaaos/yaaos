@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.domain import pull_requests
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 from app.domain.vcs import VCSPullRequest
 
 

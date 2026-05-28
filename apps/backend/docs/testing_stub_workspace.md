@@ -4,14 +4,14 @@
 
 ## Purpose
 
-Test-only `WorkspaceProvider`. When `YAAOS_WORKSPACE_STUB` is set, `app/main.py` calls `wrap_all_registered_workspace_providers()`, which walks `core/workspace`'s registry and replaces every entry with a `StubWorkspaceProvider` wrapping the real one. `provision` creates an empty tempdir + marker; no git clone, no VCS plugin lookup. `run_coding_agent_cli` returns a canned empty result; `destroy` rmtrees. Mirrors `testing/stub_coding_agent`; both activate together in e2e. Excluded from production wheel builds.
+Test-only `WorkspaceProvider`. When `YAAOS_WORKSPACE_STUB` is set, `app/web.py` calls `wrap_all_registered_workspace_providers()`, which walks `core/workspace`'s registry and replaces every entry with a `StubWorkspaceProvider` wrapping the real one. `provision` creates an empty tempdir + marker; no git clone, no VCS plugin lookup. `run_coding_agent_cli` returns a canned empty result; `destroy` rmtrees. Mirrors `testing/stub_coding_agent`; both activate together in e2e. Excluded from production wheel builds.
 
 ## Public interface
 
 - `StubWorkspaceProvider`
 - `wrap_all_registered_workspace_providers`
 
-No HTTP routes. No `bootstrap()` — wired from `app/main.py`.
+No HTTP routes. No `bootstrap()` — wired from `app/web.py`.
 
 ## Module architecture
 
@@ -26,7 +26,7 @@ Mirrors `meta` from the real provider. Wrapped provider is held but never delega
 
 ### `wrap_all_registered_workspace_providers()`
 
-Reaches into `core/workspace.service._PROVIDERS` and swaps in place. Idempotent. Logs `stub_workspace.wrapped_all` with the count. Future workspace providers (Docker, K8s) require zero changes here.
+Calls `list_workspace_providers()` + `clear_workspace_providers()` + `register_workspace_provider()` to swap every entry for a stub wrapping it. Idempotent. Logs `stub_workspace.wrapped_all` with the count. Future workspace providers (Docker, K8s) require zero changes here.
 
 ### Why a wrapper, not a free-standing fake
 
@@ -34,7 +34,7 @@ Mirroring `meta.id` means consumers route to the stub under the real provider's 
 
 ### Companion: stub_coding_agent
 
-`testing_stub_coding_agent.md` covers the matching coding-agent stub. Both activate together (`YAAOS_CODING_AGENT_STUB` + `YAAOS_WORKSPACE_STUB`). `app/main.py` order: real plugins bootstrap → testing wrappers replace registry entries.
+`testing_stub_coding_agent.md` covers the matching coding-agent stub. Both activate together (`YAAOS_CODING_AGENT_STUB` + `YAAOS_WORKSPACE_STUB`). `app/web.py` order: real plugins bootstrap → testing wrappers replace registry entries.
 
 ## Data owned
 

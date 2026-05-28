@@ -16,9 +16,8 @@ from app.domain.identity import repository as identity_repo
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
+from app.domain.orgs import Role, get_test_inbox
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.email import get_test_inbox
-from app.domain.orgs.types import Role
 
 # Drives the hourly health-check loop end-to-end: provider.validate →
 # `mcp_credentials.last_refresh_status` flip → audit row → owner email.

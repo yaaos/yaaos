@@ -20,7 +20,7 @@ from app.domain.coding_agent import (
     ReviewContext,
     build_invocation,
 )
-from app.domain.vcs.types import Diff, VCSPullRequest
+from app.domain.vcs import Diff, VCSPullRequest
 
 
 def _ctx() -> AnswerQuestionContext:

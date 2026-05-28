@@ -1,6 +1,6 @@
 # plugins/in_memory_workspace
 
-> Tempdir-backed `WorkspaceProvider`. Clones repos onto the host filesystem and runs coding-agent CLIs in-process. POC only — no isolation.
+> Tempdir-backed `WorkspaceProvider`. Clones repos onto the host filesystem and runs coding-agent CLIs in-process. No isolation — for single-tenant deployments where the host trusts the coding-agent CLI.
 
 ## Purpose
 
@@ -69,7 +69,7 @@ Always `healthy=True, message="ok"` in . Tempdir is part of the host filesystem;
 
 ### Test-mode wrapping
 
-This file never branches on test env vars. When `YAAOS_WORKSPACE_STUB` is set, `app/main.py` calls `testing.stub_workspace.wrap_all_registered_workspace_providers()` after `bootstrap()`. See `testing_stub_workspace.md`.
+This file never branches on test env vars. When `YAAOS_WORKSPACE_STUB` is set, `app/web.py` calls `testing.stub_workspace.wrap_all_registered_workspace_providers()` after `bootstrap()`. See `testing_stub_workspace.md`.
 
 ## Data owned
 

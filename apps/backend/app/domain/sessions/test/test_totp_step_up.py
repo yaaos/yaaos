@@ -13,9 +13,8 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
+from app.domain.identity import ProviderProfile, totp
 from app.domain.identity import repository as identity_repo
-from app.domain.identity import totp
-from app.domain.identity.providers import ProviderProfile
 from app.domain.sessions import web as _auth_web  # noqa: F401
 from app.plugins.oauth_test import set_next_profile
 

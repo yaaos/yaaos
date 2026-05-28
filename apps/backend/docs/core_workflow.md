@@ -12,13 +12,13 @@ Owns `Workflow`, `Step`, `WorkflowCommand`, `Outcome`, and the three [`core/task
 
 **Engine:** `WorkflowEngine`, `get_engine`.
 
+**Registry helpers:** `register_workflow(wf)`, `unregister_workflow(workflow_name, version)`, `scoped_workflow(wf)` — see [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
+
 **Task refs:** `START_STEP`, `HANDLE_AGENT_EVENT`, `ROUTE_WORKFLOW`.
 
 **Exceptions:** `WorkflowError`, `WorkflowNotFoundError`, `CommandNotRegisteredError`, `WorkflowExecutionNotFoundError`.
 
 **Admin ops:** `request_cancel(execution_id, *, session)`, `resume_hitl(execution_id, *, response, session)`.
-
-Tests import `_reset_for_tests` directly from `app.core.workflow.service` to clear the engine singleton between runs.
 
 **Read projections** (replace raw Row access for cross-module callers):
 - `WorkflowExecutionSummary` — frozen dataclass: `id`, `ticket_id`, `workflow_name`, `state`, `current_step_id`, `created_at`, `updated_at`.

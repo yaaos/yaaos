@@ -16,7 +16,7 @@ from app.core.audit_log import list_for_entity
 from app.domain.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer.orphan_sweep import ORPHAN_REASON, _sweep_once
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 async def _seed_running_ticket(db_session, org_id, *, ext: str, age_seconds: int) -> uuid.UUID:  # type: ignore[no-untyped-def]

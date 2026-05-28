@@ -6,13 +6,13 @@ import asyncio
 
 import pytest
 
-from app.core.redis import service as redis_service
-from app.core.redis.service import _reset_for_tests, get_client, get_url, ping
+import app.core.redis.service as redis_service
+from app.core.redis.service import get_client, get_url, ping
 
 
 @pytest.fixture(autouse=True)
 async def _isolate_cache():
-    _reset_for_tests()
+    redis_service._clients.clear()
     yield
     await redis_service.aclose()
 

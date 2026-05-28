@@ -12,15 +12,14 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import app.main  # noqa: F401  — registers the reviewer router
+import app.web  # noqa: F401  — registers the reviewer router
 from app.core.auth import AuthMiddleware
-from app.core.workflow import WorkflowState
-from app.core.workflow.models import WorkflowExecutionRow
+from app.core.workflow import WorkflowExecutionRow, WorkflowState
 from app.domain.identity import repository as identity_repo
 from app.domain.identity import sessions as session_lifecycle
+from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.types import Role
-from app.domain.tickets.models import TicketRow
+from app.domain.tickets import TicketRow
 
 
 def _app() -> FastAPI:

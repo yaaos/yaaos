@@ -15,17 +15,11 @@ from app.core.events import (
     publish_after_commit,
     subscribe,
 )
-from app.core.events.service import _reset_for_tests
 
 
 class _SampleEvent(Event):
     kind: Literal["sample"] = "sample"
     source_module: Literal["test"] = "test"
-
-
-@pytest.fixture(autouse=True)
-def _clear_subs() -> None:
-    _reset_for_tests()
 
 
 @pytest.mark.asyncio

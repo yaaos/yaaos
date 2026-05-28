@@ -8,11 +8,14 @@ yaaos's HTTP boundary. Owns the FastAPI app factory, lifespan, middleware stack,
 
 ## Public interface
 
-Exports `RouteSpec`, `register_routes`, `create_app`. See `apps/backend/app/core/webserver/__init__.py`.
+Exports `RouteSpec`, `register_routes`, `create_app`, `ShutdownHook`, `register_web_shutdown_hook`, `iter_web_shutdown_hooks`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks`. See `apps/backend/app/core/webserver/__init__.py`.
 
 - `RouteSpec` — Pydantic model with `module_name`, optional `url_prefix`, `router`, optional `on_startup` / `on_shutdown` hooks.
 - `register_routes(spec)` — called at module import; validates one-prefix-per-module.
-- `create_app()` — returns the FastAPI app; called from `app/main.py` after all modules import.
+- `create_app()` — returns the FastAPI app; called from `app/web.py` after all modules import.
+- `ShutdownHook` — `Callable[[], Awaitable[None]]` type alias. Re-exported from `core/shutdown_registry`.
+- `register_web_shutdown_hook(hook)` / `iter_web_shutdown_hooks()` — web shutdown registry. Re-exported from `core/shutdown_registry`.
+- `register_worker_shutdown_hook(hook)` / `iter_worker_shutdown_hooks()` — worker shutdown registry. Re-exported from `core/shutdown_registry`.
 
 `/api/health` is a framework carve-out owned by `core/webserver/health.py` and does NOT go through the registry.
 
@@ -36,9 +39,9 @@ Boot order:
 2. Run every `on_startup` hook — raising crashes the boot (loud-by-design).
 3. Mount SPA `/assets` + catch-all if `apps/web/dist` exists.
 4. Yield.
-5. Run `on_shutdown` hooks on teardown; errors logged, not propagated.
+5. Iterate `iter_web_shutdown_hooks()` in reverse registration order, calling each hook. Errors are logged and swallowed so all hooks run. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
-By the time the lifespan fires, every module has been imported by `app/main.py` so `register_routes(...)` calls have populated `_specs`.
+By the time the lifespan fires, every module has been imported by `app/web.py` so `register_routes(...)` calls have populated `_specs`. Side-effect: each module's `__init__` also calls `register_web_shutdown_hook(shutdown)` so the lifespan loop covers every registered resource.
 
 ### Middleware stack
 
@@ -76,4 +79,4 @@ None. The registry is in-memory only.
 
 ## How it's tested
 
-`app/core/webserver/test/` covers `RouteSpec` validation (prefix overlap, missing prefix, etc.), `create_app()` boots cleanly with no registered routes, and health returns `200`. Lifespan ordering + module-mounting is covered indirectly by every integration test running through `TestClient`.
+`app/core/webserver/test/` covers `RouteSpec` validation (prefix overlap, missing prefix, etc.), `create_app()` boots cleanly with no registered routes, health returns `200`, shutdown registry registration and iteration, and lifespan teardown calling hooks in reverse order. Lifespan ordering + module-mounting is covered indirectly by every integration test running through `TestClient`.

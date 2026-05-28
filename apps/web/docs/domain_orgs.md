@@ -21,7 +21,7 @@
 
 - Picker sorts orgs alphabetically by slug. `last_used_at` is deferred per Open Question 3 in requirements.md.
 - Create-org form maps 409 (slug-taken) and 422 (slug format) to inline errors.
-- Members remove uses native `window.confirm` for the POC; a ConfirmModal upgrade is a polish item.
+- Members remove uses native `window.confirm`; a ConfirmModal upgrade is a polish item.
 
 ## Where the code lives
 
