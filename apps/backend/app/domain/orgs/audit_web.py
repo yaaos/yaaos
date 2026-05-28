@@ -15,8 +15,8 @@ from pydantic import BaseModel
 
 from app.core.audit_log import list_for_org
 from app.core.auth import Action, org_id_var
+from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions import require
 
 router = APIRouter()
 

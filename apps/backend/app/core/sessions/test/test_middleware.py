@@ -1,4 +1,4 @@
-"""Integration tests for `core/auth` middleware + `domain/sessions` dependencies.
+"""Integration tests for `core/auth` middleware + `core/sessions` dependencies.
 
 The ad-hoc FastAPI app is driven by `httpx.AsyncClient` over an ASGI
 transport so requests stay on the test's event loop (asyncpg refuses to
@@ -18,9 +18,9 @@ from fastapi import Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware
 from app.core.identity import repository as identity_repo
+from app.core.sessions import public_route, require
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.sessions import public_route, require
 
 
 def _make_app() -> FastAPI:
@@ -203,7 +203,7 @@ async def test_legacy_route_without_security_declaration_500s() -> None:
 
 def test_required_role_for_covers_every_action() -> None:
     """Action enum must stay in lockstep with the role registry."""
-    from app.domain.sessions.dependencies import _REQUIRED_ROLE  # noqa: PLC0415
+    from app.core.sessions.dependencies import _REQUIRED_ROLE  # noqa: PLC0415
 
     missing = [a for a in Action if a not in _REQUIRED_ROLE]
     assert missing == [], f"Actions missing from _REQUIRED_ROLE: {missing}"

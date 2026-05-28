@@ -18,7 +18,7 @@ Exported from `app/domain/orgs/__init__.py`:
 - Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
 - Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.
 
-HTTP routes (registered side-effect via `web.py`, mounted from `app/web.py` to break the `domain.orgs ↔ domain.sessions` import cycle):
+HTTP routes (registered side-effect via `web.py`, mounted from `app/web.py` to break the `domain.orgs ↔ core.sessions` import cycle):
 
 | Method | Path | Action |
 |---|---|---|
@@ -42,11 +42,11 @@ HTTP routes (registered side-effect via `web.py`, mounted from `app/web.py` to b
 
 ### BYOK routes
 
-The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here because BYOK keys are per-org and the routes need `domain/sessions` deps; `core/byok` stays free of HTTP. Plaintext crosses the boundary only inbound on `POST {provider}` — `GET` returns `configured` / `not_set` only. The provider list is sourced from `core/byok`'s validator registry: a plugin registering its validator auto-surfaces here.
+The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here because BYOK keys are per-org and the routes need `core/sessions` deps; `core/byok` stays free of HTTP. Plaintext crosses the boundary only inbound on `POST {provider}` — `GET` returns `configured` / `not_set` only. The provider list is sourced from `core/byok`'s validator registry: a plugin registering its validator auto-surfaces here.
 
 ### Session-timeout override
 
-`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`domain/sessions`](domain_sessions.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
+`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`core/sessions`](core_sessions.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
 
 ### VCS
 
@@ -95,7 +95,7 @@ Both write `membership/role_changed` or `membership/removed` audit entries with 
 
 ### Import-cycle break
 
-`domain.orgs.web` imports `domain.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `domain.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/web.py` after both modules have finished loading.
+`domain.orgs.web` imports `core.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `core.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/web.py` after both modules have finished loading.
 
 ## Data owned
 

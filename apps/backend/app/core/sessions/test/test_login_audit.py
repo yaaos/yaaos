@@ -11,9 +11,9 @@ from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
 from app.core.identity import ProviderProfile
 from app.core.identity import repository as identity_repo
+from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.sessions import web as _auth_web  # noqa: F401
 from app.plugins.oauth_test import set_next_profile
 
 
@@ -91,7 +91,7 @@ async def test_logout_all_emits_audit(db_session, seeded) -> None:
     # path (which has subtle transactional-fixture interaction inside the
     # `async with db_session()` re-entry that lookups the freshly-inserted
     # SessionRow inconsistently across the test client boundary).
-    from app.domain.sessions.web import _emit_logout_audit  # noqa: PLC0415
+    from app.core.sessions.web import _emit_logout_audit  # noqa: PLC0415
 
     await _emit_logout_audit(db_session, user_id=seeded["user"].id, kind="logout_all")
     await db_session.commit()

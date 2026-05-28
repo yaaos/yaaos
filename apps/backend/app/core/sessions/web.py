@@ -1,4 +1,4 @@
-"""HTTP wiring for `domain/sessions` — `/api/auth/*` endpoints.
+"""HTTP wiring for `core/sessions` — `/api/auth/*` endpoints.
 
 `GET  /api/auth/login?provider=<id>&next=<path>` → 302 to the provider's
   authorization URL with a signed `state` carrying the optional post-login
@@ -51,8 +51,8 @@ from app.core.identity import (
 from app.core.identity import (
     sessions as session_lifecycle,
 )
+from app.core.sessions.dependencies import public_route
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions.dependencies import public_route
 
 log = structlog.get_logger("auth.web")
 

@@ -1,12 +1,11 @@
 """URL-contract test — pin every load-bearing API URL.
 
 This is the test that catches "module renamed → route silently moved" bugs.
-The Phase 0a rename `domain/auth` → `domain/sessions` silently moved every
-`/api/auth/*` URL to `/api/sessions/*` because the RouteSpec didn't carry
-an explicit `url_prefix` and the default fallback derives from `module_name`.
-The SPA, the GitHub OAuth callback, and every docstring still expected
-`/api/auth/*` — production broke; per-test mini-apps that re-implemented
-the prefix-derivation rule kept passing.
+A module rename that changes `module_name` without setting `url_prefix` on
+its RouteSpec silently moves every URL that relied on the default prefix,
+breaking the SPA, GitHub OAuth callback, and every external caller with no
+test failure because per-test mini-apps re-implement the prefix-derivation
+rule themselves.
 
 This test boots the real `create_app()` (NOT a per-test mini-app, NOT a
 duplicated mount loop) and asserts the small set of URLs that downstream

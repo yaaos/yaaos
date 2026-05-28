@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, SecretStr
 
 from app.core.auth import Action, public_route
+from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions import require
 from app.plugins.claude_code.service import _set_anthropic_key, bootstrap_anthropic_env, get_plugin
 
 DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")

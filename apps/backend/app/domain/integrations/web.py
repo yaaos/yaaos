@@ -37,6 +37,7 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.oauth import OAuthError, build_authorize_url
 from app.core.observability import spawn
+from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.integrations import service as integ
 from app.domain.integrations.models import McpCredentialRow
@@ -47,7 +48,6 @@ from app.domain.integrations.types import (
     get_provider,
     known_providers,
 )
-from app.domain.sessions import current_actor, require
 
 log = structlog.get_logger("integrations.web")
 

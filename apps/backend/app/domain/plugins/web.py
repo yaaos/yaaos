@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.auth import Action
+from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.plugins.service import list_available
-from app.domain.sessions import require
 
 
 class PluginMetaPayload(BaseModel):

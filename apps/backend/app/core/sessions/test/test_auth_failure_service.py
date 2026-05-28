@@ -24,10 +24,10 @@ from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, register_handler
 from app.core.identity import _set_session_last_seen_for_tests
 from app.core.identity import repository as identity_repo
+from app.core.sessions import require
+from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/me
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.sessions import require
-from app.domain.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/me
 
 
 def _make_app() -> FastAPI:

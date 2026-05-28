@@ -11,10 +11,10 @@ from app.core import byok as byok_service
 from app.core.auth import AuthMiddleware
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
+from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import byok_routes as _byok_routes  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role
-from app.domain.sessions import web as _auth_web  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

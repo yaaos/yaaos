@@ -25,8 +25,8 @@ from pydantic import BaseModel
 from app.core import byok as byok_service
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
+from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.sessions import current_actor, require
 
 log = structlog.get_logger("byok.web")
 

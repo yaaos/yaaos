@@ -39,10 +39,10 @@ from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
 from app.core import identity  # noqa: F401, E402
 from app.domain import orgs  # noqa: F401, E402
 from app.core import auth  # noqa: F401, E402
-from app.domain import sessions as _domain_sessions  # noqa: F401, E402
+from app.core import sessions  # noqa: F401, E402
 
 # Register `/api/memberships/*` and `/api/audit/*` after both `domain.orgs`
-# and `domain.sessions` are loaded — `orgs.web` imports `domain.sessions.dependencies`,
+# and `core.sessions` are loaded — `orgs.web` imports `core.sessions.dependencies`,
 # which imports back into `domain.orgs`, so the cycle must break here, not in
 # `orgs/__init__`.
 from app.core.identity import user_web as _identity_user_web  # noqa: F401, E402

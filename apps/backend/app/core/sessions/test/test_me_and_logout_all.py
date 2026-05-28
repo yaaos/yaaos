@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
+from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.sessions import web as _auth_web  # noqa: F401
 
 
 def _app() -> FastAPI:

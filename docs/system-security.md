@@ -19,12 +19,12 @@ Three processes hold different secrets and run with different privileges.
 
 ### Authentication
 
-- **User sessions** — `domain/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`), and a post-response guard 500s any 2xx response that left `route_security_resolved` unset.
+- **User sessions** — `core/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`), and a post-response guard 500s any 2xx response that left `route_security_resolved` unset.
 - **WorkspaceAgent bearer** — placeholder verifier (any non-empty `Bearer <token>` after a successful identity-exchange). The org-side trust anchor lives on `orgs.registered_iam_arn`; `core/agent_gateway.ensure_agent_row` consumes the ARN presented at identity exchange.
 
 ### Authorization
 
-- Per-action `Role` mapping in [`domain/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/domain/sessions/dependencies.py): `BUILDER` < `ADMIN` < `OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
+- Per-action `Role` mapping in [`core/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/core/sessions/dependencies.py): `BUILDER` < `ADMIN` < `OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
 - Owner/Admin-gated endpoints: `PATCH /api/orgs` (workspace_provider + registered_iam_arn), `GET /api/workspaces/connection_status`.
 
 ### Secrets at rest

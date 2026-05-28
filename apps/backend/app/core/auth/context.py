@@ -131,8 +131,8 @@ async def public_route() -> None:
     """FastAPI dependency marker for `RouteSecurity.PUBLIC` routes. Sets
     `route_security_resolved = "public"` so the middleware's post-response
     guard recognizes the declaration. Lives in `core/auth` (not
-    `domain/sessions`) so non-domain modules can use it without a layering
-    cycle. USER_SCOPED routes don't need this marker — the middleware sets
+    `core/sessions`) so modules that don't need session resolution can use it
+    without loading the full sessions module. USER_SCOPED routes don't need this marker — the middleware sets
     `"user_scoped"` based on path classification."""
     route_security_resolved.set("public")
 

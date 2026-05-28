@@ -34,7 +34,7 @@ depends_on = ["app.core.auth", "app.core.shutdown_registry", "app.core.webserver
 
 [[modules]]
 path = "app.core.identity"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.orgs", "app.domain.sessions"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.sessions", "app.core.webserver", "app.domain.orgs"]
 
 [[modules]]
 path = "app.core.llm"
@@ -63,6 +63,10 @@ depends_on = ["app.core.secrets"]
 [[modules]]
 path = "app.core.secrets"
 depends_on = ["app.core.config"]
+
+[[modules]]
+path = "app.core.sessions"
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.webserver", "app.domain.integrations", "app.domain.orgs"]
 
 [[modules]]
 path = "app.core.sse_pubsub"
@@ -94,11 +98,11 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "a
 
 [[modules]]
 path = "app.domain.integrations"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.mcp_proxy", "app.domain.orgs", "app.domain.sessions"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.sessions", "app.core.webserver", "app.domain.mcp_proxy", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.lessons"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.webserver", "app.domain.sessions"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.webserver"]
 
 [[modules]]
 path = "app.domain.mcp_proxy"
@@ -110,11 +114,11 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.events", "app.core
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sessions", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.plugins"
-depends_on = ["app.core.auth", "app.core.plugin_kit", "app.core.webserver", "app.domain.coding_agent", "app.domain.sessions", "app.domain.vcs"]
+depends_on = ["app.core.auth", "app.core.plugin_kit", "app.core.sessions", "app.core.webserver", "app.domain.coding_agent", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.pull_requests"
@@ -122,15 +126,11 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.observability", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.lessons", "app.domain.mcp_proxy", "app.domain.pull_requests", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
-
-[[modules]]
-path = "app.domain.sessions"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.webserver", "app.domain.integrations", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.lessons", "app.domain.mcp_proxy", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.tickets"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.events", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.events", "app.core.sessions", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.pull_requests", "app.domain.reviewer"]
 
 [[modules]]
 path = "app.domain.vcs"
@@ -138,11 +138,11 @@ depends_on = ["app.core.plugin_kit"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_kit", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs", "app.domain.sessions"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_kit", "app.core.sessions", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs"]
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.identity", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.identity", "app.core.observability", "app.core.plugin_kit", "app.core.sessions", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.in_memory_workspace"
@@ -447,6 +447,17 @@ from = ["app.core.saml"]
 [[interfaces]]
 expose = ["SecretsDecryptError", "decrypt", "encrypt"]
 from = ["app.core.secrets"]
+
+[[interfaces]]
+expose = [
+  "current_actor",
+  "public_route",
+  "require",
+  "require_session",
+  "required_role_for",
+  "web",
+]
+from = ["app.core.sessions"]
 
 [[interfaces]]
 expose = [
@@ -896,17 +907,6 @@ expose = [
   "start_pr_review",
 ]
 from = ["app.domain.reviewer"]
-
-[[interfaces]]
-expose = [
-  "current_actor",
-  "public_route",
-  "require",
-  "require_session",
-  "required_role_for",
-  "web",
-]
-from = ["app.domain.sessions"]
 
 [[interfaces]]
 expose = [

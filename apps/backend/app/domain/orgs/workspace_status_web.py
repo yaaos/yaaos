@@ -32,11 +32,11 @@ from fastapi.responses import StreamingResponse
 from app.core.agent_gateway import connection_status_for_org
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
+from app.core.sessions import require
 from app.core.sse_pubsub import channel_for
 from app.core.sse_pubsub import subscribe as sse_subscribe
 from app.core.webserver import RouteSpec, register_routes
 from app.core.workflow import get_execution_summary
-from app.domain.sessions import require
 
 router = APIRouter()
 

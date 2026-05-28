@@ -15,7 +15,7 @@ from app.core.auth import AuthMiddleware
 from app.core.identity import ProviderProfile
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
-from app.domain.sessions import web as _auth_web  # noqa: F401
+from app.core.sessions import web as _auth_web  # noqa: F401
 from app.plugins.oauth_test import set_next_profile
 
 

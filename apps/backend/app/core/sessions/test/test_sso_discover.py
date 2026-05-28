@@ -14,9 +14,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
+from app.core.sessions import web as _sessions_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import upsert_config
-from app.domain.sessions import web as _sessions_web  # noqa: F401
 
 
 def _app() -> FastAPI:

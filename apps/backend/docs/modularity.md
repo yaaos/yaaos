@@ -25,7 +25,7 @@ No other core→domain edges are permitted.
 
 ### No module-name collisions across `core`, `domain`, `plugins`
 
-Module names are globally unique across the three layers. Reusing a name (e.g. `core/auth` *and* `domain/auth`) makes import sites ambiguous to read, breaks unique RouteSpec keys, and produces confusing audit-kind prefixes. When a domain shim needs to live alongside its core primitive, rename the domain module so the relationship is one-way and the names don't collide (e.g. `core/auth` is the middleware; `domain/sessions` is the FastAPI dep + `/api/auth/*` routes that bind it to identity + orgs). Same for `core/byok`: its HTTP shim lives inside `domain/orgs/byok_routes.py`, not in a new `domain/byok` module.
+Module names are globally unique across the three layers. Reusing a name (e.g. `core/auth` *and* `domain/auth`) makes import sites ambiguous to read, breaks unique RouteSpec keys, and produces confusing audit-kind prefixes. When a core module needs to bind a primitive to domain data, it keeps a distinct name so the relationship is one-way and the names don't collide (e.g. `core/auth` is the pure middleware; `core/sessions` is the FastAPI dep + `/api/auth/*` routes that bind it to identity + orgs — a permitted core→domain edge). Same for `core/byok`: its HTTP shim lives inside `domain/orgs/byok_routes.py`, not in a new `domain/byok` module.
 
 ## Module shape
 

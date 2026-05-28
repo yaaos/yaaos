@@ -51,8 +51,8 @@ def _err(status: int, code: str) -> HTTPException:
 
 def _require_user():
     """Session-only auth: resolves the cookie → `user_id_var`. No org context.
-    Lazy import because `domain/sessions` depends on `core/identity`."""
-    from app.domain.sessions import require_session  # noqa: PLC0415
+    Lazy import because `core/sessions` depends on `core/identity`."""
+    from app.core.sessions import require_session  # noqa: PLC0415
 
     return require_session
 

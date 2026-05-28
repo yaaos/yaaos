@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var
+from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.lessons.service import (
     Lesson,
@@ -33,7 +34,6 @@ from app.domain.lessons.service import (
     list_lessons,
     update,
 )
-from app.domain.sessions import current_actor, require
 
 router = APIRouter()
 

@@ -23,11 +23,11 @@ from app.core.config import get_settings
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.oauth import ProviderConfig, Tokens
+from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.integrations import web as _integ_web  # noqa: F401
 from app.domain.integrations.types import _REGISTRY
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
-from app.domain.sessions import web as _auth_web  # noqa: F401
 
 
 def _make_stub_config() -> ProviderConfig:

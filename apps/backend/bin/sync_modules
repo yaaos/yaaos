@@ -35,8 +35,9 @@ PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset(
     [
         # core/identity may read domain/orgs for membership creation at signup.
         ("app.core.identity", "app.domain.orgs"),
-        # core/identity.user_web depends on domain/sessions for the require_session dep.
-        ("app.core.identity", "app.domain.sessions"),
+        # core/sessions reads domain/orgs (memberships, roles) and domain/integrations (OAuth configs).
+        ("app.core.sessions", "app.domain.orgs"),
+        ("app.core.sessions", "app.domain.integrations"),
     ]
 )
 LAYER_ORDER = {name: i for i, name in enumerate(LAYERS)}

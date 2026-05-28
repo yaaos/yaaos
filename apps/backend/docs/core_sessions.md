@@ -1,14 +1,14 @@
-# domain/sessions
+# core/sessions
 
 > FastAPI dependency factories that wire the [`core/auth`](core_auth.md) middleware into identity + orgs lookups.
 
 ## Purpose
 
-`core/auth` ships the pure middleware, contextvars, and the `Action` enum. The actual session-cookie → user lookup and slug → org → membership → role check happen here because they need both `core/identity` and `domain/orgs` — dependencies that `core/auth` can't take (core can't depend on domain sessions layer). The module also owns the `/api/auth/*` HTTP surface — login redirect, callback, logout, providers list.
+`core/auth` ships the pure middleware, contextvars, and the `Action` enum. The actual session-cookie → user lookup and slug → org → membership → role check happen here because they need both `core/identity` and `domain/orgs` — dependencies that `core/auth` can't take directly (it stays free of domain reads). The module also owns the `/api/auth/*` HTTP surface — login redirect, callback, logout, providers list.
 
 ## Public interface
 
-Exported from `app/domain/sessions/__init__.py`:
+Exported from `app/core/sessions/__init__.py`:
 
 - `require(action)` — dependency factory for `RouteSecurity.ORG_SCOPED` routes. Resolves `X-Org-Slug` → org → membership → role check. Sets the identity contextvars + `route_security_resolved = "org_scoped"`. Returns the `Membership` so handlers that want it can `Depends(require(...))` directly.
 - `require_session` — dependency for `RouteSecurity.USER_SCOPED` routes. Resolves the session cookie → `user_id_var`; raises `AuthFailure("unauthenticated")` on missing/expired sessions. No `X-Org-Slug` or role check.

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var
 from app.core.database import session
+from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
@@ -22,7 +23,6 @@ from app.domain.reviewer.service import (
     all_conversations_view,
     list_findings_view,
 )
-from app.domain.sessions import require
 
 router = APIRouter()
 

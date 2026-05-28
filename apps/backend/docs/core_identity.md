@@ -18,7 +18,7 @@ Exported from `app/core/identity/__init__.py`:
 - Provider Protocol — `providers.Provider`, `providers.ProviderProfile`, `providers.ProviderError`, `providers.register_provider`, `providers.get_provider`, `providers.list_providers`.
 - Sessions namespace — `sessions.create`, `sessions.lookup`, `sessions.touch`, `sessions.revoke`, `sessions.revoke_all_for_user`, `sessions.rotate`, `sessions.mark_sso_satisfied`, `sessions.is_sso_satisfied`, `sessions.cleanup_expired`, `sessions.CreatedSession`, `sessions.SSO_TTL`.
 
-HTTP routes for login + callback + logout live in [`domain/sessions`](domain_sessions.md) (`/api/auth/*`). User-management routes live under `/api/user/*` in `user_web.py`: emails, plus `GET/PATCH /api/user/me` for the user profile. All `/api/user/*` routes are `RouteSecurity.USER_SCOPED` — session via `_require_user()` (which delegates to `domain/sessions.require_session`), no `X-Org-Slug` required. An `on_startup` hook spawns the periodic cleanup loop.
+HTTP routes for login + callback + logout live in [`core/sessions`](core_sessions.md) (`/api/auth/*`). User-management routes live under `/api/user/*` in `user_web.py`: emails, plus `GET/PATCH /api/user/me` for the user profile. All `/api/user/*` routes are `RouteSecurity.USER_SCOPED` — session via `_require_user()` (which delegates to `core/sessions.require_session`), no `X-Org-Slug` required. An `on_startup` hook spawns the periodic cleanup loop.
 
 `users.github_username` is a denorm written by the login orchestrator on every GitHub sign-in (see Login orchestrator below). The User > Details page only displays it and offers a Clear button (`clear_github_username: true` on `PATCH /api/user/me`). Re-binding to a different GitHub account is "sign in with GitHub again."
 
@@ -52,7 +52,7 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 ### Session lifecycle
 
 1. Login calls `sessions.create(user_id=…)` after the orchestrator returns. The returned `CreatedSession` carries the raw token (set on the `yaaos_session` HttpOnly cookie) and the per-session CSRF token (set on the `yaaos_csrf` non-HttpOnly cookie).
-2. Subsequent requests come in with the session cookie. `domain/sessions.require()` resolves it to a user via `sessions.lookup`, then loads the membership for the `X-Org-Slug` header.
+2. Subsequent requests come in with the session cookie. `core/sessions.require()` resolves it to a user via `sessions.lookup`, then loads the membership for the `X-Org-Slug` header.
 3. Mutating requests must include the matching CSRF token in the `X-CSRF-Token` header — the middleware enforces the double-submit check before any handler runs.
 4. Role change, invite-accept, or SSO satisfaction triggers `sessions.rotate(old_raw)` — the old row is deleted and a new one minted atomically.
 5. "Sign out everywhere" calls `sessions.revoke_all_for_user(user_id)`. Role revocation does the same automatically.
@@ -79,4 +79,4 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 - `test/test_repository.py` — repository helpers against real Postgres via the transactional-rollback fixture.
 - `test/test_sessions.py` — lifecycle: create, rotate, revoke, revoke-all, expired-lookup, mark-sso-satisfied, TTL.
 - `test/test_login_orchestrator.py` — the three orchestrator branches: existing-identity, auto-link-by-email, fresh-signup-creates-user (with and without invitation).
-- Endpoint coverage lives in [`domain/sessions`](domain_sessions.md): `test/test_oauth_endpoints.py`.
+- Endpoint coverage lives in [`core/sessions`](core_sessions.md): `test/test_oauth_endpoints.py`.
