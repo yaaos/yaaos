@@ -12,8 +12,8 @@ from fastapi import FastAPI
 
 from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware
-from app.domain.identity import repository as identity_repo
-from app.domain.identity import sessions as session_lifecycle
+from app.core.identity import repository as identity_repo
+from app.core.identity import sessions as session_lifecycle
 from app.domain.orgs import invite as invite_service
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships

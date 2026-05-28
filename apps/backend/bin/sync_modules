@@ -28,6 +28,17 @@ LAYERS = ("core", "domain", "plugins", "testing")
 # Layer ordinal: core=0, domain=1, plugins=2, testing=3. Higher may depend on lower.
 # `testing/` is the test-scaffolding layer — stubs, recorders, fake plugins. Nothing
 # else may import from `testing/` (enforced by the same layering check below).
+
+# Permitted core→domain edges (auth/identity infra only — see docs/modularity.md).
+# Each tuple is (from_module, to_module) where both are fully-qualified app paths.
+PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset(
+    [
+        # core/identity may read domain/orgs for membership creation at signup.
+        ("app.core.identity", "app.domain.orgs"),
+        # core/identity.user_web depends on domain/sessions for the require_session dep.
+        ("app.core.identity", "app.domain.sessions"),
+    ]
+)
 LAYER_ORDER = {name: i for i, name in enumerate(LAYERS)}
 
 
@@ -187,10 +198,16 @@ def _module_to_module_deps(layer: str, name: str) -> list[str]:
 
 
 def check_layering(modules: list[tuple[str, str]]) -> list[str]:
-    """Return human-readable layering violations, empty list if clean."""
+    """Return human-readable layering violations, empty list if clean.
+
+    Edges listed in PERMITTED_CROSS_LAYER_EDGES are exempt — they are
+    documented auth/identity infra reads that cross the core→domain boundary
+    by design (see docs/modularity.md § Permitted core→domain edges).
+    """
     errors: list[str] = []
     for layer, name in modules:
         my_order = LAYER_ORDER[layer]
+        my_path = f"app.{layer}.{name}"
         for dep in _module_to_module_deps(layer, name):
             # dep like "app.domain.foo"
             parts = dep.split(".")
@@ -199,6 +216,8 @@ def check_layering(modules: list[tuple[str, str]]) -> list[str]:
             dep_layer = parts[1]
             dep_order = LAYER_ORDER[dep_layer]
             if dep_order > my_order:
+                if (my_path, dep) in PERMITTED_CROSS_LAYER_EDGES:
+                    continue
                 errors.append(
                     f"layering violation: app.{layer}.{name} depends on {dep} "
                     f"({dep_layer} > {layer})"

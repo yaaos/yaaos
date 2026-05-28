@@ -9,7 +9,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-33 modules: **15 core · 10 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections.
+33 modules: **16 core · 9 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 
@@ -30,6 +30,7 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (skeleton). |
 | [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (skeleton). |
 | [core_sse_pubsub](core_sse_pubsub.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers (skeleton). |
+| [core_identity](core_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 
 ### Domain — business logic, vendor-neutral
 
@@ -42,7 +43,6 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 | [domain_tickets](domain_tickets.md) | Lifecycle `open → in_review → complete`. |
 | [domain_reviewer](domain_reviewer.md) | `ReviewJob` aggregate, per-PR queue, workflow. |
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
-| [domain_identity](domain_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
 | [domain_sessions](domain_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints. |
 

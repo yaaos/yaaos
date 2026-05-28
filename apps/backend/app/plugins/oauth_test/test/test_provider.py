@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.identity import ProviderProfile, get_provider
+from app.core.identity import ProviderProfile, get_provider
 from app.plugins.oauth_test import set_next_profile
 
 

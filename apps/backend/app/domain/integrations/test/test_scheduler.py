@@ -10,9 +10,9 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.audit_log import list_for_org
+from app.core.identity import repository as identity_repo
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
-from app.domain.identity import repository as identity_repo
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY

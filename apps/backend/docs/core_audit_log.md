@@ -44,7 +44,7 @@ Optional `session` joins the caller's transaction (helper adds + flushes; caller
 
 `get(entry_id, *, org_id)` returns one entry or raises `AuditEntryNotFoundError`. Used for deep-linking.
 
-`purge_older_than(cutoff)` deletes rows with `created_at < cutoff`. The daily retention task in `domain/identity.scheduler` calls this with `datetime.now(UTC) - AUDIT_LOG_RETENTION` (`AUDIT_LOG_RETENTION = timedelta(days=15)`, exported from `core/audit_log`). Lowered from 30d — MCP dispatch writes one audit row per JSON-RPC method and is the dominant volume contributor; 15d keeps the storage envelope bounded.
+`purge_older_than(cutoff)` deletes rows with `created_at < cutoff`. The daily retention task in `core/identity.scheduler` calls this with `datetime.now(UTC) - AUDIT_LOG_RETENTION` (`AUDIT_LOG_RETENTION = timedelta(days=15)`, exported from `core/audit_log`). Lowered from 30d — MCP dispatch writes one audit row per JSON-RPC method and is the dominant volume contributor; 15d keeps the storage envelope bounded.
 
 ### What it does not do
 
@@ -52,7 +52,7 @@ Optional `session` joins the caller's transaction (helper adds + flushes; caller
 - Does not validate payload shape beyond "must be Pydantic".
 - Does not publish events — `core/events` is separate; callers wanting both call both.
 - Does not enforce FK on `entity_id` — loose ref; entities can be deleted and the row survives.
-- Does prune `purge_older_than(cutoff)` plus the daily scheduler call in `domain/identity.scheduler` keeps `audit_entries` within `AUDIT_LOG_RETENTION` (15 days, lowered from 30d in to absorb MCP dispatch volume).
+- Does prune `purge_older_than(cutoff)` plus the daily scheduler call in `core/identity.scheduler` keeps `audit_entries` within `AUDIT_LOG_RETENTION` (15 days, lowered from 30d in to absorb MCP dispatch volume).
 
 ## Data owned
 

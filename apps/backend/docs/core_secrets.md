@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Single owner of Fernet construction. Wraps `cryptography.fernet.Fernet` so the master-key resolution + algorithm choice live in one place. Callers (`domain/identity/totp`, `domain/orgs/sso`, `core/byok`) call `encrypt`/`decrypt` instead of constructing their own cipher.
+Single owner of Fernet construction. Wraps `cryptography.fernet.Fernet` so the master-key resolution + algorithm choice live in one place. Callers (`core/identity/totp`, `domain/orgs/sso`, `core/byok`) call `encrypt`/`decrypt` instead of constructing their own cipher.
 
 ## Public interface
 

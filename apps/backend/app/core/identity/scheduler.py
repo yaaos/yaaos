@@ -2,7 +2,7 @@
 unverified-TOTP secrets older than 24h, and audit-log entries older
 than `AUDIT_LOG_RETENTION`.
 
-Single background loop owned by `domain/identity`. Spawned in the FastAPI
+Single background loop owned by `core/identity`. Spawned in the FastAPI
 lifespan via the module's `RouteSpec.on_startup` hook (see `web.py`).
 """
 
@@ -18,8 +18,8 @@ from app.core.audit_log import AUDIT_LOG_RETENTION
 from app.core.audit_log import purge_older_than as purge_audit_older_than
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.domain.identity import sessions
-from app.domain.identity.models import UserTotpSecretRow
+from app.core.identity import sessions
+from app.core.identity.models import UserTotpSecretRow
 from app.domain.orgs import delete_expired_invitations
 
 log = structlog.get_logger("identity.cleanup")
@@ -56,7 +56,7 @@ async def _purge_expired_sessions() -> int:
 
     from app.core.audit_log import Actor as _Actor  # noqa: PLC0415
     from app.core.audit_log import audit as _audit  # noqa: PLC0415
-    from app.domain.identity.models import SessionRow  # noqa: PLC0415
+    from app.core.identity.models import SessionRow  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     class _ExpiryPayload(_BaseModel):

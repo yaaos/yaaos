@@ -7,8 +7,8 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.domain.identity import repository as identity_repo
-from app.domain.identity import sessions as session_lifecycle
+from app.core.identity import repository as identity_repo
+from app.core.identity import sessions as session_lifecycle
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 from app.domain.sessions import web as _auth_web  # noqa: F401
@@ -67,7 +67,7 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
     from sqlalchemy import delete  # noqa: PLC0415
 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.domain.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.core.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
     from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     async with get_sessionmaker()() as cleanup:
@@ -90,7 +90,7 @@ async def test_logout_all_revokes_every_session(db_session) -> None:
     assert resp.status_code == 200
 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.domain.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.core.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as cleanup:
         assert await session_lifecycle.lookup(cleanup, s1.raw_token) is None

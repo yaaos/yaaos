@@ -100,8 +100,8 @@ async def sso_acs(
     """Assertion Consumer Service. Verifies the SAML response (real or stub),
     matches the user by verified email, optionally JIT-creates a membership,
     marks the session SSO-satisfied for this org."""
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
     from app.domain.orgs.sso import get_config  # noqa: PLC0415
     from app.domain.orgs.types import Role  # noqa: PLC0415
@@ -237,7 +237,7 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     the exempt-Owner pointer changed."""
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.auth import user_id_var  # noqa: PLC0415
-    from app.domain.identity import can_be_sso_exempt_owner  # noqa: PLC0415
+    from app.core.identity import can_be_sso_exempt_owner  # noqa: PLC0415
     from app.domain.orgs import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
     from app.domain.sessions import current_actor  # noqa: PLC0415

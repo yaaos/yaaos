@@ -8,8 +8,8 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.domain.identity import repository as identity_repo
-from app.domain.identity import sessions as session_lifecycle
+from app.core.identity import repository as identity_repo
+from app.core.identity import sessions as session_lifecycle
 from app.domain.sessions import web as _auth_web  # noqa: F401
 
 

@@ -15,6 +15,14 @@ Layering rule: each layer may depend on lower layers, never higher. Production c
 
 Nuance: `core` modules may define domain-aware *data types* (e.g., `Actor` references the agent concept) — but never *behaviour* that encodes business decisions.
 
+### Permitted core→domain edges
+
+`core/` may depend on `domain/` only for auth/identity infra reads:
+- `core/sessions` may read from `domain/orgs` (memberships) and `domain/integrations` (OAuth provider configs).
+- `core/identity` may read from `domain/orgs` (membership creation at signup).
+
+No other core→domain edges are permitted.
+
 ### No module-name collisions across `core`, `domain`, `plugins`
 
 Module names are globally unique across the three layers. Reusing a name (e.g. `core/auth` *and* `domain/auth`) makes import sites ambiguous to read, breaks unique RouteSpec keys, and produces confusing audit-kind prefixes. When a domain shim needs to live alongside its core primitive, rename the domain module so the relationship is one-way and the names don't collide (e.g. `core/auth` is the middleware; `domain/sessions` is the FastAPI dep + `/api/auth/*` routes that bind it to identity + orgs). Same for `core/byok`: its HTTP shim lives inside `domain/orgs/byok_routes.py`, not in a new `domain/byok` module.

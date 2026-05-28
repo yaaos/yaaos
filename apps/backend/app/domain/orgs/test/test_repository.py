@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.orgs import repository as repo
 from app.domain.orgs.types import Role
 

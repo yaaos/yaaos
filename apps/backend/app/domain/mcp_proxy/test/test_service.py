@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.mcp_proxy import lookup_token, mint_token, revoke_token, sweep_expired
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.orgs import repository as orgs_repo

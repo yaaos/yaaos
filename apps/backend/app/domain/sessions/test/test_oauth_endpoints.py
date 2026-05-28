@@ -11,8 +11,8 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.domain.identity import ProviderProfile
-from app.domain.identity import repository as repo
+from app.core.identity import ProviderProfile
+from app.core.identity import repository as repo
 from app.domain.orgs import InvitationRow, Role
 from app.domain.orgs import repository as orgs_repo
 from app.domain.sessions import web as auth_web  # noqa: F401 — ensures /api/auth routes register

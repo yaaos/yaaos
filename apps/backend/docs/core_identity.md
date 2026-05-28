@@ -1,4 +1,4 @@
-# domain/identity
+# core/identity
 
 > Users, emails, OAuth identities, TOTP secrets, opaque sessions.
 
@@ -8,7 +8,7 @@ Owns who the human (or workspace principal) is, what identities they've linked, 
 
 ## Public interface
 
-Exported from `app/domain/identity/__init__.py`:
+Exported from `app/core/identity/__init__.py`:
 
 - Types — `User`, `UserEmail`, `OAuthIdentity`, `Session`, `LoginResult`.
 - Exceptions — `UserNotFoundError`, `EmailAlreadyLinkedError`, `SessionNotFoundError`, `TotpError`.

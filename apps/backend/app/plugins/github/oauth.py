@@ -9,7 +9,7 @@ flow's `yaaos_github_app_*` env vars play no part here.
 Scopes are configured on the OAuth App registration itself, so we never
 pass a `scope` query param.
 
-Implements `domain/identity.Provider`.
+Implements `core/identity.Provider`.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import structlog
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from app.core.config import get_settings
-from app.domain.identity import ProviderError, ProviderProfile, register_provider
+from app.core.identity import ProviderError, ProviderProfile, register_provider
 
 log = structlog.get_logger("plugins.github.oauth")
 

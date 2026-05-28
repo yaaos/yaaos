@@ -1,4 +1,4 @@
-"""SQLAlchemy models for `domain/identity` — users, emails, oauth identities,
+"""SQLAlchemy models for `core/identity` — users, emails, oauth identities,
 TOTP secrets, sessions, GitHub installations.
 
 UUIDs are the universal primary key. Emails round-trip through `user_emails`;

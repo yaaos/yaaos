@@ -22,8 +22,8 @@ from app.core.audit_log import Actor, ActorKind, audit
 from app.core.auth import org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.identity import repository as identity_repo
 from app.core.secrets import SecretsDecryptError, decrypt
-from app.domain.identity import repository as identity_repo
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.types import get_provider
 from app.domain.mcp_proxy import sweep_expired

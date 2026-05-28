@@ -25,8 +25,8 @@ from pydantic import BaseModel
 
 from app.core.auth import public_route
 from app.core.database import session as db_session
+from app.core.identity import repository as identity_repo
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.identity import repository as identity_repo
 from app.domain.notifications import service as notif_service
 from app.domain.notifications.subscribers import start_subscriber
 

@@ -253,7 +253,7 @@ Every yaaos-issued bearer follows the same shape — adopted in for sessions, in
 - **Store** `sha256(raw_token)` as the primary key. Raw tokens never persist.
 - **Lookup** by hashing the inbound bearer + selecting by hash + checking `expires_at > now()`. Constant-time-safe because the hash is the PK.
 - **Own one table per consumer.** `sessions`, `mcp_review_tokens`, and (via sha256-on-write) `invitations.token_hash` are separate; one bearer can't be substituted for another.
-- **Expire by absolute time.** Each consumer owns its TTL — sessions 14d, MCP review tokens 2h, invitations 7d. The periodic cleanup task in `domain/identity/scheduler` (or a domain-local equivalent) deletes expired rows; production code also checks `expires_at` on every read.
+- **Expire by absolute time.** Each consumer owns its TTL — sessions 14d, MCP review tokens 2h, invitations 7d. The periodic cleanup task in `core/identity/scheduler` (or a module-local equivalent) deletes expired rows; production code also checks `expires_at` on every read.
 
 ## Route security declarations
 

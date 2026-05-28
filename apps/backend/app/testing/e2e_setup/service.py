@@ -200,7 +200,7 @@ async def seed_bootstrap_owner(
     admin-onboarding path would produce.
     """
     from app.core.audit_log import Actor  # noqa: PLC0415
-    from app.domain.identity import (  # noqa: PLC0415
+    from app.core.identity import (  # noqa: PLC0415
         create_email,
         create_oauth_identity,
         create_user,
@@ -247,8 +247,8 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
     the session normally."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
-    from app.domain.identity import create_email, create_session, create_user  # noqa: PLC0415
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import create_email, create_session, create_user  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
 
     async with db_session() as s:
         existing = await identity_repo.find_user_by_email(s, email)
@@ -281,7 +281,7 @@ def stage_oauth_test_profile(
     *, external_subject: str, primary_email: str, email_verified: bool, display_name: str
 ) -> None:
     """Stash the next profile the ``oauth_test`` provider will return."""
-    from app.domain.identity import ProviderProfile  # noqa: PLC0415
+    from app.core.identity import ProviderProfile  # noqa: PLC0415
 
     # `plugins.oauth_test` loads only under YAAOS_ENV=test; this helper is
     # imported by code that runs in dev too, so import lazily.

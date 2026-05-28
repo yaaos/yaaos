@@ -21,8 +21,8 @@ import pyotp
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.identity import repository as repo
 from app.core.secrets import SecretsDecryptError, decrypt, encrypt
-from app.domain.identity import repository as repo
 
 log = structlog.get_logger("identity.totp")
 

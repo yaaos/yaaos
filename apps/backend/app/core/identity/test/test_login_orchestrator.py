@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.identity import repository as repo
-from app.domain.identity.providers import ProviderProfile
-from app.domain.identity.service import login_via_oauth
+from app.core.identity import repository as repo
+from app.core.identity.providers import ProviderProfile
+from app.core.identity.service import login_via_oauth
 
 
 def _profile(*, sub="42", email="user@example.com", login: str | None = None) -> ProviderProfile:

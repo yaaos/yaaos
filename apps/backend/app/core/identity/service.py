@@ -1,4 +1,4 @@
-"""Service entry-points for `domain/identity`.
+"""Service entry-points for `core/identity`.
 
 Re-exports public types and exposes the login orchestrator that providers
 call from the OAuth callback. The orchestrator owns the identity-binding
@@ -14,10 +14,10 @@ from uuid import UUID
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.identity import repository as repo
-from app.domain.identity.models import OAuthIdentityRow, SessionRow, UserEmailRow, UserRow
-from app.domain.identity.providers import ProviderProfile
-from app.domain.identity.types import (
+from app.core.identity import repository as repo
+from app.core.identity.models import OAuthIdentityRow, SessionRow, UserEmailRow, UserRow
+from app.core.identity.providers import ProviderProfile
+from app.core.identity.types import (
     EmailAlreadyLinkedError,
     OAuthIdentity,
     Session,

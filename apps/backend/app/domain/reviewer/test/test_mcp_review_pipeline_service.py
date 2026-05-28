@@ -24,9 +24,9 @@ from pydantic import SecretStr
 
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
+from app.core.identity import repository as identity_repo
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
-from app.domain.identity import repository as identity_repo
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)

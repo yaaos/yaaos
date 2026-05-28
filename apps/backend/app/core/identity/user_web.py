@@ -51,7 +51,7 @@ def _err(status: int, code: str) -> HTTPException:
 
 def _require_user():
     """Session-only auth: resolves the cookie → `user_id_var`. No org context.
-    Lazy import because `domain/sessions` depends on `domain/identity`."""
+    Lazy import because `domain/sessions` depends on `core/identity`."""
     from app.domain.sessions import require_session  # noqa: PLC0415
 
     return require_session
@@ -59,7 +59,7 @@ def _require_user():
 
 @router.get("/emails", dependencies=[Depends(_require_user())])
 async def list_emails() -> list[EmailView]:
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
@@ -79,7 +79,7 @@ async def add_email(
     body: _AddEmailRequest,
     yaaos_csrf: Annotated[str | None, Cookie()] = None,
 ) -> EmailView:
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
@@ -97,8 +97,8 @@ async def add_email(
 async def remove_email(request: Request, email_id: UUID) -> dict[str, str]:
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.identity.models import UserEmailRow  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity.models import UserEmailRow  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
@@ -141,7 +141,7 @@ class _PatchUserRequest(BaseModel):
 @router.get("/me", dependencies=[Depends(_require_user())])
 async def user_me() -> _UserMeResponse:
     """Profile payload for the User > Details page."""
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     user_id = user_id_var.get()
@@ -189,7 +189,7 @@ async def patch_user_me(
     """Update profile fields. `display_name` accepted as plain text; the
     `github_username` denorm is owned by the login flow and is never written
     here. `clear_github_username=true` removes the verified value."""
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:

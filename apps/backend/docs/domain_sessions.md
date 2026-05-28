@@ -4,7 +4,7 @@
 
 ## Purpose
 
-`core/auth` ships the pure middleware, contextvars, and the `Action` enum. The actual session-cookie → user lookup and slug → org → membership → role check happen here because they need both `domain/identity` and `domain/orgs` — dependencies that `core/auth` can't take (core can't depend on domain). The module also owns the `/api/auth/*` HTTP surface — login redirect, callback, logout, providers list.
+`core/auth` ships the pure middleware, contextvars, and the `Action` enum. The actual session-cookie → user lookup and slug → org → membership → role check happen here because they need both `core/identity` and `domain/orgs` — dependencies that `core/auth` can't take (core can't depend on domain sessions layer). The module also owns the `/api/auth/*` HTTP surface — login redirect, callback, logout, providers list.
 
 ## Public interface
 
@@ -21,7 +21,7 @@ HTTP routes (registered side-effect via `web.py`):
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/auth/login?provider=<id>&next=<path>` | 302 to the provider's authorization URL; signs `next` into the state. |
-| GET | `/api/auth/callback/{provider}?code=...&state=...` | Verify state, exchange code, run [`login_via_oauth`](domain_identity.md#login-orchestrator), issue session, 303 to `next`. |
+| GET | `/api/auth/callback/{provider}?code=...&state=...` | Verify state, exchange code, run [`login_via_oauth`](core_identity.md#login-orchestrator), issue session, 303 to `next`. |
 | POST | `/api/auth/logout` | Revoke the current session; clear cookies. |
 | GET | `/api/auth/providers` | Enumerate registered provider ids (test stub appears only under `YAAOS_ENV=test`). |
 
@@ -45,7 +45,7 @@ Every 401 caused by a dead/missing session flows through [`AuthFailure`](../app/
 
 `/api/auth/me` (a public route — no `require` dep) routes through `auth_failure_response()`, which is the JSONResponse-returning sibling of the exception so the same body + cookie shape lands.
 
-Idle timeout also writes a `user / logout / payload.kind=idle_timeout` audit row before raising — mirrors the hard-expiry pattern in `domain/identity/scheduler._purge_expired_sessions` so the timeline has a server-side answer to "why did my session die" for both expiry paths.
+Idle timeout also writes a `user / logout / payload.kind=idle_timeout` audit row before raising — mirrors the hard-expiry pattern in `core/identity/scheduler._purge_expired_sessions` so the timeline has a server-side answer to "why did my session die" for both expiry paths.
 
 ### `_REQUIRED_ROLE` registry
 
@@ -80,7 +80,7 @@ The callback handler is the only place that translates a provider's normalized p
 2. Verify the `state` signature + 10-minute TTL via `itsdangerous.URLSafeTimedSerializer` (salt `yaaos-oauth-state`). Expired → 400 `state_expired`; tampered → 400 `state_invalid`.
 3. `provider.exchange_code(...)` — `ProviderError` → 502 `provider_error`.
 4. Reject unverified email → 403 `email_not_verified`.
-5. Run [`login_via_oauth`](domain_identity.md#login-orchestrator) — auto-link or self-signup as needed. The orchestrator never raises rejections; the only deferral is TOTP step-up when the user has a verified TOTP secret and the provider didn't satisfy MFA (signed `yaaos_totp_challenge` cookie, JSON `{step_up: "totp_required"}`).
+5. Run [`login_via_oauth`](core_identity.md#login-orchestrator) — auto-link or self-signup as needed. The orchestrator never raises rejections; the only deferral is TOTP step-up when the user has a verified TOTP secret and the provider didn't satisfy MFA (signed `yaaos_totp_challenge` cookie, JSON `{step_up: "totp_required"}`).
 6. On success — `sessions.create(user_id=…)`, set `yaaos_session` (HttpOnly, SameSite=Lax) + `yaaos_csrf` (non-HttpOnly) cookies, 303-redirect to the signed `next` path. Open-redirect defeated by `_safe_next`: only same-origin absolute paths are honored.
 
 ### State signing

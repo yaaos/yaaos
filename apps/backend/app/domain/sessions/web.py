@@ -42,16 +42,16 @@ from app.core.auth import (
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.webserver import RouteSpec, register_routes
-from app.domain.identity import (
+from app.core.identity import (
     ProviderError,
     get_provider,
     list_providers,
     login_via_oauth,
 )
-from app.domain.identity import (
+from app.core.identity import (
     sessions as session_lifecycle,
 )
+from app.core.webserver import RouteSpec, register_routes
 from app.domain.sessions.dependencies import public_route
 
 log = structlog.get_logger("auth.web")
@@ -187,7 +187,7 @@ async def callback(
         # Step-up: if the user has a verified TOTP secret and the provider
         # didn't satisfy MFA, defer session creation and send the user
         # through `/totp-challenge`.
-        from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+        from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
 
         needs_step_up = not profile.mfa_satisfied and await totp_lifecycle.has_verified_totp(
             s, login_result.user.id
@@ -293,7 +293,7 @@ async def me(
     URL is selected; on routes that need it, the SPA adds `X-Org-Slug` from
     the URL path. 401 when there's no session.
     """
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.domain.integrations import list_broken_credentials_for_org  # noqa: PLC0415
     from app.domain.orgs import Role as _Role  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
@@ -407,7 +407,7 @@ async def totp_enroll(
     `{seed, otpauth_uri}`. The SPA renders the URI as a QR code; users on
     devices without a camera type the seed. Verify must be called with a
     current code before `verified_at` flips."""
-    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
@@ -433,7 +433,7 @@ async def totp_challenge(
     by the OAuth callback when the user needs MFA, verify the supplied
     TOTP code, then mint the real session and redirect to the original
     `next` path."""
-    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
 
     if not yaaos_totp_challenge:
         return JSONResponse(status_code=400, content={"error": "no_challenge_cookie"})
@@ -484,7 +484,7 @@ async def totp_verify(
     """Verify a TOTP code against the user's enrolled secret. On success the
     row's `verified_at` stamp flips and step-up login starts demanding a
     code on every signin that wasn't satisfied by the IdP."""
-    from app.domain.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")

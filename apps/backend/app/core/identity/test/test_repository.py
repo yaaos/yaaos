@@ -1,4 +1,4 @@
-"""Repository-level smoke tests for `domain/identity` against real Postgres.
+"""Repository-level smoke tests for `core/identity` against real Postgres.
 
 These tests exercise the migration + raw inserts. They establish that every
 table the architecture document declared actually exists with the
@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.identity import repository as repo
+from app.core.identity import repository as repo
 
 
 @pytest.mark.asyncio

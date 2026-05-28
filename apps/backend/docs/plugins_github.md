@@ -11,7 +11,7 @@ Owns: App authentication (RS256 JWT → installation token), the webhook receive
 ## Public interface
 
 - Singleton `GitHubPlugin` registered into `domain/vcs` at `bootstrap()`; also registers the `github_app_installed` onboarding contributor.
-- `GitHubOAuthProvider` registered into `domain/identity` at `bootstrap_oauth()` when the OAuth App's `client_id` + `client_secret` are configured.
+- `GitHubOAuthProvider` registered into `core/identity` at `bootstrap_oauth()` when the OAuth App's `client_id` + `client_secret` are configured.
 - `record_app_install(session, *, org_id, install_external_id, account_login, status="active") -> None` — shape (a) public primitive to insert a `github_app_installations` row. Callers compose it inside their own `db_session()` block. Use for admin-onboarding or e2e seeding where the installation is already known. See [patterns.md § Service-fn session-handling convention](patterns.md).
 - Side-effect import of `web.py` wires HTTP routes (prefix `/api/github`):
   - `POST /webhook` — GitHub event receiver.
@@ -20,7 +20,7 @@ Owns: App authentication (RS256 JWT → installation token), the webhook receive
   - `GET /install_callback` — post-install redirect target; writes the install row.
   - `GET /repositories` — live list of repos the App sees.
   - `GET /health` — `app_provisioned` / `installed` / `ok`.
-- Domain code never imports `plugins/github` directly — it goes through `domain/vcs`'s registry and `domain/identity`'s provider registry.
+- Domain code never imports `plugins/github` directly — it goes through `domain/vcs`'s registry and `core/identity`'s provider registry.
 
 ## Module architecture
 
@@ -57,7 +57,7 @@ Two-step (`service.py`):
 
 ### Login provider (GitHub OAuth App)
 
-`GitHubOAuthProvider` implements `domain/identity.Provider`, driven by the **OAuth App** credentials (`yaaos_github_oauth_client_id`/`_secret`), not the GitHub App's:
+`GitHubOAuthProvider` implements `core/identity.Provider`, driven by the **OAuth App** credentials (`yaaos_github_oauth_client_id`/`_secret`), not the GitHub App's:
 
 - `authorization_url()` builds `${github_web_base_url}/login/oauth/authorize?client_id=...&redirect_uri=...&state=...&allow_signup=false`. No `scope` param — OAuth App scopes are configured on the registration itself.
 - `exchange_code()` POSTs to the token URL (`yaaos_github_oauth_token_url` if set, else `${github_web_base_url}/login/oauth/access_token`), then fetches `${github_api_base_url}/user` and `/user/emails`, returns a normalized `ProviderProfile` with `external_subject = user.id`, the verified primary email, and `provider_login = user.login` (the GitHub handle, which the orchestrator persists to `users.github_username`).

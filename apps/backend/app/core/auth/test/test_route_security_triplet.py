@@ -20,7 +20,7 @@ from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
 from app.core.auth.types import ORG_SCOPED_PREFIXES, RouteSecurity, classify_route
-from app.domain.identity import user_web as _user_web  # noqa: F401
+from app.core.identity import user_web as _user_web  # noqa: F401
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import sso_web as _sso_web  # noqa: F401
 from app.domain.orgs import web as _orgs_web  # noqa: F401

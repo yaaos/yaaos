@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.audit_log import Actor, AuditEntryRow
-from app.domain.identity import create_user
+from app.core.identity import create_user
 from app.domain.orgs import MembershipRow, OrgRow, create_membership, create_org
 from app.domain.orgs.types import Role
 

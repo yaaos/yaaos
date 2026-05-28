@@ -1,4 +1,4 @@
-"""Service-layer create ops for `domain/identity` — round-trip tests against real Postgres."""
+"""Service-layer create ops for `core/identity` — round-trip tests against real Postgres."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.identity import repository as repo
-from app.domain.identity import service as svc
+from app.core.identity import repository as repo
+from app.core.identity import service as svc
 
 
 @pytest.mark.asyncio

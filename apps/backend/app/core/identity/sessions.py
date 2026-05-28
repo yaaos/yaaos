@@ -1,4 +1,4 @@
-"""Session lifecycle for `domain/identity`.
+"""Session lifecycle for `core/identity`.
 
 Opaque server-side sessions. The raw token is 32 random bytes (URL-safe base64
 for cookie shipping); the DB stores only `hashlib.sha256(raw).hexdigest()`.
@@ -24,8 +24,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.domain.identity.models import SessionRow
-from app.domain.identity.types import Session, SessionNotFoundError
+from app.core.identity.models import SessionRow
+from app.core.identity.types import Session, SessionNotFoundError
 
 
 def _hash(raw: str) -> str:

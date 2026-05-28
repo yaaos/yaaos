@@ -24,8 +24,8 @@ from pydantic import BaseModel
 
 from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, limiter, org_id_var, user_id_var
 from app.core.database import session as db_session
+from app.core.identity import repository as identity_repo
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.identity import repository as identity_repo
 from app.domain.orgs import invitations as inv
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.service import Membership

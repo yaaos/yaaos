@@ -101,8 +101,8 @@ async def test_install_callback_happy_path_writes_app_install_row(seed_org, db_s
 async def seeded_owner(db_session):
     """Owner + Admin sessions on a fresh org. Builds the auth surface the
     `/install/start` route needs to exercise role gating (Owner-only)."""
-    from app.domain.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
     from app.domain.orgs import Role  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 

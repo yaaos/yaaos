@@ -1,4 +1,4 @@
-"""Shared types for `domain/identity` — Pydantic value objects + exceptions."""
+"""Shared types for `core/identity` — Pydantic value objects + exceptions."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.domain.identity.models import (
+from app.core.identity.models import (
     OAuthIdentityRow,
     SessionRow,
     UserEmailRow,

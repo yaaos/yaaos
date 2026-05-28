@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.core.audit_log import AuditEntryRow
 from app.core.database import truncate_all_tables
-from app.domain.identity import create_user
+from app.core.identity import create_user
 from app.domain.orgs import MembershipRow, OrgRow, Role, create_membership, create_org
 
 

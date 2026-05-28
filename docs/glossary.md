@@ -19,7 +19,7 @@ Shared vocabulary across backend and frontend. These terms appear in code, URLs,
 | **Audit entry** | One row in `audit_log`. Append-only. Kind is `<entity>.<verb_past>`. Payload is a Pydantic model owned by the writing module. |
 | **Actor** | Who initiated an action — `{kind: "github_user" | "agent" | "system" | "user" | "workspace" | "sso", login?, agent_id?, user_id?, workspace_id?}`. Required on every audit entry. Defined in `core/audit_log` (relocated from `core/primitives` in ). |
 | **Onboarding** | Dashboard's pre-ready state. Two checks: GitHub App installed + Anthropic API key set (validated by live probe). Computed by `domain/orgs.get_onboarding_status()`. |
-| **User** | A human identity. UUID PK, soft-deletable via `deactivated_at`. Distinct from `actor_kind=github_user` which is the GitHub-as-VCS actor on legacy rows. Owned by `domain/identity`. |
+| **User** | A human identity. UUID PK, soft-deletable via `deactivated_at`. Distinct from `actor_kind=github_user` which is the GitHub-as-VCS actor on legacy rows. Owned by `core/identity`. |
 | **Membership** | Link between a `User` and an `Org`. Composite PK `(user_id, org_id)`. Carries a per-org `handle` and one of three `Role`s. Same user can be `@jack` in one org and `@jkora` in another. |
 | **Role** | `owner ≥ admin ≥ member`. Compared via `role.covers(required)` only. Action-to-role minimums declared at `Depends(require(Action.X))` call sites. |
 | **Session** | Opaque server-side row keyed by `sha256(raw_token)`. Cookie is `HttpOnly; SameSite=Lax; Secure`. Double-submit CSRF via the per-session `csrf_token`. `sso_satisfied_for_org_id` + timestamp track the 8-hour SSO TTL. |

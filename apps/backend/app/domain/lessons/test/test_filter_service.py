@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.lessons.service import LessonFilter, list_lessons
 from app.domain.orgs import repository as orgs_repo
 

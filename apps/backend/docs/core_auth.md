@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the security middleware mounted on the FastAPI app, the contextvars that thread `org_id` / `user_id` / `actor_kind` / `actor_id` through one request, the central `Action` enum that names every distinct privilege check, and the `RouteSecurity` taxonomy that classifies every `/api/*` path into one of three categories. The dependency factories that actually resolve sessions and memberships live in [`domain/sessions`](domain_sessions.md) (they need `domain/identity` + `domain/orgs`); `core/auth` is the contract those deps render against.
+Owns the security middleware mounted on the FastAPI app, the contextvars that thread `org_id` / `user_id` / `actor_kind` / `actor_id` through one request, the central `Action` enum that names every distinct privilege check, and the `RouteSecurity` taxonomy that classifies every `/api/*` path into one of three categories. The dependency factories that actually resolve sessions and memberships live in [`domain/sessions`](domain_sessions.md) (they need `core/identity` + `domain/orgs`); `core/auth` is the contract those deps render against.
 
 ## Public interface
 

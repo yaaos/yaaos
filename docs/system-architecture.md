@@ -54,7 +54,7 @@ Two distinct yaaos-owned GitHub registrations, both env-only — credentials nev
 - **GitHub OAuth App** (`YAAOS_GITHUB_OAUTH_*`) — drives "Sign in with GitHub". Auth = `client_id`/`client_secret` → user access token. No install concept, no webhooks.
 
 1. Operator registers the GitHub App at github.com → `Settings > Developer settings > GitHub Apps`, drops App ID / slug / PEM / webhook secret into `.env`. Separately registers a GitHub OAuth App at `Settings > Developer settings > OAuth Apps`, drops `client_id` / `client_secret` into `.env`. See [docs/setup.md](setup.md).
-2. **Login (OAuth App):** SPA hits `/api/auth/login?provider=github` → backend signs `state` and 302s to `${github_web_base_url}/login/oauth/authorize?client_id=...`. GitHub redirects back with `code`; backend exchanges via `POST /login/oauth/access_token` using the OAuth App credentials and reads `/user` + `/user/emails`. The [`identity` orchestrator](../apps/backend/docs/domain_identity.md#login-orchestrator) finds or creates the user.
+2. **Login (OAuth App):** SPA hits `/api/auth/login?provider=github` → backend signs `state` and 302s to `${github_web_base_url}/login/oauth/authorize?client_id=...`. GitHub redirects back with `code`; backend exchanges via `POST /login/oauth/access_token` using the OAuth App credentials and reads `/user` + `/user/emails`. The [`identity` orchestrator](../apps/backend/docs/core_identity.md#login-orchestrator) finds or creates the user.
 3. **Install (GitHub App):** Owner hits `Org Settings > VCS > Install yaaos on GitHub`. SPA POSTs `/api/github/install/start` (which signs `state={org_id}` and returns `${github_web_base_url}/apps/${slug}/installations/new?state=...`). Browser follows; user picks repos; GitHub redirects to `/api/github/install_callback`. Backend verifies state, looks up the install's `account.login` via App JWT, and writes a `github_app_installations` row.
 4. **Outbound API (GitHub App):** `plugins/github` signs a short-lived RS256 App JWT with the platform PEM, exchanges it at `POST /app/installations/{id}/access_tokens` for an installation token (~1h TTL, in-memory). Token used as Bearer for REST and `GIT_ASKPASS`-style for `git clone`.
 
@@ -119,7 +119,7 @@ Every domain function takes `org_id` kwarg; every query filters by it. Multi-org
 
 ### Identity & access
 
-Users, orgs, memberships, sessions, OAuth + SAML SSO live in `domain/identity` + `domain/orgs`. `core/auth` owns the security middleware: every `/api/*` route declares its security via `Depends(require(action))` or `Depends(public_route)`; the middleware enforces `X-Org-Slug` resolution, sets contextvars (`org_id`, `user_id`, `actor_kind`, `actor_id`), and 500s the response if no route declared security. Sessions are opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure`-flagged cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with an 8-hour TTL. Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets.
+Users, orgs, memberships, sessions, OAuth + SAML SSO live in `core/identity` + `domain/orgs`. `core/auth` owns the security middleware: every `/api/*` route declares its security via `Depends(require(action))` or `Depends(public_route)`; the middleware enforces `X-Org-Slug` resolution, sets contextvars (`org_id`, `user_id`, `actor_kind`, `actor_id`), and 500s the response if no route declared security. Sessions are opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure`-flagged cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with an 8-hour TTL. Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets.
 
 **Login flow:**
 
@@ -143,14 +143,14 @@ GitHub  GET /api/auth/callback/github
                                           └─ 303 → next path
 ```
 
-**Session lifecycle:** rotate on role change + invite accept + SSO satisfaction. `sessions.revoke_all_for_user` on member removal + logout-all. Periodic cleanup (`domain/identity/scheduler`) purges expired sessions, expired invitations, unverified-TOTP secrets >24h, and audit rows older than `AUDIT_LOG_RETENTION` (30d).
+**Session lifecycle:** rotate on role change + invite accept + SSO satisfaction. `sessions.revoke_all_for_user` on member removal + logout-all. Periodic cleanup (`core/identity/scheduler`) purges expired sessions, expired invitations, unverified-TOTP secrets >24h, and audit rows older than `AUDIT_LOG_RETENTION` (30d).
 
 **Contextvar propagation:** HTTP middleware sets `org_id_var` / `user_id_var` / `actor_kind_var` / `actor_id_var` per request; background jobs open `with org_context(...)`. `require_org_context()` raises in functions that read org-scoped tables without context. OTel spans + structlog log lines carry `yaaos.org_id` + `yaaos.actor_kind` everywhere.
 
-Per-module deep dives: [`core_auth`](../apps/backend/docs/core_auth.md), [`domain_identity`](../apps/backend/docs/domain_identity.md), [`domain_orgs`](../apps/backend/docs/domain_orgs.md), [`plugins_github`](../apps/backend/docs/plugins_github.md), [`core_saml`](../apps/backend/docs/core_saml.md).
+Per-module deep dives: [`core_auth`](../apps/backend/docs/core_auth.md), [`core_identity`](../apps/backend/docs/core_identity.md), [`domain_orgs`](../apps/backend/docs/domain_orgs.md), [`plugins_github`](../apps/backend/docs/plugins_github.md), [`core_saml`](../apps/backend/docs/core_saml.md).
 
 ### Secrets at rest
-All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secrets.md) — a single Fernet wrapper resolving the master key from `YAAOS_TOTP_MASTER_KEY` (fallback `YAAOS_ENCRYPTION_KEY` in non-prod). Callers: `domain/identity/totp`, `domain/orgs/sso`, [`core/byok`](../apps/backend/docs/core_byok.md), and legacy plugin-settings tables. Plaintext crosses the boundary only at write (caller → encrypt) and at the specific call site that needs the decrypted value; never logged, never echoed in errors, never placed in audit payloads.
+All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secrets.md) — a single Fernet wrapper resolving the master key from `YAAOS_TOTP_MASTER_KEY` (fallback `YAAOS_ENCRYPTION_KEY` in non-prod). Callers: `core/identity/totp`, `domain/orgs/sso`, [`core/byok`](../apps/backend/docs/core_byok.md), and legacy plugin-settings tables. Plaintext crosses the boundary only at write (caller → encrypt) and at the specific call site that needs the decrypted value; never logged, never echoed in errors, never placed in audit payloads.
 
 ### Settings surface
 

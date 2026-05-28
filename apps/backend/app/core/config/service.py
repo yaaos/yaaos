@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     yaaos_oauth_state_secret: SecretStr = SecretStr("dev-only-oauth-state-secret")
 
     # TOTP master key (Fernet, 32 bytes URL-safe base64). Defaults to
-    # empty; `domain/identity.totp` falls back to `yaaos_encryption_key` when
+    # empty; `core/identity.totp` falls back to `yaaos_encryption_key` when
     # unset so dev/test only need one key. Production must set this.
     yaaos_totp_master_key: SecretStr = SecretStr("")
 

@@ -6,7 +6,7 @@ re-presenting the dead cookie on the next request. Idle timeout
 additionally writes an `entity=user / action=logout / payload.kind=idle_timeout`
 audit row so operators have a server-side answer to "why did my session
 die" — matching the existing hard-expiry audit pattern in
-`apps/backend/app/domain/identity/scheduler.py`.
+`apps/backend/app/core/identity/scheduler.py`.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from fastapi import Depends, FastAPI
 
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, register_handler
-from app.domain.identity import _set_session_last_seen_for_tests
-from app.domain.identity import repository as identity_repo
+from app.core.identity import _set_session_last_seen_for_tests
+from app.core.identity import repository as identity_repo
 from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 from app.domain.sessions import require

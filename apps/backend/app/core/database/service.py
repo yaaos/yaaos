@@ -442,7 +442,7 @@ async def _apply_create_all_identity(conn) -> None:  # type: ignore[no-untyped-d
     """
     import importlib  # noqa: PLC0415
 
-    importlib.import_module("app.domain.identity.models")
+    importlib.import_module("app.core.identity.models")
     importlib.import_module("app.domain.orgs.models")
     new_tables = [
         Base.metadata.tables[name]
@@ -837,7 +837,7 @@ async def _apply_create_all_settings(conn) -> None:  # type: ignore[no-untyped-d
     """
     import importlib  # noqa: PLC0415
 
-    importlib.import_module("app.domain.identity.models")
+    importlib.import_module("app.core.identity.models")
     importlib.import_module("app.domain.orgs.models")
     importlib.import_module("app.core.byok.models")
 

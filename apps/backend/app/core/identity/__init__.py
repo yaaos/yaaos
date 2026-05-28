@@ -1,14 +1,14 @@
-"""domain/identity — users, emails, OAuth identities, sessions, TOTP."""
+"""core/identity — users, emails, OAuth identities, sessions, TOTP."""
 
-from app.domain.identity import repository, sessions, totp
-from app.domain.identity.providers import (
+from app.core.identity import repository, sessions, totp
+from app.core.identity.providers import (
     ProviderError,
     ProviderProfile,
     get_provider,
     list_providers,
     register_provider,
 )
-from app.domain.identity.service import (
+from app.core.identity.service import (
     EmailAlreadyLinkedError,
     OAuthIdentity,
     Session,
@@ -25,11 +25,11 @@ from app.domain.identity.service import (
     create_user,
     login_via_oauth,
 )
-from app.domain.identity.totp import can_be_sso_exempt_owner, has_verified_totp
+from app.core.identity.totp import can_be_sso_exempt_owner, has_verified_totp
 
 # NOTE: `identity.user_web` is not imported here to avoid circular imports at
 # load time. It appears in `__all__` so tach allows side-effect imports from
-# `app/web.py` and tests that do `from app.domain.identity import user_web`.
+# `app/web.py` and tests that do `from app.core.identity import user_web`.
 
 __all__ = [
     "EmailAlreadyLinkedError",

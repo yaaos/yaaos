@@ -19,7 +19,7 @@ import pytest
 import pytest_asyncio
 
 from app.core.config import get_settings
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 
 _BIN = Path(__file__).resolve().parents[4] / "bin" / "bootstrap"
@@ -66,7 +66,7 @@ async def cleanup(db_session) -> AsyncIterator[None]:
     # Best-effort teardown.
     from sqlalchemy import delete  # noqa: PLC0415
 
-    from app.domain.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.core.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
     from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     for email in created_emails:
@@ -210,7 +210,7 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
 async def _cleanup_user_and_org(s, *, user_id, org_id) -> None:
     from sqlalchemy import delete  # noqa: PLC0415
 
-    from app.domain.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.core.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
     from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     await s.execute(delete(MembershipRow).where(MembershipRow.user_id == user_id))

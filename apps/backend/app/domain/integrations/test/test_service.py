@@ -10,10 +10,10 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.audit_log import Actor, list_for_org
+from app.core.identity import repository as identity_repo
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
 from app.domain import integrations as integ
-from app.domain.identity import repository as identity_repo
 from app.domain.integrations.types import _REGISTRY, IntegrationNotConnectedError
 from app.domain.orgs import repository as orgs_repo
 

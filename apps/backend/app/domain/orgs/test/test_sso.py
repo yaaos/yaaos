@@ -9,9 +9,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import Action, AuthMiddleware
-from app.domain.identity import repository as identity_repo
-from app.domain.identity import sessions as session_lifecycle
-from app.domain.identity import totp as totp_lifecycle
+from app.core.identity import repository as identity_repo
+from app.core.identity import sessions as session_lifecycle
+from app.core.identity import totp as totp_lifecycle
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import sso_web as _sso_web  # noqa: F401

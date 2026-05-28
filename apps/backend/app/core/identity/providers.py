@@ -7,7 +7,7 @@ The login endpoint (`/api/auth/login`) and callback endpoint
 `get_provider` and `list_providers`.
 
 A `ProviderProfile` is the normalized payload a provider returns from
-`exchange_code`. The login orchestrator (`domain/identity.service.login_via_oauth`)
+`exchange_code`. The login orchestrator (`core/identity.service.login_via_oauth`)
 applies the matching / linking / hard-reject rules against the profile —
 provider plugins are responsible only for talking to the IdP and producing
 the normalized shape.

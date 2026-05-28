@@ -33,6 +33,10 @@ path = "app.core.events"
 depends_on = ["app.core.auth", "app.core.shutdown_registry", "app.core.webserver"]
 
 [[modules]]
+path = "app.core.identity"
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.orgs", "app.domain.sessions"]
+
+[[modules]]
 path = "app.core.llm"
 depends_on = ["app.core.config"]
 
@@ -85,16 +89,12 @@ path = "app.domain.coding_agent"
 depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
 
 [[modules]]
-path = "app.domain.identity"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.orgs", "app.domain.sessions"]
-
-[[modules]]
 path = "app.domain.intake"
 depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.integrations"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.identity", "app.domain.mcp_proxy", "app.domain.orgs", "app.domain.sessions"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.mcp_proxy", "app.domain.orgs", "app.domain.sessions"]
 
 [[modules]]
 path = "app.domain.lessons"
@@ -106,11 +106,11 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.domain.notifications"
-depends_on = ["app.core.auth", "app.core.database", "app.core.events", "app.core.observability", "app.core.webserver", "app.domain.identity", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.events", "app.core.identity", "app.core.observability", "app.core.webserver", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.identity", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sse_pubsub", "app.core.webserver", "app.core.workflow", "app.domain.coding_agent", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.plugins"
@@ -126,7 +126,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.domain.sessions"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.webserver", "app.domain.identity", "app.domain.integrations", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.webserver", "app.domain.integrations", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -142,7 +142,7 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.dat
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.identity", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.events", "app.core.identity", "app.core.observability", "app.core.plugin_kit", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.sessions", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.in_memory_workspace"
@@ -158,7 +158,7 @@ depends_on = ["app.core.config", "app.core.oauth", "app.domain.integrations"]
 
 [[modules]]
 path = "app.plugins.oauth_test"
-depends_on = ["app.core.config", "app.domain.identity"]
+depends_on = ["app.core.config", "app.core.identity"]
 
 [[modules]]
 path = "app.plugins.saml_test"
@@ -166,7 +166,7 @@ depends_on = ["app.core.config", "app.domain.orgs"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.secrets", "app.core.webserver", "app.core.workspace", "app.domain.identity", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.webserver", "app.core.workspace", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.domain.pull_requests", "app.domain.reviewer", "app.domain.tickets", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
@@ -346,6 +346,37 @@ expose = [
   "subscriber_count",
 ]
 from = ["app.core.events"]
+
+[[interfaces]]
+expose = [
+  "EmailAlreadyLinkedError",
+  "OAuthIdentity",
+  "ProviderError",
+  "ProviderProfile",
+  "Session",
+  "SessionNotFoundError",
+  "TotpError",
+  "User",
+  "UserEmail",
+  "UserNotFoundError",
+  "_delete_user_artifacts_for_tests",
+  "_set_session_last_seen_for_tests",
+  "can_be_sso_exempt_owner",
+  "create_email",
+  "create_oauth_identity",
+  "create_session",
+  "create_user",
+  "get_provider",
+  "has_verified_totp",
+  "list_providers",
+  "login_via_oauth",
+  "register_provider",
+  "repository",
+  "sessions",
+  "totp",
+  "user_web",
+]
+from = ["app.core.identity"]
 
 [[interfaces]]
 expose = [
@@ -618,37 +649,6 @@ expose = [
   "verify_fix",
 ]
 from = ["app.domain.coding_agent"]
-
-[[interfaces]]
-expose = [
-  "EmailAlreadyLinkedError",
-  "OAuthIdentity",
-  "ProviderError",
-  "ProviderProfile",
-  "Session",
-  "SessionNotFoundError",
-  "TotpError",
-  "User",
-  "UserEmail",
-  "UserNotFoundError",
-  "_delete_user_artifacts_for_tests",
-  "_set_session_last_seen_for_tests",
-  "can_be_sso_exempt_owner",
-  "create_email",
-  "create_oauth_identity",
-  "create_session",
-  "create_user",
-  "get_provider",
-  "has_verified_totp",
-  "list_providers",
-  "login_via_oauth",
-  "register_provider",
-  "repository",
-  "sessions",
-  "totp",
-  "user_web",
-]
-from = ["app.domain.identity"]
 
 [[interfaces]]
 expose = [

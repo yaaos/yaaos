@@ -9,8 +9,8 @@ from fastapi import FastAPI
 
 from app.core import byok as byok_service
 from app.core.auth import AuthMiddleware
-from app.domain.identity import repository as identity_repo
-from app.domain.identity import sessions as session_lifecycle
+from app.core.identity import repository as identity_repo
+from app.core.identity import sessions as session_lifecycle
 from app.domain.orgs import byok_routes as _byok_routes  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.types import Role

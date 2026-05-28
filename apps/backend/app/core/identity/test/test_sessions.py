@@ -1,4 +1,4 @@
-"""Lifecycle tests for `domain/identity.sessions`."""
+"""Lifecycle tests for `core/identity.sessions`."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.identity import repository as repo
-from app.domain.identity import sessions
-from app.domain.identity.types import SessionNotFoundError
+from app.core.identity import repository as repo
+from app.core.identity import sessions
+from app.core.identity.types import SessionNotFoundError
 
 
 @pytest.mark.asyncio
@@ -43,7 +43,7 @@ async def test_lookup_expired_returns_none(db_session) -> None:
     # Force the row's expires_at into the past so we don't sleep in the test.
     from sqlalchemy import update  # noqa: PLC0415
 
-    from app.domain.identity.models import SessionRow  # noqa: PLC0415
+    from app.core.identity.models import SessionRow  # noqa: PLC0415
 
     await db_session.execute(
         update(SessionRow)
@@ -124,7 +124,7 @@ async def test_cleanup_expired(db_session) -> None:
     expired = await sessions.create(db_session, user_id=user.id, workspace_id=None)
     from sqlalchemy import update  # noqa: PLC0415
 
-    from app.domain.identity.models import SessionRow  # noqa: PLC0415
+    from app.core.identity.models import SessionRow  # noqa: PLC0415
 
     await db_session.execute(
         update(SessionRow)

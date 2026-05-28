@@ -10,7 +10,7 @@ orchestration end-to-end without depending on GitHub.
 from __future__ import annotations
 
 from app.core.config import get_settings
-from app.domain.identity import ProviderProfile, register_provider
+from app.core.identity import ProviderProfile, register_provider
 
 assert get_settings().yaaos_env == "test", "plugins.oauth_test refuses to load outside YAAOS_ENV=test"
 

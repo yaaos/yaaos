@@ -1,4 +1,4 @@
-"""Raw row access for `domain/identity`.
+"""Raw row access for `core/identity`.
 
 Service-layer code uses these helpers; HTTP handlers never call repository
 functions directly. Every function takes an `AsyncSession`; transaction
@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.identity.models import (
+from app.core.identity.models import (
     OAuthIdentityRow,
     SessionRow,
     UserEmailRow,

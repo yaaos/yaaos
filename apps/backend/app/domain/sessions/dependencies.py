@@ -24,7 +24,7 @@ from app.core.auth import (
     user_id_var,
 )
 from app.core.database import session as db_session
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.orgs import Membership, Role
 from app.domain.orgs import repository as orgs_repo
 
@@ -158,7 +158,7 @@ def require(action: Action) -> Callable[..., None]:
                 idle = _timedelta(minutes=minutes) if minutes else SESSION_IDLE_TIMEOUT
                 if sess_row.last_seen_at + idle < _datetime.now(_UTC):
                     # Audit row mirrors the hard-expiry pattern in
-                    # `domain/identity/scheduler._purge_expired_sessions`
+                    # `core/identity/scheduler._purge_expired_sessions`
                     # so the timeline has a "why did my session die"
                     # entry for the idle case too.
                     from pydantic import BaseModel as _BaseModel  # noqa: PLC0415
@@ -185,8 +185,8 @@ def require(action: Action) -> Callable[..., None]:
         # have `sso_satisfied_for_org_id == org_id` within the 8h TTL.
         # Break-glass: the exempt Owner bypasses this AND must have a
         # verified TOTP secret (Phase 11 helper).
-        from app.domain.identity import has_verified_totp  # noqa: PLC0415
-        from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
+        from app.core.identity import has_verified_totp  # noqa: PLC0415
+        from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
         from app.domain.orgs import get_config  # noqa: PLC0415
 
         async with db_session() as s:
@@ -241,7 +241,7 @@ def require(action: Action) -> Callable[..., None]:
         # actual usage. Single-write per authenticated request; cheap.
         session_cookie = request.cookies.get("yaaos_session")
         if session_cookie:
-            from app.domain.identity import sessions as session_lifecycle  # noqa: PLC0415
+            from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
 
             async with db_session() as s:
                 await session_lifecycle.touch(s, session_cookie)

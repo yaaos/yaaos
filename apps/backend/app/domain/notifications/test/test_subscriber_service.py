@@ -16,7 +16,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 
-from app.domain.identity import repository as identity_repo
+from app.core.identity import repository as identity_repo
 from app.domain.notifications.models import NotificationRow
 from app.domain.notifications.subscribers import _handle_status_change
 from app.domain.orgs import Role

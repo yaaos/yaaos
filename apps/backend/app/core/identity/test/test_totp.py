@@ -5,8 +5,8 @@ from __future__ import annotations
 import pyotp
 import pytest
 
-from app.domain.identity import repository as repo
-from app.domain.identity import totp
+from app.core.identity import repository as repo
+from app.core.identity import totp
 
 
 @pytest.mark.asyncio

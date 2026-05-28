@@ -36,7 +36,7 @@ sys.path.insert(0, str(_HERE.parent))
 import httpx  # noqa: E402
 
 from app.core.database import session as db_session  # noqa: E402
-from app.domain.identity import repository as identity_repo  # noqa: E402
+from app.core.identity import repository as identity_repo  # noqa: E402
 from app.domain.orgs import repository as orgs_repo  # noqa: E402
 from app.domain.orgs.types import Role  # noqa: E402
 

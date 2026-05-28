@@ -1,4 +1,4 @@
-"""Module identity for `domain/identity`."""
+"""Module identity for `core/identity`."""
 
 
 def get_module_name() -> str:
