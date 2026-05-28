@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import current_org_id
 from app.core.shutdown_registry import (  # noqa: F401
     ShutdownHook,
     iter_worker_shutdown_hooks,
@@ -67,14 +68,27 @@ async def enqueue(
     task_ref: TaskRef,
     args: dict[str, Any],
     *,
+    metadata: dict[str, Any] | None = None,
     session: AsyncSession,
 ) -> UUID:
     """Atomic-in-session enqueue. Writes a `taskiq_enqueue` outbox row that
-    the drain delivers after commit. Returns the outbox row id."""
-    payload = {
+    the drain delivers after commit. Returns the outbox row id.
+
+    `metadata` is an optional dict forwarded through the outbox payload to the
+    taskiq dispatch envelope. When omitted, auto-fills `{"org_id": str(org_id)}`
+    if the `org_id` contextvar is set (producers in HTTP request handlers don't
+    need to pass it explicitly — the contextvar set by the entry-point wrap is
+    enough). Stays absent when no contextvar is set and no explicit value is
+    given (system-bootstrap paths that run outside any org context)."""
+    if metadata is None:
+        org_id = current_org_id()
+        if org_id is not None:
+            metadata = {"org_id": str(org_id)}
+    payload: dict[str, Any] = {
         "task_name": task_ref.name,
         "queue": task_ref.queue,
         "args": args,
+        "metadata": metadata,
     }
     return await outbox_write(session, kind="taskiq_enqueue", payload=payload)
 

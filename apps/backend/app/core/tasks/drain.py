@@ -116,6 +116,7 @@ async def _taskiq_dispatcher_for(broker: AsyncBroker) -> Dispatcher:
             raise ValueError(f"no dispatcher registered for kind={kind!r}")
         task_name = payload.get("task_name")
         args = payload.get("args") or {}
+        metadata = payload.get("metadata")
         if not isinstance(task_name, str) or not task_name:
             raise ValueError("taskiq_enqueue payload missing task_name")
         if not isinstance(args, dict):
@@ -123,7 +124,10 @@ async def _taskiq_dispatcher_for(broker: AsyncBroker) -> Dispatcher:
         task = broker.find_task(task_name)
         if task is None:
             raise ValueError(f"taskiq task not registered: {task_name}")
-        await task.kicker().kiq(**args)
+        kicker = task.kicker()
+        if metadata is not None:
+            kicker = kicker.with_labels(metadata=metadata)
+        await kicker.kiq(**args)
 
     return dispatch
 

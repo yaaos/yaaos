@@ -74,7 +74,7 @@ depends_on = ["app.core.auth", "app.core.redis", "app.core.sessions", "app.core.
 
 [[modules]]
 path = "app.core.tasks"
-depends_on = ["app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.workflow"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.workflow"]
 
 [[modules]]
 path = "app.core.webserver"
