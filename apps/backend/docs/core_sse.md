@@ -21,8 +21,11 @@ The `/api/sse` prefix is declared as `ORG_SCOPED` in `core/auth/types.py` so all
 | Method | Path | Auth |
 |--------|------|------|
 | GET | `/api/sse/general` | `ORG_READ` — org-scoped general event stream for the caller's resolved org. |
+| GET | `/api/sse/workspace_activity/{workflow_execution_id}` | `ORG_READ` + workflow-in-org ownership check (404 on cross-org). |
 
-Each frame is `data: <json>\n\n` carrying a `GeneralEventKind`-typed payload. Cross-org isolation is enforced by the per-org Redis channel shape — subscribers only receive events published to their org's channel. Closes when the client disconnects.
+Each frame is `data: <json>\n\n`. The general route carries `GeneralEventKind`-typed payloads; the workspace_activity route carries the raw agent event dict unchanged. Cross-org isolation is enforced by the per-org Redis channel shape — subscribers only receive events published to their org's channel. Closes when the client disconnects.
+
+The workspace_activity route adds an ownership check via the `register_workspace_activity_ownership_check` registrar; the app bootstrap wires `domain/orgs.assert_workflow_in_org` into it. The registrar keeps `core/sse` from importing `domain/*`.
 
 **Python symbols exported from `app/core/sse/__init__.py`:**
 
@@ -47,6 +50,7 @@ Each frame is `data: <json>\n\n` carrying a `GeneralEventKind`-typed payload. Cr
 
 **Shared:**
 
+- `register_workspace_activity_ownership_check(check)` — boot-time registrar for the workflow-in-org ownership dep used by the workspace_activity route. Idempotent for the same callable; raises on conflicting double-registration.
 - `serialize_for_sse(payload)` — formats a `dict[str, Any]` as an HTTP `text/event-stream` data frame (`data: <json>\n\n`). Both general and workspace-activity subscribers use this before writing to the HTTP response.
 - `RedisPubsub` — class form for callers that want to construct their own bus (mostly tests).
 - `get_pubsub()` — process-singleton accessor.
@@ -92,3 +96,4 @@ None. The module is transport — Redis is the substrate.
 - `test/test_workspace_activity_publish_service.py` — workspace-activity pipeline: cross-org isolation (org_B publish does not reach org_A subscriber on same wfx); cross-wfx isolation (wfx_2 publish does not reach wfx_1 subscriber in same org). Uses `redis_or_skip`.
 - `test/test_serialize_for_sse_service.py` — `serialize_for_sse` formats `dict` payload as `data: <json>\n\n`.
 - `test/test_general_endpoint_service.py` — HTTP auth gate on `GET /api/sse/general` (401/400/403); cross-org isolation on `_general_stream` directly (httpx-ASGITransport hangs on close for infinite streams — the HTTP wrapper has no logic beyond auth, so the generator is the right test target). Uses `db_session` + `redis_or_skip` for the streaming test; the auth tests use only `db_session`.
+- `test/test_workspace_activity_endpoint_service.py` — cross-org 404 on `GET /api/sse/workspace_activity/{id}` (via the registered ownership check); happy-path streaming via `_workspace_activity_stream` (same httpx-ASGI constraint as the general endpoint).

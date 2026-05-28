@@ -469,6 +469,7 @@ expose = [
   "publish_general",
   "publish_general_after_commit",
   "publish_workspace_activity",
+  "register_workspace_activity_ownership_check",
   "reset_pubsub",
   "serialize_for_sse",
   "shutdown",
