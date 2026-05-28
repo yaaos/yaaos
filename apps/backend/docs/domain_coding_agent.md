@@ -1,78 +1,44 @@
 # domain/coding_agent
 
-> Vendor-neutral abstraction over coding-agent CLIs (Claude Code, future: Codex, Aider) — Protocol, registry, dispatch, shipped subagent prompt content.
+> Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, and shipped subagent prompt content.
 
-## Purpose
+## Scope
 
-The contract between yaaos and external agent CLIs. Owns the `CodingAgentPlugin` Protocol with five targeted task methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) — not a generic `invoke`. Owns structured input contexts and vendor-neutral output types per mode, telemetry/status enums, the plugin registry, and the typed exception hierarchy. Owns **zero prompt assembly** and **zero output-format choice** — plugin concerns.
+Owns: `CodingAgentPlugin` Protocol, per-mode context/result types, telemetry enums, plugin registry, typed exception hierarchy, shipped `reviewers/*.md` prompt content.
 
-Also owns the **shipped reviewer subagent prompt content** under `reviewers/*.md`. The markdown is plugin-agnostic ("what to check"); each plugin's installer wraps it in its own native format (Claude Code frontmatter, etc.) and writes it to the right place.
+Does NOT own: prompt assembly, output-format choice (plugin concerns), workspace mechanics.
 
-Lives in `domain/` (not `core/`) because return types reference `vcs.Finding` and `lessons.Lesson`. See [`modularity.md`](modularity.md).
+Lives in `domain/` (not `core/`) because return types reference `vcs.Finding` and `lessons.Lesson`.
 
-## Public interface
+## Why / invariants
 
-Exported from `app/domain/coding_agent/__init__.py`:
+- **Status-not-exception contract:** task methods MUST NOT raise on agent-level failures (timeout, bad JSON, non-zero exit) — those become `status` + `error_message`. Only infrastructure errors (`WorkspaceExecError`, etc.) are raised. Consumers (`reviewer`) branch on `result.status`.
+- **Five named task methods, not a generic `invoke`:** `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`. Adding a mode requires a Protocol change.
+- **Prompts live in the caller, not here.** `domain/reviewer/llm/prompts/` owns the words; `coding_agent` owns the contract.
+- Subagent markdown (`reviewers/*.md`) is plugin-agnostic — describes *what to check* and the JSON output schema. Plugins wrap it in their native format at bootstrap.
 
-- Shared types — `InvocationStatus`, `InvocationTelemetry`, `ValidationResult`, `HealthStatus`, `ActivityEvent`, `OnActivity`, `Severity`, `FindingAnchor`, `FindingDraft`.
-- Per-mode contexts/results — `ReviewContext`/`ReviewResult`, `IncrementalReviewContext`/`IncrementalReviewResult`, `VerifyFixContext`/`VerifyFixResult`, `StaleCheckContext`/`StaleCheckResult`, `AnswerQuestionContext`/`AnswerQuestionResult`. The answer-question context also exports `PriorThreadMessage` for the conversation-history field.
-- Protocol — `CodingAgentPlugin`.
-- Registry/dispatch — `register_plugin`, `register_coding_agent_plugin`, `unregister_coding_agent_plugin`, `scoped_coding_agent`, `get_plugin`, `registered_plugin_ids`, `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check_all`. `clear_plugins` remains for testing helpers that manage full registry snapshots. See [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
-- Exceptions — `CodingAgentError`, `PluginNotFoundError`, `CodingAgentCacheMiss`.
+## `CodingAgentPlugin` Protocol
 
-No HTTP routes.
+Signatures in `app/domain/coding_agent/types.py`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback.
 
-## Module architecture
+- `review` — full base..head diff → `list[FindingDraft]`; reviewer applies admission + converts to `vcs.Finding`.
+- `incremental_review` — `prev_sha..head` only → `list[FindingDraft]`.
+- `verify_fix` — original finding + original code + current code → still-present verdict.
+- `stale_check` — original finding + current code + diff summary → still-applies verdict.
+- `answer_question` — finding + anchor code + thread history + question → `answer: str`. No verdict, no state transition.
 
-### Types (`types.py`)
+## Registry
 
-- `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies` (reserved; not surfaced to the agent — fingerprint dedup in the reviewer aggregate handles re-emission silently), `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
-- `InvocationStatus` — `SUCCESS` / `PARSE_FAILURE` / `AGENT_ERROR` / `TIMEOUT`.
-- `InvocationTelemetry` — `tokens_in`, `tokens_out`, `latency_ms`, `raw_output`, `raw_stderr`, `model` (resolved name reported by the CLI on completion). Cost is not tracked — CLI pricing data is not authoritative.
-- `ReviewResult` — `status`, `findings: list[FindingDraft]` (`source_agent` populated by the parent's synthesis pass), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`. The reviewer aggregate runs admission on these drafts and converts admitted survivors into `vcs.Finding`s before calling `vcs_plugin.post_review`.
-- `ValidationResult` — `valid`, `errors`.
-- `ActivityEvent` — `{ts, kind, message, detail}` — one pre-rendered user-facing event from the coding-agent stream. `message` is rendered by the plugin so consumers (and the FE) don't interpret raw CLI shapes.
-- `OnActivity` — `Callable[[ActivityEvent], Awaitable[None]]`. Optional callback on `review`; called once per parsed stream event.
+`app/domain/coding_agent/service.py`. Process-global `_registry` keyed by `plugin.meta.id`. `register_plugin` rejects duplicates; `scoped_coding_agent(plugin)` is the test-safe context manager. `clear_plugins()` is reserved for test helpers managing full registry snapshots. See [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
 
-### `CodingAgentPlugin` Protocol
+## Subagent prompt files (`reviewers/`)
 
-Async task methods `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, plus `validate_config`, `health_check`, and `meta: PluginMeta`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback. Signatures in `app/domain/coding_agent/types.py`.
-
-- `review` — full base..head diff. Returns `FindingDraft`s; the reviewer aggregate applies admission and converts to `vcs.Finding` for posting.
-- `incremental_review` — `prev_sha..head` only. Returns `FindingDraft`s; the reviewer aggregate applies schema/severity gating, caps, dedup, and persists.
-- `verify_fix` — given an original finding + original code + current code at the resolved anchor, decides whether the issue is still present.
-- `stale_check` — given an original finding + current code + a diff summary, decides whether the finding still applies.
-- `answer_question` — given an original finding + code at the anchor + the thread's prior messages + the developer's question + base/head SHAs, produces a single `answer: str` to be posted as a yaaos reply. No verdict, no state transition — the reviewer just posts the text.
-
-All task methods MUST NOT raise on agent-level failures (timeout, non-zero exit, malformed JSON) — those become `status` + `error_message` so consumers branch on the same surface. Only infrastructure failures (e.g., `WorkspaceExecError`) are raised.
-
-Prompts and structured-output schemas for each mode live in the **calling domain module** (today: `domain/reviewer/llm/prompts/`), not here — `coding_agent` owns the contract; the caller owns the words.
-
-### Subagent prompt content (`reviewers/`)
-
-Six markdown files describe what each shipped subagent reviews. Plugin-agnostic — they describe *what to check*, the JSON output schema, and discipline rules. No vendor-specific syntax in the body.
-
-- `architecture.md` — module boundaries, patterns, abstractions, CLAUDE.md adherence (always-on).
-- `security.md` — auth, injection, secrets, crypto misuse (always-on).
-- `line-level.md` — per-line correctness, idioms, code-level patterns including "no mocks in tests" (always-on).
-- `tests.md` — test presence and quality for new behavior (always-on).
-- `docs.md` — documentation sync per CLAUDE.md rule (always-on).
-- `skill.md` — Claude Code Skill file validation (conditional: only when the diff touches `**/SKILL.md` or `.claude/skills/**`).
-
-Plugins (today: `plugins/claude_code`) read these at bootstrap, wrap them in their native subagent format, and install them where their CLI expects to find them.
-
-### Registry + dispatch (`service.py`)
-
-Process-global `_registry` keyed by `plugin.meta.id`. `register_plugin` (aliased as `register_coding_agent_plugin`) rejects duplicates; `unregister_coding_agent_plugin(plugin_id)` removes one entry (no-op if absent); `scoped_coding_agent(plugin)` is the test-safe context manager. `review` is a thin wrapper that resolves the plugin, forwards the call, and emits an `agent.reviewed` log line carrying telemetry. No retry, no fallback — caller policy. `health_check_all` converts any raised exception to an unhealthy `HealthStatus`. `clear_plugins()` does a wholesale wipe — reserved for testing helpers that manage full registry snapshots (e.g. `register_fake_coding_agent`).
-
-### Failure model
-
-The status-not-exception contract means a malformed JSON response or a timeout becomes `ReviewResult(status=PARSE_FAILURE, …)`, not a raised exception. Consumers (`reviewer`) branch on `result.status` to decide whether to mark the job failed, retry, or surface partial output.
+Six markdown files: `architecture.md`, `security.md`, `line-level.md`, `tests.md`, `docs.md` (all always-on); `skill.md` (conditional — only when the diff touches `**/SKILL.md` or `.claude/skills/**`). Plugin `plugins/claude_code` reads these at bootstrap and installs them in its native subagent format.
 
 ## Data owned
 
-None. Registry is in-memory. Subagent prompt content is shipped markdown.
+None. Registry is in-memory; subagent content is shipped markdown.
 
 ## How it's tested
 
-`app/domain/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, dispatcher logging, `validate_config` forwarding, `health_check_all` exception-to-unhealthy. Uses a fake plugin. Plugin-specific behaviour covered by each plugin's tests under `app/plugins/<plugin>/test/`.
+`app/domain/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, dispatcher logging, `validate_config` forwarding, `health_check_all` exception-to-unhealthy. Plugin-specific behaviour in `app/plugins/<plugin>/test/`.

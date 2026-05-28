@@ -2,102 +2,42 @@
 
 > Wire protocol between the customer-deployed WorkspaceAgent and the yaaos control plane.
 
-## Purpose
+## Scope
 
-Owns the inbound surface that WorkspaceAgents talk to: long-poll command claim, heartbeat with workspace inventory, terminal AgentEvent ingestion, workspace-state events, identity exchange. The only module that touches `core/workflow.HANDLE_AGENT_EVENT` from the wire side — terminal events resolve the event-to-workflow lookup chain (`command_id → workspaces → current_holder_workflow_id`) and enqueue `workflow.handle_agent_event` via the outbox in the same transaction as the workspace mirror update. The bidirectional activity WebSocket lives alongside but is intentionally a separate channel.
+- **Owns:** inbound WorkspaceAgent surface — identity exchange, long-poll command claim, heartbeat/inventory, AgentEvent + WorkspaceEvent ingestion. `workspace_agents` and `bearer_tokens` tables.
+- **Does not own:** workspace lifecycle (owned by [`core/workspace`](core_workspace.md)); workflow routing (owned by [`core/workflow`](core_workflow.md)).
+- **Emits:** terminal AgentEvents → `workflow.handle_agent_event` enqueued via outbox (owned by [`core/tasks`](core_tasks.md)); progress events → `publish_workspace_activity` in [`core/sse`](core_sse.md). Reads `workspaces` to resolve the `command_id → current_holder_workflow_id` lookup chain.
 
-## Public interface
+## Why / invariants
 
-Wire types (mirror [`apps/backend/openapi/agent-api.yaml`](../openapi/agent-api.yaml)) + service entry points. See `app/core/agent_gateway/__init__.py`.
+- **Terminal AgentEvent enqueue is in the same transaction as the workspace mirror update** — prevents a workflow from missing its terminal event on crash between the two writes.
+- **Stale-claim guard (410)** — events whose `command_id` is not in any workspace's `current_command_id` are rejected; prevents stale redelivery from advancing a workflow it no longer owns.
+- **`org_context` wrap on every actor-resolving endpoint** — heartbeat, claim, workspace-events, command-events, and the activity WebSocket (entire connection lifetime). Excluded: `/identity/exchange` (bootstraps the bearer; no agent identity yet).
+- **ARN canonicalization** — `assumed-role/ROLE/SESSION` → `iam::ACCT:role/ROLE`, lowercased. IAM role names are case-insensitive in AWS; lowering both sides avoids mismatches without losing uniqueness.
+- **`SubscriberRegistry` is process-local.** On WebSocket reconnect it replays `subscribe` for every active route so the agent's rebuilt SubscriptionSet picks up where the old connection left off.
+- **No activity flows from agent → SPA when nobody's watching** — the `SubscriberRegistry` only sends `subscribe` on `0 → 1` subscriber-count transitions.
 
-- `AgentCommand` (discriminated union of the five command kinds: `CreateWorkspace`, `WriteFiles`, `RefreshWorkspaceAuth`, `InvokeClaudeCode`, `CleanupWorkspace`), `AgentEvent`, `WorkspaceEvent`, `HeartbeatRequest/Response`, `IdentityExchangeRequest/Response`, `ClaimRequest`.
-- `enqueue_command(agent_id, command)` — push an AgentCommand onto the agent's FIFO; wakes any blocked long-poll.
-- `claim_next(agent_id, *, wait_seconds)` — long-poll consume; returns `None` on timeout.
-- `record_heartbeat(agent_id, request, *, session)` — bumps liveness + computes `forgotten_workspaces`.
-- `record_agent_event(event, *, session)` — applies the stale-claim guard; on terminal events, enqueues `workflow.handle_agent_event` in the outbox. On progress events, republishes to the org-scoped workspace-activity channel via `publish_workspace_activity` in [`core/sse`](core_sse.md) so the SPA's SSE live-tail picks them up.
-- `record_workspace_event(event, *, session)` — updates the workspace mirror; same stale-claim guard.
-- `pick_agent_for_org(org_id, *, session)` — returns an `AgentRef` (least-loaded reachable pod for the org) or `None` when no pod is reachable. Load is in-process queue depth; ties break on most-recent heartbeat.
-- `has_any_reachable_agent(*, session)` — returns `True` when any pod heartbeated within the last 90 s; used for global health checks without exposing the Row.
-- `clear_queues()` — drop every in-memory queue and condition. Called by tests between runs.
-- `shutdown()` — drops the `SubscriberRegistry` singleton; self-registered with the web shutdown registry at import time (web only — the worker process doesn't handle agent WebSocket connections).
-- `AgentRef` — value object returned by `pick_agent_for_org`: `agent_id` (row PK) + `agent_pod_id` (pod identity used for command dispatch).
-- Errors: `GatewayError`, `StaleClaimError` (→ 410), `UnauthorizedError` (→ 401).
+## Gotchas
 
-HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested under the project's `/api/` convention):
+- **`clear_queues()`** must be called between test runs to reset in-memory dispatch state (per-agent FIFO + `asyncio.Condition`).
+- **Replay-LRU window is 10 min** — clock skew > 5 min on the agent side will produce `clock_skew` rejections.
+- Bearer plaintext is returned exactly once from `bearers.issue` and never persisted; `verify` returns `None` for every failure (no oracle).
 
-| Method + Path | Auth | Purpose |
-|---|---|---|
-| `POST /api/v1/identity/exchange` | public | SigV4-signed STS → 24h bearer. Replays the signed request against AWS STS, canonicalizes assumed-role ARNs to role ARNs, looks up the org by `registered_iam_arn`, cross-checks the signed URL's region against `aws_region`. Rate-limited per source IP (10/min) and per `agent_pod_id` (100/hr). Issues a real bearer via `core/agent_gateway/bearers`. |
-| `POST /api/v1/agents/{id}/heartbeat` | bearer | Liveness + workspace inventory → reconciliation response. |
-| `POST /api/v1/agents/{id}/commands/claim` | bearer | Long-poll (up to `wait_seconds`, capped at 55s). 200 with one command or 204. |
-| `POST /api/v1/workspaces/{id}/events` | bearer | Workspace state transitions. Stale-claim → 410. |
-| `POST /api/v1/commands/{id}/events` | bearer | AgentCommand events. Terminal events advance the workflow. Stale-claim → 410. |
+## Vocabulary
 
-## Module architecture
-
-### Entities
-
-- **AgentCommand** — wire-layer command. Discriminated by `kind`. Carries `command_id`, `workspace_id`, `traceparent`, plus kind-specific payload.
-- **AgentEvent** — non-terminal `progress` or terminal `completed_{success|failure|skipped}`. Carries `command_id`, `outcome_label`, `outputs`, `attempt`, `traceparent`.
-- **WorkspaceEvent** — `created | ready | exited | destroyed | failed`. Scoped to the `command_id` that drove the transition.
-
-### Key value objects
-
-- `IdentityExchangeRequest/Response` — bearer issuance handshake.
-- `HeartbeatRequest/Response` — liveness + inventory; response carries `forgotten_workspaces` so the agent cleans up control-plane orphans.
-- `ClaimRequest` — `wait_seconds` long-poll horizon.
-- `BearerContext` — resolved identity from a verified bearer. `bearer_id`, `agent_id`, `org_id`.
-- `VerifiedIdentity` — STS verifier result. `canonical_arn` (IAM role), `raw_arn` (as STS returned it), `region`.
-- `FailureCategory` — typed STS verifier failure: `parse_error`, `endpoint_disallowed`, `body_mismatch`, `replay_detected`, `aws_rejected`, `clock_skew`.
-
-### org_context wrap
-
-Every actor-resolving entry point enters `org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.id)` immediately after bearer auth resolves the agent. This ensures downstream `enqueue(...)`, `publish_general_after_commit(...)`, and `publish_workspace_activity(...)` see the org via contextvar without per-site arguments.
-
-Wrapped endpoints:
-- `POST /api/v1/agents/{id}/heartbeat`
-- `POST /api/v1/agents/{id}/commands/claim`
-- `POST /api/v1/workspaces/{id}/events`
-- `POST /api/v1/commands/{id}/events`
-- `WSS /api/v1/agents/{id}/activity` — wrap covers the entire connection lifetime (accept → receive loop → close); once per connection, not once per message.
-
-`POST /api/v1/identity/exchange` is **excluded** — it's the bootstrap endpoint that mints the bearer; no agent exists yet to enter context for.
-
-### Core user flows
-
-1. **Identity exchange.** Agent pod boots, sigv4-signs an STS `GetCallerIdentity` request with its IAM credentials (IRSA / EC2 instance profile / ECS task role), posts the signed envelope + `agent_pod_id` to `/identity/exchange`. Control plane:
-   - Parses the envelope; rejects non-STS URLs (`endpoint_disallowed`), wrong body (`body_mismatch`).
-   - Replay-LRU dedupe on `Authorization || X-Amz-Date` (10 min window, rejects `replay_detected`).
-   - HTTPS POST to AWS STS via a TLS-1.3-pinned shared httpx client; on `RequestExpired` returns `clock_skew`, other non-2xx returns `aws_rejected`.
-   - Canonicalizes the returned ARN (`arn:aws:sts::ACCT:assumed-role/ROLE/SESSION` → `arn:aws:iam::ACCT:role/ROLE`) and lowercases it so the customer's registered IAM role ARN matches. IAM names are unique-case-insensitive in AWS, so lowering both sides is safe and removes a foot-gun.
-   - Looks up the org by `orgs.registered_iam_arn` (UNIQUE) and checks the signed URL's region against `orgs.aws_region`. Registration enforces a strict no-path role-ARN shape in [`domain/orgs/org_settings_web`](domain_orgs.md) so two orgs can't collide on the same canonical (paths are stripped by AWS's `assumed-role` form).
-   - Issues a 24h bearer via `bearers.issue` (sha256 hash stored, plaintext returned once), upserts the `workspace_agents` row, captures source IP.
-   - Returns `{bearer, expires_at, agent_id}`.
-2. **Long-poll command claim.** Free agent slots each post `claim` with `wait_seconds=30`. Backend's per-agent FIFO returns the head, or 204 on timeout. Internally an `asyncio.Condition` per agent wakes the poll the moment `enqueue_command(agent_id, cmd)` runs.
-3. **Heartbeat reconciliation.** Every ~30s the agent posts its workspace inventory. Backend bumps liveness and reads back `forgotten_workspaces` — anything the agent reports that's destroyed or unknown control-plane-side.
-4. **Event ingestion.** Workspace-state and AgentCommand events flow through their respective endpoints. The single-flight claim columns set by [`core/workspace.try_claim`](core_workspace.md) gate every event: `command_id` not in any workspace's `current_command_id` → 410. Terminal AgentEvents enqueue `workflow.handle_agent_event` via the outbox in the same transaction; progress events call `publish_workspace_activity(org_id, wfx_id, payload)` in [`core/sse`](core_sse.md) — the same org-scoped channel the WebSocket activity-batch path writes to, so HTTP-posted progress and WS-batched activity converge on one subscriber surface.
-
-### Activity WebSocket
-
-The bidirectional `WSS /api/v1/agents/{id}/activity` carries demand-pull activity:
-
-- Auth on upgrade — `Bearer <token>` validated against `bearer_tokens` via `bearers.verify`. Missing / empty → close with `4401`.
-- **Agent → backend** `activity_batch` messages publish each event to the org-scoped workspace-activity channel via `publish_workspace_activity` in [`core/sse`](core_sse.md).
-- **Backend → agent** `subscribe` / `unsubscribe` messages, dispatched by `SubscriberRegistry` on `0 → 1` / `1 → 0` UI-subscriber-count transitions. No activity flows when nobody's watching.
-- **WS reconnect**: `SubscriberRegistry.register_sender` replays a `subscribe` for every active route whose `agent_id` matches the reconnecting agent so the agent's rebuilt SubscriptionSet picks up where the old connection left off.
-- `SubscriberRegistry` is process-local.
+- **AgentCommand** — discriminated union: `CreateWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace`.
+- **AgentEvent** — `progress` (non-terminal) or `completed_{success|failure|skipped}` (terminal).
+- **WorkspaceEvent** — `created | ready | exited | destroyed | failed`.
+- **AgentRef** — `agent_id` + `agent_pod_id`; returned by `pick_agent_for_org` (least-loaded reachable pod).
+- **BearerContext** — resolved identity from a verified bearer: `bearer_id`, `agent_id`, `org_id`.
 
 ## Data owned
 
-- `workspace_agents` — per-pod identity rows (one per `(org_id, agent_pod_id)`). Bumped on every successful identity exchange + heartbeat.
-- `bearer_tokens` — issued-bearer ledger. `token_hash` (sha256), `issued_at`, `expires_at`, `revoked_at`, `revoked_reason`, `last_seen_at`, `source_ip`. Plaintext is returned exactly once from `bearers.issue` and never persisted. `verify` returns `None` for every failure (no oracle).
-
-Reads `workspaces` ([`core/workspace`](core_workspace.md)) to resolve the lookup chain; writes to the outbox owned by [`core/tasks`](core_tasks.md). Bearer revocation cascades from Workspace settings actions (`arn_change` / `mode_switch` / `disconnect` / `manual_rotate`) and from failsafe-6 (`agent_loss`).
+- `workspace_agents` — per-pod identity rows; one per `(org_id, agent_pod_id)`.
+- `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip)`. Revocation cascades from settings actions (`arn_change`, `mode_switch`, `disconnect`, `manual_rotate`) and failsafe-6 (`agent_loss`).
 
 ## How it's tested
 
-`test/test_service.py` covers: per-agent FIFO independence; immediate return when empty; long-poll wakes on enqueue; long-poll times out cleanly; heartbeat reconciliation reports unknown workspaces; terminal AgentEvent enqueues `workflow.handle_agent_event` with the resolved workflow id; progress events do NOT enqueue but DO publish to the org-scoped workspace-activity channel via `publish_workspace_activity` for SSE live-tail; stale `command_id` raises `StaleClaimError`; workspace-state `ready` event transitions row to `active`; stale workspace event raises; `pick_agent_for_org` returns `AgentRef` for a fresh pod, `None` for no agents / stale heartbeat / non-reachable state, and prefers the least-loaded pod; `has_any_reachable_agent` returns `True`/`False` based on 90-s cutoff. Tests call `clear_queues()` between runs to reset the in-memory dispatch state.
+`test/test_service.py` covers: per-agent FIFO independence; long-poll wakes on enqueue and times out cleanly; heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `pick_agent_for_org` returns least-loaded `AgentRef` or `None`; `has_any_reachable_agent` respects the 90s cutoff.
 
-`test/test_activity_publish_service.py` covers: WS `activity_batch` path delivers events to `subscribe_workspace_activity(org_id, wfx_id)` on the org-scoped channel.
-
-Endpoint coverage rides on the service tests + the bearer-dep guards.
+`test/test_activity_publish_service.py` covers the WS `activity_batch` path delivering events to `subscribe_workspace_activity`.

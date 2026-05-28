@@ -2,119 +2,39 @@
 
 > Workflow engine — typed workflows, three command categories, async event-driven execution.
 
-## Purpose
+## Scope
 
-Owns `Workflow`, `Step`, `WorkflowCommand`, `Outcome`, and the three [`core/tasks`](core_tasks.md) task bodies that drive the engine (`start_step`, `handle_agent_event`, `route_workflow`). Workflows are typed data, registered at startup; the engine is mechanism, not policy.
+- **Owns:** `Workflow`, `Step`, `WorkflowCommand` types, engine state machine, three taskiq task bodies (`start_step`, `handle_agent_event`, `route_workflow`), `workflow_executions` + `pending_human_decisions` tables.
+- **Does not own:** business logic (callers register typed `Workflow` + `WorkflowCommand` impls); workspace provisioning ([`core/workspace`](core_workspace.md)); task durability ([`core/tasks`](core_tasks.md)).
+- **Boundary:** callers enqueue work by calling `engine.start()`; the engine routes via taskiq; terminal AgentEvents arrive from [`core/agent_gateway`](core_agent_gateway.md) via `handle_agent_event`.
 
-## Public interface
+## Why / invariants
 
-**Typed data:** `Workflow`, `Step`, `RetryPolicy`, `WorkflowCommand`, `Outcome`, `OutcomeKind`, `CommandCategory`, `CommandContext`, `TerminalAction`, `WorkflowState`, `TERMINAL_STATES`.
+- **Three tasks, not two** — Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; workers stay free during the wait; `handle_agent_event` fires when the terminal event arrives.
+- **Recovery fires at most once per step instance** — repeated `auth_expired` after recovery has run falls through to Tier-2 retry then Tier-3 transitions. Prevents infinite auth-refresh loops.
+- **`in_memory` provider runs the command inline** (no wire round-trip; `pending_agent_command_id` stays null). **`remote_agent` provider** dispatches the AgentCommand and parks the workflow in `awaiting_agent`.
+- **`$`-expression inputs** — `$<step_id>.<field>` reads a prior step's `outputs`; `$ticket.<field>` reads the payload stashed at `engine.start()` time. Absent fields return `None` rather than erroring.
+- **Cross-module callers use read projections**, not raw SQLAlchemy rows. See `WorkflowExecutionSummary`, `HitlHistoryEntry`, and the `list_*` / `get_*` ops in `__init__.py`.
 
-**Engine:** `WorkflowEngine`, `get_engine`.
+## Gotchas
 
-**Registry helpers:** `register_workflow(wf)`, `unregister_workflow(workflow_name, version)`, `scoped_workflow(wf)` — see [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
+- `register_workflow` allows forward references to unregistered commands; `start()` validates them and fails loud (no row written) when a step references an unregistered command.
+- `TERMINAL_STATES = {done, failed, cancelled}` — check before enqueuing further work.
+- `scoped_workflow` / `unregister_workflow` are required for test isolation; see [patterns.md § `scoped_*` context managers](patterns.md).
 
-**Task refs:** `START_STEP`, `HANDLE_AGENT_EVENT`, `ROUTE_WORKFLOW`.
+## Vocabulary
 
-**Exceptions:** `WorkflowError`, `WorkflowNotFoundError`, `CommandNotRegisteredError`, `WorkflowExecutionNotFoundError`.
-
-**Admin ops:** `request_cancel(execution_id, *, session)`, `resume_hitl(execution_id, *, response, session)`.
-
-**Read projections** (replace raw Row access for cross-module callers):
-- `WorkflowExecutionSummary` — frozen dataclass: `id`, `ticket_id`, `workflow_name`, `state`, `current_step_id`, `created_at`, `updated_at`.
-- `HitlHistoryEntry` — frozen dataclass: `id`, `workflow_execution_id`, `question_payload`, `resolution_payload`, `resolved_at`, `created_at`.
-- `list_executions_for_ticket(ticket_id, *, session)` → `list[WorkflowExecutionSummary]`, newest first.
-- `get_execution_summary(execution_id, *, session)` → `WorkflowExecutionSummary | None`.
-- `get_awaiting_human_execution(ticket_id, *, session)` → `WorkflowExecutionSummary | None` — most recent `awaiting_human` row.
-- `list_active_execution_ids(ticket_id, *, session)` → `list[UUID]` — non-terminal executions only.
-- `list_hitl_history(ticket_id, *, session)` → `list[HitlHistoryEntry]`, newest first.
-- `list_all_execution_states(*, session)` → `list[str]` — all state values; used for metrics aggregation.
-
-The SQLAlchemy rows (`WorkflowExecutionRow`, `PendingHumanDecisionRow`) are internal to this module. Cross-module callers use the projection ops above. See `app/core/workflow/__init__.py`.
-
-- `WorkflowEngine.register_workflow(wf)` — register a typed `Workflow`. Validates the entry-step id and inter-step transition targets. Forward references to unregistered commands are allowed here; `start()` validates them.
-- `WorkflowEngine.register_command(cmd)` — register a `WorkflowCommand` (Protocol) by its `kind`.
-- `WorkflowEngine.start(*, workflow_name, ticket_id, version=None, traceparent=None, session)` — create a `workflow_executions` row in `pending` state, enqueue an initial `route_workflow` task via the outbox, return the new execution id. Required `session`; the caller commits.
-- `get_engine()` — process-wide singleton.
-
-## Module architecture
-
-### Entities
-
-- **WorkflowExecution** — one row in `workflow_executions` per in-flight workflow run. Identity: `id` (uuid). Carries the state-machine cursor, `step_state` for input resolution, `pending_agent_command_id` for the await-agent gate, `cancel_requested` flag, and `otel_trace_context`.
-- **PendingHumanDecision** — one row per HITL pause. Identity: `id` (uuid). Closed by writing `resolution_payload` + `resolved_at` in the same transaction that re-enqueues the next step.
-
-### Key value objects
-
-- **Workflow** — frozen Pydantic. `name`, `version`, `steps`, `entry_step_id`.
-- **Step** — frozen Pydantic. `id`, `command_kind`, `inputs` map (source expressions like `$provision.workspace_id`), `retry_policy`, `hitl`, `transitions` map (label → step id | TerminalAction).
-- **Outcome** — frozen Pydantic. Tagged by `OutcomeKind` (`success | failure | hitl_pending`). Carries `outputs`, optional `failure_reason` or `hitl_question`, and the `append_steps` escape hatch.
-- **CommandContext** — frozen Pydantic. Workflow execution id, ticket id, step id, attempt counter, optional traceparent. The entire workflow-related payload a command sees alongside its typed `inputs` model.
-
-### Core user flows
-
-1. **Register at startup.** Domain modules import `get_engine()` and call `register_command(...)` for each WorkflowCommand impl + `register_workflow(...)` for each typed `Workflow`.
-2. **Start.** `domain/intake` (or any orchestrator) calls `engine.start(workflow_name=..., ticket_id=..., session=s)`. The engine validates every step's `command_kind` is registered, writes a `pending` `workflow_executions` row, enqueues an initial `route_workflow(workflow_execution_id, completed_step_id=None, ...)` via `core/outbox` in the same session.
-3. **Route → start_step → handle_agent_event → route_workflow** — the three taskiq tasks that drive the state machine.
-
-### State machines
-
-`workflow_executions.state` (`WorkflowState`):
-
-| From | Event | To |
-|---|---|---|
-| `pending` | engine starts | `running` |
-| `running` | Workspace step dispatched (remote_agent provider) | `awaiting_agent` |
-| `running` | Workspace step run inline (in_memory provider) | stays `running` |
-| `running` | HITL step pauses | `awaiting_human` |
-| `running` | terminal action (`complete_workflow` / `fail_workflow`) | `done` / `failed` |
-| `awaiting_agent` | terminal AgentEvent arrives | `running` |
-| `awaiting_agent` | cancel + event arrival | `cancelled` |
-| `awaiting_human` | resume signal | `running` |
-| `awaiting_human` | cancel | `cancelled` |
-| any | step failure + retry exhausted | `failed` |
-
-`TERMINAL_STATES = {done, failed, cancelled}`.
-
-### Why three tasks (not two)
-
-Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; `handle_agent_event` is enqueued when the terminal event arrives at `core/agent_gateway`; `route_workflow` does the routing. Workers stay free during the wait.
-
-### Input-expression resolver
-
-`Step.inputs: dict[str, Any]` values can be literal or reference shorthand. Supported `$`-prefixed shapes resolved by `_resolve_input_expression`:
-
-- `$<step_id>.<field>` — value from a prior step's `outputs` dict. Returns None if the step hasn't completed or the field is absent.
-- `$ticket.<field>` — value from the ticket payload stashed at `engine.start(ticket_payload=...)` time. Returns None when the caller didn't supply a payload or the field isn't present.
-
-Anything else passes through verbatim (literals).
-
-### Recovery-policy insertion (Tier-1)
-
-Before Tier-2 retry / Tier-3 transition, `route_workflow` checks the failed step's `outcome_label` against `core/workspace.get_recovery_policy(label)`. When a policy is registered (boot ships `auth_expired → RefreshWorkspaceAuth`), the engine:
-
-1. Appends a synthetic recovery step (with the registered `command_kind`) at the head of the execution queue.
-2. Snapshots the failed step id as the post-recovery destination via the existing `__after_append__` machinery.
-3. Resets the failed step's attempt counter (Tier-2 budget starts fresh after recovery).
-4. Marks the step as recovered in `step_state.__recovered_steps__` so a second failure with the same label falls through to retry/fail — preventing infinite auth-refresh loops.
-
-Recovery fires **at most once per step instance**. Repeated `auth_expired` after recovery has run drops to Tier-2 (retry budget) and then Tier-3 (transition map).
-
-### Workspace dispatch — in_memory vs remote_agent
-
-`engine.start(..., workspace_provider=...)` stashes the org's provider on `step_state["__workspace_provider__"]`. `start_step`'s Workspace branch reads it:
-
-- **`in_memory`** — runs the command inline (same path as Local). The command body owns the workspace lifecycle calls (`core/workspace.create_workspace` / `close_workspace`) and any in-process subprocess work. No wire round-trip; `pending_agent_command_id` stays null.
-- **`remote_agent`** — dispatches the AgentCommand to `core/agent_gateway` and parks the workflow in `awaiting_agent` until the Go agent reports the terminal event.
-
-Default when the caller omits the parameter or passes `None`: `in_memory` (matches the default org configuration).
+- **WorkflowCommand** — Protocol; one registered impl per `kind`. Carries `restart_safe`, `category` (`Workspace | Local | Hitl`).
+- **CommandContext** — payload a command sees: execution id, ticket id, step id, attempt counter, optional traceparent.
+- **Outcome** — tagged by `OutcomeKind` (`success | failure | hitl_pending`). Carries `outputs`, optional failure/hitl fields, and `append_steps` escape hatch.
+- **Recovery-policy insertion (Tier-1)** — engine checks `core/workspace.get_recovery_policy(label)` before Tier-2 retry; appends a synthetic recovery step and resets the failed step's attempt counter.
 
 ## Data owned
 
-- `workflow_executions` — see [models.py](../app/core/workflow/models.py). Indexes on `state`, `pending_agent_command_id`, `ticket_id`. Created by migration `015_create_workflow_tables`.
-- `pending_human_decisions` — see [models.py](../app/core/workflow/models.py). Index on `(workflow_execution_id, resolved_at)`. Same migration.
+- `workflow_executions` — indexes on `state`, `pending_agent_command_id`, `ticket_id`. Migration 015.
+- `pending_human_decisions` — index on `(workflow_execution_id, resolved_at)`. Same migration.
 
 ## How it's tested
 
-- `test/test_types.py` — typed data validation (workflows, steps, retry policy, outcomes, terminal-action transitions).
-- `test/test_engine.py` — register validation (unknown entry step, dangling transitions, double-register), version-selection (`get_workflow` picks latest), `start()` writes a `pending` row + enqueues `workflow.route_workflow` via the outbox, `start()` fails loud (no row written) when a step references an unregistered command.
+`test/test_types.py` — typed data validation (workflows, steps, retry policy, outcomes, terminal transitions).
+`test/test_engine.py` — register validation (unknown entry step, dangling transitions, double-register), version-selection, `start()` writes `pending` row + enqueues `route_workflow`, `start()` fails loud on unregistered command.

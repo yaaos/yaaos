@@ -1,73 +1,40 @@
 # domain/org_settings
 
-> Org-scoped settings — one route per concern. Each page mounts the `OrgSettingsLayout` shell so the side-tab navigation stays consistent.
+> Org-scoped settings pages under `/orgs/$slug/settings/*`, sharing `OrgSettingsLayout` for consistent tab navigation.
 
-## Purpose
+## Scope
 
-Per-org configuration the SPA surfaces under `/orgs/$slug/settings/*`. The pages share an `OrgSettingsLayout` shell + per-tab content. The Coding Agent detail (anchor) is the most complex of the bunch; the rest are linear settings forms.
+Routes: `auth`, `members`, `audit`, `vcs`, `coding-agents`, `coding-agents/$pluginId`, `api-keys`, `mcp-proxy` — see `core/routing` for mounts. Consumes endpoints: `/api/coding-agents`, `/api/api-keys`, `/api/mcp-proxy`, `/api/orgs`, `/api/memberships`, `/api/audit`, `/api/github/*`, `/api/vcs`, `/api/sso/*`, `/api/claude_code/*`. Owns no data.
 
-## Public interface
+Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`test/layout.test.tsx`).
 
-Each page is mounted by `core/routing` at its respective path:
+## VCS page
 
-| Page | Route | File |
-|---|---|---|
-| Auth | `/orgs/$slug/settings/auth` | `AuthSettingsPage.tsx` |
-| Members | `/orgs/$slug/settings/members` | `MembersSettingsPage.tsx` |
-| Audit | `/orgs/$slug/settings/audit` | `AuditSettingsPage.tsx` |
-| VCS | `/orgs/$slug/settings/vcs` | `vcs/VcsSettingsPage.tsx` |
-| Coding Agents (list) | `/orgs/$slug/settings/coding-agents` | `coding_agents/CodingAgentsSettingsPage.tsx` |
-| Coding Agent (detail) | `/orgs/$slug/settings/coding-agents/$pluginId` | `coding_agents/CodingAgentSettingsPage.tsx` |
-| API Keys | `/orgs/$slug/settings/api-keys` | `byok/BYOKSettingsPage.tsx` |
-| MCP Proxy | `/orgs/$slug/settings/mcp-proxy` | `integrations/IntegrationsSettingsPage.tsx` |
+- **Empty state** — `PluginPicker`; GitHub selection fires `useStartGithubInstall()` (`POST /api/github/install/start`) then navigates to the returned state-signed github.com URL. Non-GitHub uses `useSetVcs` directly.
+- **Connected state** — reads `/api/github/installation`; two sub-states: not-installed-on-org (re-fires install handshake) and healthy (shows account + repos from `/api/github/repositories`).
+- **`app_configured: false`** — platform env vars unset; shows operator guidance, no install button.
+- "Manage on GitHub" links to `installations_url` — canonical for repo access changes. No yaaos-side reconnect.
+- "Remove" → `DELETE /api/vcs`; does not uninstall the GitHub App.
+- Install flow uses a backend POST (not `window.location`) because `X-Org-Slug` + CSRF can't ride a bare navigation.
 
-`OrgSettingsLayout` renders the left tab strip + the page body slot; each page passes `active=…` so the matching tab highlights.
+## Coding Agent detail
 
-### VCS page
+`coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component via `coding_agents/plugin_registry.ts`. `claude_code` is the only registered plugin.
 
-- Empty state mounts `PluginPicker`; picking GitHub fires `useStartGithubInstall()` (POSTs `/api/github/install/start`) and navigates the browser to the returned state-signed github.com URL. Picking a non-github plugin uses `useSetVcs` directly.
-- Connected state surfaces two sub-states from `/api/github/installation`: not installed on this org (button fires the same `useStartGithubInstall()` handshake), and healthy (account login + installation id + live repo list from `/api/github/repositories`). A third pseudo-state — `app_configured: false` — surfaces only when the platform yaaos GitHub App env vars are unset on the deployment; the UI shows operator guidance with no install button.
-- "Manage on GitHub" links to the per-installation settings page (`installations_url` from `/api/github/installation`) — the canonical place to change which repos are accessible. There is no yaaos-side reconnect button; reinstalling and changing repo access both happen on github.com.
-- "Remove" clears the org's VCS choice via `DELETE /api/vcs`; it does not uninstall the App on GitHub.
-- The "Install on GitHub" path goes through a backend JSON POST rather than a direct browser nav because the auth chain reads `X-Org-Slug` + CSRF from headers, which a `window.location.href` navigation can't carry.
+`ClaudeCodeSettings.tsx` composition (top → bottom):
+1. **`BrokenIntegrationsNotice`** — amber banner when any MCP credential has `last_refresh_status="failed"` (from `/api/auth/me`).
+2. **`BuilderReadOnlyBanner`** — info banner; UI only. Server enforces `require(Action.CODING_AGENT_WRITE)`.
+3. **`AnthropicKeyCard`** — BYOK Anthropic key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
+4. **`OrchestratorCard`** — `AgentEditor` for orchestrator; inline "overridden" badges + Reset when fields differ from `/api/claude_code/defaults`.
+5. **`SubAgentsCard`** — 1–8 repeatable `AgentEditor` rows; inline duplicate-name validation; Add/Remove (last-row protected).
+6. **Save** — one PATCH replacing the entire settings JSONB; disabled on duplicate name or out-of-range count.
+7. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
 
-## Coding Agent detail — anchor
+`AgentEditor` fields: `name`, `prompt`, `model`, `version`, `effort`, `use_default_system_prompt` (checkbox; default true; toggling off reveals `system_prompt` textarea). Toggling back to default clears `system_prompt` so the wire payload stays clean.
 
-`coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component registered via `coding_agents/plugin_registry.ts`. Today `claude_code` is the only registered plugin; future coding agents register here.
+## Tests
 
-`coding_agents/plugins/claude_code/ClaudeCodeSettings.tsx` is the anchor implementation:
-
-### Composition
-
-1. **`BrokenIntegrationsNotice`** — amber banner when the org has any MCP credential with `last_refresh_status="failed"`. Sourced from `/api/auth/me`'s `broken_integrations`.
-2. **`BuilderReadOnlyBanner`** — info banner for Builder-role users. UI affordance only; the server-side `require(Action.CODING_AGENT_WRITE)` enforcement is the truth.
-3. **Architecture description card** — one-paragraph static explainer.
-4. **`AnthropicKeyCard`** — BYOK provider=anthropic. Write-only post-save: when a key is configured, the card shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear actions; the input is hidden until Rotate is clicked. Plaintext is never read back from the backend so the UI doesn't pretend it is. Four mutations live in `coding_agents/plugins/claude_code/queries.ts`.
-5. **`OrchestratorCard`** — bare `AgentEditor` for the orchestrator. Inline "overridden" badges + Reset buttons when any field differs from the plugin defaults from `/api/claude_code/defaults`.
-6. **`SubAgentsCard`** — repeatable `AgentEditor` rows (1..8) with Add / Remove (last-protection). Inline duplicate-name validation.
-7. **Save button** — replaces the entire settings JSONB in one PATCH; disabled when there's a duplicate sub-agent name or the count is out of range.
-8. **`DangerZone`** — destructive `ConfirmModal` flow that fires `useUninstallCodingAgent`.
-
-### Per-agent fields
-
-`AgentEditor` exposes all four schema additions from `apps/backend/app/plugins/claude_code/settings_schema.py` (b36c824):
-
-- `name`, `prompt`, `model`, `version`, `effort` — legacy fields.
-- `use_default_system_prompt` (checkbox, default true) — when toggled off, reveals…
-- `system_prompt` (textarea) — overrides the plugin's built-in system prompt for this agent.
-
-Toggling the checkbox back to default clears any stale `system_prompt` override so the wire payload stays clean.
-
-`mcp_proxy_ids` lives on `ClaudeCodeSettings` (not the per-agent level); the field round-trips through the form unchanged.
-
-## Data owned
-
-None. Each page reads through `core/api` query hooks; mutations target the existing org-settings endpoints (`/api/coding-agents`, `/api/api-keys`, `/api/mcp-proxy`, `/api/orgs`, `/api/memberships`, `/api/audit`).
-
-## How it's tested
-
-- `coding_agents/test/coding_agents.test.tsx` — the list page covering install / uninstall confirm.
-- `coding_agents/test/plugin_registry.test.tsx` — dispatch via `getPluginSettingsComponent`.
-- `byok/test/byok.test.tsx`, `integrations/test/integrations.test.tsx`, `vcs/test/vcs.test.tsx` — the per-page settings forms.
-- `test/layout.test.tsx` — tab visibility per role (admin sees all six; builder sees Members only).
-- The Coding Agent detail page is exercised by the PR-review e2e (which traverses the full settings → review pipeline) rather than a dedicated detail-page Vitest.
+- `coding_agents/test/` — list page + plugin registry dispatch.
+- `byok/test/`, `integrations/test/`, `vcs/test/` — per-page forms.
+- `test/layout.test.tsx` — tab visibility per role.
+- Detail page is covered by the PR-review e2e, not a dedicated Vitest.

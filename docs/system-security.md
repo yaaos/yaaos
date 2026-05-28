@@ -1,40 +1,39 @@
 # System security
 
-> What's actually shipped today. Every section here is backed by a real code path — no aspirational content.
+> What's actually shipped today. Every section is backed by a real code path — no aspirational content.
 
 ## Trust boundaries
 
-Three processes hold different secrets and run with different privileges.
-
 | Boundary | What crosses | Direction |
 |---|---|---|
-| **GitHub webhook → backend** | HMAC-signed JSON payload | Inbound to `/api/intake/github_pr` ([`apps/backend/app/plugins/github/intake_type.py`](../apps/backend/app/plugins/github/intake_type.py)). |
-| **Backend ↔ WorkspaceAgent** | AgentCommand + AgentEvent JSON over HTTPS long-poll + WebSocket activity stream. Bearer in `Authorization`. | Outbound-only from the agent's TCP perspective. |
+| **GitHub webhook → backend** | HMAC-signed JSON payload | Inbound to `POST /api/intake/github_pr` ([`plugins/github/intake_type.py`](../apps/backend/app/plugins/github/intake_type.py)). |
+| **Backend ↔ WorkspaceAgent** | AgentCommand + AgentEvent JSON over HTTPS long-poll + WebSocket. Bearer in `Authorization`. | Outbound-only from agent's TCP perspective. |
 | **WorkspaceAgent ↔ workspace process** | JSON-newline IPC over stdin/stdout. | Bidirectional, in-process, no TCP. |
 | **Workspace process ↔ Claude Code subprocess** | CLI argv + env + stdio. | Local subprocess. |
 
-**Critical property:** the workspace process holds no credentials for the yaaos control-plane API. Findings cross the trust boundary only via the supervisor's `POST /api/v1/commands/{id}/events` call, which is the audited piece.
+**Critical property:** the workspace process holds no credentials for the yaaos control-plane API. Findings cross the trust boundary only via the supervisor's `POST /api/v1/commands/{id}/events`, which is the audited piece.
 
 ## Control-plane security
 
 ### Authentication
 
-- **User sessions** — `core/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`), and a post-response guard 500s any 2xx response that left `route_security_resolved` unset.
+- **User sessions** — `core/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`); a post-response guard 500s any 2xx that left `route_security_resolved` unset.
 - **WorkspaceAgent bearer** — placeholder verifier (any non-empty `Bearer <token>` after a successful identity-exchange). The org-side trust anchor lives on `orgs.registered_iam_arn`; `core/agent_gateway.ensure_agent_row` consumes the ARN presented at identity exchange.
 
 ### Authorization
 
-- Per-action `Role` mapping in [`core/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/core/sessions/dependencies.py): `BUILDER` < `ADMIN` < `OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
+- Per-action `Role` mapping in [`core/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/core/sessions/dependencies.py): `BUILDER < ADMIN < OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
 - Owner/Admin-gated endpoints: `PATCH /api/orgs` (workspace_provider + registered_iam_arn), `GET /api/workspaces/connection_status`.
 
 ### Secrets at rest
 
-- `core/secrets` Fernet-encrypts everything that lives in the database. Encryption key is the `YAAOS_ENCRYPTION_KEY` env var; never derived, never hard-coded.
-- Encrypted columns: `byok_keys.encrypted_value` (per-(org, provider) BYOK key), `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`. The platform GitHub App's private key + webhook secret live in env vars (`YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`), not in the DB.
+- `core/secrets` Fernet-encrypts everything that lives in the database. Key is `YAAOS_ENCRYPTION_KEY` env var — never derived, never hard-coded.
+- Encrypted columns: `byok_keys.encrypted_value`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`.
+- Platform GitHub App private key + webhook secret live in env vars (`YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`), not the DB.
 
 ### Audit log
 
-[`core/audit_log`](../apps/backend/docs/core_audit_log.md) writes one row per state transition. Required-session API ([`apps/backend/docs/patterns.md` § Session management + atomicity](../apps/backend/docs/patterns.md)) means audit rows always commit alongside the state change they describe — no diverging audit-only or state-only writes.
+[`core/audit_log`](../apps/backend/docs/core_audit_log.md) writes one row per state transition. Required-session API (see [`apps/backend/docs/patterns.md`](../apps/backend/docs/patterns.md)) ensures audit rows always commit alongside the state change — no diverging audit-only or state-only writes.
 
 ## Agent + workspace security
 
@@ -44,12 +43,12 @@ Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_ar
 
 ### Workspace isolation (what ships)
 
-- **OS-process isolation per workspace** — the supervisor spawns one OS process per workspace; IPC over stdin/stdout pipes.
-- **Container filesystem read-only** except `/var/agent/workspaces/` (deployment configuration; documented in [`apps/agent/docs/README.md`](../apps/agent/docs/README.md)).
+- **OS-process isolation per workspace** — supervisor spawns one OS process per workspace; IPC over stdin/stdout pipes.
+- **Container filesystem read-only** except `/var/agent/workspaces/` (documented in [`apps/agent/docs/README.md`](../apps/agent/docs/README.md)).
 
 ### What deliberately doesn't ship
 
-- No landlock / seccomp / per-workspace UID / network namespaces. The risk surface is the workspace process (single tenant, customer code already trusted to that level) + the supervisor (which holds the control-plane bearer, audited via the structured log + OTel spans).
+No landlock / seccomp / per-workspace UID / network namespaces. Risk surface: the workspace process (single tenant, customer code already trusted to that level) + the supervisor (which holds the control-plane bearer, audited via structlog + OTel spans).
 
 ### Zero biz logic in the agent
 
@@ -67,23 +66,23 @@ The bearer issued at identity-exchange is scoped to the per-pod `agent_id` (`wor
 
 ### Single-flight + stale-claim guard
 
-[`core/workspace.try_claim`](../apps/backend/app/core/workspace/dispatch.py) is an atomic conditional UPDATE that succeeds iff `current_command_id IS NULL` AND `status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off — only one AgentCommand can hold a workspace at a time.
+[`core/workspace.try_claim`](../apps/backend/app/core/workspace/dispatch.py) is an atomic conditional UPDATE succeeding iff `current_command_id IS NULL AND status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off — only one AgentCommand can hold a workspace at a time.
 
-Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{id}/events`) validate the inbound `command_id` against `workspaces.current_command_id`. Mismatch → `410 Gone`; the agent abandons silently. This guards against late-redelivered events from a stale command claim.
+Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{id}/events`) validate inbound `command_id` against `workspaces.current_command_id`. Mismatch → `410 Gone`; agent abandons silently.
 
 ### Failure-report-precedes-disposal
 
-`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal event must arrive before the workspace row is disposed, so workflows can never lose their resolution path to the workspace that owned them.
+`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal event must arrive before the workspace row is disposed — workflows can never lose their resolution path to the workspace that owned them.
 
 ### `traceparent` on every wire payload
 
-W3C trace context is a required field on every AgentCommand, AgentEvent, WorkspaceEvent, and Heartbeat. The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers (verified by unit tests of the helpers).
+W3C trace context is a required field on every AgentCommand, AgentEvent, WorkspaceEvent, and Heartbeat. The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers.
 
 ## Data at rest
 
 | Class | Where | Encryption |
 |---|---|---|
-| OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | Refresh tokens in `oauth_identities.encrypted_refresh_token` (Fernet). Session bearers hashed (sha256) — raw value only on the user's cookie. |
+| OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | Refresh tokens in `oauth_identities.encrypted_refresh_token` (Fernet). Session bearers sha256-hashed — raw value only on user's cookie. |
 | BYOK provider keys | `byok_keys.encrypted_value` | Fernet via `core/secrets`. |
 | GitHub webhook secret + App private key | `YAAOS_GITHUB_APP_WEBHOOK_SECRET` + `YAAOS_GITHUB_APP_PRIVATE_KEY` env vars | Platform-deployment secrets (env vars, not DB). One App per yaaos deployment; never per-customer. |
 | SAML SP private key | `sso_configs.sp_private_key_encrypted` | Fernet via `core/secrets`. |
@@ -91,7 +90,7 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | MCP review bearer | `mcp_review_tokens.token_hash` | sha256 — raw value never persists. |
 | Activity events | n/a — never persisted | n/a |
 
-## Threat model — what explicitly defends against
+## Threat model
 
 | Threat | Defense |
 |---|---|
@@ -99,13 +98,14 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
-| Agent pod identity spoofing | Not yet defended — the placeholder verifier accepts any non-empty signed-STS string. |
-| Activity events leaking source content | Not yet defended — the WebSocket plumbing exists but there is no pre-renderer audit on `domain/coding_agent` ActivityEvents. |
-| Worker exhaustion under long-running AgentCommands | Async event-driven workflow engine — workers exit after dispatch and resume on the terminal event. Verified by the workflow state-machine tests. |
+| Agent pod identity spoofing | Not yet defended — placeholder verifier accepts any non-empty signed-STS string. |
+| Activity events leaking source content | Not yet defended — WebSocket plumbing exists but no pre-renderer audit on `domain/coding_agent` ActivityEvents. |
+| Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by workflow state-machine tests. |
 
-## Threats does NOT defend against (yet)
+## Not defended against (yet)
 
-- Compromised agent pod (running as customer's IAM role with workspace state on disk). Out of scope per architecture — workspace-process sandbox hardening is .- Activity event payload tampering. WebSocket is TLS-protected but events are not signed. Architectural assumption: customer's network is trusted to ECS.
+- Compromised agent pod (customer's IAM role + workspace state on disk). Out of scope — workspace-process sandbox hardening is deferred.
+- Activity event payload tampering. WebSocket is TLS-protected but events are not signed. Architectural assumption: customer's network is trusted to ECS.
 - Side-channel via prompt content. Out of scope.
 
 ## Cross-references

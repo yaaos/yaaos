@@ -19,21 +19,7 @@ These are the rules the SPA is built on. They are absolute — if a design or ch
 
 ### Shell
 
-The signed-in app is a single horizontal split:
-
-```
-┌───────────┬─────────────────────────────┐
-│ Sidebar   │ Main content                │
-│ (220px /  │ (flex-1, only this scrolls) │
-│  56px     │                             │
-│  in rail) │                             │
-└───────────┴─────────────────────────────┘
-```
-
-- The sidebar is fixed-width and never scrolls horizontally. Pinned width: 220px. Unpinned (rail) width: 56px — icons only.
-- Only `<main>` scrolls. The sidebar and any in-page banners stay put.
-- Standalone routes (`/login`, `/user`, `/orgs`) render outside the shell — no sidebar — because they are user-scoped or pre-auth.
-- See [core_layout.md](core_layout.md) for the React composition (`AppShell`, route outlet, broken-integrations banner).
+Two-column split: fixed-width sidebar (220px pinned / 56px rail) + flex-grow `<main>`. Only `<main>` scrolls. Standalone routes (`/login`, `/user`, `/orgs`) render without the shell. React composition: [core_layout.md](core_layout.md).
 
 ### Sidebar
 
@@ -53,121 +39,79 @@ Top-to-bottom anatomy:
 
 ### Page region
 
-Inside `<main>`:
-
-- Pages own their own header (usually `<h1>` or a card header). There is no shared "PageHeader" strip mandated by the layout — the [`PageHeader`](components.md) composite is opt-in for surfaces that benefit from a title + actions row.
-- Vertical rhythm: pages set their own top padding (`p-6` is common for max-width content columns). The layout adds none of its own.
-- Long pages scroll inside `<main>`; everything outside `<main>` stays anchored.
+Pages own their own header (`<h1>` or card header). The layout adds no top padding or chrome. [`PageHeader`](components.md) is opt-in. Long pages scroll inside `<main>`; everything outside stays anchored.
 
 ## Navigation model
 
-- **One nav surface.** The sidebar is the only navigation chrome. Sub-page nav (settings sub-pages, ticket-detail tabs, etc.) is either part of the page content (an in-content tab list) or absent (linked from the sidebar group).
-- **No breadcrumbs.** IA depth never exceeds two levels of org-scoped + the page itself. Breadcrumbs would imply depth we don't have.
-- **No back-links.** Sidebar nav + browser back is enough. A "Back to X" link is a code smell suggesting the page belongs deeper than IA allows.
-- **URL structure:** `/orgs/$slug/...` for every org-scoped page. `/`, `/login`, `/user/*`, `/orgs` are user-scoped or pre-auth.
-- **Role gating in nav:** items are hidden when the user lacks the role required for the destination. Groups disappear entirely if no child survives the filter. Mirrors backend `require(action)` — the sidebar is a UI hint, not the authority.
+- **One nav surface.** Sidebar only. Sub-page nav is in-content (tab list) or absent.
+- **No breadcrumbs, no back-links.** Two clicks to anything; sidebar + browser back is enough. A "Back to X" link implies depth the IA doesn't have.
+- **URL structure:** `/orgs/$slug/...` for org-scoped pages; `/`, `/login`, `/user/*`, `/orgs` are user-scoped or pre-auth.
+- **Role gating:** items hidden when the user lacks the required role; groups disappear if no child survives. UI hint only — backend `require(action)` is the authority.
 
 ## State patterns
 
-Every surface that fetches or mutates data follows one shape per state. Pick the right one; do not invent a hybrid.
+One shape per state — don't invent hybrids. See [components.md](components.md) for each primitive.
 
-### Empty (no data, no error)
-
-- Use `EmptyState` ([components.md](components.md)): icon, headline, optional body, optional primary CTA.
-- Headline says what's missing in user terms ("No tickets yet"). Body is one line of context.
-- Don't conflate "empty" with "not configured" — see [§ Setup-required gate](#setup-required-gate).
-
-### Loading
-
-- Skeleton placeholders for list shapes; a small inline spinner for in-flight mutations.
-- No full-page spinners. No skeleton "shimmer" that lasts longer than 200ms before content appears.
-
-### Error
-
-- Use `ErrorBanner` ([components.md](components.md)): in-page banner, body text, optional Retry.
-- Voice rule: the system failed, not the user. Don't say "You did X wrong"; say "Couldn't load X. Retry?". See [§ Voice](#voice).
-- Validation errors (4xx with a field-keyed map) surface inline under the relevant input — they're not error banners.
-
-### Success
-
-- Mutations show "Saving…" → "Saved." inline near the action, not as a toast.
-- Toasts are reserved for cross-surface successes that aren't anchored to a control (rare).
-
-### Live-stream
-
-- Ticket detail's Activity pane (SSE) streams new rows in chronologically. New rows fade in for 200ms then settle — no popping. See [core_sse.md](core_sse.md) for the subscription model.
-
-### Setup-required gate
-
-- An org that isn't fully configured (missing VCS, etc.) shows `NotConfiguredBanner` at the top of `<main>`. Admins see a missing-piece list; non-admins see "ask your admin."
-- The Dashboard treats setup-required as its primary state — gated content is replaced by the banner. Other pages render their normal empty state alongside the banner.
+| State | Pattern |
+|---|---|
+| Empty | `EmptyState`: icon + headline ("No tickets yet") + optional CTA. Don't conflate with setup-required. |
+| Loading | Skeleton for lists; inline spinner for mutations. No full-page spinners. |
+| Error | `ErrorBanner`: in-page, optional Retry. Voice: system failed, not user. Validation errors (4xx field map) inline under the field. |
+| Success | "Saving…" → "Saved." inline. Toasts only for cross-surface successes with no anchor control. |
+| Live-stream | Activity pane (SSE) appends rows chronologically; new rows fade in 200ms. See [core_sse.md](core_sse.md). |
+| Setup-required | `NotConfiguredBanner` at top of `<main>`. Dashboard replaces gated content with it; other pages show both. |
 
 ## Information density
 
-yaaos is a tool for engineers running many tickets and many orgs. Density is a feature, not a tradeoff.
+Density is a feature. yaaos is a devtools product with many rows and many orgs in flight.
 
-- **Body root: 13px.** Set on `<html>`; everything else cascades.
-- **Compact spacing rungs.** Use `p-2` (8px) / `p-3` (12px) / `p-4` (16px) inside cards and tables. `p-6` (24px) is for top-of-page padding only.
-- **Tables over cards for lists ≥ 5 items.** A 20-row card grid wastes pixels.
-- **One affordance per row.** A list row links to the detail page; secondary actions live in the detail page or a row menu, not a button cluster on the row.
-- **Tight type scale** — see [§ Type](#type) below. Don't reach for `text-2xl` unless it's a page-defining title.
-- **Discipline by surface type:**
-  - List pages: dense; many rows visible without scroll.
-  - Detail pages: comfortable; one focused decision at a time.
-  - Settings forms: comfortable; clear field grouping, generous label spacing.
-  - Empty/error states: airy; let the message breathe.
+- Body root: 13px on `<html>`.
+- Spacing: `p-2`/`p-3`/`p-4` inside cards + tables; `p-6` for top-of-page only.
+- Tables over card grids for lists ≥ 5 items.
+- One affordance per row — secondary actions go in the detail page or a row menu.
+- Type scale: see [§ Type](#type). Avoid `text-2xl` unless it's a page-defining title.
+- Surface discipline: lists = dense; detail + settings = comfortable; empty/error = airy.
 
 ## Voice
 
-The SPA's voice is direct, terse, and engineering-honest. We're talking to operators, not consumers.
+Direct, terse, engineering-honest. Operators, not consumers.
 
-- **Active over passive.** "Couldn't reach GitHub" beats "GitHub could not be reached."
-- **System owns failure.** Errors blame the system or the network; never the user.
-- **Concrete over hedged.** "Retry in 30s" beats "Please try again later."
-- **No exclamation marks.** Ever.
-- **No emoji in product copy.** Reserved for things like coding-agent identity (Claude's robot, etc.) where the icon is the brand.
-- **No "Please."** It's noise — "Save changes" not "Please save your changes."
-- **Locked patterns:**
-  - Destructive confirm: "Delete <thing>?" + "This can't be undone." + red `Delete` button.
-  - Cost-protective confirm: "Run review?" + cost line ("Uses ~$0.12 of your BYOK budget.") + neutral `Run` button.
+- Active over passive. System owns failure — never the user.
+- Concrete over hedged: "Retry in 30s" not "Please try again later."
+- No exclamation marks. No "Please." No emoji in product copy.
+- Locked copy patterns:
+  - Destructive confirm: "Delete \<thing>?" + "This can't be undone." + red `Delete`.
+  - Cost confirm: "Run review?" + cost line + neutral `Run`.
   - Save success: "Saved." (period, no exclamation).
-  - Empty list: "No <things> yet." + optional next-step CTA.
-  - Error retry: "Couldn't load <thing>. Retry?" with a Retry button.
+  - Empty list: "No \<things> yet." + optional CTA.
+  - Error retry: "Couldn't load \<thing>. Retry?"
 
 ## Iconography
 
-- **Library:** [`lucide-react`](https://lucide.dev). Don't mix icon libraries.
-- **Stroke weight:** Lucide default (`stroke-width: 2`). No per-icon overrides.
-- **Sizes:** `w-4 h-4` (16px) is the default in dense nav/rows; `w-5 h-5` for buttons; `w-6 h-6` for empty-state hero icons. Avoid arbitrary sizes.
-- **Color:** icons inherit `currentColor`. Don't hardcode fill or stroke colors — they should always pick up the parent's text color so theme switches work.
-- **One icon per concept.** If "Tickets" is `Ticket`, it's always `Ticket` — don't substitute `ClipboardList` elsewhere.
-- **Decorative icons get `aria-hidden`; meaningful ones get a `title` or sibling label.** See [§ Accessibility](#accessibility).
+- Library: `lucide-react` only. Don't mix.
+- Stroke: Lucide default (`stroke-width: 2`). No overrides.
+- Sizes: `w-4 h-4` nav/rows · `w-5 h-5` buttons · `w-6 h-6` empty-state hero. No arbitrary values.
+- Color: `currentColor` — no hardcoded fill/stroke.
+- One icon per concept, used consistently.
+- Decorative: `aria-hidden`. Meaningful: `aria-label` or `title`.
 
 ## Accessibility (a11y)
 
-We target WCAG 2.1 AA on critical flows. The discipline here keeps us there.
+Target: WCAG 2.1 AA on critical flows.
 
-- **shadcn/Radix primitives handle most of it.** Focus management, ARIA roles, escape-to-close, focus-trap inside dialogs, keyboard nav for menus — all built-in. Don't reimplement these.
-- **What we add:**
-  - Every interactive element is keyboard-reachable in a sensible order. Tab visits the sidebar then the main content; arrow keys navigate within menus/listboxes.
-  - Buttons that have only an icon get an `aria-label` or a `title`. The sidebar nav uses `title` for tooltips when collapsed.
-  - Color is not the sole carrier of meaning. Pair color with icon, label, or position (e.g., a red badge also says "Failed").
-  - Focus ring is global: `*:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }`. Don't suppress it.
-  - `prefers-reduced-motion` honored on animated primitives (Tailwind `motion-reduce:` variants).
-- **Per-surface gotchas:**
-  - Live regions for SSE-driven updates (notifications, activity) use `aria-live="polite"` so screen readers don't get spammed.
-  - Long lists use semantic `<ul>/<li>` or `<table>` — not `<div>` soup.
-- **Verification:** `apps/e2e/` wires `axe-core` smoke checks.
+- Radix/shadcn primitives cover focus management, ARIA roles, escape-to-close, focus-trap, keyboard nav — don't reimplement.
+- Icon-only buttons get `aria-label` or `title`. Sidebar nav uses `title` for rail tooltips.
+- Color is never the sole meaning carrier — pair with icon, label, or position.
+- Focus ring: global `*:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }`. Don't suppress.
+- `prefers-reduced-motion` via Tailwind `motion-reduce:` variants.
+- SSE-driven live regions use `aria-live="polite"`. Long lists use `<ul>/<li>` or `<table>`.
+- `apps/e2e/` wires `axe-core` smoke checks.
 
 ## Design tokens
 
-Semantic CSS variables that every component reads. Defined in [`src/styles.css`](../src/styles.css); aliased onto Tailwind utilities in [`tailwind.config.ts`](../tailwind.config.ts).
+Semantic CSS variables defined in [`src/styles.css`](../src/styles.css), aliased onto Tailwind utilities in [`tailwind.config.ts`](../tailwind.config.ts). Theme swaps via `[data-theme="light"|"dark"]` on `<html>`; `:root` defaults to dark.
 
-### Theme switching
-
-Themes swap via `[data-theme="light"|"dark"]` on `<html>`. `:root` defaults to dark. Variable names stay constant; oklch values flip.
-
-### Color — semantic roles (shadcn-named, canonical)
+### Color — semantic roles
 
 | Token | Purpose |
 |---|---|
@@ -187,9 +131,9 @@ Themes swap via `[data-theme="light"|"dark"]` on `<html>`. `:root` defaults to d
 | `--ring` | Focus-ring color — applied at the global `*:focus-visible` rule plus shadcn primitives. |
 | `--radius` | Component corner radius (6px). Tailwind `rounded` resolves to this. |
 
-Sidebar-scoped tokens (consumed by the shadcn `sidebar` primitive): `--sidebar-background`, `--sidebar-foreground`, `--sidebar-primary`, `--sidebar-primary-foreground`, `--sidebar-accent`, `--sidebar-accent-foreground`, `--sidebar-border`, `--sidebar-ring`.
+Sidebar-scoped tokens: `--sidebar-background`, `--sidebar-foreground`, `--sidebar-primary`, `--sidebar-primary-foreground`, `--sidebar-accent`, `--sidebar-accent-foreground`, `--sidebar-border`, `--sidebar-ring`.
 
-Legacy yaaos-named tokens (`--bg`, `--surface`, `--text`, `--accent-2`, `--danger`, etc.) coexist for unmigrated surfaces. They're scheduled for removal — don't reach for them in new code.
+Legacy tokens (`--bg`, `--surface`, `--text`, `--accent-2`, `--danger`, etc.) coexist for unmigrated surfaces — scheduled for removal; don't use in new code.
 
 ### Type
 
@@ -207,50 +151,17 @@ Body root is 13px (`html { font-size: 13px }`).
 
 Font family: Geist (sans + mono). Mono uses tabular-nums.
 
-### Spacing
+### Spacing + radius + motion
 
-Tailwind defaults; common rungs: `1` (4px), `2` (8px), `3` (12px), `4` (16px), `6` (24px), `8` (32px), `12` (48px), `16` (64px). No arbitrary values (`p-[7px]`) — add a rung or fix the inconsistency.
+Values are in `tailwind.config.ts` and `src/styles.css`. No arbitrary values (`p-[7px]`) — add a rung or fix the inconsistency.
 
-### Radius
+### Adding a token
 
-| Class | Value |
-|---|---|
-| `rounded-sm` | 4px |
-| `rounded` | 6px (`var(--radius)`) |
-| `rounded-md` | 8px |
-| `rounded-lg` | 10px |
-| `rounded-pill` | 9999px |
-
-### Motion
-
-| Class | Value | Use |
-|---|---|---|
-| `duration-100` | 100ms | Hover, focus. |
-| `duration-200` | 200ms | Open/close. |
-| `duration-400` | 400ms | Rare; expanding panels. |
-
-`prefers-reduced-motion` honored via Tailwind's `motion-reduce:` variants.
-
-### Focus ring
-
-```
-*:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-```
-
-Primitives keep their internal `focus-visible:ring-2 focus-visible:ring-ring` for explicit treatment. Both compose without double-drawing.
-
-### Adding a new token
-
-1. Add the variable to both `:root,[data-theme="dark"]` and `[data-theme="light"]` blocks in `styles.css`.
-2. Map it in `tailwind.config.ts` so a utility class exists.
-3. Update the table above.
+Add to both `:root,[data-theme="dark"]` and `[data-theme="light"]` in `styles.css`, map in `tailwind.config.ts`, update the color table above.
 
 ## Related docs
 
 - [components.md](components.md) — primitive + composite index. What's available; what each thing is for.
-- [patterns.md](patterns.md) — frontend code patterns: module docs template, query keys, time helpers, SSE invalidation, dumb-frontend rules.
+- [architecture.md](architecture.md) — layer model (core / domain / shared) and cross-cutting wiring.
+- [patterns.md](patterns.md) — import rules, testid conventions, query keys, time helpers, SSE invalidation, dumb-frontend rules.
 - [core_layout.md](core_layout.md) — React composition of the shell (`AppShell`, route outlet).
-- [modularity.md](modularity.md) — layer shape and import rules.

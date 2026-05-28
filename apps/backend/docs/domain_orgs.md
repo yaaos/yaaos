@@ -2,114 +2,72 @@
 
 > Orgs, memberships, roles, invitations, SSO config, onboarding aggregator.
 
-## Purpose
+## Scope
 
-Owns the tenancy boundary. Every non-user yaaos data row is `org_id`-scoped; this module owns the table that defines an org and the membership rows that decide who's in it and what they can do. Invitations are the sole access gate (no self-signup). SAML SSO config lives here too — the IdP metadata + per-org SP private key + JIT toggle + break-glass exempt-Owner pointer. Also houses the onboarding-status aggregator: `register_onboarding_contributor(name, check)` lets plugins push readiness callbacks into a per-org registry, and `get_onboarding_status(org_id)` fans them out; `onboarding_web.py` exposes `/api/settings/onboarding` + `/api/settings/plugins` for the settings page.
+Owns the tenancy boundary. Every non-user yaaos row is `org_id`-scoped; this module owns the `orgs` table and the membership rows that decide who's in it and at what role. Invitations are the sole access gate — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) also live here.
 
-## Public interface
+## Entities
 
-Exported from `app/domain/orgs/__init__.py`:
+- **Org** — UUID PK + immutable unique `slug` (used in `X-Org-Slug` header). Soft-deleted via `archived_at`.
+- **Membership** — composite PK `(user_id, org_id)`. Per-membership `@handle` (a user can have different handles per org); one of three roles. Removal deletes the row (presence = active).
+- **Invitation** — stores `sha256(raw_token)`, never the raw value. Single-use: `accepted_at` clamps the row.
+- **SsoConfig** — at most one per org. Holds IdP metadata XML, JIT toggle, exempt-Owner pointer, SP private key (encrypted via [core/secrets](core_secrets.md)).
 
-- Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`, `VcsState`, `CodingAgentInstall`.
-- Lookups — `get_org(org_id) -> Org | None`; `find_saml_org_slug_for_domain(domain) -> str | None` (returns the org slug for the first enabled SSO config whose `email_domains` contains `domain`, or `None`); `list_active_member_ids(org_id, *, session) -> list[UUID]` — returns the `user_id` of every current member of the org (membership rows are presence-is-active; removal deletes the row).
-- FastAPI deps — `assert_workflow_in_org(workflow_execution_id: UUID = Path(...)) -> None` — raises `HTTPException(404)` if the wfx doesn't exist or its ticket belongs to a different org than the caller's. 404 on cross-org access matches yaaos's existence-non-disclosure default.
-- Bootstrap primitives — `create_org(session, *, slug, display_name, actor) -> Org`; `create_membership(session, *, user_id, org_id, role, handle, actor) -> Membership`. Shape (a) session-taking fns; never commit. Emit `org.created` / `membership.created` audit entries. Use for admin-onboarding or seed paths where the org owner is already known (no invitation token needed). See [patterns.md § Service-fn session-handling convention](patterns.md).
-- Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`, `delete_expired_invitations() -> int`.
-- VCS — `get_vcs`, `set_vcs`, `clear_vcs`. One VCS per org; state lives on the `orgs` row.
-- Coding agents — `list_coding_agents`, `install_coding_agent`, `update_coding_agent_settings`, `uninstall_coding_agent`. Many per org via `org_coding_agents`.
-- Exceptions — `OrgNotFoundError`, `MembershipNotFoundError`, `InsufficientRoleError`, `InvitationError`, `InvitationExpiredError`, `InvitationUsedError`, `InvitationInvalidError`, `CodingAgentAlreadyInstalledError`, `CodingAgentNotInstalledError`.
+## Role hierarchy
 
-HTTP routes (registered side-effect via `web.py`, mounted from `app/web.py` to break the `domain.orgs ↔ core.sessions` import cycle):
+`OWNER ≥ ADMIN ≥ BUILDER`. `role.covers(required)` is the only comparison; per-action minimums declared at the call site.
 
-| Method | Path | Action |
-|---|---|---|
-| GET    | `/api/memberships`              | `MEMBERS_READ` — list members of the current org. |
-| POST   | `/api/memberships/invite`       | `MEMBERS_INVITE` — invite by email; sends an SMTP message and writes audit. |
-| POST   | `/api/memberships/accept`       | public allowlist; session cookie identifies the acceptor. |
-| PATCH  | `/api/memberships/{user_id}`    | `MEMBERS_CHANGE_ROLE` — update role; revokes the target's existing sessions. |
-| DELETE | `/api/memberships/{user_id}`    | `MEMBERS_REMOVE` — drop the row + revoke every session for the user. |
-| GET    | `/api/vcs`                      | `VCS_READ` — current VCS install (plugin_id + settings). |
-| POST   | `/api/vcs`                      | `VCS_WRITE` — set chosen plugin; returns either the new state OR a redirect URL when the plugin needs an out-of-band install. |
-| DELETE | `/api/vcs`                      | `VCS_WRITE` — clear the org's VCS choice. |
-| GET    | `/api/coding-agents`            | `CODING_AGENT_READ` — list installed coding-agent plugins. |
-| POST   | `/api/coding-agents`            | `CODING_AGENT_WRITE` — install a plugin. |
-| PATCH  | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — replace settings. |
-| DELETE | `/api/coding-agents/{plugin_id}`| `CODING_AGENT_WRITE` — uninstall. |
-| PATCH  | `/api/orgs`                     | `ORG_SETTINGS_WRITE` — update top-level org settings (today: `session_timeout_override`). |
-| GET    | `/api/api-keys`                     | `BYOK_READ` — list providers with status (`configured` / `not_set`) + timestamps. |
-| POST   | `/api/api-keys/{provider}`          | `BYOK_WRITE` — set/update the encrypted key for a provider. |
-| POST   | `/api/api-keys/{provider}/validate` | `BYOK_WRITE` — call the provider plugin's validator with the stored key. |
-| DELETE | `/api/api-keys/{provider}`          | `BYOK_WRITE` — remove the row. |
+- **Owner** — full control incl. org deletion, billing, SSO config, GitHub App linking. ≥1 Owner required per org.
+- **Admin** — Owner powers minus deleting the org or removing other Owners.
+- **Builder** — read findings, post replies, trigger reviews, manage own acks.
 
-### BYOK routes
+## Invitation lifecycle
 
-The HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here because BYOK keys are per-org and the routes need `core/sessions` deps; `core/byok` stays free of HTTP. Plaintext crosses the boundary only inbound on `POST {provider}` — `GET` returns `configured` / `not_set` only. The provider list is sourced from `core/byok`'s validator registry: a plugin registering its validator auto-surfaces here.
+1. `invite(...)` — signs `{org_id, email}` via `itsdangerous.URLSafeTimedSerializer` (salt `yaaos-invitation`, 7-day TTL), inserts row with `sha256(raw_token)`, sends SMTP email, audits `invitation/invited`. Returns `(Invitation, raw_token)` — raw token only ever surfaced in the email.
+2. `accept_invitation(raw_token, user_id, actor)` — verifies signature + TTL, looks up by token hash, refuses on `accepted_at` (`InvitationUsedError`) or expiry (`InvitationExpiredError`) or mismatch (`InvitationInvalidError`). On success: inserts membership, stamps `accepted_at`, audits `membership/joined`. Re-acceptance with existing membership is a no-op (still marks token used).
+3. Handle defaults to email local-part (lower-cased, ≤64 chars).
 
-### Session-timeout override
+`/api/memberships/accept` is `RouteSecurity.PUBLIC` — the signed token is the authorization, not a membership.
 
-`orgs.session_timeout_override` (nullable integer, minutes) lets an org tighten the idle-session window without redeploy. The check lives in [`core/sessions`](core_sessions.md)'s `require()` dep: every org-scoped request looks up the org's override and rejects with `401 session_idle_expired` when `last_seen_at + override` (or [`SESSION_IDLE_TIMEOUT`](core_database.md) when null) is in the past. Null = use the global default. Owner+Admin can change the value via `PATCH /api/orgs`; non-positive values are rejected with 422. Unknown body keys are ignored so future top-level settings can be added without breaking existing clients.
+## Membership mutations
 
-### VCS
+- `change_role` — updates row + calls `sessions.revoke_all_for_user`. User must re-authenticate.
+- `remove_member` — deletes row + revokes all sessions. No-op if row already gone.
 
-One VCS plugin per org. State lives on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). Switching is two-step: clear, then set. The github plugin's `install_url(org_id)` returns `None` — its install handshake is driven by a dedicated `POST /api/github/install/start` endpoint (so `X-Org-Slug` + CSRF reach the auth chain) which returns the signed github.com redirect URL as JSON. The install callback calls `set_vcs(...)` to durably record the org's choice on first-bind. All three mutations audit (`vcs.installed`, `vcs.cleared`).
+Both audit with `from_role` + `to_role` payload.
 
-### Coding agents
+## VCS + coding agents
 
-Many coding-agent plugins per org. Each install is an `org_coding_agents` row keyed by `(org_id, plugin_id)` with a `settings jsonb`. Mutations audit (`coding_agent.installed`, `coding_agent.settings_updated`, `coding_agent.uninstalled`). Plugin-specific settings shape lives in the plugin itself.
+- One VCS plugin per org. State on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). GitHub install handshake is via `POST /api/github/install/start` (separate endpoint so `X-Org-Slug` + CSRF are available); `set_vcs` records the choice on first-bind. Switching is two-step: clear then set.
+- Many coding-agent plugins per org via `org_coding_agents(org_id, plugin_id)` with `settings jsonb`. All mutations audit.
 
-## Module architecture
+## BYOK routes
 
-### Entities
+HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYOK keys are per-org; routes need `core/sessions` deps). `GET` returns `configured` / `not_set` only — plaintext never leaves. Provider list sourced from `core/byok`'s validator registry.
 
-- **Org** — UUID PK + immutable unique `slug` used in `/orgs/{slug}/...` and the `X-Org-Slug` header. Soft-deleted via `archived_at`.
-- **Membership** — composite PK `(user_id, org_id)`. Carries a per-membership `@handle` (a user can be `@jack` here and `@jkora` there) and one of three roles.
-- **Invitation** — pending offer. Stores the sha256 hex of the signed invitation token, never the raw value. Single-use: `accepted_at` clamps the row.
-- **SsoConfig** — at most one per org. Holds the IdP metadata XML, JIT toggle, exempt-Owner pointer, and the SP private key (encrypted via [core/secrets](core_secrets.md)) used to sign SAML AuthnRequests.
+## Session-timeout override
 
-### Key value objects
-
-- **`Role`** — `OWNER ≥ ADMIN ≥ BUILDER`. `role.covers(required)` is the only comparison anywhere in the codebase; per-action minimums declared at the call site.
-  - Owner — full control incl. org deletion, billing, SSO config, GitHub App linking. ≥1 Owner required per org.
-  - Admin — Owner powers minus deleting the org or removing other Owners.
-  - Builder — read findings, post replies, trigger reviews, manage own acks.
-
-### Invitation lifecycle
-
-1. `invite(org_id, email, role, invited_by_user_id, actor)` — signs `{org_id, email}` via `itsdangerous.URLSafeTimedSerializer` (salt `yaaos-invitation`, 7-day TTL), inserts the invitation row with `sha256(raw_token)`, sends an SMTP plain-text email containing the accept URL, writes an `invitation/invited` audit entry. Returns `(Invitation, raw_token)` — the raw token is only ever surfaced inside the email (test callers also read it from the return).
-2. `accept_invitation(raw_token, user_id, actor)` — verifies the signature + TTL, looks up the row by token hash, refuses on `accepted_at` set (`InvitationUsedError`) or expiry (`InvitationExpiredError`), refuses on payload/row mismatch (`InvitationInvalidError`). On success: insert the membership with `Role(row.role)`, stamp `accepted_at`, write an `membership/joined` audit entry. Idempotent against existing membership — re-acceptance is a no-op that still marks the row used.
-3. Membership creation = always one row per `(user_id, org_id)`. Handle defaults to the email local-part (lower-cased, ≤64 chars).
-
-### Membership mutations
-
-- `change_role(org_id, user_id, new_role, actor)` updates the row and calls `sessions.revoke_all_for_user(user_id)` — the affected user must re-authenticate.
-- `remove_member(org_id, user_id, actor)` deletes the row and revokes every session for the user. No-op if the membership is already gone.
-
-Both write `membership/role_changed` or `membership/removed` audit entries with the `from_role` + `to_role` payload.
-
-### Email transport
-
-`email.send_plain` wraps blocking `smtplib` in `asyncio.to_thread`. Dev points at Mailpit (`smtp://localhost:1025`); prod points wherever the operator configured (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM`). In `YAAOS_ENV=test` the call short-circuits and appends to `get_test_inbox()` — tests assert against the list.
-
-### Public-allowlist exception for `/accept`
-
-`/api/memberships/accept` is classified as `RouteSecurity.PUBLIC` (in `PUBLIC_EXACT`) because it must work for users who have a session but not yet a membership in the org. The signed token is the authorization, not the membership.
-
-### Import-cycle break
-
-`domain.orgs.web` imports `core.sessions.dependencies` (for `require`, `public_route`, `current_actor`). `core.sessions.dependencies` imports `domain.orgs` (repository, service.Membership, types.Role). To avoid a partial-init `ImportError`, `domain.orgs.__init__` does NOT trigger `orgs.web`; the side-effect import lives in `app/web.py` after both modules have finished loading.
+`orgs.session_timeout_override` (nullable integer, minutes) tightens the idle-session window per org. Checked in [`core/sessions`](core_sessions.md) `require()` dep on every org-scoped request. Null = global default. Non-positive values rejected with 422.
 
 ## Data owned
 
-- `orgs`, `memberships`, `invitations`, `sso_configs`.
-- `UNIQUE(org_id, handle)` on `memberships` keeps `@mentions` unambiguous inside an org.
-- Partial unique `uq_invitations_pending_org_email` on `(org_id, lower(email)) WHERE accepted_at IS NULL` blocks duplicate pending invites for the same address.
-- `orgs.workspace_provider` — `in_memory` (testing) or `remote_agent`. Drives [`core/workspace`](core_workspace.md) provider selection.
-- `orgs.registered_iam_arn` — canonical IAM role ARN customers register for AWS-IAM auth. Partial UNIQUE (`WHERE NOT NULL`) prevents two orgs claiming the same ARN. Stored lowercased to keep match with `core/agent_gateway` canonicalization (IAM names are unique-case-insensitive).
-- `orgs.aws_region` — STS region the agent runs in. Paired with `registered_iam_arn` via check constraint `ck_orgs_arn_region_paired` (both-or-neither). Cross-checked against the signed STS URL in `core/agent_gateway` to defend against cross-region replay.
-- `org_settings_web.PATCH /api/orgs` accepts `workspace_provider`, `registered_iam_arn`, `aws_region` together. ARN must full-match `arn:aws:iam::<12-digit>:role/<name>` with no path slashes — paths get stripped by AWS's `assumed-role` form, so two orgs registering different-path roles could collide on the same canonical and one would receive the other's bearer. Rejects malformed shapes with 422 `invalid_registered_iam_arn`; rejects unpaired ARN/region with 422 `arn_and_region_must_be_paired`. SPA exposes them through `WorkspaceSettingsPage`.
+Tables: `orgs`, `memberships`, `invitations`, `sso_configs`. See `models.py` + [core_database.md](core_database.md) for columns.
+
+Notable constraints:
+- `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.
+- Partial unique `uq_invitations_pending_org_email` on `(org_id, lower(email)) WHERE accepted_at IS NULL` — blocks duplicate pending invites.
+- `orgs.registered_iam_arn` partial UNIQUE (`WHERE NOT NULL`), stored lowercased. Paired with `orgs.aws_region` via check constraint `ck_orgs_arn_region_paired` (both-or-neither). ARN must match `arn:aws:iam::<12-digit>:role/<name>` with no path slashes — paths are stripped by AWS's assumed-role form, so different-path roles could collide on the same canonical.
+
+## Import-cycle note
+
+`domain.orgs.web` imports `core.sessions.dependencies`; `core.sessions.dependencies` imports `domain.orgs`. The side-effect import of `orgs.web` lives in `app/web.py` after both modules finish loading — `domain.orgs.__init__` does NOT trigger it.
+
+## HTTP routes
+
+See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/coding-agents`, `/api/orgs`, `/api/api-keys`).
 
 ## How it's tested
 
 - `test/test_repository.py` — repository helpers against real Postgres.
-- `test/test_invitations.py` — service-layer coverage: invite (verifies inbox), accept happy path, used-token error, expired-token error, garbage-token error, remove revokes sessions, role change revokes sessions.
-- `test/test_membership_endpoints.py` — ASGI-driven endpoint coverage: invite + email sent, member role rejected for invite, accept happy path, accept-expired → 410, accept-used → 410, remove revokes sessions, change_role rotates sessions, list-members returns roster.
+- `test/test_invitations.py` — invite, accept, used-token, expired-token, garbage-token, remove revokes sessions, role change revokes sessions.
+- `test/test_membership_endpoints.py` — ASGI-driven: invite + email sent, role enforcement, accept happy path, accept-expired → 410, accept-used → 410, remove/change_role session revocation.

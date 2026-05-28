@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backend CI: lint, format check, modularity, table-access, tests, semgrep.
+# Backend CI: lint, format check, module sync, table-access, tests, semgrep.
 # Runs from apps/backend/ as cwd. (DI-over-@patch is enforced by ruff TID251.)
 
 set -euo pipefail

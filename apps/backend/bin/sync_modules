@@ -29,7 +29,7 @@ LAYERS = ("core", "domain", "plugins", "testing")
 # `testing/` is the test-scaffolding layer — stubs, recorders, fake plugins. Nothing
 # else may import from `testing/` (enforced by the same layering check below).
 
-# Permitted core→domain edges (auth/identity infra only — see docs/modularity.md).
+# Permitted core→domain edges (auth/identity infra only — see docs/architecture.md).
 # Each tuple is (from_module, to_module) where both are fully-qualified app paths.
 PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset(
     [
@@ -203,7 +203,7 @@ def check_layering(modules: list[tuple[str, str]]) -> list[str]:
 
     Edges listed in PERMITTED_CROSS_LAYER_EDGES are exempt — they are
     documented auth/identity infra reads that cross the core→domain boundary
-    by design (see docs/modularity.md § Permitted core→domain edges).
+    by design (see docs/architecture.md § Layers).
     """
     errors: list[str] = []
     for layer, name in modules:

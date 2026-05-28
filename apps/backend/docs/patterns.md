@@ -66,6 +66,55 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
 - Module-level only (heavy-ML exception requires `# noqa: PLC0415`).
 - Other modules import only `__all__` exports. Internal cross-module imports are Tach-rejected.
 
+## Module structure
+
+### Conventional files
+
+Each subdirectory of a layer is a module. Standard files:
+
+- `__init__.py` — public interface: re-exports + `__all__` + registration side effects.
+- `module.py` — exports `get_module_name()` for registrations and audit kinds.
+- `service.py` — business-logic functions (split as the module grows).
+- `models.py` — SQLAlchemy + Pydantic types owned by the module.
+- `web.py` — FastAPI router + handlers (only if the module exposes HTTP routes).
+- `test/` — tests live inside the module.
+
+### `__init__.py` rules
+
+- `__all__` is always present. `bin/sync_modules` derives the tach interface from it.
+- All implementation lives in named submodules. No business logic in `__init__.py`.
+- Order: re-exports, then `__all__`, then registration calls.
+- No lazy/conditional imports (rare heavy-ML case: `# noqa: PLC0415`).
+- No self-imports — internal files use direct submodule paths, not `from app.domain.foo import bar` within the same module.
+
+### `web.py` routing convention
+
+- Router carries no prefix. `RouteSpec.url_prefix` (defaulting to `/api/{module_name}`) is applied by `core/webserver`.
+- Call `register_routes(RouteSpec(...))` at the bottom; one prefix per module, enforced at boot.
+- See [core_webserver.md](core_webserver.md) for the full `RouteSpec` registry contract.
+
+### `bin/sync_modules` workflow
+
+Runs the full module-sync sequence:
+
+1. Discover modules under each layer.
+2. Write `tach.toml` — `[[modules]]` entries + `[[interfaces]]` blocks (expose lists from `__all__`).
+3. Check internal imports (no relative imports across boundaries, no `__init__` self-imports).
+4. Check layering.
+5. Run `tach check --interfaces`.
+6. Run `bin/check_table_access`.
+
+Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing a module interface.
+
+### Adding a new module
+
+1. Create the directory under the appropriate layer.
+2. Add `__init__.py` (re-exports + `__all__`) and `module.py` (`get_module_name`).
+3. If exposing HTTP routes: add `web.py`, call `register_routes` at bottom, ensure `__init__.py` imports `web` so the side effect runs.
+4. For a new plugin: ensure `app/web.py` imports the plugin package.
+5. Run `bin/sync_modules`.
+6. Add `apps/backend/docs/<layer>_<module>.md` following the per-module template.
+
 ## Background work
 
 ### `core/observability.spawn()`

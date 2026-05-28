@@ -4,7 +4,8 @@ FastAPI service in Python 3.13. Single Docker image runs the API, serves the bun
 
 ## Read first
 
-- [modularity.md](modularity.md) — Tach-enforced layer model (`core < domain < plugins < testing`), `RouteSpec` registry, module shape.
+- [architecture.md](architecture.md) — layer model, extension points (plugin Protocols), structural patterns, key cross-module flows.
+- [patterns.md](patterns.md) — backend conventions: module shape, `RouteSpec` registry, DI-over-patch, table-ownership, audit-log payloads, time-control env vars, async-everywhere, `spawn` contract.
 - [patterns.md](patterns.md) — backend conventions: DI-over-patch, table-ownership, audit-log payloads, time-control env vars, async-everywhere, `spawn` contract.
 
 ## Module map

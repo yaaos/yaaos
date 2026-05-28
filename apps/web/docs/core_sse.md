@@ -16,7 +16,7 @@ Owns the single browser-wide `EventSource` connecting to `/api/sse/general` and 
 
 ### Mounting
 
-`<SSESubscriber>` wraps the router in `main.tsx`. The `EventSource("/api/sse/general")` is held at module scope — **not** inside the `useEffect`. The React effect only attaches the active `QueryClient`; the connection itself outlives the component, so React StrictMode's dev-mode mount → unmount → remount cycle does NOT open new connections. Exactly one connection per browser tab.
+`<SSESubscriber>` wraps the router in `main.tsx`. The `EventSource` is module-scoped, not inside `useEffect` — the effect only attaches the `QueryClient`. StrictMode double-mount doesn't open extra connections. Exactly one connection per tab.
 
 ### Event → invalidation map
 
@@ -33,15 +33,7 @@ Invalidations are deduped on a 200 ms trailing debounce keyed by `JSON.stringify
 
 ### Reconnection
 
-Native `EventSource` auto-reconnects on socket drop with exponential backoff. `onerror` is a logger; the browser handles retry. After a long disconnect, tanstack-query's mount + window-focus refetch behaviour resyncs queries on the next interaction; detail-page queries that still carry a `refetchInterval` cover state drift continuously.
-
-### Why a subscriber, not per-component listeners
-
-Each `EventSource` is a long-lived stream holding a server-side connection. Mounting one per component would multiply connections by N pages × M tabs. One-at-the-root keeps it at exactly 1 per tab and centralises the invalidation map.
-
-### SSR safety
-
-The effect early-returns if `window` or `EventSource` is undefined. Browser-only today; the guard means a future SSR pass won't crash.
+Native `EventSource` auto-reconnects with exponential backoff. `onerror` is a logger. TanStack Query's mount + window-focus refetch resyncs after a long disconnect; `refetchInterval` queries cover continuous drift.
 
 ## Data owned
 

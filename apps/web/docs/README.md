@@ -6,12 +6,10 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 
 - [design.md](design.md) — design principles, layout, navigation rules, state patterns, density, voice, icons, a11y, design tokens. Read before adding a surface or chrome element.
 - [components.md](components.md) — index of available primitives + composites.
-- [modularity.md](modularity.md) — layer shape, import rules, testid conventions.
-- [patterns.md](patterns.md) — query-key taxonomy, time helpers, SSE invalidation, error boundary.
+- [architecture.md](architecture.md) — layer model (core / domain / shared), cross-cutting wiring, key flows.
+- [patterns.md](patterns.md) — module shape, import rules, testid conventions, query-key taxonomy, time helpers, SSE invalidation.
 
 ## Module map
-
-4 core docs + the domain docs below.
 
 ### Core
 
@@ -35,17 +33,13 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 | [domain_user](domain_user.md) | `/user/details`, `/user/security`, `/user/messaging` — self-service profile + 2FA. |
 | [domain_orgs](domain_orgs.md) | Org picker (`/orgs`) + Members + Audit + SSO config — surfaces tied to a specific org's identity layer. |
 
-## Directory shape
-
-Under `apps/web/src/`: `core/` (api, sse, routing, layout, observability), `domain/` (one folder per surface), `shared/` (components, hooks, utils, types), and `main.tsx` (entry — mounts `QueryClient` + `SSESubscriber` + Router).
-
 ## Running locally
 
 `pnpm dev` from `apps/web/` starts Vite on :5173, proxying `/api/*` and `/assets/*` to the backend (run separately via `apps/backend/bin/dev`).
 
 ## CI
 
-`apps/web/bin/ci` runs Biome format-check + lint, `tsc --noEmit`, Vitest, and the Vite production build. Semgrep static security scanning lives in its own RWX task (`web-security` in `.rwx/push.yml`) using the official `semgrep/semgrep` Docker image — kept out of `bin/ci` because the web-builder image is node-only (no Python) and the web pipeline must not depend on the backend pipeline's artifacts. Local dev shortcut: `cd apps/web && uv run --directory ../backend semgrep scan --config p/typescript --config p/react --config p/owasp-top-ten --error --metrics off --quiet src` — reuses the semgrep already installed in the backend's uv venv as a convenience (not a structural dependency; the rulesets and target are entirely web-specific). Full docker-image invocation also documented inline in `apps/web/bin/ci`.
+`apps/web/bin/ci` runs Biome, `tsc --noEmit`, Vitest, and the Vite build. Semgrep runs in a separate RWX task (`web-security`) via the `semgrep/semgrep` Docker image — kept out of `bin/ci` because the web-builder image is node-only. Local semgrep shortcut and full docker invocation documented inline in `apps/web/bin/ci`.
 
 ## Stack
 

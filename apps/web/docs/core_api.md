@@ -8,21 +8,15 @@ A small, hand-maintained layer between the FastAPI backend and the UI. Owns the 
 
 ## Public interface
 
-Re-exports from `@core/api`:
-- **Client:** `apiClient`, `apiFetch`, `getCurrentOrgSlug`, `setCurrentOrgSlug`.
-- **Resource types:** `HealthResponse`, `Ticket`, `Lesson`, `ReviewJob`, `ReviewJobActivityEvent`, `Finding`, `FindingSnippetLine`, `AuditEntry`, `GithubInstallation`, `GithubRepository`, `GithubRepositoriesResponse`, `PluginMeta`, `PluginType`, `PluginHealth`, `ConfigStatus`, `CreateOrgResponse`, `DashboardResponse`, `DashboardStats`, `HitlHistoryEntry`, `MineOrg`, `Notification`, `NotificationsPopover`, `SsoDiscoverResult`, `ConversationRow`, `FindingRow`, `FindingThread`, `OrgSettings`, `ReviewTimelineRow`, `ThreadMessage`, `WorkspaceConnectionStatus`.
-- **Queries:** `useHealth`, `useConfigStatus`, `useDashboard`, `useTickets`, `useTicket`, `useTicketAudit`, `useReviewsForTicket`, `useReviewJobsForTicket`, `useLessons`, `useMetricsSummary`, `useGithubInstallation`, `useGithubRepositories`, `usePluginHealth`, `useNotifications`, `useNotificationsPopover`, `useMyOrgs`, `useHitlHistory`, `useOrgSettings`, `useWorkspaceConnectionStatus`, `useConversationsForTicket`, `useFindingsForTicket`, `useThreadForFinding`.
-- **Mutations:** `useRereviewMutation`, `useFullRereviewMutation`, `useCancelReviewerJobs`, `useCreateLesson`, `useDeleteLesson`, `useSetAnthropicKey`, `useMarkNotificationRead`, `useMarkAllNotificationsRead`, `useAckFinding`, `usePushBackFinding`, `useCreateOrg`, `useHitlRespond`, `useSsoDiscover`, `useUpdateOrgSettings`.
+Re-exports from `@core/api`: client helpers (`apiClient`, `apiFetch`, `getCurrentOrgSlug`, `setCurrentOrgSlug`), one TypeScript type per backend resource, one TanStack Query hook per endpoint, and one mutation hook per write operation. See `apps/web/src/core/api/index.ts` for the full list.
 
 ## Module architecture
 
 ### Two clients, one helper
 
-`client.ts`:
-- `apiClient` — `openapi-fetch` typed client. `Paths` is hand-declared and currently only covers `/api/health`.
-- `apiFetch<T>(path, init?)` — generic fetch wrapper. On `401` it hands the response to [`handleAuthFailure`](../src/core/api/auth-failure.ts) (lazy-imported to break the load-path cycle), which hard-navigates to `/login?reason=...&next=<current-path>` and throws `AuthError`. On any other non-2xx, throws `${status} ${path}: ${body}`. Returns `undefined` on 204; parsed JSON otherwise.
-
-OpenAPI codegen is deferred — the surface is small enough that hand-declared types are cheaper.
+`client.ts` exposes two surfaces:
+- `apiClient` — `openapi-fetch` typed client. `Paths` hand-declared (currently covers `/api/health`); codegen deferred.
+- `apiFetch<T>(path, init?)` — generic fetch wrapper. On 401, lazy-imports `handleAuthFailure` (breaks load-path cycle) which hard-navigates to `/login?reason=...&next=<current-path>`. Non-2xx throws `${status} ${path}: ${body}`. 204 → `undefined`.
 
 ### Central 401 handler
 
@@ -35,47 +29,20 @@ OpenAPI codegen is deferred — the surface is small enough that hand-declared t
 
 ### Resource types
 
-Each API resource has a type alias in `client.ts`, mirroring the backend Pydantic models. Notes:
-- `Ticket` — includes `pr_number` / `author_login` / `is_draft` enriched from the linked PR at read-time.
-- `Finding` — `severity` is `"must-fix" | "nit" | "suggestion" | "info"`; carries optional `rationale`, `snippet: FindingSnippetLine[]`, `applied_lesson_ids`, and `source_agent` (which yaaos subagent surfaced this finding).
-- `ReviewJob` — one row per (PR × review run). Full state including `current_step`, `last_heartbeat_at`, `tokens_in`/`out`, `findings`, `model`, `effort`, and `activity_log` (persisted chronological events from the coding-agent stream).
-- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`. `message` is rendered server-side. Used in `ReviewJob.activity_log` (persisted) and as the payload of workspace-activity SSE events (`/api/sse/workspace_activity/{id}`).
-- `PluginMeta` — driven by `/api/settings/plugins` so the Settings UI auto-lists plugins.
+Type aliases in `client.ts` mirror backend Pydantic models. Non-obvious fields:
+- `Ticket` — `pr_number`, `author_login`, `is_draft` enriched from the linked PR at read-time.
+- `Finding` — `severity: "must-fix" | "nit" | "suggestion" | "info"`; optional `rationale`, `snippet: FindingSnippetLine[]`, `applied_lesson_ids`, `source_agent`.
+- `ReviewJob` — one row per (PR × review run); includes `activity_log` (persisted coding-agent stream events).
+- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used in `ReviewJob.activity_log` and as the SSE payload for `/api/sse/workspace_activity/{id}`.
+- `PluginMeta` — from `/api/settings/plugins`; drives the Settings UI plugin list.
 
 ### Query hooks
 
-`queries.ts` defines one hook per endpoint:
-
-| Hook | Endpoint | Refetch |
-|---|---|---|
-| `useHealth` | `GET /api/health` | 5s |
-| `useOnboarding` | `GET /api/settings/onboarding` | 5s |
-| `useTickets` | `GET /api/tickets` | 3s |
-| `useTicket(id)` | `GET /api/tickets/${id}` | — |
-| `useTicketAudit(id)` | `GET /api/tickets/${id}/audit` | 3s |
-| `useReviewJobsForTicket(id)` | `GET /api/reviewer/jobs/by-ticket/${id}` | 3s |
-| `useLessons(repo?)` | `GET /api/lessons[?repo=...]` | — |
-| `useMetricsSummary` | `GET /api/reviewer/metrics` | 5s |
-| `useGithubInstallation` | `GET /api/github/installation` | 5s |
-| `useGithubRepositories` | `GET /api/github/repositories` | on demand |
-| `usePluginsList` | `GET /api/settings/plugins` | — |
-| `usePluginHealth(id)` | `GET /api/${id}/health` | 5s |
-
-Polling intervals are a safety net for missed SSE messages (see [core_sse.md](core_sse.md)).
+`queries.ts` — one hook per endpoint. Polling intervals (3–5s) are a safety net for missed SSE messages (see [core_sse.md](core_sse.md)); see the file for the full endpoint-to-hook mapping.
 
 ### Mutation hooks
 
-Mutations invalidate the keys they affect on success:
-
-| Hook | Endpoint | Invalidates |
-|---|---|---|
-| `useRereviewMutation` | `POST /api/reviewer/rereview?ticket_id=...` | `["tickets"]`, `["reviewer","jobs",id]`, `["tickets",id,"audit"]`, `["reviewer","metrics"]` |
-| `useCancelReviewerJobs` | `POST /api/reviewer/cancel?ticket_id=...` | same as re-review |
-| `useCreateLesson` | `POST /api/lessons` | `["lessons", repo]` |
-| `useDeleteLesson` | `DELETE /api/lessons/${id}` | `["lessons", repo]` |
-| `useSetAnthropicKey` | `POST /api/claude_code/api_key` | `["onboarding"]`, `["plugin-health","claude_code"]` |
-
-Key taxonomy: see [patterns.md § Query keys](patterns.md#query-keys).
+Each mutation invalidates the query keys it affects on success. Key taxonomy: [patterns.md § Query keys](patterns.md#query-keys). Hook-to-endpoint mapping is in `queries.ts`.
 
 ## Data owned
 
@@ -83,7 +50,4 @@ None. The `QueryClient` lives in `main.tsx`; hooks here just read/write it.
 
 ## How it's tested
 
-- `apps/web/src/domain/dashboard/test/dashboard.test.tsx` exercises `useOnboarding` indirectly.
-- Every e2e spec in `apps/e2e/tests/*.spec.ts` drives full hook + backend round-trips.
-
-Non-trivial cache logic (custom `select`, optimistic updates) earns dedicated Vitest tests in `apps/web/src/core/api/test/`.
+E2e specs in `apps/e2e/tests/*.spec.ts` cover full hook + backend round-trips. Non-trivial cache logic (custom `select`, optimistic updates) gets Vitest tests in `apps/web/src/core/api/test/`.

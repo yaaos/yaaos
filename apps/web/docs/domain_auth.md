@@ -4,21 +4,15 @@
 
 ## Surfaces
 
-- `/login` — `LoginPage`. Email field, on Continue the SPA calls `useSsoDiscover` (`POST /api/auth/sso/discover`) and renders the matching provider button. Falls back to a multi-provider panel (preserves `data-testid="login-test"` for e2e) when discover returns no preferred provider.
-- Logout — `useLogoutAll` mutation, fired from the User Card popover in the sidebar.
+- `/login` — `LoginPage`. Email field → `useSsoDiscover` (`POST /api/auth/sso/discover`) → provider button. Falls back to multi-provider panel when discover returns no preferred provider.
+- Logout — `useLogoutAll` mutation; fired from the sidebar User Card popover. Re-exported from `domain/auth/index.ts` for cross-domain callers.
 
-## Data flow
+## Key behavior
 
-- `useSsoDiscover` — `POST /api/auth/sso/discover` with `{email}`. Returns `{provider: "github"}` for any well-formed email.
-- GitHub button POSTs to `/api/sso/start` (carries CSRF) and redirects.
-- TOTP step (when SSO returns a 2FA challenge) renders inline; not a separate route.
+- No client cache — mounts before any user identity is known.
+- GitHub button POSTs to `/api/sso/start` (carries CSRF) then redirects; TOTP challenge renders inline, not a separate route.
+- `data-testid="login-test"` panel is the e2e contract for "login page is rendered."
 
-## State / contract
+## Code
 
-- No client cache — Login mounts before any user identity is known.
-- Provider button presence drives the `data-testid="login-test"` panel; that testid is the e2e contract for "is the login page rendered?"
-
-## Where the code lives
-
-- `apps/web/src/domain/auth/LoginPage.tsx`
-- `apps/web/src/domain/auth/index.ts` re-exports `useLogoutAll` for cross-domain callers (Account → Security).
+`apps/web/src/domain/auth/LoginPage.tsx`, `apps/web/src/domain/auth/index.ts`.

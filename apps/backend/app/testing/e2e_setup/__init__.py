@@ -15,7 +15,7 @@ Routes (all `POST`, all return 404 in prod — gated on `is_non_prod`):
     `{"repo_external_id", "title", "body"}`.
 
 Layering: this module lives in the testing layer (above plugins, per
-`docs/modularity.md`) so it can depend on every domain + plugin model.
+`docs/architecture.md`) so it can depend on every domain + plugin model.
 It is imported from `app/web.py` only when `is_non_prod` (`yaaos_env` is
 `dev` or `test`); prod wheels exclude the testing/ tree entirely (see
 `pyproject.toml`).

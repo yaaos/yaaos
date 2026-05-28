@@ -2,83 +2,50 @@
 
 > Tempdir-backed `WorkspaceProvider`. Clones repos onto the host filesystem and runs coding-agent CLIs in-process. No isolation — for single-tenant deployments where the host trusts the coding-agent CLI.
 
-## Purpose
+## Scope
 
-The only concrete `core/workspace.WorkspaceProvider` in . Implements `provision`, `run_coding_agent_cli`, `destroy`, `health_check`. Provisions by `mkdtemp` + `git clone --depth=1`, runs coding-agent CLIs in that tempdir, rmtrees on destroy. Provider singleton holds no state — per-workspace state lives in the `plugin_state` dict returned from `provision` and passed back into every call.
-
-## Public interface
-
-- Singleton `InMemoryWorkspaceProvider` registered into `core/workspace` at `bootstrap()`.
-- Side-effect import of `web.py` mounts routes (prefix `/api/in_process`):
-  - `GET /health` — `{healthy, message, checked_at}`. Tempdir is always available; returns healthy unconditionally.
-- Domain code goes through `core/workspace`'s registry and the abstract `Workspace` handle.
+The only concrete `core/workspace.WorkspaceProvider` in . Implements `provision`, `run_coding_agent_cli`, `destroy`, `health_check`. Provider singleton holds no state — per-workspace state lives in the `plugin_state` dict returned from `provision`.
 
 ## Module architecture
 
-### `provision(spec)` — git clone with short-lived auth
-
-`spec: WorkspaceSpec` carries `repo` (`plugin_id` + `external_id`), `sha`, `branch_name`, `base_sha`, `base_branch`, `org_id`. `org_id` required — can't mint a clone token without it.
+### `provision(spec)`
 
 1. `tempfile.mkdtemp(prefix="yaaos-ws-")`.
-2. `_write_askpass()` — chmod 0700 askpass script in a sibling tempfile (outside `working_dir` because git clone requires an empty target).
-3. `vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)` — fresh token via the VCS plugin registry. Lives only in the Python process and briefly in the subprocess env.
-4. Ask the VCS plugin for the clone URL — `vcs.get_plugin(plugin_id).clone_url(external_id)`. The provider holds no VCS-specific URL knowledge; the GitHub plugin returns `<github_web_base_url>/<external_id>.git`.
-5. Subprocess env: copy of `os.environ` plus `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, `YAAOS_GIT_TOKEN`. Token never on argv — git asks via the askpass script.
-6. `git clone --depth=1 --branch <branch_name|HEAD>` — shallow clone of head branch tip.
-7. If `spec.sha` set and not `"HEAD"`: `git fetch --depth=1 origin <sha>` then `git checkout <sha>`. Branch may have advanced; agents must see the PR's head sha.
-8. If `spec.base_sha` set: `git fetch --depth=1 origin <base_sha>` (best-effort, logged-and-continued on failure). Brings the base commit as an orphan in the shallow store so subagents can run `git diff <base_sha>..HEAD` — diff works on tree endpoints without needing the intermediate chain. Whatever branch the PR targets (not necessarily `main`).
-9. Write a `.yaaos-workspace` marker file (best-effort).
-10. `finally` unlinks the askpass. Provision failures rmtree the working_dir before re-raising.
+2. Write chmod-0700 askpass script in a sibling tempfile.
+3. `vcs.get_installation_token(spec.repo.plugin_id, spec.org_id)` — token lives only in process memory and briefly in subprocess env (via `GIT_ASKPASS`/`YAAOS_GIT_TOKEN`; never on argv).
+4. `git clone --depth=1 --branch <branch>` from the VCS plugin's `clone_url`.
+5. If `spec.sha` is set and not `"HEAD"`: fetch + checkout the exact PR head sha.
+6. If `spec.base_sha` is set: `git fetch --depth=1 origin <base_sha>` (best-effort). Brings the base commit into the shallow store so agents can `git diff <base_sha>..HEAD` without the intermediate chain.
+7. Write `.yaaos-workspace` marker (best-effort).
 
-Returns `{"working_dir": working_dir}` — becomes `Workspace.plugin_state`. Consumers never see the path; they go through the `Workspace` handle.
+Returns `{"working_dir": working_dir}`. Failure rmtrees before re-raising.
 
 ### `run_coding_agent_cli`
 
-Lets a coding-agent plugin run a CLI inside the workspace. Provider owns subprocess lifecycle so the coding-agent plugin stays vendor-only (see `plugins_claude_code.md` and `core/workspace` docs).
+`asyncio.create_subprocess_exec` with `cwd=working_dir`, `start_new_session=True` (enables process-group kill). Two modes:
+- No `on_stream_line` → buffered via `communicate(input=stdin, timeout=...)`.
+- With `on_stream_line` → stream stdout line-by-line; stderr buffered.
 
-1. Read `working_dir` from `plugin_state`. Missing/vanished → `WorkspaceExecError`.
-2. `asyncio.create_subprocess_exec` with `cwd=working_dir`, `start_new_session=True` (so SIGKILL can target the process group if the agent spawns children).
-3. Branch on `on_stream_line`:
-   - `None` → `asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout_seconds)` (buffered).
-   - Set → stream stdout line-by-line via `proc.stdout.readline()` and invoke the callback per line. stderr is still buffered (small enough; only consulted on failure).
-4. Return `CodingAgentCliResult`. Bytes decoded `errors="replace"` so partial UTF-8 never crashes the caller.
-
-Two kill paths share a single `_kill_process_group(proc)` helper (SIGTERM → 2s grace → SIGKILL of the whole process group):
-
-- **Timeout** — `asyncio.wait_for` raises `TimeoutError`; we kill, drain, return `CodingAgentCliResult(timed_out=True, exit_code=-1, ...)`.
-- **Caller cancel** — outer task is cancelled (e.g., workflow-engine `request_cancel` flips `cancel_requested=True` and the engine's per-step task gets cancelled); `CancelledError` raises inside `wait_for`. We kill, drain (with a 5s upper bound so a wedged child can't block the cancel forever), then re-raise `CancelledError`. The cancellation unwinds normally; the workspace's `async with` exit destroys the tempdir.
-
-Without the cancel kill path, the CLI would keep running until its own timeout even though the workflow transitioned to `cancelled`.
+Two kill paths share `_kill_process_group` (SIGTERM → 2s grace → SIGKILL):
+- **Timeout** — returns `CodingAgentCliResult(timed_out=True)`.
+- **Caller cancel** — kills, drains (5s cap), re-raises `CancelledError`. Without this, the CLI would keep running until its own timeout after the workflow transitions to `cancelled`.
 
 Provider does not interpret `argv` or `stdout`; schema-aware logic lives in the coding-agent plugin.
 
 ### `destroy`
 
-`shutil.rmtree(working_dir, ignore_errors=True)`. Idempotent — missing key, missing directory, or partial state all no-op. Logs `workspace.in_process.destroyed` on success.
-
-### `health_check`
-
-Always `healthy=True, message="ok"` in . Tempdir is part of the host filesystem; nothing to probe.
-
-### Internal helpers
-
-- `_write_askpass()` — chmod 0700 askpass in a sibling tempfile.
-- `_git_env_with_token(askpass_path, token)` — env dict.
-- `_run_subprocess(argv, env, timeout_seconds)` — setup-time git invocations. Uses `_kill_process_group` on timeout.
-- `_kill_process_group(proc)` — module-level helper; SIGTERM → 2s → SIGKILL of the process group. Shared by `run_coding_agent_cli` (timeout + cancel) and `_run_subprocess` (timeout).
+`shutil.rmtree(working_dir, ignore_errors=True)`. Idempotent.
 
 ### Test-mode wrapping
 
-This file never branches on test env vars. When `YAAOS_WORKSPACE_STUB` is set, `app/web.py` calls `testing.stub_workspace.wrap_all_registered_workspace_providers()` after `bootstrap()`. See `testing_stub_workspace.md`.
+Never branches on env vars. When `YAAOS_WORKSPACE_STUB` is set, `app/web.py` calls `testing.stub_workspace.wrap_all_registered_workspace_providers()` after `bootstrap()`. See [testing_stub_workspace.md](testing_stub_workspace.md).
 
 ## Data owned
 
-None. Per-workspace state is the tempdir plus the `{"working_dir": ...}` dict that `core/workspace` persists in the `workspaces` table.
+None. Per-workspace state is the tempdir + `{"working_dir": ...}` dict persisted by `core/workspace` in the `workspaces` table.
 
 ## How it's tested
 
-Unit tests in `app/plugins/in_memory_workspace/test/`:
+Unit tests in `app/plugins/in_memory_workspace/test/test_provider.py` — fake `VCSPlugin` + local bare git repo as clone source; covers full `git clone` → `fetch` → `checkout` path, `run_coding_agent_cli` (exit codes, stdin, timeout/SIGKILL), and `destroy` idempotency.
 
-- `test_provider.py` — fake `VCSPlugin` + a **local bare git repo** as the clone source so the full `git clone` → `fetch` → `checkout` path runs without network. Also covers `run_coding_agent_cli` against trivial `/bin/sh -c` subprocesses (exit codes, stdin piping, timeout-triggered SIGKILL) and `destroy` idempotency.
-
-Exercised indirectly by every backend integration test running a reviewer review through the real plugin stack against fake-github.
+Exercised indirectly by every backend integration test running a reviewer flow through the real plugin stack.

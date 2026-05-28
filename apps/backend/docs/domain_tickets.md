@@ -1,114 +1,42 @@
 # domain/tickets
 
-> yaaos's unit of work — owns `tickets`, the lifecycle state machine, queries, and ticket-status change publishing.
+> yaaos's unit of work — owns `tickets`, the lifecycle state machine, and ticket-status change publishing.
 
-## Purpose
+## Scope
 
-Home of the ticket aggregate. Every ticket is born `in_review` when a PR is first observed, transitions to `complete` on close/merge, or `abandoned` if a caller forces it. `open` is reserved for future ticket sources that exist before review starts; today only `github_pr` is accepted. Owns no review state, no PR mirror state, and no audit-log writes outside its own transitions.
+Owns: ticket identity, status transitions, idempotent creation, SSE + durable-task publishing on every transition.
 
-## Public interface
+Does NOT own: PR mirror state (`pull_requests`), review state (`reviewer`), workspace lifecycle, audit entries beyond `ticket.created` / `ticket.status_changed`.
 
-Exported from `app/domain/tickets/__init__.py`:
+## Why / invariants
 
-- `Ticket` — Pydantic row view; carries denormalized PR fields (`pr_number`, `author_login`, `is_draft`) populated at read time.
-- `TicketFilter` — list filter (`repo_external_ids`, `author_logins`, `created_after`, `created_before`, `statuses`).
-- `TicketStatus` — `Literal["running", "hitl", "done", "failed", "cancelled"]` (collapse).
-- Service — `create` (intake-driven; idempotent on `idempotency_key`), `create_for_pr`, `upsert_ticket_for_pr`, `attach_pr_to_ticket`, `set_workflow_execution`, `get`, `get_by_id` (unscoped fetch — use when org is unknown), `get_by_pr`, `list_tickets`, `list_running_older_than(cutoff) -> list[tuple[ticket_id, org_id, pr_id | None]]` (system sweep helper), `complete`, `abandon`, `fail`, `attach_workflow_execution`.
-- Exceptions — `TicketNotFoundError`, `InvalidTicketTransition`.
+- **Two signals fire atomically with every transition commit:** `core/sse.publish_general_after_commit` (SPA) and `core/tasks.enqueue` (durable outbox). Rolled-back transactions emit neither.
+- **`(org_id, source, source_external_id)` UNIQUE** collapses concurrent webhook deliveries. `upsert_ticket_for_pr` uses `INSERT … ON CONFLICT DO NOTHING`; the race loser gets `(None, False)` and exits.
+- **Terminal states have no outbound transitions.** Enforced in code (`_transition` raises `InvalidTicketTransition`), not a DB CHECK.
+- **Workspace ≠ ticket.** The reviewer opens one workspace per coordinator call; it is anonymous from the ticket's perspective — no FK, no column.
+- `source != "github_pr"` is not accepted today; future sources need new validation.
 
-columns on `tickets`: `type` (`pr_review` default), `idempotency_key` (sparse-unique), `payload` (JSONB), `current_workflow_execution_id` (soft pointer into `workflow_executions`). Created by migration `016_tickets_m05_columns`.
+## State machine
 
-HTTP routes (`/api/tickets`):
-
-- `GET /api/tickets` — list, with `repo_external_id[]` / `status[]` / `limit`.
-- `GET /api/tickets/{ticket_id}` — detail.
-- `GET /api/tickets/{ticket_id}/audit` — aggregated timeline (ticket + linked PR + every review_job's audit entries, newest first).
-
-## Module architecture
-
-### Files
-
-- `models.py` — `TicketRow`.
-- `service.py` — `Ticket`, `TicketFilter`, service functions, `_transition` (shared body of `complete`/`abandon`).
-- `web.py` — FastAPI routes and `register_routes`.
-- `module.py` — `get_module_name() -> "tickets"`.
-
-### State machine
-
-| Current → New | Trigger |
+| From → To | Trigger |
 |---|---|
-| (none) → `pending` | `create` (generic intake path) |
-| (none) → `running` | `create_for_pr` / the github intake type's PR-opened branch |
-| `pending` → `running` | first workflow-step dispatch |
-| `running` → `done` | `complete` (intake on PR close/merge) |
+| (none) → `pending` | `create` (generic intake) |
+| (none) → `running` | `create_for_pr` / `upsert_ticket_for_pr` |
+| `pending` → `running` | workflow-step dispatch |
+| `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
-| `running` → `failed` | `fail(reason=...)` — used by the orphan sweep and future workflow-failure paths |
+| `running` → `failed` | `fail(reason=...)` — orphan sweep, future workflow failures |
 
-`complete`, `abandon`, and `fail` share `_transition`: loads the row, refuses if terminal (raising `InvalidTicketTransition`), updates `status`, writes the audit entry, and commits. On commit, two things happen atomically:
-
-1. **SPA notification** — `core/sse.publish_general_after_commit` fires a `ticket_status_changed` event on the org's general channel after commit. Rolled-back transactions never emit.
-2. **Durable notification task** — `core/tasks.enqueue` writes an outbox row for `domain/notifications.handle_ticket_status_change`, carrying `member_user_ids` pre-fetched inside the same transaction. Guaranteed durable if the transaction commits.
-
-Terminal states have no outbound transitions. Enforced in code, not DB CHECK; column is plain `String`.
-
-### Idempotent creation
-
-Three insert paths, all writing a `ticket.created` audit entry and triggering the status-change pair (SPA event + durable task):
-
-- `create` (generic intake — webhooks routed via `domain/intake`). Idempotent on `(org_id, idempotency_key)`. Emits `(previous=None, new='pending')`; the workflow engine emits the `pending → running` transition later.
-- `create_for_pr`. Returns the existing row on duplicate `pr_id` after refreshing title/description. Emits `(previous=None, new='running')`. Exists for direct callers and tests.
-- `upsert_ticket_for_pr` (the real production GitHub PR-opened path). Race-safe INSERT via `INSERT … ON CONFLICT DO NOTHING` on `(org_id, source, source_external_id)`; returns `(ticket_id, created)`. On conflict (race loser) returns `(None, False)`. Used by the github intake type's `_prepare_pr_review` so it can upsert the PR and back-fill `tickets.pr_id` in one shared transaction. Emits `(previous=None, new='running')` — same shape as `create_for_pr`. The `_prepare_pr_review` intake handler fires the same pair directly on the shared session.
-
-The `(org_id, source, source_external_id)` UNIQUE constraint collapses concurrent webhook deliveries for the same PR to a single ticket row. `upsert_ticket_for_pr` uses `INSERT … ON CONFLICT DO NOTHING` on this key; callers detect the loser via `created=False` and exit without doing further work.
-
-### Read-time denormalization
-
-`get` and `list_tickets` enrich each ticket with `pr_number`, `author_login`, `is_draft` by joining to `pull_requests`. `list_tickets` batches PR lookups into one `WHERE id IN (...)` query.
-
-### Event publishing
-
-Every transition (including creation) fires two signals atomically with the commit:
-
-- **`core/sse.publish_general_after_commit`** — org-scoped Redis event with `kind="ticket_status_changed"` and `{ticket_id, new_status, previous_status}` payload for the SPA's general SSE channel. Must-not-be-seen-on-rollback guarantee baked in.
-- **`core/tasks.enqueue`** — durable outbox row for `domain/notifications.handle_ticket_status_change`. Carries `member_user_ids` fetched inside the same transaction so the handler needs no membership query. Governed by the rule: must-happen reactions go through `core/tasks`; SPA notifications go through `core/sse`.
-
-See [domain_notifications.md](domain_notifications.md) for the task handler; [core_sse.md](core_sse.md) for the publish-after-commit mechanism; [core_tasks.md](core_tasks.md) for the outbox pattern.
-
-### Aggregated audit timeline
-
-`GET /api/tickets/{ticket_id}/audit` powers the detail UI's timeline tab. Pulls audit entries for ticket, linked PR, and every review_job for that PR; sorts newest-first. `reviewer.list_review_jobs_for_pr` is imported lazily to avoid a cycle.
-
-### Caller responsibility
-
-`tickets` does not decide *when* to transition. Current callers:
-
-- The github intake type's `pull_request.closed` branch → `tickets.complete(ticket_id)` on merge or close.
-- `reviewer.orphan_sweep` → `tickets.fail(ticket_id, reason='orphaned_no_review_job')` on tickets stuck `running` past the grace window with no `reviews` row.
-- A future repo-removal flow → `tickets.abandon(ticket_id, reason='repo_removed')`.
-- The audit endpoint reads but never writes.
-
-### Relationship to workspaces
-
-The "one workspace per ticket" principle is enforced by **runtime scope**, not by ticket data. Each review batch's coordinator (`_run_ticket_review` in `domain/reviewer`) opens one `core/workspace.with_workspace(...)` per coordinator call and gathers every agent against it; the workspace is destroyed when the last agent returns. There is no `tickets.workspace_id` column and no `workspaces.ticket_id` FK — workspaces are anonymous from the ticket's point of view.
-
-The ticket aggregate does not own, expose, or coordinate workspace lifecycle. It owns identity and lifecycle state only.
-
-
-### What the module does not do
-
-- Doesn't own PR mirror state (`pull_requests`) or review state (`domain/reviewer`).
-- Doesn't own workspace lifecycle (see above).
-- Doesn't subscribe to its own events.
-- Doesn't write audit entries beyond `ticket.created` and `ticket.status_changed`.
-- Doesn't accept `source != "github_pr"` — future sources require new validation.
+`complete` / `abandon` / `fail` all go through `_transition` in `service.py`.
 
 ## Data owned
 
-- `tickets` — `(id, org_id, source, source_external_id, title, description, status, plugin_id, repo_external_id, pr_id, created_at, updated_at)`. Canonical schema in [core_database.md](core_database.md).
+`tickets` — canonical schema in [core_database.md](core_database.md).
 
 ## How it's tested
 
-- `app/domain/tickets/test/test_service.py` — `@pytest.mark.service` round-trips for `upsert_ticket_for_pr` (create + idempotency/race-loser path), `attach_pr_to_ticket` (happy path + `pr_id IS NULL` guard), and `set_workflow_execution`.
-- `app/domain/tickets/test/test_status_change_producer_service.py` — `@pytest.mark.service` tests: outbox row written with correct `member_user_ids`; SSE event emitted after commit; no SSE event on rollback.
-- `app/domain/tickets/test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
-- State-machine and event-publish semantics covered by intake and reviewer integration tests.
+- `test/test_service.py` — `upsert_ticket_for_pr` (create + race-loser), `attach_pr_to_ticket`, `set_workflow_execution`.
+- `test/test_status_change_producer_service.py` — outbox row, SSE after commit, no SSE on rollback.
+- `test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
+
+See [domain_notifications.md](domain_notifications.md), [core_sse.md](core_sse.md), [core_tasks.md](core_tasks.md).

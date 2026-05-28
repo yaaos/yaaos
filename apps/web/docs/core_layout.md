@@ -12,28 +12,21 @@ Wraps every signed-in page in the sidebar-only shell mandated by [design.md § L
 
 ## Module architecture
 
-### Files
-
-Under `src/core/layout/`: `app-shell.tsx`, `theme.ts`, `broken-integrations-banner.tsx`, with `index.ts` re-exporting `AppShell`. The sidebar is its own module — see [core/sidebar/](../src/core/sidebar/).
+Files: `app-shell.tsx`, `theme.ts`, `broken-integrations-banner.tsx`, `index.ts`. Sidebar is its own module at `src/core/sidebar/`.
 
 ### `AppShell`
 
-Two-column flex: fixed-width sidebar on the left, flexible-width content on the right. Only `<main>` scrolls; the sidebar stays pinned. There is **no top bar** — the sidebar is the only persistent chrome (see [design.md § Principles](design.md#principles)). Above `<main>`, the `BrokenIntegrationsBanner` renders inline when any required integration is unhealthy.
+Two-column flex: fixed-width sidebar + flex-grow `<main>`. Only `<main>` scrolls. No top bar — see [design.md § Principles](design.md#principles). `BrokenIntegrationsBanner` renders above `<main>` when any required integration is unhealthy.
 
-`STANDALONE_PATHS` (`/login`, `/user`, `/orgs`) render the `<Outlet />` without the shell — user-scoped + org-picker pages don't surface org nav. Visiting a standalone path while authenticated still works; visiting one of the org-scoped paths while unauthenticated bounces through `indexRoute → /login`.
+`STANDALONE_PATHS` (`/login`, `/user`, `/orgs`) render `<Outlet>` without the shell.
 
 ### Theme tokens
 
-`theme.ts` exposes a small helper API used by the sidebar's pin toggle and the user-card theme switch:
-
-- `getSidebarPinned()` / `setSidebarPinned(pinned)` — persist the pinned-vs-rail state to `localStorage`.
-- `toggleTheme()` — flip `[data-theme="light"|"dark"]` on `<html>` and persist the choice.
-
-Color and spacing values are CSS custom properties defined in [`src/styles.css`](../src/styles.css) and aliased onto Tailwind utilities in `tailwind.config.ts`. The token vocabulary is documented in [design.md § Design tokens](design.md#design-tokens). `:root` defaults to dark; values flip when `[data-theme="light"]` is set.
+`theme.ts`: `getSidebarPinned()` / `setSidebarPinned(pinned)` — `localStorage` pinned-vs-rail state. `toggleTheme()` — flips `[data-theme="light"|"dark"]` on `<html>`. Token vocabulary: [design.md § Design tokens](design.md#design-tokens).
 
 ### `BrokenIntegrationsBanner`
 
-Renders inside the shell, above `<main>`, when `useBrokenIntegrations()` returns a non-empty list. One row per broken integration, with a deep link to the relevant settings page. Hidden entirely when everything is healthy.
+Reads `useBrokenIntegrations()`; shows one row per broken integration with a deep link to settings. Hidden when everything is healthy.
 
 ## Data owned
 
@@ -41,4 +34,4 @@ None — `BrokenIntegrationsBanner` reads from a query hook; `theme.ts` reads/wr
 
 ## How it's tested
 
-Rendered on every e2e test — any shell breakage shows up as page-navigation test failures. Sidebar has its own unit tests under `core/sidebar/test/`.
+Rendered on every e2e test — shell breakage shows up as page-navigation failures. Sidebar unit tests in `core/sidebar/test/`.

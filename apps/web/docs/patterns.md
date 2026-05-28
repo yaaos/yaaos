@@ -1,57 +1,81 @@
 # Frontend patterns
 
-Cross-app conventions (UTC on the wire, audit-log shape) live in [`docs/system-architecture.md`](../../../docs/system-architecture.md).
+Cross-app conventions (UTC on the wire, audit-log shape) live in [`docs/system-architecture.md`](../../../docs/system-architecture.md). Layer model and cross-cutting wiring: [architecture.md](architecture.md).
+
+## Module shape
+
+- **Domain module** — collapses page + local subcomponents into one `index.tsx`. Split into `list/` + `detail/` (plus `_shared.tsx`) only when a file exceeds ~1500 lines. Optional `api.ts` for module-local TanStack hooks.
+- **Core module** — `index.ts` (re-exports), implementation file(s), optional `types.ts`.
+
+## Imports
+
+Absolute only via path aliases (`@core/...`, `@domain/...`, `@shared/...`). Only what's exported from `index.ts(x)` — no deep imports across module boundaries.
+
+## testid conventions
+
+- Page container: `<page>-<state>` (e.g. `dashboard-onboarding`, `ticket-detail`).
+- List containers: `<entity>-list` (`tickets-list`, `findings-list`, `lessons-list`, `audit-log`).
+- List rows: `<entity>-row-<id>`.
+- Actions: `<action>-<entity>` (`rereview-button`, `cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
+- Status badges: `<entity>-status` (`github-status`, `apikey-status`).
+- Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
+- Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
+
+## Tooling
+
+| Concern | Tool |
+|---|---|
+| Lint + format | Biome (`apps/web/biome.json`) |
+| Type check | `tsc --noEmit` |
+| Unit tests | Vitest |
+| Build | Vite |
+
+`apps/web/bin/ci` runs all four.
 
 ## Module documentation
 
-Every shipped module has one `apps/web/docs/<layer>_<module>.md` following this fixed template, in order:
+Every shipped module has one `apps/web/docs/<layer>_<module>.md` with this fixed structure:
 
-1. **Purpose** — one paragraph. What the module owns; what it does not.
-2. **Public interface** — what's exported from `index.ts(x)` (components, hooks, queries). No internals.
-3. **Module architecture** — the internal shape, in this order:
-   - **Entities** — domain concepts owned by this module (usually views over backend data). One bullet each.
-   - **Key value objects** — load-bearing types / props shapes. One bullet, one sentence each.
-   - **Core user flows** — short numbered steps for the main ways the user exercises this module. Prose; no code.
-   - **State machines** — if any. States as bullets, transitions as `from → to` arrow notation.
-4. **Data owned** — query keys, client-side caches, local component state worth noting.
-5. **How it's tested** — e2e coverage (no FE unit test discipline today; see [README](README.md)).
+1. **Purpose** — what the module owns; what it doesn't.
+2. **Public interface** — exports from `index.ts(x)`. No internals.
+3. **Module architecture** — Entities · Key value objects · Core user flows · State machines (omit if none; `from → to` notation).
+4. **Data owned** — query keys, notable local state.
+5. **How it's tested** — e2e coverage.
 
-Discipline still applies: terse, bullets, no code snippets, no `Decisions` section, link don't repeat. Modules with no state machines just omit that sub-section.
+Terse, bullets, no code snippets, no `Decisions` section, link don't repeat.
 
 ## Auth + tenancy
 
-- **API client auto-injects `X-Org-Slug`** — `apps/web/src/core/api/org-context.ts` holds the current slug. The `/orgs/$slug` router scope writes to it in `beforeLoad`; `/login` and `/user/*` clear it. `apiFetch` reads the slug and adds the header unless the caller already supplied one. Domain hooks stay org-agnostic at the call site.
-- **Use `RequireMembership` for role gates** — `<RequireMembership orgSlug="..." role="admin">` renders children only when the current user has at least `role` in that org. UI hint only; the backend's `require(action)` is the source of truth.
-- **Route → org slug** — `/orgs/$slug/...` is the canonical shape for every domain page. `/`, `/login`, `/user/*` stay user-scoped. The `/` route probes `/api/auth/me` and redirects to `/orgs/<first-slug>/dashboard` or `/login`.
+- `apiFetch` auto-injects `X-Org-Slug` from `core/api/org-context.ts`. Domain hooks are org-agnostic at the call site.
+- Use `<RequireMembership orgSlug="..." role="admin">` for UI role gates — hint only; backend `require(action)` is the authority.
+- Every domain page is under `/orgs/$slug/...`. The `/` route probes `/api/auth/me` and redirects.
 
 ## Sidebar nav config
 
-- **Typed nav, no per-route hardcoding** — `apps/web/src/core/sidebar/nav-config.ts` defines the `NavConfig` type (`link | group`). The Sidebar renders the static config; route paths inside the group are *relative* (`/dashboard`, `/settings/auth`) and prefixed with `/orgs/{slug}` by the renderer.
-- **Per-item role gates** — `role: "admin"` on a `link` or `group` hides it for `member`-role users. The group itself is hidden when no child survives the filter (matches the backend's per-action gate).
-- **Per-group collapse state in `localStorage`** — `use-collapse-state.ts` persists `{ [groupId]: collapsed }` and syncs across tabs via the `storage` event. A group is rendered expanded only while one of its children is the active route; whenever the active route falls outside the group, an effect in `sidebar.tsx` force-collapses it. The user can still manually expand from any page; the next navigation re-applies the rule.
-- **Rail-mode flyout for groups** — when the sidebar is unpinned, group icons open a right-anchored Popover with the sub-items instead of trying to render them in the 56px rail. Top-level link icons and the org switcher are centered in the rail.
-- **Active state is background-only** — selected nav items get `bg-accent` and nothing else. No border, no margin/padding shift; the item must occupy the exact same box whether selected or not.
+- `core/sidebar/nav-config.ts` defines the `NavConfig` type (`link | group`). Route paths are relative (`/dashboard`); renderer prefixes `/orgs/{slug}`.
+- `role: "admin"` on a link or group hides it for non-admins; a group disappears when no child survives the filter.
+- Collapse state lives in `localStorage` via `use-collapse-state.ts`, syncs across tabs. A group is expanded only while a child is the active route; navigating away auto-collapses it.
+- Rail-mode groups open a right-anchored Popover. Active items use `bg-accent` only — no layout shift on select.
 
 ## Org Settings shell
 
-- **Passthrough wrapper, no top chrome** — `OrgSettingsLayout` is now a thin `<div>` that just renders its children. The sidebar's Org Settings group is the only nav into sub-pages; the layout itself adds nothing visual above the page content (see [design.md § Principles](design.md#principles): no top bar ever). Per-page role gating happens in each settings page, mirroring the sidebar gate.
-- **Bespoke React per plugin via the registry** — Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register components at module load via a side-effect import (today: `claude_code`); unregistered plugins land on the built-in placeholder. No generic JSON-schema renderer in . - **Plugin picker is shared** — `apps/web/src/shared/plugin_picker/PluginPicker` is used by both the VCS empty-state and the Coding Agents Add flow. Backed by `useAvailablePlugins(type)` which hits `GET /api/plugins/available?type=...`.
+- `OrgSettingsLayout` is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page.
+- Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`); unregistered plugins get the built-in placeholder.
+- `PluginPicker` (`shared/plugin_picker/`) is shared between the VCS empty-state and Coding Agents Add flow. Backed by `useAvailablePlugins(type)` → `GET /api/plugins/available?type=...`.
 
 ## Dumb frontend
 
-The SPA renders data and dispatches actions. It owns no rules yaaos's backend doesn't also enforce.
+The SPA renders data and dispatches actions — it owns no rules the backend doesn't also enforce.
 
-- **Forms** — FE validations exist for input immediacy; the backend re-validates and returns 4xx with field-keyed errors that surface inline. No FE rule the backend doesn't also have.
-- **Verdicts / status / counts** — server-supplied. Never derived client-side.
-- **Permissions** — show/hide based on server-supplied capability flags. has no auth; the shape is in place.
-- **Cache invalidation** — driven by mutation responses and SSE events. No "I bet this is stale" client heuristics.
-- **Client-side filter/sort** — fine for UX over an already-fetched list. Anything that changes which rows the user *acts on* (bulk-delete, bulk-export) goes through the API.
+- Verdicts, statuses, counts, permissions: server-supplied. Never derived client-side.
+- Cache invalidation: driven by mutation responses and SSE events. No client heuristics.
+- Client-side filter/sort: fine for UX over a fetched list. Any operation that changes which rows the user *acts on* goes through the API.
 
-If a FE change could alter what gets stored, posted, or counted without a corresponding API change, the logic is in the wrong place.
+If a FE change could alter stored/posted/counted state without a corresponding API change, the logic is in the wrong place.
 
 ## Query keys
 
-Every TanStack Query key is a module-scoped array. Canonical keys:
+Module-scoped arrays. Canonical keys:
 
 - `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`
 - `["reviewer", "jobs", ticket_id]`, `["reviewer", "metrics"]`, `["reviewer", "agents"]`
@@ -60,60 +84,32 @@ Every TanStack Query key is a module-scoped array. Canonical keys:
 - `["plugin-health", pluginId]`
 - `["onboarding"]`, `["health"]`
 
-Mutations invalidate exactly the keys they affect; the SSE subscriber does the same (see [core_sse.md](core_sse.md)).
+Mutations and the SSE subscriber ([core_sse.md](core_sse.md)) invalidate exactly the keys they affect.
 
 ## Time and dates
 
-- Backend emits ISO-8601 UTC (`Z` or `+00:00`).
-- FE renders in the browser's local timezone via helpers in `apps/web/src/shared/utils/ago.ts`:
-  - `ago(ts)` — relative duration (e.g., `"12s ago"`).
-  - `formatTime(ts)` — local `HH:MM:SS`. Used for audit-log rows.
-  - `formatDateTime(ts)` — full local date + time.
-- **Anti-pattern:** `new Date(ts).toISOString()` — always UTC; never use for display. Use the helpers above.
+Backend emits ISO-8601 UTC (`Z`). FE renders in browser local timezone via `apps/web/src/shared/utils/ago.ts`:
 
-`Intl.DateTimeFormat` reads the browser's OS timezone automatically — there is no central knob.
+- `ago(ts)` — relative duration (`"12s ago"`).
+- `formatTime(ts)` — local `HH:MM:SS` (audit-log rows).
+- `formatDateTime(ts)` — full local date + time.
+
+Anti-pattern: `new Date(ts).toISOString()` — always UTC, never use for display.
 
 ## API client
 
-`core/api/client.ts` exposes:
-- `apiClient` — `openapi-fetch` typed client (currently only `/api/health`).
-- `apiFetch<T>(path, init?)` — generic fetch helper. Throws on non-2xx with status + body excerpt.
-
-Every query/mutation hook wraps one of those. See [core_api.md](core_api.md) for the surface.
+Two surfaces in `core/api/client.ts`: `apiClient` (typed `openapi-fetch`) and `apiFetch<T>` (generic helper, throws on non-2xx). Every hook wraps one of these. Full surface: [core_api.md](core_api.md).
 
 ## Error handling at the API boundary
 
-- **Mutations** — `useMutation` hooks expose `isPending` / `isSuccess` / `isError`; forms show inline "Saving…" / "Saved." / red error text. No global toast yet.
-- **Queries** — components handle loading + error inline. Primitives expose `data-testid` slots so e2e can assert state.
-- **Validation errors** — backend returns 4xx with a field-keyed error map; the form surfaces the message under the relevant input.
-
-## Component primitives
-
-`shared/components/` contains hand-rolled primitives over Tailwind: `Button`, `Card`/`CardHeader`/`CardContent`, `Badge`, `Dialog`/`DialogHeader`/`DialogBody`/`DialogFooter`. shadcn/ui isn't installed. Every interactive primitive accepts `data-testid` as a passthrough.
-
-## SSE — single subscription at app root
-
-One `EventSource` per browser tab, mounted via `<SSESubscriber>` in `main.tsx`. The subscriber translates each event's `kind` into `qc.invalidateQueries(...)` calls. Domain modules consume *queries*, not events.
-
-Consequences:
-- A new event kind adds one `case` to `core/sse/subscriber.tsx`, usually zero changes elsewhere.
-- A domain module wanting live updates just uses the right query key.
-
-Polling intervals (3-5s) on the underlying queries are a safety net for missed messages.
+- **Mutations** — expose `isPending`/`isSuccess`/`isError`; forms show inline "Saving…" / "Saved." / red error text.
+- **Queries** — components handle loading + error inline; `data-testid` slots on primitives let e2e assert state.
+- **Validation errors** — 4xx field-keyed map surfaces under the relevant input.
 
 ## Code style
 
-- Function components only. No class components.
-- Hooks for shared logic. No HOCs unless a library forces it.
-- TanStack Query for server state. No `useEffect(() => fetch(...))`.
-- React state for component-local state. Zustand listed but unused.
-- Tailwind only. Color tokens are oklch, in `core/layout/theme.ts`.
-- Type-strict; `tsc` warnings are CI errors.
-
-## Imports
-
-Absolute only via path aliases (`@core/...`, `@domain/...`, `@shared/...`). Only what's exported from `index.ts(x)`.
-
-## Forms
-
-React state + manual validation. No `react-hook-form` / `zod`.
+- Function components only. Hooks for shared logic; no HOCs unless forced by a library.
+- TanStack Query for server state — no `useEffect(() => fetch(...))`.
+- Tailwind only. Color tokens in `core/layout/theme.ts` (oklch).
+- `tsc` strict — warnings are CI errors.
+- Forms: React state + manual validation. No `react-hook-form` / `zod`.

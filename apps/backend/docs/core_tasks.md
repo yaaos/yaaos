@@ -2,71 +2,36 @@
 
 > Durable task scheduler over taskiq + Redis with atomic-in-session enqueue.
 
-## Purpose
+## Scope
 
-Owns the `@task` decorator, the `enqueue(task, args, *, session)` API, and the worker process that runs tasks. Atomic-in-session: `enqueue` writes a row to the private `outbox_entries` table inside the caller's transaction, so the task is durable iff the commit lands. Hides taskiq broker details from domain code — swapping the scheduler is contained here.
+- **Owns:** `@task` decorator, `enqueue` API, outbox table (`outbox_entries`), drain loop, worker process scaffolding, `OrgContextMiddleware`.
+- **Does not own:** task bodies (owned by callers); broker topology (Redis detail hidden here).
+- **Boundary:** `enqueue` writes a row in the caller's transaction; the drain pump pushes to Redis; taskiq pops and executes. The entire durable path is self-contained.
 
-The taskiq broker is the single task registry; `@task` registers directly with `broker.task(...)`. `broker.find_task(name)` is the lookup (used by the drain dispatcher and by in-process test drains).
+## Why / invariants
 
-## Public interface
+- **`enqueue` requires `session`** — there is no fire-and-forget path. Durability is opt-in by committing the session.
+- **`metadata` auto-fill from `org_id` contextvar** — when enqueued inside an `org_context()` block and `metadata` is omitted, `enqueue` fills `TaskMetadata(org_id=...)` automatically. HTTP request handlers don't need to pass it explicitly.
+- **`TaskMetadata` is JSON-dumped on the wire** — avoids the prior `str(dict)` / `ast.literal_eval` round-trip. Consumer parses with `model_validate_json`.
+- **`OrgContextMiddleware`** enters `org_context(metadata.org_id, ActorKind.SYSTEM)` before every task body — `current_org_id()` is reliably available inside any task.
+- **Task bodies must tolerate duplicate delivery.** The drain stamps `dispatched_at` only after a successful Redis push — a crash between push and stamp redispatches. Bodies look up state from DB rather than trusting args alone.
+- **Worker races three tasks via `asyncio.wait(FIRST_COMPLETED):** drain loop, taskiq receiver, stop signal. Stop signal wins on SIGTERM; the others tear down gracefully.
+- **`drain_loop` and the taskiq receiver catch their own errors** — a defect logs `tasks.worker.child_crashed` and exits cleanly rather than silently discarding the exception.
 
-Exports `task`, `enqueue`, `TaskRef`, `TaskMetadata`, `drain_once`, `scoped_task_registration`, `ShutdownHook`, `shutdown`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks`. See `apps/backend/app/core/tasks/__init__.py`.
+## Gotchas
 
-- `@task(name, *, queue="default", max_retries=1)` — registers a task body with the broker; returns a `TaskRef` callers `enqueue` against. `queue` / `max_retries` ride as taskiq labels (no consumer today; future brokers / middleware pick them up without API churn).
-- `enqueue(task_ref, args, *, metadata=None, session)` — writes a `taskiq_enqueue` outbox row in the caller's session. Returns the row id. Required `session` — there is no fire-and-forget path. `metadata` is an optional `TaskMetadata` (or raw dict for back-compat) forwarded to the taskiq dispatch envelope via taskiq labels. When omitted and the `org_id` contextvar is set, auto-fills `TaskMetadata(org_id=...)` — producers in HTTP request handlers don't need to pass it explicitly.
-- `TaskRef` — frozen handle to a registered task name + queue + retry policy.
-- `TaskMetadata` — frozen pydantic model carrying `org_id: UUID`. The typed envelope on the taskiq label from producer (`enqueue`) through outbox + drain to consumer (`OrgContextMiddleware`). Producer dumps via `model_dump_json()` for the wire; consumer parses via `model_validate_json()`. Avoids the prior `str(dict)` / `ast.literal_eval` round-trip.
-- `drain_once(db_session, *, dispatcher, batch_size=100)` — pulls undispatched outbox rows and hands each to `dispatcher`. Service tests import from the package top-level (`from app.core.tasks import drain_once`).
-- `scoped_task_registration(task_ref)` — context manager for test isolation. Wrap the test body after calling `@task(name)(fn)` to get a `TaskRef`; on exit, the name is popped from the broker registry. See [patterns.md § `scoped_*` context managers](patterns.md).
-- `shutdown()` — calls the broker object's own async `shutdown()` (closes connections). Does NOT drop the broker singleton — task registrations set at import time remain intact. Re-exported from `core/shutdown_registry` registration side-effect.
-- `ShutdownHook`, `register_worker_shutdown_hook`, `iter_worker_shutdown_hooks` — re-exported from `core/shutdown_registry`.
-
-The outbox model (`OutboxEntryRow`) and the internal drain primitive (`write`) are private substrate in `app.core.tasks.models` and `app.core.tasks.drain`. The worker entrypoint imports `drain_loop` directly from `app.core.tasks.drain`. `drain_once` is public and exported from the package top-level.
-
-## Module architecture
-
-### Core flow
-
-1. Task author writes `@task("route_workflow") async def route_workflow(*, exec_id, ...)`. The decorator registers the body with the taskiq broker.
-2. Domain caller inside a transaction: `await enqueue(route_workflow, args={...}, session=s); await s.commit()`. The `outbox_entries` row commits atomically with the rest of the caller's writes. If the caller is inside an HTTP request (or any `org_context()` block), `enqueue` auto-fills `metadata={"org_id": str(org_id)}` from the contextvar — no explicit arg needed.
-3. The worker's drain loop polls `outbox_entries WHERE dispatched_at IS NULL` with `FOR UPDATE SKIP LOCKED`, dispatches `kind='taskiq_enqueue'` rows to the taskiq broker (LPUSH to a Redis list), then stamps `dispatched_at`. When the outbox payload carries `metadata`, the drain validates it as `TaskMetadata` and forwards a `model_dump_json()` string to the taskiq kicker via `.with_labels(metadata=...)`. The JSON-string encoding bypasses taskiq's `str()` label coercion so the consumer can parse it directly.
-4. Before the task body runs, `OrgContextMiddleware.pre_execute` parses the `metadata` label with `TaskMetadata.model_validate_json` and enters `org_context(metadata.org_id, ActorKind.SYSTEM)`. `current_org_id()` is reliably available inside any task body — handler code never enters context manually. Tasks without `metadata` in labels run without an org context. The middleware exits the context (success or error) via `post_execute` / `on_error` — `on_error` passes `None, None, None` to `__aexit__` so the `@asynccontextmanager` generator just cleans up rather than re-throwing the task exception.
-5. The same worker process runs `broker.listen()` — it BRPOPs tasks from Redis and invokes the registered body with the kwargs the caller passed to `enqueue`. Bodies own their own session (they open one via `core/database.session()`). No retry middleware honors `max_retries`; the drain re-loops on failure.
-
-### Worker process
-
-`apps/backend/app/core/tasks/runtime.py` (entry point via `apps/backend/app/worker.py`) wires `OrgContextMiddleware` into the broker via `broker.add_middlewares(org_context_middleware)` before `broker.startup()`, then boots one event loop racing three tasks via `asyncio.wait(..., FIRST_COMPLETED)`:
-
-- `drain_loop(broker)` — Postgres → Redis pump (lives in `drain.py`). Sleeps ~100ms between empty polls; immediately re-polls when a batch had work. Per-batch transaction so a crash mid-batch redispatches at-most a batch's worth of rows on restart.
-- `Receiver.listen(stop)` — taskiq's consumer loop. Pops tasks from Redis, invokes the registered body. Exits when the `stop` event is set.
-- `stop.wait()` — fires on SIGTERM/SIGINT and normally wins the race, triggering graceful shutdown of the other two.
-
-The broker URL comes from [`core/redis.get_url()`](core_redis.md) — taskiq-redis takes a URL (not a client) so this is a thin accessor on top of `settings.redis_url`. After the stop signal wins, the runtime iterates `iter_worker_shutdown_hooks()` in reverse registration order to teardown all registered resources. See [patterns.md § Two process lifecycles, two registries](patterns.md).
-
-`drain_loop` and the taskiq receiver each catch their own errors, so the worker scaffolding normally sees only the stop-signal task finish first. If a defect lets one escape, the worker logs `tasks.worker.child_crashed` with the traceback before tearing down — the process still exits and the supervisor restarts it. Without this the exception would be silently discarded when the `Task` is garbage-collected.
-
-Single-process today. If the workload demands it, the drain and consume tasks split into separate compose services (same image, different `CMD` args) so taskiq concurrency and drain throughput scale independently.
-
-### Outbox table (private)
-
-`outbox_entries` is the private substrate: `id`, `kind`, `payload` (jsonb), `created_at`, `dispatched_at`, `attempt`, `last_error`. Domain modules never import the model — they go through `enqueue()`. Migration `014_create_outbox_entries`.
-
-`kind` is opaque so future consumers (e.g. cross-process webhook emission) plug in via their own dispatcher without schema changes. Today the only kind is `taskiq_enqueue` with payload `{task_name, queue, args, metadata}`. `metadata` is the JSON dump of `TaskMetadata` (`{"org_id": "<uuid>"}`), or `null` when enqueued outside any org context.
-
-### Idempotency
-
-Task bodies MUST tolerate duplicate delivery. The drain stamps `dispatched_at` only after a successful broker push — a crash between push and stamp redispatches on the next poll. Body authors look up state from the DB rather than trusting the args alone.
-
-### Relationship to `spawn()`
-
-[`core/observability.spawn()`](core_observability.md) stays for fire-and-forget request-scoped background work without durability needs. `core/tasks` is for work that must survive restarts, has retry policy, or participates in a workflow. Don't conflate — the architecture doc has the matrix.
+- **`spawn()` vs `enqueue`** — use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work. Use `enqueue` for work that must survive restarts, has retry policy, or participates in a workflow.
+- **`scoped_task_registration`** — required for test isolation when registering tasks dynamically; see [patterns.md § `scoped_*` context managers](patterns.md).
+- **`shutdown()` does not drop the broker singleton** — task registrations set at import time remain intact.
 
 ## Data owned
 
-- `outbox_entries` — `(id uuid pk, kind text, payload jsonb, created_at, dispatched_at nullable, attempt int default 0, last_error text nullable)`. Created by migration 014.
+- `outbox_entries` — `(id uuid pk, kind text, payload jsonb, created_at, dispatched_at nullable, attempt int, last_error text nullable)`. Only kind today: `taskiq_enqueue`. Migration 014.
 
 ## How it's tested
 
-`test/test_service.py` covers registry registration (via `scoped_task_registration`), double-register rejection, and `enqueue()` writing the expected outbox payload. `test/test_enqueue_metadata_service.py` covers the `metadata` auto-fill from contextvar, explicit override, and the no-context / no-metadata path. `test/test_drain.py` covers `write()` + `drain_once()` with a stub dispatcher: insert, drain, stamp; failure leaves the row pending with `attempt` and `last_error` updated. `test/test_scoped_task_registration.py` covers the scoped context manager: task visible inside, gone outside, cleanup on exception. `test/test_drain_once_public.py` smoke-tests the public package import path. `test/test_middleware_service.py` confirms task bodies see `current_org_id()` via `OrgContextMiddleware` — uses an `InMemoryBroker` (await_inplace) with the middleware wired in, drains a real outbox row, and asserts the contextvar is set inside the task body. The broker-wired dispatcher is exercised end-to-end against the dev Redis stack — see `apps/e2e/` for the full enqueue → drain → execute path.
-
-Cross-module service tests that exercise the outbox pump in-process import `drain_once` from the package top-level (`from app.core.tasks import drain_once`) and `OutboxEntryRow` from `app.core.tasks.models`.
+`test/test_service.py` — registry registration, double-register rejection, `enqueue` outbox payload.
+`test/test_enqueue_metadata_service.py` — metadata auto-fill from contextvar, explicit override, no-context path.
+`test/test_drain.py` — `write` + `drain_once` with stub dispatcher; failure leaves row pending with updated `attempt` + `last_error`.
+`test/test_middleware_service.py` — `current_org_id()` visible inside task body via `InMemoryBroker` + real outbox drain.
+`test/test_scoped_task_registration.py` — task visible inside scope, gone outside, cleans up on exception.

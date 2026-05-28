@@ -3,18 +3,11 @@
 ## Folder roles — never mix tenses
 
 - `docs/` — **present tense.** How the code works *today*. If it isn't built, it doesn't go here.
-- `plan/` — **future tense.** What we want to build. Vision, roadmap, milestones, notes.
+- Ignore `plan/` — it's planning scaffolding, not part of the shipped system. Touch it only when a skill or the user explicitly sends you there.
 
-A file never does both jobs. When a milestone ships, the same PR updates `docs/` to reflect the new reality and checks off the relevant tasks in `plan/milestones/`.
+When code changes, the same PR updates `docs/` to match.
 
 ## Key files
-
-### Plan (future tense — what we're going to build)
-
-- `plan/VISION.md` — the whole tool, end state. Changes rarely.
-- `plan/ROADMAP.md` — near-term: usually just the next milestone + a backlog.
-- `plan/milestones/MNN-<slug>/` — one folder per milestone, containing all planning docs for that milestone. Always includes `README.md` (the entry-point index + reading order) and `requirements.md` (the locked spec). Other docs (`architecture.md`, `modularity.md`, `backend.md`, `frontend.md`, etc.) added as needed. **Read `README.md` first.**
-- `plan/notes/` — scratchpad. Promote matured notes into milestones or docs; don't let it become a graveyard.
 
 ### Docs (present tense — how the shipped code works)
 
@@ -23,19 +16,17 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 - `docs/README.md` — entry point. Links to per-app docs.
 - `docs/system-architecture.md` — system-wide only: inter-app flows (GitHub App webhook → intake → reviewer → vcs.post_review; SSE bus; auth chain) and cross-app conventions (ISO-UTC on the wire, HMAC webhook signing, audit-log row shape). **Never explains a single app's internals.**
 - `docs/glossary.md` — shared vocabulary (ticket, PR, review_job, agent, lesson, finding).
-- `apps/<app>/docs/README.md` — entry into that app: stack, top-level structure, where module docs live.
-- `apps/<app>/docs/modularity.md` — that app's module model + import rules.
-- `apps/<app>/docs/patterns.md` — conventions specific to that app.
-- `apps/<app>/docs/<layer>_<module>.md` — one file per module. Follows the fixed template: Purpose · Public interface · Module architecture · Data owned · How it's tested. The Module architecture section is itself structured (Entities · Key value objects · Core user flows · State machines) — see each app's `docs/patterns.md` for the full template. **No decisions section; no historical log.** Never re-explains the app or the system.
+- `apps/<app>/docs/README.md` — thin index/orientation: stack, top-level structure, links to the other docs.
+- `apps/<app>/docs/architecture.md` — the app's internal architecture: layer model + *why*, extension points (plugin Protocols), key cross-module runtime flows, major structural patterns. Points to `tach`/CI as the *enforcer* of boundaries — never restates the enforced rule list.
+- `apps/<app>/docs/patterns.md` — coding conventions + module-shape conventions + how-to (adding a module, `sync_modules`).
+- `apps/<app>/docs/<layer>_<module>.md` — one file per module. Follows the fixed template: **Scope** (what the module owns and does NOT own, plus its boundary — what it receives, what it emits, who it hands to) · **Why / invariants** (design rationale and ordering/contract rules the code obeys silently) · **Gotchas** (traps, "don't do X, go through Y") · **Vocabulary** (terms local to this module) · **Entry points** (where to start reading). Bullets, 1–2 sentences each; link to source paths for detail; no code snippets. **No decisions section; no historical log.** Never re-explains the app or the system.
 
 ## Mode by location
 
-- When editing in `plan/`: act as a product/requirements collaborator. Ask clarifying questions, refine scope, challenge assumptions. **Do not write code.**
-- When editing code: act as an implementer. Follow the active milestone. Don't redesign the product mid-task — if scope feels wrong, surface it and update the milestone first. The milestone/phase/slug vocabulary you read in `plan/` is scaffolding — it stays in `plan/`. Translate it out as you write: name code by what it does, not the plan step that produced it. See **No planning vocabulary in shipped code** below.
+- When editing code: act as an implementer. Don't redesign the product mid-task — if scope feels wrong, surface it. See **No planning vocabulary in shipped code** below.
 
 ## Discipline
 
-- Never invent a new milestone unsolicited. Add ideas to `## Backlog` in `ROADMAP.md` instead.
 - Bugs are fixed immediately, not tracked. No bug list.
 - **Every new user-visible feature ships with appropriate tests.** Three tiers, in order of preference: unit tests for branchy logic in one module; **service tests** (`<module>/test/test_*_service.py`, `@pytest.mark.service`) for backend flows crossing 3+ modules — even when the user triggers the flow via the SPA, if the contract lives in the backend, test it there; e2e tests in `apps/e2e/` (Playwright) ONLY for genuinely browser-visible behavior (SSE live updates, OAuth redirects, cookies, route navigation, role-gated UI rendering). Default to service tests over e2e — they're faster, less flaky, and assert on the same durable state. See [apps/backend/docs/patterns.md § Testing](apps/backend/docs/patterns.md) for the service-test pattern (real Postgres via `db_session`, stub plugins from `app/testing/`).
 - **Never hand-edit `apps/backend/tach.toml`** — it's generated by `apps/backend/bin/sync_modules`. Run that script after adding or changing a module's interface.
@@ -46,13 +37,14 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 
 - **Same-PR doc updates: which docs are in scope.** If behavior moved, a public API renamed, a module split, or a default flipped — the relevant `apps/<app>/docs/<layer>_<module>.md` lands in the same commit. If it's cross-cutting, `apps/<app>/docs/patterns.md`, `docs/system-architecture.md`, `docs/glossary.md`, and `docs/setup.md` all need a look. If you deleted a UI page or route, the per-page doc + the README index + the routing doc all need updates. If you changed an audit payload, the writing module's audit table needs updating.
 - **Terse.** Default to bullets. Cut filler. If a paragraph could be three bullets, make it three bullets. If a sentence could be five words, make it five words. A doc that takes 10 minutes to read explains less than one that takes 2.
-- **No code snippets.** Docs describe *principles* and *behavior*, not code. Reference real paths (`apps/backend/app/domain/reviewer/queue.py:200`) when readers need detail — they can read the source. The source is the truth; copied snippets drift silently.
+- **No code snippets.** Docs describe *principles* and *behavior*, not code. Reference real paths (`apps/backend/app/domain/reviewer/admission.py:200`) when readers need detail — they can read the source. The source is the truth; copied snippets drift silently.
+- **Don't mirror code or tooling.** If `tach`, a checker, or the source already owns a fact (import rules, schemas, signatures, route lists), link to the enforcer/source — don't restate it in prose. Restated facts drift; the enforcer doesn't. Boundary: `architecture.md` = the app's shape + flows + why; `patterns.md` = conventions; `README.md` = index.
 - **Capture the *why* inline when non-obvious** — next to the description of how it works, as a one-liner. No `## Decisions` heading, no dated entries, no alternatives-considered. If the why is obvious from the what, omit. The git log is the audit trail.
 - **No alternatives, debates, or journey.** Docs describe how the code works today. Meeting-summary prose ("we initially tried X, then switched to Y") is wrong shape — keep only the resulting fact.
 - **Cross-link, don't repeat.** When module X interacts with module Y, link to Y's doc. If you find yourself paraphrasing another module, the link is the answer.
-- **No `TBD` / `TODO` / `coming soon`.** If it isn't shipped, it isn't in `docs/` — that belongs in `plan/` or a ticket. If a doc would otherwise say TBD, describe what *is* there or omit the section.
-- **No date stamps in doc bodies.** "As of 2026-05-16, X works like this" rots. Use git blame for "when did this rule appear." Dated entries are fine in `plan/` (decisions still in flux there).
-- **No planning vocabulary.** Milestone tags, phase/slice numbers, ticket slugs, and `plan/` path citations never appear in `docs/`. This is the same rule as **No planning vocabulary in shipped code** under Implementation discipline — it binds docs too.
+- **No `TBD` / `TODO` / `coming soon`.** If it isn't shipped, it doesn't go in `docs/`. If a doc would otherwise say TBD, describe what *is* there or omit the section.
+- **No date stamps in doc bodies.** "As of 2026-05-16, X works like this" rots. Use git blame for "when did this rule appear."
+- **No planning vocabulary.** Milestone tags, phase/slice numbers, ticket slugs never appear in `docs/`. This is the same rule as **No planning vocabulary in shipped code** under Implementation discipline — it binds docs too.
 - **The first line is a 1-sentence purpose statement** (the `> blockquote` under the H1 in per-module docs). Reader decides in 5 seconds whether to keep reading.
 - **One rule lives in one place.** If a discipline applies to N modules, write it once in `apps/<app>/docs/patterns.md` and link from each per-module doc. Don't repeat per-module discipline lists.
 - **Diagrams only when truly needed.** ASCII flow when something crosses 3+ modules and would be opaque without one. Otherwise prose.
@@ -66,15 +58,15 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 When writing or changing code:
 
 - **Red-Green-Refactor TDD.** Write the failing test first (Red), then the minimum code to make it pass (Green), then refactor. Do not write production code without a failing test that demands it.
-- **Read the module's existing docs before changing the module.** Context first; don't reinvent prior choices silently. Where to look: `apps/<app>/docs/<layer>_<module>.md` if the module has shipped, otherwise its deep-dive in `plan/milestones/<active-milestone>/`. The milestone names, phase numbers, and `plan/` paths you encounter there are reading aids — never echo them into the code, identifiers, filenames, or comments you write.
-- **No planning vocabulary in shipped code.** Milestone tags (`M0x`), phase/step/slice numbers, ticket slugs, `plan/` paths, `PHASES.md`/`DECISIONS.md`, and "how we got here" prose (`previously`, `originally`, `used to X but now`, `will land in`, `deferred to a future milestone`) never appear in identifiers, filenames, comments, or `docs/`. Name things by what they ARE (`DEFAULT_ORG_ID`, not `M01_ORG_ID`; `test_row_carries_status_meta`, not `test_m06_fields`). Comments and docs say what the code does and why, present tense. The plan you execute is full of "Phase N" and slug names — strip them on the way into code. Planning vocabulary lives only in `plan/`; the git log is the history. (Proper version suffixes like `_v1` are fine — they describe a contract, not a plan step.)
+- **Read the module's existing docs before changing the module.** Context first; don't reinvent prior choices silently. Where to look: `apps/<app>/docs/<layer>_<module>.md`.
+- **No planning vocabulary in shipped code.** Milestone tags (`M0x`), phase/step/slice numbers, ticket slugs, `PHASES.md`/`DECISIONS.md`, and "how we got here" prose (`previously`, `originally`, `used to X but now`, `will land in`, `deferred to a future milestone`) never appear in identifiers, filenames, comments, or `docs/`. Name things by what they ARE (`DEFAULT_ORG_ID`, not `M01_ORG_ID`; `test_row_carries_status_meta`, not `test_m06_fields`). Comments and docs say what the code does and why, present tense. The git log is the history. (`_v1`-style version suffixes are fine — they describe a contract, not a plan step.)
 - **`bin/ci` IS THE TEST COMMAND. Run it before saying "done". No exceptions.** Don't run `pytest`, `pnpm test`, `ruff`, `tach`, `semgrep`, or `tsc` standalone for verification — they're each a slice of the full gate and skipping the others is how regressions slip in. The per-app scripts are the contract:
   - **Backend code changed** (anything under `apps/backend/` that isn't a `.md`) → `apps/backend/bin/ci`. Includes lint, format check, tach, table-access check, pytest, and semgrep against Python via the backend's own uv venv.
   - **Web code changed** (anything under `apps/web/` that isn't a `.md`) → `apps/web/bin/ci`. Includes biome, `tsc --noEmit`, vitest, vite build, and a semgrep scan (`p/typescript` + `p/react` + `p/owasp-top-ten`). Requires `semgrep` on PATH locally (`pipx install semgrep` or `pip install --user semgrep`); the RWX `web-ci` task pip-installs it.
   - **Agent code changed** (anything under `apps/agent/` that isn't a `.md`) → `apps/agent/bin/ci`. Includes gofmt, `go mod tidy` drift, golangci-lint, build, race-enabled test, govulncheck, and semgrep (`p/golang` + `p/owasp-top-ten`). Requires `golangci-lint`, `govulncheck`, and `semgrep` on PATH locally; the RWX `agent-ci` task installs them inline.
   - **Any combination changed** → run each app's script.
   - There is no top-level `bin/ci`. The `Stop` hook in `.claude/settings.json` re-runs the relevant `bin/ci` automatically before a turn ends — but the hook is a safety net, not your excuse to skip the explicit run during work.
-- **Run `apps/e2e/bin/ci` at the end of milestone work, and after any change that touches a user-visible flow.** Triggers: closing a milestone; adding/removing/renaming a route; changing the auth, ticket, review-posting, or settings flows; changing an API contract the SPA depends on; any change that crosses ≥3 modules. Skip for: pure-backend internals (queue tuning, migration plumbing), per-module refactors that preserve interfaces, pure-doc changes. Requires the Docker stack; bring it up via `bin/dev-rebuild` first. Not in the Stop hook — too expensive to run every turn.
+- **Run `apps/e2e/bin/ci` after any change that touches a user-visible flow.** Triggers: adding/removing/renaming a route; changing the auth, ticket, review-posting, or settings flows; changing an API contract the SPA depends on; any change that crosses ≥3 modules. Skip for: pure-backend internals (queue tuning, migration plumbing), per-module refactors that preserve interfaces, pure-doc changes. Requires the Docker stack; bring it up via `bin/dev-rebuild` first. Not in the Stop hook — too expensive to run every turn.
 - **Before declaring done: grep the docs for everything you changed.** For every symbol, table, route, page, payload field, or concept you touched, run `grep -rn "<thing>" apps/*/docs docs` and update every hit. The backend CI's `check_doc_links` only catches broken markdown links — it does NOT catch stale references to renamed functions or deleted tables. If you skipped this step, you skipped the task.
 - **When tach fails after adding or changing a module interface, run `apps/backend/bin/sync_modules`.** That's the usual cause; running the sync command fixes the false errors.
 - **Fix root causes, not symptoms.** If a test fails, fix the bug; don't soften the assertion. If a type check fails, fix the type; don't add `# type: ignore`. If an assertion was wrong from the start, that's a real change worth surfacing.

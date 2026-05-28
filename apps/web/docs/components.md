@@ -4,14 +4,7 @@
 
 ## Layers
 
-```
-src/shared/components/
-├── ui/        shadcn primitives (one file per primitive; copied in via the shadcn CLI)
-├── chrome/    yaaos chrome composites — sidebar, org switcher, user popover, notifications
-└── layout/    yaaos layout composites — page header, empty state, error banner
-```
-
-Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) and Tailwind (visual style via the design tokens documented in [design.md](design.md)). They live in our repo — modify freely.
+`src/shared/components/`: `ui/` (shadcn/Radix primitives), `chrome/` (sidebar, org switcher, notifications), `layout/` (page header, empty state, error banner). All live in-repo — modify freely.
 
 ## Primitives (`src/shared/components/ui/`)
 
@@ -89,6 +82,4 @@ Primitives are thin wrappers over Radix UI (focus management, ARIA correctness) 
 
 ## Adding a primitive
 
-1. `pnpm dlx shadcn@latest add <name> --yes` (writes to `src/shared/components/ui/<name>.tsx` and installs any Radix dep).
-2. If shadcn's CLI rewrites `tailwind.config.ts` or `src/styles.css`, reconcile against the existing shadcn-named token layer.
-3. Update this doc with a one-liner.
+`pnpm dlx shadcn@latest add <name> --yes`. If the CLI rewrites `tailwind.config.ts` or `src/styles.css`, reconcile against the existing token layer. Add a one-liner to this doc.

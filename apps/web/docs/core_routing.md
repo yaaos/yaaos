@@ -32,32 +32,26 @@ The module declares the TanStack `Register` augmentation so `<Link to="/orgs/$sl
 
 ### Slug source of truth = URL
 
-`apps/web/src/core/api/org-context.ts` exposes `getCurrentOrgSlug()` (plain function) and `useCurrentOrgSlug()` (React hook). Both derive the slug from the URL on every read — there is no module-global cache, no localStorage, no server-stored "current org" field. Two browser tabs in different orgs stay independent because each tab reads its own `window.location`.
+`core/api/org-context.ts` exposes `getCurrentOrgSlug()` (plain function) and `useCurrentOrgSlug()` (hook). Both derive from `window.location` on every read — no module-global cache, no localStorage. Two tabs in different orgs stay independent.
 
-`apiFetch` reads the slug from `getCurrentOrgSlug()` to attach `X-Org-Slug` (backend USER_SCOPED + PUBLIC routes ignore the header anyway). Chrome components (sidebar, switcher, banner, user-card, notifications-bell) read `useCurrentOrgSlug()` so they re-render on SPA navigation.
-
-The chrome only renders inside the org-scope route (the `STANDALONE_PATHS` exit early for `/login` and `/orgs`), which means every chrome component is guaranteed to see a non-null slug. Bare-href fallbacks like `/dashboard` are gone — the entire premise was a slug that might be null in the chrome, and that can no longer happen.
+`apiFetch` uses `getCurrentOrgSlug()` to attach `X-Org-Slug`. Chrome components use `useCurrentOrgSlug()` to re-render on navigation. Chrome renders only inside the org-scope route (`STANDALONE_PATHS` exit early) so every chrome component is guaranteed a non-null slug.
 
 ### `/api/auth/me` contract
 
-Returns `{user, memberships[]}`. `memberships` are the authenticated user's current memberships (each entry: `slug`, `display_name`, `role`, `handle`, `broken_integrations`). Revoked memberships disappear on the next call. There is no `current_org_slug` field — the server has no opinion about which org you're "in"; that's view state and lives in the URL.
+Returns `{user, memberships[]}` (each entry: `slug`, `display_name`, `role`, `handle`, `broken_integrations`). No `current_org_slug` field — the server has no opinion about "current org"; that's URL state.
 
 ### Login + provisioning
 
-- Anonymous user hits any URL → central 401 handler hard-navigates to `/login?reason=signed_out&next=…`.
-- `LoginPage` enumerates `/api/auth/providers`; clicking a button hits `/api/auth/login?provider=<id>&next=<path>`.
-- OAuth callback completes server-side. The server matches `(provider, external_subject)` first, then verified-email; if neither matches, it redirects to `/login?reason=not_provisioned` with NO cookie set — **OAuth never auto-provisions**. New users must be invited (see `/api/memberships/accept`).
-- On success, the server applies `_safe_next` plus membership validation: if `next` points at `/orgs/$slug/...`, the resolved user must have a membership in `$slug`; otherwise the redirect collapses to `/`.
-- `/` probe routes per the rules above.
+- 401 → `handleAuthFailure` hard-navigates to `/login?reason=signed_out&next=…`.
+- `LoginPage` lists `/api/auth/providers`; clicking hits `/api/auth/login?provider=<id>&next=<path>`.
+- OAuth completes server-side. No match → `/login?reason=not_provisioned`, no cookie — **OAuth never auto-provisions**. New users must be invited via `/api/memberships/accept`.
+- On success: `_safe_next` validates `next`; if it targets `/orgs/$slug/...`, the user must have a membership in `$slug`, otherwise collapses to `/`.
 
-### In-app navigation discipline
+### In-app navigation
 
-- All in-SPA navigation uses `<Link>` from `@tanstack/react-router`. Native `<a href="/internal/path">` triggers a full browser reload and is reserved for external URLs (`target="_blank" rel="noopener noreferrer"`) and backend full-redirect routes under `/api/`.
-- Grep guard: `grep -rn '<a\s[^>]*href="/' apps/web/src` must return no in-SPA hits.
+Use `<Link>` from `@tanstack/react-router` for all SPA navigation. Native `<a href="...">` is for external URLs or backend `/api/` redirects only. Grep guard: `grep -rn '<a\s[^>]*href="/' apps/web/src` → zero in-SPA hits.
 
-### Type augmentation
-
-`router.tsx` declares `module "@tanstack/react-router"` augmenting `Register` so `<Link to="/orgs/$slug/tickets/$ticketId">` type-checks everywhere. Pass interpolated strings (`<Link to={`/orgs/${slug}/dashboard`}>`) only when forced; prefer the pattern + `params={{ slug }}` form for full type safety.
+`router.tsx` augments `Register` so typed `<Link to="...">` works everywhere. Prefer `params={{ slug }}` over interpolated strings for full type safety.
 
 ## Data owned
 
