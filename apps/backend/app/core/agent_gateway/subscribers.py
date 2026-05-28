@@ -15,9 +15,8 @@ The actual WebSocket send is parameterized via `sender: Sender` (an async
 callable). That keeps `subscribers.py` free of FastAPI / Starlette
 imports and lets tests inject a list-collecting fake.
 
-In-process for now. Multi-instance backends will route the
-subscribe / unsubscribe via Redis pub/sub (out of scope for foundations
-— same Phase 8b follow-on as the Redis backend for `core/sse`).
+In-process. Multi-instance backends route the subscribe / unsubscribe
+via Redis pub/sub, the same mechanism as the Redis backend for `core/sse`.
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ class SubscriberRegistry:
     subscribe / unsubscribe control messages to the agent that owns the
     associated workspace on the 0→1 / 1→0 boundary.
 
-    Process-local; the multi-instance variant lands in the follow-on.
+    Process-local.
     """
 
     def __init__(self) -> None:

@@ -76,7 +76,7 @@ class ClaudeCodeSettings(BaseModel):
     orchestrator: AgentSettings
     agents: list[AgentSettings] = Field(min_length=1, max_length=8)
     # MCP-proxy connections to expose as context for this org's
-    # runs. Optional with empty-default so legacy DB rows still parse.
+    # runs. Optional with empty-default so rows without it still parse.
     mcp_proxy_ids: list[UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")

@@ -141,8 +141,8 @@ class GitHubPlugin:
 
         For the test stack (`apps/fake-github`), if the configured PEM is a
         sentinel placeholder (no `BEGIN ... PRIVATE KEY` marker), falls back
-        to the legacy fake JWT string so the existing fake-github / integration
-        tests keep working without real RSA material.
+        to a fake JWT string so the fake-github / integration tests keep
+        working without real RSA material.
         """
         app_id, pem, _secret = _platform_credentials()
         async with db_session() as s:
@@ -580,7 +580,7 @@ def _build_app_jwt(app_id: str, pem: str) -> str:
     Real GitHub requires an RS256-signed JWT with `iss=app_id`, ~10min `exp`,
     and a small `iat` clock skew. The fake-github test stack accepts any string
     starting with `jwt-fake-` — so when the stored PEM is the test sentinel,
-    we emit the legacy token instead of trying to RSA-sign a non-key.
+    we emit the fake token instead of trying to RSA-sign a non-key.
     """
     if not pem or "BEGIN" not in pem:
         return f"jwt-fake-{app_id}"

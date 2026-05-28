@@ -35,7 +35,7 @@ type inboundWire struct {
 
 // DecodeInbound parses one inbound WS message. Returns an error on
 // malformed JSON, unknown `type`, or missing `workspace_id`. The
-// `workflow_execution_id` may be empty (older backends pre-slice 79),
+// `workflow_execution_id` may be empty (older backends),
 // in which case the agent can still update the SubscriptionSet but
 // can't populate outbound batches — caller decides what to do.
 func DecodeInbound(raw []byte) (InboundMessage, error) {

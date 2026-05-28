@@ -1,6 +1,6 @@
 """Tests for plugin-internal prompt assembly + state computation.
 
-Both used to live in domain/reviewer; they're plugin-internal now because the
+Prompt assembly + state computation are plugin-internal because the
 public Protocol (`review(context) -> ReviewResult`) returns vendor-neutral
 `vcs.Finding`s. Tests stay close to the code they cover.
 """
@@ -77,8 +77,8 @@ def test_prompt_includes_parent_header_and_branch_refs() -> None:
     # so the agent knows what to diff against.
     assert "git diff" in out
     assert "## Branch" in out
-    # Sanity: the raw diff body from the context is no longer dumped into the
-    # prompt. (Token cost on big PRs was the whole point.)
+    # Sanity: the raw diff body from the context isn't dumped into the
+    # prompt, to keep token cost down on big PRs.
     assert "diff --git" not in out
 
 
@@ -95,9 +95,9 @@ def test_prompt_includes_lessons_when_given() -> None:
 
 def test_prompt_omits_prior_yaaos_comments() -> None:
     """Full review intentionally doesn't surface prior yaaos comments to the
-    agent — the aggregate's fingerprint dedup handles re-emission silently
-    (plan §10.10). Telling the agent to "not duplicate" was fighting the
-    persistence layer and starved re-observation signal.
+    agent — the aggregate's fingerprint dedup handles re-emission silently.
+    Telling the agent to "not duplicate" would fight the persistence layer
+    and starve the re-observation signal.
     """
     long_bodies = ["x" * 500 for _ in range(30)]
     out = _assemble_review_prompt(_ctx(prior_yaaos_comment_bodies=long_bodies))

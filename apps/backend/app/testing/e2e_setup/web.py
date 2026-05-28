@@ -160,7 +160,7 @@ class _SamlSignRequest(BaseModel):
 @router.post("/saml/sign")
 async def saml_sign(req: _SamlSignRequest) -> dict[str, str]:
     """Test-only: sign a stub SAML assertion the `/api/sso/<slug>/acs`
-    handler will accept. Drives the Phase 12 Playwright spec."""
+    handler will accept. Drives the SSO Playwright spec."""
     _guard_dev()
     from app.plugins.saml_test import sign_assertion  # noqa: PLC0415
 

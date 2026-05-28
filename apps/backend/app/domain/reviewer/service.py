@@ -1,4 +1,4 @@
-"""Service layer for the durable-findings flows (plan §6.4, §6.5, §9).
+"""Service layer for the durable-findings flows.
 
 Pure orchestration over the aggregate. The DB session + VCS adapter calls
 are pulled in at the route layer (see `web.py`); the helpers here take the
@@ -10,16 +10,15 @@ POC layout:
   aggregate (acknowledge / no-op for mid-band) and return the yaaos reply
   body the caller should post.
 - `apply_verify_fix_result` — given a coding-agent verify_fix result,
-  transition the aggregate per plan §10.4 and return the reply body.
+  transition the aggregate and return the reply body.
 - `apply_stale_check_result` — given a coding-agent stale_check result,
-  transition the aggregate per plan §10.4 and return the reply body.
+  transition the aggregate and return the reply body.
 - `is_yaaos_command` / `is_off_topic_message` — cheap deterministic checks
-  applied before the classifier per plan §6.4 step 2.
+  applied before the classifier.
 - `pr_review_view` — read model bundling the aggregate's data into the shape
   the UI consumes (multi-review timeline, All Conversations cross-cut).
 
-Confidence thresholds match plan §10.3 / §10.4 and are class constants here
-so the tests pin them too.
+Confidence thresholds are class constants here so the tests pin them too.
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ from app.domain.reviewer.types import (
     Review,
 )
 
-# Plan §10.4 — verify_fix / stale_check.
+# verify_fix / stale_check thresholds.
 VERIFY_ACT_THRESHOLD = 0.80
 VERIFY_OBSERVE_THRESHOLD = 0.50
 
@@ -103,7 +102,7 @@ class FindingAuditPayload(BaseModel):
     fields: dict[str, Any]
 
 
-# ─── Deterministic pre-classifier checks (plan §6.4 step 2) ────────────────
+# ─── Deterministic pre-classifier checks ───────────────────────────────────
 
 
 def is_yaaos_command(body: str) -> str | None:
@@ -113,7 +112,7 @@ def is_yaaos_command(body: str) -> str | None:
 
 
 def is_off_topic_message(body: str) -> bool:
-    """Heuristic: short, no question, no fix claim → don't classify (plan §6.4 step 2)."""
+    """Heuristic: short, no question, no fix claim → don't classify."""
     stripped = body.strip()
     if "?" in stripped:
         return False
@@ -177,7 +176,7 @@ def apply_classified_reply(
     return ReplyAction(kind="noop")
 
 
-# ─── verify_fix → aggregate transition (plan §6.5 + §10.4) ─────────────────
+# ─── verify_fix → aggregate transition ─────────────────────────────────────
 
 
 def apply_verify_fix_result(
@@ -223,7 +222,7 @@ def apply_verify_fix_result(
     )
 
 
-# ─── stale_check → aggregate transition (plan §6.2 + §10.4) ────────────────
+# ─── stale_check → aggregate transition ────────────────────────────────────
 
 
 def apply_stale_check_result(
@@ -259,12 +258,12 @@ def apply_stale_check_result(
     )
 
 
-# ─── Read views (plan §9) ──────────────────────────────────────────────────
+# ─── Read views ─────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class FindingView:
-    """Read-model row consumed by the multi-review UI (plan §9.2)."""
+    """Read-model row consumed by the multi-review UI."""
 
     id: uuid.UUID
     state: FindingState
@@ -283,7 +282,7 @@ class FindingView:
 
 @dataclass(frozen=True)
 class ConversationView:
-    """One entry in the All Conversations cross-cut (plan §9.3)."""
+    """One entry in the All Conversations cross-cut."""
 
     finding_id: uuid.UUID
     state: FindingState
@@ -322,7 +321,7 @@ def _finding_view(f: Finding) -> FindingView:
 
 
 def all_conversations_view(aggregate: PRReviewAggregate) -> list[ConversationView]:
-    """Plan §9.3 — findings with at least one developer reply.
+    """Findings with at least one developer reply.
 
     A "conversation" in this view means an actual back-and-forth: the
     finding's thread has ≥1 `author_kind='human'` message. Findings yaaos
@@ -366,7 +365,7 @@ def _messages_for_thread(aggregate: PRReviewAggregate, thread_id: uuid.UUID) -> 
     return [m for m in aggregate.messages if m.thread_id == thread_id]
 
 
-# ─── Plan §5.1 public Python API ───────────────────────────────────────────
+# ─── Public Python API ──────────────────────────────────────────────────────
 
 
 async def list_reviews_for_pr(pr_id: uuid.UUID, *, org_id: uuid.UUID) -> list[Review]:
@@ -432,7 +431,7 @@ async def get_org_id_for_review(review_id: uuid.UUID) -> uuid.UUID | None:
 async def list_findings_for_pr(
     pr_id: uuid.UUID, *, org_id: uuid.UUID, include_terminal: bool = False
 ) -> list[FindingView]:
-    """Plan §5.1: list findings for a PR. Default excludes resolved+stale."""
+    """List findings for a PR. Default excludes resolved+stale."""
     from app.core.database import session as db_session  # noqa: PLC0415
     from app.domain.reviewer.repository import SqlAlchemyAggregateRepository  # noqa: PLC0415
 
@@ -443,7 +442,7 @@ async def list_findings_for_pr(
 
 
 async def get_thread(thread_id: uuid.UUID, *, org_id: uuid.UUID) -> ThreadView | None:
-    """Plan §5.1: fetch a thread view (messages + ack) by thread id.
+    """Fetch a thread view (messages + ack) by thread id.
 
     Returns None when the thread doesn't exist or belongs to a different org
     (the FindingRow row's org_id is the source of truth here).
@@ -528,11 +527,11 @@ class ThreadView:
     ack_rationale: str | None
 
 
-# ─── Plan §10.13 eval metrics ──────────────────────────────────────────────
+# ─── Eval metrics ────────────────────────────────────────────────────────────
 
 
 async def compute_acceptance_rate(*, org_id: uuid.UUID) -> float:
-    """Plan §10.13: (findings that led to a developer code change) / (findings posted).
+    """(findings that led to a developer code change) / (findings posted).
 
     A finding "led to a code change" iff its current state is
     `resolved_confirmed` (agent verified the fix) OR `resolved_unverified`
@@ -563,9 +562,9 @@ async def compute_acceptance_rate(*, org_id: uuid.UUID) -> float:
 
 
 async def compute_resolved_without_edit_rate(*, org_id: uuid.UUID) -> float:
-    """Plan §10.13: (resolved-without-edit) / (findings posted). Higher = more noise.
+    """(resolved-without-edit) / (findings posted). Higher = more noise.
 
-    Proxy today: `acknowledged` (wontfix or intentional) + `resolved_unverified`
+    Proxy: `acknowledged` (wontfix or intentional) + `resolved_unverified`
     + `stale` count as "marked resolved without edit". Returns 0.0 when empty.
     """
     from sqlalchemy import func, select  # noqa: PLC0415
@@ -660,7 +659,7 @@ def dispatch_events(session: AsyncSession, *, aggregate: PRReviewAggregate) -> l
 
 
 # Domain events that represent durable-finding state transitions worth an
-# audit row (plan §5.3). Reviews already audit via `audit_for_review_job`.
+# audit row. Reviews already audit via `audit_for_review_job`.
 _AUDIT_FINDING_EVENT_KINDS = {
     "FindingRaised": "finding_raised",
     "FindingReObserved": "finding_re_observed",
@@ -679,7 +678,7 @@ async def dispatch_audits(
     actor: Any,
     org_id: uuid.UUID,
 ) -> int:
-    """Plan §5.3: write an `audit_entries` row per finding state transition.
+    """Write an `audit_entries` row per finding state transition.
 
     Peeks at `aggregate.events` (does NOT drain — `dispatch_events` owns the
     drain). Idempotent across multiple calls only insofar as the caller
@@ -776,7 +775,7 @@ async def aggregate_findings_by_prs(
 
 
 def review_summary(aggregate: PRReviewAggregate, review: Review) -> dict[str, int]:
-    """Counters for the per-review section header (plan §9.2): N new, M re-observed, K resolved."""
+    """Counters for the per-review section header: N new, M re-observed, K resolved."""
     new = 0
     re_observed = 0
     resolved = 0

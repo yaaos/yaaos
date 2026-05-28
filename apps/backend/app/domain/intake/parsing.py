@@ -1,10 +1,9 @@
 """Re-review command parsing — pure helper.
 
-Plan/notes/full-pr-flow.md §9.5 / §13 step 13 — canonical PR-comment command
-set: `@yaaos review` (incremental), `@yaaos full review`, `@yaaos cancel`. The
-legacy `@yaaos rereview` form maps to `full review` for backward compat. Plus
-`confirm` as a bare body matches the mid-band acknowledgment confirmation
-path (§6.4 step 4).
+Canonical PR-comment command set: `@yaaos review` (incremental),
+`@yaaos full review`, `@yaaos cancel`. The deprecated `@yaaos rereview`
+form still maps to `full review` for backward compat. Plus `confirm` as a
+bare body matches the mid-band acknowledgment confirmation path.
 """
 
 import re
@@ -14,8 +13,8 @@ import re
 _YAAOS_FULL_REVIEW_RE = re.compile(r"@yaaos\s+full\s+review\b", re.IGNORECASE)
 _YAAOS_REVIEW_RE = re.compile(r"@yaaos\s+review\b", re.IGNORECASE)
 _YAAOS_CANCEL_RE = re.compile(r"@yaaos\s+cancel\b", re.IGNORECASE)
-# Legacy: @yaaos rereview (with optional -<specialty>) — keep accepting; it
-# maps to `full review`.
+# Deprecated: @yaaos rereview (with optional -<specialty>) — still
+# accepted; maps to `full review`.
 _LEGACY_REREVIEW_RE = re.compile(r"@yaaos(?:-[a-z0-9-]+)?\s+rereview\b", re.IGNORECASE)
 
 
@@ -34,19 +33,19 @@ def parse_yaaos_command(body: str) -> str | None:
 
 
 def parse_rereview(body: str) -> tuple[bool, None]:
-    """Legacy `@yaaos rereview` parser. Matches the OLD vocabulary only.
+    """Parser for the deprecated `@yaaos rereview` vocabulary only.
 
-    Returns (matched, None). The new vocabulary (`@yaaos review`,
+    Returns (matched, None). The canonical vocabulary (`@yaaos review`,
     `@yaaos full review`, `@yaaos cancel`) is recognized by
     `parse_yaaos_command` — callers that want to honor both run
-    `parse_rereview` first (legacy intent: re-review) then
-    `parse_yaaos_command` for the new commands.
+    `parse_rereview` first (re-review intent) then
+    `parse_yaaos_command` for the canonical commands.
     """
     return bool(_LEGACY_REREVIEW_RE.search(body or "")), None
 
 
 def is_mid_band_confirm(body: str) -> bool:
-    """Plan §6.4 step 4 mid-band path: developer types `confirm` to acknowledge.
+    """Mid-band path: developer types `confirm` to acknowledge.
 
     Bare `confirm` on its own line (case-insensitive, optional surrounding
     whitespace / punctuation). Mid-band only fires when a prior yaaos reply

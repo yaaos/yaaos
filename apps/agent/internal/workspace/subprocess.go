@@ -1,6 +1,6 @@
 package workspace
 
-// Streaming subprocess primitive. The eventual `InvokeClaudeCode`
+// Streaming subprocess primitive. The `InvokeClaudeCode`
 // handler body composes this — Claude Code emits stream-json events on
 // stdout (one JSON object per line), and the supervisor needs to forward
 // each line as an `activity_batch` over the WebSocket while the
@@ -8,8 +8,8 @@ package workspace
 // end loses that real-time signal.
 //
 // `RunStreaming` is intentionally Claude-Code-agnostic — the InvokeClaudeCode
-// body will be the only caller initially, but the same primitive serves
-// any future "long-running subprocess with line-by-line stdout output"
+// body is its caller, but the same primitive serves any
+// "long-running subprocess with line-by-line stdout output"
 // case (e.g. yaaos-skills indexers, the disk janitor's `du` walk).
 //
 // What's covered:
@@ -27,7 +27,7 @@ package workspace
 //
 // What's NOT covered (deliberate — caller's problem):
 //   - JSON parsing of the stdout lines. Callback receives raw bytes;
-//     each caller (Claude Code, future others) knows its own wire shape.
+//     each caller (Claude Code, others) knows its own wire shape.
 //   - Backpressure if the callback is slow. The pipe buffer fills, the
 //     subprocess blocks on write. Caller MUST keep the callback cheap
 //     (push-to-channel-and-return is the canonical shape).

@@ -1,6 +1,6 @@
-"""Phase 3 wiring: `_build_mcp_payload` + mint/revoke + agent_config threading.
+"""MCP wiring: `_build_mcp_payload` + mint/revoke + agent_config threading.
 
-The full reviewer worker is exercised by the e2e suite (Phase 5). These tests
+The full reviewer worker is exercised by the e2e suite. These tests
 cover the small, deterministic surface: provider collection + token lifecycle
 hooked into the same payload the worker hands the coding-agent plugin.
 """

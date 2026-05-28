@@ -1,4 +1,4 @@
-"""Pure transition functions for `FindingState` (plan §3).
+"""Pure transition functions for `FindingState`.
 
 The aggregate decides whether evidence (a classifier output, a verify-fix
 result) is strong enough to transition; this module's job is to validate
@@ -13,7 +13,7 @@ that the requested transition is allowed.
 | open → stale | stale_check returned "no longer applies" ≥ threshold. |
 | resolved_* / stale / acknowledged | Terminal in this PR. |
 
-`superseded` + `acknowledged → open` are deferred for POC (plan §11).
+`superseded` + `acknowledged → open` are not supported in the POC.
 """
 
 from __future__ import annotations

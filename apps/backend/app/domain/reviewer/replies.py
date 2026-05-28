@@ -1,4 +1,4 @@
-"""Developer reply handling (plan §6.4) + verify-fix / answer-question subflows.
+"""Developer reply handling + verify-fix / answer-question subflows.
 
 Webhook payload → resolve external comment to a CommentThread →
 deterministic checks (yaaos command? off-topic? mid-band `confirm`?) →
@@ -87,7 +87,7 @@ async def handle_developer_reply(
         return None
     pr_id = finding_row.pr_id
 
-    # 2. Cheap deterministic checks — plan §6.4 step 2.
+    # 2. Cheap deterministic checks.
     cmd = is_yaaos_command(body)
     if cmd is not None:
         # yaaos command routing is handled separately (intake calls the
@@ -97,7 +97,7 @@ async def handle_developer_reply(
         )
         return f"command:{cmd}"
 
-    # Mid-band confirmation path (plan §6.4 step 4) — if the immediately prior
+    # Mid-band confirmation path — if the immediately prior
     # yaaos message asked for a confirm, "confirm" finalizes the ack.
     from app.domain.intake import is_mid_band_confirm  # noqa: PLC0415
 
@@ -320,7 +320,7 @@ async def _finalize_mid_band_ack(
     body: str,
     author_external_id: str,
 ) -> None:
-    """Mid-band acknowledgment confirmation (plan §6.4 step 4).
+    """Mid-band acknowledgment confirmation.
 
     The developer's current message is just `confirm` (or similar). The
     *real* rationale was the message immediately before yaaos's
@@ -401,7 +401,7 @@ async def _original_mid_band_rationale(thread_id: UUID, author_external_id: str)
     return last_human_before_confirm.body if last_human_before_confirm else None
 
 
-# ── verify_fix subflow (plan §6.5) ───────────────────────────────────────────
+# ── verify_fix subflow ────────────────────────────────────────────────────────
 
 
 async def _run_verify_fix(
@@ -438,7 +438,7 @@ async def _run_verify_fix(
             ),
             org_id=org_id,
         ) as ws:
-            # Plan §6.5: hand the agent the ORIGINAL code (captured at
+            # Hand the agent the ORIGINAL code (captured at
             # finding-creation time) AND the current code at the resolved
             # anchor, so it can decide whether the diff actually fixes the
             # flagged issue. `original_lines` lives on `current_anchor` JSONB.

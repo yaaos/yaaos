@@ -1,10 +1,9 @@
-"""(foundations): the five reviewer workflows + their commands
-register against `core/workflow.get_engine()` at `domain/reviewer` import.
+"""The five reviewer workflows + their commands register against
+`core/workflow.get_engine()` at `domain/reviewer` import.
 
-These tests don't run the workflows end-to-end — Phase 4 cont'd wires the
-real command bodies and dismantles `queue.py`. Here we assert that the
-registry shape lines up with the locked workflow definitions so a typo in
-a step's `command_kind` is caught at the seam.
+These tests don't run the workflows end-to-end. They assert that the
+registry shape lines up with the workflow definitions so a typo in a
+step's `command_kind` is caught at the seam.
 """
 
 from __future__ import annotations

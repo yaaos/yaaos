@@ -1,4 +1,4 @@
-"""Plan §5.3: every durable-finding state transition writes an audit entry.
+"""Every durable-finding state transition writes an audit entry.
 
 `dispatch_audits(aggregate, session=..., actor=..., org_id=...)` drains the
 aggregate's pending domain events and writes one `audit_entries` row per

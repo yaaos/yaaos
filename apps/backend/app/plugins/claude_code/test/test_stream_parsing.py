@@ -3,7 +3,7 @@
 The CLI emits one JSON object per line under `--output-format=stream-json`.
 We parse the captured stdout post-hoc to extract the terminal `result` event
 and log a per-event trace. These tests exercise the parser against canned
-streams; live CLI streaming is covered by manual review and (eventually) e2e.
+streams; live CLI streaming is covered by manual review and e2e.
 """
 
 from __future__ import annotations

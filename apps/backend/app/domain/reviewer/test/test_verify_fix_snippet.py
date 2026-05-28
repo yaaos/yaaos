@@ -1,7 +1,7 @@
-"""Plan §6.5: verify_fix must give the agent the ORIGINAL anchored code
+"""verify_fix must give the agent the ORIGINAL anchored code
 (captured when the finding was raised) so it can compare against the
-current code. The legacy placeholder was a static "POC: snippet not
-stored" string — the LLM had no context and had to guess.
+current code, rather than a placeholder the LLM would have to guess
+around.
 """
 
 from __future__ import annotations

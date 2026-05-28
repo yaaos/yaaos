@@ -44,8 +44,7 @@ from app.domain.tickets import get_payload as get_ticket_payload
 
 log = structlog.get_logger("domain.reviewer.commands")
 
-# Labels whose presence on a PR force-skips the review. Matches the legacy
-# `queue.py` behavior so the cutover is a straight swap. Case-insensitive.
+# Labels whose presence on a PR force-skips the review. Case-insensitive.
 SKIP_LABELS: frozenset[str] = frozenset({"yaaos-skip", "no-review", "wip"})
 
 # ── Workspace commands (5) ──────────────────────────────────────────────
@@ -207,8 +206,8 @@ class CodeReview(_WorkspaceReviewCommand):
         from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
 
         # Minimal PR + diff for the POC in-memory path. Real production code
-        # would fetch via vcs.get_pr / vcs.get_diff; that wiring lands with
-        # the Phase 6 Go subprocess body which has the real VCS side.
+        # would fetch via vcs.get_pr / vcs.get_diff; the Go subprocess body
+        # owns the real VCS side.
         head_sha = str(ticket_ctx.payload.get("head_sha") or "")
         base_sha = str(ticket_ctx.payload.get("base_sha") or "")
         pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
@@ -268,15 +267,14 @@ class IncrementalReview(_WorkspaceReviewCommand):
     """Push-driven incremental review against `prev_sha..head_sha`.
 
     Full body — provisions nothing (the prior `ProvisionWorkspace` step
-    owns the workspace), but does everything else `run_incremental_review`
-    used to do in the legacy `incremental.py`: fetches the real diff +
-    lessons + prior-finding summaries, builds the IncrementalReviewContext,
-    invokes `coding_agent.incremental_review`, runs the deterministic
-    anchor pass + LLM stale-check on touched-file open findings, posts the
-    new findings + stale-check replies via the VCS plugin, persists via
-    the aggregate, and updates the legacy `ReviewRow` for the SPA's
-    per-PR history view. On `pending_replay`, re-triggers via
-    `start_incremental_review`.
+    owns the workspace), but does everything else the incremental review
+    needs: fetches the real diff + lessons + prior-finding summaries,
+    builds the IncrementalReviewContext, invokes
+    `coding_agent.incremental_review`, runs the deterministic anchor pass +
+    LLM stale-check on touched-file open findings, posts the new findings +
+    stale-check replies via the VCS plugin, persists via the aggregate, and
+    updates the `ReviewRow` for the SPA's per-PR history view. On
+    `pending_replay`, re-triggers via `start_incremental_review`.
 
     Inputs: `workspace_id` (from ProvisionWorkspace). Reads from the
     ticket payload (set by `start_incremental_review`): `review_id`,
@@ -615,7 +613,7 @@ class IncrementalReview(_WorkspaceReviewCommand):
             )
             await s.commit()
 
-        # Trigger-policy §7 rule 4: re-evaluate if pending_replay was set.
+        # Trigger-policy rule: re-evaluate if pending_replay was set.
         async with db_session() as s:
             current = (
                 await s.execute(select(ReviewRow).where(ReviewRow.id == review_id))
@@ -884,9 +882,8 @@ class SecretsScan:
     - Posts a `secrets_warning_review` to the PR via the registered VCS
       plugin so the human sees yaaos's refusal in-band.
 
-    Matches the legacy `_run_review_job_inner` behavior (slice 46) — the
-    legacy path is the existing production owner of secrets detection;
-    the workflow needs the same gate or it's a regression.
+    The workflow needs this secrets gate to match the production
+    behavior; without it a secret could slip through.
 
     No `pr_id`? The workflow can't fetch the diff yet; treat as no-op
     success (CheckShouldReview already handled the ticket-payload skip
@@ -1427,8 +1424,7 @@ class PostReply(_LocalReviewCommand):
             external_comment_id = f"local-reply-{uuid4()}"  # fallback
             if parent_external_id is None or pr_row is None or parent_external_id.startswith("local-"):
                 # No real parent yet (e.g. PostFindings never posted to GitHub
-                # for this finding) — persist locally with placeholder. Same
-                # behavior as before slice 32.
+                # for this finding) — persist locally with placeholder.
                 log.info(
                     "post_reply.local_only",
                     workflow_execution_id=ctx.workflow_execution_id,

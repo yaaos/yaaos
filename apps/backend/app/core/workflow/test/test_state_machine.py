@@ -5,7 +5,7 @@ Drives the three task bodies (`start_step`, `handle_agent_event`,
 rows and re-dispatches them to the task bodies, simulating the worker
 without standing up Redis or taskiq.
 
-Covers the unit-test bullets in PHASES.md § Phase 1:
+Covers:
 - Local-only workflow runs to completion.
 - Workspace step async cycle: start_step → awaiting_agent → terminal event → route → done.
 - Failure + retry → fail_workflow after exhaustion.
@@ -124,7 +124,7 @@ class _AppendOnce:
 
 
 class _WorkspaceStub:
-    """Workspace-category command — start_step stubs dispatch until Phase 3.
+    """Workspace-category command whose dispatch start_step stubs.
     Provided here so the workspace branch of start_step is exercised."""
 
     kind = "DoOnAgent"

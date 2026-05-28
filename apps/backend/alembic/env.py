@@ -4,7 +4,7 @@ The actual migration runner is `core/database.migrate()` (invoked via
 `bin/migrate`). Do NOT use `alembic upgrade` directly — it bypasses the
 `schema_migrations` per-migration tracking model.
 
-See `plan/milestones/M01-code-review/patterns.md` § Per-migration tracking.
+See `docs/patterns.md` § Per-migration tracking.
 """
 
 from logging.config import fileConfig

@@ -1,4 +1,4 @@
-"""`CodeAnchor` re-resolution under line drift (plan §2.3 + §6.2 step 4b).
+"""`CodeAnchor` re-resolution under line drift.
 
 When a file changes between reviews, line numbers drift. The anchor's
 `surrounding_content_hash` covers 3 lines of context above + the anchored
@@ -50,8 +50,8 @@ def make_anchor(
     """Build a `CodeAnchor` for a fresh observation.
 
     Captures `original_lines` (the exact anchored range as a tuple) so the
-    verify_fix subflow (plan §6.5) can later compare against the developer's
-    edited code without re-reading historical commits.
+    verify_fix subflow can compare against the developer's edited code
+    without re-reading historical commits.
     """
     return CodeAnchor(
         file_path=file_path,

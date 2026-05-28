@@ -17,10 +17,10 @@ JSON-RPC envelopes to `POST /api/mcp/{review_id}/{server}`; the proxy:
 6. Writes one `mcp.<provider>.dispatched` audit row per method call —
    never batched; one row per JSON-RPC method exercised.
 
-Refresh-on-expired-token is deferred (see DECISIONS.md): the proxy returns
+Expired access tokens are not refreshed automatically: the proxy returns
 `broken_creds` when the access token is expired, and the operator
-reconnects through Org Settings > Integrations. Phase 3b's hourly health
-check + email notification will accelerate that loop in practice.
+reconnects through Org Settings > Integrations. The hourly health
+check + email notification accelerate that loop in practice.
 """
 
 from __future__ import annotations
@@ -144,9 +144,9 @@ async def dispatch(
                 _rpc_error(rpc_id, *_RPC_ERR_BROKEN_CREDS, f"{server} credentials need reconnect")
             )
         if credential.expires_at < datetime.now(UTC):
-            # Refresh path is deferred (see DECISIONS.md). For now we
-            # surface broken_creds; Phase 3b's hourly health check will
-            # flip last_refresh_status="failed" so the UI surfaces it.
+            # Expired tokens aren't auto-refreshed; surface broken_creds.
+            # The hourly health check flips last_refresh_status="failed"
+            # so the UI surfaces it.
             record_broken_creds(review_id, server)
             return JSONResponse(
                 _rpc_error(

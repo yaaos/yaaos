@@ -17,9 +17,7 @@ from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
 from app.domain.tickets.models import TicketRow
 
-# collapse: single 5-state vocabulary. The legacy 4-state lifecycle
-# (open / in_review / complete / abandoned) was mapped one-shot in migration
-# 023; this is the canonical name now. `hitl` and `failed` are populated by
+# Single 5-state ticket vocabulary. `hitl` and `failed` are populated by
 # the workflow-state projection (reviewer/workflow_review_view.py); the
 # transition helpers below only emit `running`, `done`, `cancelled`.
 TicketStatus = Literal["running", "hitl", "done", "failed", "cancelled"]

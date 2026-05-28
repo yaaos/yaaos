@@ -1,4 +1,4 @@
-"""Value objects + enums for the durable-findings reviewer (plan §2.3).
+"""Value objects + enums for the durable-findings reviewer.
 
 Immutable. Pure data. No I/O. The aggregate (`aggregate.py`) consumes these;
 the SQLAlchemy repository (`repository.py`) maps them to/from rows.
@@ -37,7 +37,7 @@ class FindingState(StrEnum):
 
     @property
     def is_terminal(self) -> bool:
-        """Acknowledged + resolved + stale are terminal in this PR (plan §3)."""
+        """Acknowledged + resolved + stale are terminal in this PR."""
         return self in {
             FindingState.ACKNOWLEDGED,
             FindingState.RESOLVED_CONFIRMED,
@@ -47,7 +47,7 @@ class FindingState(StrEnum):
 
 
 class ReviewTrigger(StrEnum):
-    """Why the review was scheduled. POC subset; plan §2.3."""
+    """Why the review was scheduled. POC subset."""
 
     PR_READY = "pr_ready"
     PUSH_INCREMENTAL = "push_incremental"
@@ -78,16 +78,16 @@ class ReviewScope:
 
 @dataclass(frozen=True)
 class CodeAnchor:
-    """Where a finding lives. Resolves to a new line after the file changes (plan §2.3).
+    """Where a finding lives. Resolves to a new line after the file changes.
 
     `surrounding_content_hash` covers 3 lines of context above + the anchored
     range + 3 lines below, whitespace-normalized. Used to re-find the anchor
     when line numbers drift in a later commit.
 
     `original_lines` snapshots the exact anchored lines at finding-creation
-    time. verify_fix (plan §6.5) compares this against the current code at
+    time. verify_fix compares this against the current code at
     the resolved anchor to decide whether the developer's claimed fix is
-    real. Empty list is allowed for legacy rows that pre-date the field.
+    real. Empty list is allowed for rows that don't carry the field.
     """
 
     file_path: str
@@ -100,7 +100,7 @@ class CodeAnchor:
 
 @dataclass(frozen=True)
 class FindingFingerprint:
-    """Conceptual identity across reviews (plan §2.3).
+    """Conceptual identity across reviews.
 
     Two raw findings with the same fingerprint are the same `Finding`.
     Hash recipe in `fingerprint.py`.
@@ -160,7 +160,7 @@ class Review:
     id: uuid.UUID
     pr_id: uuid.UUID
     org_id: uuid.UUID
-    sequence_number: int  # 1, 2, 3, ... per PR (plan §4.2)
+    sequence_number: int  # 1, 2, 3, ... per PR
     trigger_reason: ReviewTrigger
     scope: ReviewScope
     commit_sha_at_start: str

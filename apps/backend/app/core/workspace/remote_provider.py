@@ -4,25 +4,24 @@ WorkspaceAgent via `core/agent_gateway`.
 This provider does **not** spawn anything in-process. Each operation
 (`provision`, `run_coding_agent_cli`, `destroy`, etc.) enqueues an
 AgentCommand onto the target agent's FIFO via
-`core/agent_gateway.enqueue_command`. The Phase 1 workflow engine's
-Workspace branch already parks in `awaiting_agent` after dispatch; the
-terminal AgentEvent arrives at `/api/v1/commands/{id}/events` and the
-engine's `handle_agent_event` resumes the workflow.
+`core/agent_gateway.enqueue_command`. The workflow engine's Workspace
+branch parks in `awaiting_agent` after dispatch; the terminal AgentEvent
+arrives at `/api/v1/commands/{id}/events` and the engine's
+`handle_agent_event` resumes the workflow.
 
-Phase 7 foundations ships:
+Exposes:
 - Provider registration under id `remote_agent`.
 - `dispatch_to_agent(workspace_id, command, *, session)` helper that
   picks the destination agent (least-loaded reachable for the workspace's
   org) and enqueues the command.
-- Placeholder `provision()` / `destroy()` that hand control to the agent
-  via `CreateWorkspace` / `CleanupWorkspace` AgentCommands.
+- `provision()` / `destroy()` that hand control to the agent via
+  `CreateWorkspace` / `CleanupWorkspace` AgentCommands.
 
-Deferred to the Phase 7 follow-on:
-- Synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
-  returning a `CodingAgentCliResult`) become awkward in the async
-  event-driven model — the full integration replaces these with the
-  Phase 4 reviewer commands that consume the engine's `handle_agent_event`.
-- Actual provisioning policy beyond "first reachable agent".
+The synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
+returning a `CodingAgentCliResult`) don't fit the async event-driven
+model — the reviewer commands enqueue AgentCommands that the engine's
+`handle_agent_event` consumes instead. Provisioning policy is "first
+reachable agent".
 """
 
 from __future__ import annotations
@@ -63,9 +62,8 @@ class RemoteAgentWorkspaceProvider:
     `provision/run/destroy` methods read like a synchronous call/return
     cycle. For the remote path the methods enqueue AgentCommands and the
     workflow engine handles awaits via the `handle_agent_event` flow.
-    Phase 7 foundations exposes the dispatch entry points; Phase 7
-    follow-on wires the full integration into the reviewer workflows
-    (Phase 4 command bodies)."""
+    The dispatch entry points enqueue commands; the reviewer workflows
+    drive the full integration through their command bodies."""
 
     meta = PluginMeta(
         id="remote_agent",
@@ -80,13 +78,13 @@ class RemoteAgentWorkspaceProvider:
     )
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
-        # Phase 7 follow-on wires real provisioning. The full
-        # implementation enqueues a `CreateWorkspace` AgentCommand and
-        # returns plugin_state pointing at the workspace id; the workflow
-        # engine awaits the `completed_success` event.
+        # Provisioning runs through the dispatch helpers, not this
+        # synchronous Protocol method: they enqueue a `CreateWorkspace`
+        # AgentCommand and the workflow engine awaits the
+        # `completed_success` event.
         raise WorkspaceProvisionError(
-            "RemoteAgentWorkspaceProvider.provision is wired in Phase 7 follow-on; "
-            "use dispatch_to_agent() to enqueue commands today."
+            "RemoteAgentWorkspaceProvider.provision is not a synchronous call; "
+            "use dispatch_create_workspace() to enqueue commands."
         )
 
     async def run_coding_agent_cli(
@@ -100,10 +98,9 @@ class RemoteAgentWorkspaceProvider:
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult:
         del plugin_state, argv, env, stdin, timeout_seconds, on_stream_line
-        # The Phase 4 reviewer commands replace this entirely — they
-        # enqueue `InvokeClaudeCode` AgentCommands and the workflow engine
-        # awaits the terminal event. Calling this method directly is a
-        # programming error against the remote provider.
+        # The reviewer commands enqueue `InvokeClaudeCode` AgentCommands
+        # and the workflow engine awaits the terminal event. Calling this
+        # method directly is a programming error against the remote provider.
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider has no synchronous run_coding_agent_cli; "
             "Workspace WorkflowCommands enqueue AgentCommands and await events."
@@ -113,20 +110,23 @@ class RemoteAgentWorkspaceProvider:
         del plugin_state, path
         # Same shape issue as run_coding_agent_cli — reads come back as
         # outputs on terminal events in the remote model.
-        raise WorkspaceProvisionError("RemoteAgentWorkspaceProvider.read_text is wired in Phase 7 follow-on.")
+        raise WorkspaceProvisionError(
+            "RemoteAgentWorkspaceProvider.read_text is not a synchronous call; "
+            "reads arrive as outputs on terminal AgentEvents."
+        )
 
     async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
         del plugin_state, path, content
         raise WorkspaceProvisionError(
-            "RemoteAgentWorkspaceProvider.write_text is wired in Phase 7 follow-on; "
+            "RemoteAgentWorkspaceProvider.write_text is not a synchronous call; "
             "use a `WriteFiles` AgentCommand."
         )
 
     async def destroy(self, plugin_state: dict[str, Any]) -> None:
         del plugin_state
-        # Real implementation enqueues a CleanupWorkspace AgentCommand.
-        # The Phase 1 workflow engine's CleanupWorkspace WorkflowCommand
-        # is the proper invocation path.
+        # Destruction runs through the engine's CleanupWorkspace
+        # WorkflowCommand, which enqueues a CleanupWorkspace AgentCommand;
+        # that is the proper invocation path, not this method.
         return
 
     async def health_check(self) -> HealthStatus:

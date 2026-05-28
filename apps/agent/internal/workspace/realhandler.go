@@ -15,7 +15,7 @@
 //                            backend rotates a GitHub installation token
 //                            mid-flight.
 //   - InvokeClaudeCode     — read `invocation.exec` from the wire
-//                            ({argv, stdin, env}, slice 72), merge env
+//                            ({argv, stdin, env}), merge env
 //                            on top of `os.Environ()`, add TRACEPARENT
 //                            for span linkage, dispatch via
 //                            `RunStreaming` with the workspace tempdir
@@ -76,7 +76,7 @@ type RealHandlerConfig struct {
 
 	// CloneFunc clones a repo into the workspace directory. Defaults to
 	// `gitClone`, which shells out to `git` (required in the runtime
-	// image; see Dockerfile slice 69). Tests inject a no-op or a local-
+	// image; see Dockerfile). Tests inject a no-op or a local-
 	// bare-repo clone so they don't touch the network.
 	CloneFunc CloneFunc
 }
@@ -253,7 +253,7 @@ func (h *RealHandler) RefreshWorkspaceAuth(_ context.Context, cmd *protocol.Refr
 }
 
 // invocationExec is the wire shape under `cmd.Invocation.exec` —
-// produced by `domain/coding_agent.build_invocation` (slice 72). The
+// produced by `domain/coding_agent.build_invocation`. The
 // rest of `cmd.Invocation` (mode, context, prompt_config) is
 // observability/contract surface that the agent ignores by design — the
 // "zero biz logic" rule means the backend owns prompt assembly.
@@ -287,8 +287,8 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 	//   2. exec.env from the wire (ANTHROPIC_API_KEY, etc.). Backend-
 	//      supplied secrets win over anything the parent inherited.
 	//   3. TRACEPARENT from the current ctx so the spawned subprocess
-	//      can link its spans into the supervisor's trace (slice 64
-	//      already does this for the supervisor → workspace hop; this
+	//      can link its spans into the supervisor's trace (the
+	//      supervisor → workspace hop links the same way; this hop
 	//      extends it one more step to the Claude Code grand-child).
 	env := os.Environ()
 	for k, v := range inv.Exec.Env {
@@ -300,11 +300,11 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 
 	// Wall-clock cap on the subprocess comes from
 	// `InvokeClaudeCodeCommand.Limits.WallclockSeconds` on the wire,
-	// enforced one level up in `supervisor.Pool.Dispatch` (slice 68) via
+	// enforced one level up in `supervisor.Pool.Dispatch` via
 	// `context.WithTimeout`. Here we just inherit that ctx — the
 	// subprocess is killed via SIGTERM/SIGKILL on ctx cancel.
 	//
-	// Live streaming (slice 76): pull the Emitter `workspace.Run`
+	// Live streaming: pull the Emitter `workspace.Run`
 	// installed into ctx; forward each stream-json line as a progress
 	// AgentEvent so the supervisor (and ultimately the SPA's activity
 	// view) sees Claude Code's work as it happens, not just at the end.
@@ -424,7 +424,7 @@ func safeJoin(base, rel string) (string, error) {
 // the clone URL via HTTPS basic auth (`https://x-access-token:<token>@…`)
 // for GitHub installation tokens — that's the supported pattern for
 // short-lived GitHub App installation tokens. Other auth kinds use the
-// same `x-access-token` form for now; specialised handling lands when
+// same `x-access-token` form; specialised handling lands when
 // non-GitHub plugins arrive.
 //
 // Sequence:

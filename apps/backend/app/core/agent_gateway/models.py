@@ -28,8 +28,7 @@ from app.core.database import Base
 class WorkspaceAgentRow(Base):
     """One row per agent pod that has exchanged identity. The control
     plane picks pods to dispatch to by joining on `(org_id, state=reachable)`
-    + ordering by `last_heartbeat_at desc` (least-loaded provisioning
-    policy lands in a follow-on iteration)."""
+    + ordering by `last_heartbeat_at desc`."""
 
     __tablename__ = "workspace_agents"
 

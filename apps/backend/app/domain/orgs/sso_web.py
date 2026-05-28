@@ -232,9 +232,8 @@ async def get_org_sso_config() -> dict:
 async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     """Upsert per-org SSO config. The exempt-Owner picker requires the
     candidate to have a verified TOTP secret — otherwise reject with
-    `exempt_owner_no_totp`. Phase 11 helper enforces. Writes a
-    `sso_config_changed` audit row + an `exempt_owner_set` row when
-    the exempt-Owner pointer changed."""
+    `exempt_owner_no_totp`. Writes a `sso_config_changed` audit row + an
+    `exempt_owner_set` row when the exempt-Owner pointer changed."""
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.auth import user_id_var  # noqa: PLC0415
     from app.core.identity import can_be_sso_exempt_owner  # noqa: PLC0415

@@ -1,4 +1,4 @@
-"""Plan §6.2 step 4b: anchor re-resolution wired into incremental review.
+"""Anchor re-resolution wired into incremental review.
 
 Before the LLM stale_check runs, the deterministic `resolve_anchor` should
 check each open finding in touched files. Three outcomes:

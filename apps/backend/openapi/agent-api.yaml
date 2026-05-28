@@ -11,17 +11,16 @@ info:
     workspace-state events, and AgentCommand events. A separate WebSocket
     `WSS /api/v1/agents/{id}/activity` carries high-frequency CodingAgent
     ActivityEvents back to the control plane; that channel is specified
-    alongside the M05 Phase 8b work and is intentionally out of this
-    file's current revision.
+    separately and is not part of this file.
 
     Every AgentCommand and AgentEvent carries `traceparent` (W3C trace
     context) so spans nest correctly across the wire.
 
-    M05 Phase 5: hand-written. Future codegen (Pydantic on the backend,
-    oapi-codegen on the Go side) consumes this file; until then the
-    in-tree types under `app/core/agent_gateway/types.py` are the
-    canonical Pydantic mirror. A drift-detection test
-    (`app/core/agent_gateway/test/test_openapi_mirror_drift.py`, slice 66)
+    This spec is hand-written. The in-tree types under
+    `app/core/agent_gateway/types.py` are the canonical Pydantic mirror;
+    codegen (Pydantic on the backend, oapi-codegen on the Go side) can
+    consume this file. A drift-detection test
+    (`app/core/agent_gateway/test/test_openapi_mirror_drift.py`)
     catches add/rename/remove between this spec and the Pydantic mirror.
 
 servers:
@@ -38,10 +37,10 @@ paths:
         Vault AWS-auth pattern. The agent submits a pre-signed
         `GetCallerIdentity` request that the control plane replays to
         AWS STS; on success it issues a bearer with the agent's
-        registered ARN. M05 Phase 5 ships a placeholder verifier that
+        registered ARN. The verifier is currently a placeholder that
         accepts any non-empty `signed_request` and returns a bearer
-        scoped to the request-supplied `agent_pod_id`. The real STS
-        verifier lands in Phase 7.
+        scoped to the request-supplied `agent_pod_id`; it does not yet
+        replay the request to AWS STS.
       operationId: exchangeIdentity
       requestBody:
         required: true
@@ -239,8 +238,8 @@ components:
           type: string
           description: |
             Base64-encoded SigV4-signed STS GetCallerIdentity payload.
-            Phase 5 placeholder verifier accepts any non-empty value;
-            Phase 7 wires the real STS replay.
+            The placeholder verifier accepts any non-empty value; the real
+            STS replay is not yet wired.
 
     IdentityExchangeResponse:
       type: object
@@ -445,7 +444,7 @@ components:
                 argv + stdin + env the Go agent feeds to
                 `workspace.RunStreaming`. The agent reads `exec` and
                 ignores the contract-surface fields — they're there for
-                observability + future Pydantic-codegen.
+                observability + Pydantic-codegen.
               properties:
                 mode:
                   type: string

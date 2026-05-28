@@ -5,8 +5,8 @@ that emit minimum-shape outputs. Local downstream steps either short-
 circuit (no pr_id link → success-no-op) or complete cleanly with the
 spy's outputs. Each workflow ends in `done`.
 
-This is the composition story for slice 23 generalized to all 5
-workflows. Per-workflow side-effect verification (e.g. ResolveFinding
+This verifies workflow composition across all 5 workflows.
+Per-workflow side-effect verification (e.g. ResolveFinding
 actually transitioning a finding state, ArchiveStaleFindings flipping
 to STALE) is exercised in the unit + service tests for each command
 body — this test verifies the wiring + workflow shape, not the bodies'
@@ -284,9 +284,9 @@ async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped
     fifth workflow (pr_review_v1) has its own trace audit in
     `test_trace_linkage.py`; this parametrized test covers the other four.
 
-    Closes the audit row "one trace ID covers webhook → terminal outcome
-    for all five workflows" against the in-memory provider. The Go-subprocess
-    side rides on the Phase 6 follow-on env-passing of `TRACEPARENT`.
+    Asserts one trace ID covers webhook → terminal outcome for all five
+    workflows against the in-memory provider. The Go-subprocess side
+    depends on env-passing of `TRACEPARENT`.
     """
     from opentelemetry import trace as _trace  # noqa: PLC0415
 

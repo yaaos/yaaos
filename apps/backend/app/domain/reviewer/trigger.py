@@ -1,4 +1,4 @@
-"""Trigger policy for auto-incremental reviews on PR push (plan §7).
+"""Trigger policy for auto-incremental reviews on PR push.
 
 Pure function: given the PR state, in-flight reviews, last reviewed commit,
 new head, recent push timestamps, and the new commits in the diff, decide
@@ -16,7 +16,7 @@ from typing import Literal
 
 from app.domain.reviewer.types import ReviewScope
 
-# Skip reasons (POC set, plan §7). Strings, not an enum, so audit payloads and
+# Skip reasons (POC set). Strings, not an enum, so audit payloads and
 # log lines stay grep-friendly.
 SkipReason = Literal[
     "draft",
@@ -60,7 +60,7 @@ TriggerDecision = Skip | Debounce | Run
 
 
 def decide_trigger(inputs: TriggerInputs) -> TriggerDecision:
-    """First-match-wins evaluation per plan §7.
+    """First-match-wins evaluation.
 
     Rules:
     1. PR is draft → Skip("draft").

@@ -4,7 +4,7 @@
 // run (process crash, pod replace, OOM-kill) get reattributed via the
 // `.workspace-id` manifest file `RealHandler.CreateWorkspace` writes into
 // each tempdir at create time. The startup scan reports each as
-// `status="unknown"` in the first heartbeat (slice 71); the backend
+// `status="unknown"` in the first heartbeat; the backend
 // responds with a `forgotten_workspaces` list naming the ones it no
 // longer tracks. This file:
 //
@@ -12,7 +12,7 @@
 //     heartbeat entries + a workspace_id → path map (so the janitor
 //     can find each dir later).
 //   - `cleanupForgottenWorkspaces(paths, forgotten, log)` — disk
-//     janitor (slice 75). `os.RemoveAll` for each path the backend
+//     janitor. `os.RemoveAll` for each path the backend
 //     says is forgotten; returns the surviving paths so the caller
 //     can drop them from its internal map.
 //

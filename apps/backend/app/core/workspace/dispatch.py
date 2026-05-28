@@ -125,8 +125,8 @@ def clear_recovery_policies() -> None:
     _RECOVERY_POLICIES.clear()
 
 
-# only Tier-1 policy at boot. The actual `RefreshWorkspaceAuth`
-# WorkflowCommand registers in Phase 4 alongside the rest of the reviewer
-# workflow; recording the mapping here keeps it close to the workspace
-# state machine that consumes it.
+# only Tier-1 policy at boot. The `RefreshWorkspaceAuth` WorkflowCommand
+# registers alongside the rest of the reviewer workflow; recording the
+# mapping here keeps it close to the workspace state machine that
+# consumes it.
 register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")

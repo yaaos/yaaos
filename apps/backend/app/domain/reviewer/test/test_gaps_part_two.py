@@ -1,12 +1,11 @@
-"""More failing-then-fixed tests for plan gaps.
+"""Tests covering event dispatch, the public Python API, and eval metrics.
 
 Covered:
 - Domain events appended by the aggregate are dispatched to the event bus
-  after save() (plan §5.2).
-- §5.1 public Python API: `list_reviews_for_pr`, `get_review`,
-  `list_findings_for_pr`, `get_thread` are callable from `app.domain.reviewer`
-  with the signatures listed in the plan.
-- §10.13 metrics: `acceptance_rate` + `resolved_without_edit_rate` callable
+  after save().
+- Public Python API: `list_reviews_for_pr`, `get_review`,
+  `list_findings_for_pr`, `get_thread` are callable from `app.domain.reviewer`.
+- Metrics: `acceptance_rate` + `resolved_without_edit_rate` callable
   from the reviewer module.
 """
 
@@ -17,7 +16,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-# ─── Public Python API (plan §5.1) ─────────────────────────────────────────
+# ─── Public Python API ──────────────────────────────────────────────────────
 
 
 async def _seed_pr(db_session, pr_id: uuid.UUID, org_id: uuid.UUID) -> None:  # type: ignore[no-untyped-def]
@@ -50,9 +49,7 @@ async def test_public_api_list_reviews_for_pr_callable(db_session) -> None:  # t
     """
     from app.domain import reviewer  # noqa: PLC0415
 
-    assert hasattr(reviewer, "list_reviews_for_pr"), (
-        "reviewer.list_reviews_for_pr is part of plan §5.1 public API"
-    )
+    assert hasattr(reviewer, "list_reviews_for_pr"), "reviewer.list_reviews_for_pr is part of the public API"
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()
     await _seed_pr(db_session, pr_id, org_id)
     review_id = uuid.uuid4()
@@ -112,7 +109,7 @@ async def test_public_api_get_thread_callable(db_session) -> None:  # type: igno
     assert res is None
 
 
-# ─── Domain events dispatch (plan §5.2) ────────────────────────────────────
+# ─── Domain events dispatch ─────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -211,19 +208,19 @@ async def test_aggregate_events_dispatched_to_sse_bus(db_session, redis_or_skip)
     )
 
 
-# ─── Eval metrics §10.13 ────────────────────────────────────────────────────
+# ─── Eval metrics ─────────────────────────────────────────────────────────────
 
 
 def test_eval_metrics_module_exposes_acceptance_and_resolved_without_edit() -> None:
-    """Plan §10.13 lists three metrics: tier mix (already logged),
-    acceptance_rate, resolved_without_edit_rate. The reviewer module must
-    expose computation helpers for the latter two.
+    """Three metrics exist: tier mix (already logged), acceptance_rate,
+    resolved_without_edit_rate. The reviewer module must expose computation
+    helpers for the latter two.
     """
     from app.domain import reviewer  # noqa: PLC0415
 
     assert hasattr(reviewer, "compute_acceptance_rate"), (
-        "reviewer.compute_acceptance_rate is part of plan §10.13"
+        "reviewer.compute_acceptance_rate is part of the eval metrics API"
     )
     assert hasattr(reviewer, "compute_resolved_without_edit_rate"), (
-        "reviewer.compute_resolved_without_edit_rate is part of plan §10.13"
+        "reviewer.compute_resolved_without_edit_rate is part of the eval metrics API"
     )

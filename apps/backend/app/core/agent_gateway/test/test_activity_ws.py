@@ -1,4 +1,4 @@
-"""Phase 8b — Activity WebSocket: auth gate, sender registration,
+"""Activity WebSocket: auth gate, sender registration,
 activity_batch publishes to core/sse, demand-pull semantics."""
 
 from __future__ import annotations

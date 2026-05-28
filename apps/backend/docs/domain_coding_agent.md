@@ -26,10 +26,10 @@ No HTTP routes.
 
 ### Types (`types.py`)
 
-- `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies` (reserved; not surfaced to the agent — fingerprint dedup in the reviewer aggregate handles re-emission silently per plan §10.10), `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
+- `ReviewContext` — `pr`, `diff`, `lessons`, optional `language_hint`, `prior_yaaos_comment_bodies` (reserved; not surfaced to the agent — fingerprint dedup in the reviewer aggregate handles re-emission silently), `agent_config`. No persona, no agent_name — the parent reviewer's prompt and subagent definitions are shipped by the plugin layer.
 - `InvocationStatus` — `SUCCESS` / `PARSE_FAILURE` / `AGENT_ERROR` / `TIMEOUT`.
 - `InvocationTelemetry` — `tokens_in`, `tokens_out`, `latency_ms`, `raw_output`, `raw_stderr`, `model` (resolved name reported by the CLI on completion). Cost is not tracked — CLI pricing data is not authoritative.
-- `ReviewResult` — `status`, `findings: list[FindingDraft]` (plan §10.1 schema with `source_agent` populated by the parent's synthesis pass), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`. The reviewer aggregate runs admission on these drafts and converts admitted survivors into `vcs.Finding`s before calling `vcs_plugin.post_review`.
+- `ReviewResult` — `status`, `findings: list[FindingDraft]` (`source_agent` populated by the parent's synthesis pass), optional `state` / `summary_body`, `lesson_ids_consulted`, `telemetry`, optional `error_message`. The reviewer aggregate runs admission on these drafts and converts admitted survivors into `vcs.Finding`s before calling `vcs_plugin.post_review`.
 - `ValidationResult` — `valid`, `errors`.
 - `ActivityEvent` — `{ts, kind, message, detail}` — one pre-rendered user-facing event from the coding-agent stream. `message` is rendered by the plugin so consumers (and the FE) don't interpret raw CLI shapes.
 - `OnActivity` — `Callable[[ActivityEvent], Awaitable[None]]`. Optional callback on `review`; called once per parsed stream event.

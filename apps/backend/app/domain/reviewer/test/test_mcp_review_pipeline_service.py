@@ -1,4 +1,4 @@
-"""Service test (Phase 2 gap B): reviewer → MCP proxy → broken-creds tracker → review-output prefix.
+"""Service test: reviewer → MCP proxy → broken-creds tracker → review-output prefix.
 
 Stitches three pieces that are tested in isolation today:
 

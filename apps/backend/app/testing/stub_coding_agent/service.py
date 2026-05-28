@@ -107,7 +107,7 @@ class StubCodingAgentPlugin:
                     await on_activity(event)
                 except Exception:
                     log.exception("stub_coding_agent.on_activity_failed")
-        # Emit one synthetic FindingDraft (plan §10.1 schema) so e2e flows
+        # Emit one synthetic FindingDraft so e2e flows
         # that depend on findings have something to act against.
         finding = FindingDraft(
             severity="minor",

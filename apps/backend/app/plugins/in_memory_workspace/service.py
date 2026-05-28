@@ -319,7 +319,7 @@ class InMemoryWorkspaceProvider:
     async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
         """Read a workspace-relative text file from the cloned tempdir.
 
-        Used by the incremental-review anchor re-resolution (plan §6.2 step 4b).
+        Used by the incremental-review anchor re-resolution.
         Guards against path traversal — the resolved path must stay under
         `working_dir`. Returns None on missing, decode error, or escape attempt.
         """

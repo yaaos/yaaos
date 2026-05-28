@@ -42,7 +42,7 @@ def test_hash_body_gist_is_case_insensitive() -> None:
 def test_compute_fingerprint_same_content_different_lines_same_fingerprint() -> None:
     """Same anchored content at different line numbers → same fingerprint.
 
-    Line numbers aren't in the fingerprint by design (plan §2.3) — they're an
+    Line numbers aren't in the fingerprint by design — they're an
     anchor concern, not an identity concern.
     """
     fp1 = compute_fingerprint(

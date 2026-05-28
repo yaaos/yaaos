@@ -1,10 +1,9 @@
-"""Service test (Phase 3 migration of `teach-yaaos-from-finding.spec.ts`):
-the lessons-loop entry point — `lessons.create(repo, title, body, source_pr_url)`
-inserts a lesson + writes a `lesson.created` audit row.
+"""Service test for the lessons-loop entry point:
+`lessons.create(repo, title, body, source_pr_url)` inserts a lesson +
+writes a `lesson.created` audit row.
 
-The e2e spec exercises the UI handler chain (modal open → field fill →
-save → lessons page); the durable contract is the lesson row + audit, which
-is what this test asserts.
+The durable contract is the lesson row + audit, which is what this test
+asserts.
 """
 
 from __future__ import annotations

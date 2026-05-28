@@ -1,8 +1,7 @@
 """Pure helpers that inspect a `Diff` and the surrounding PR shape.
 
-Extracted from the legacy `queue.py` so the workflow-engine path + the
-legacy runner can share them. No DB, no async, no plugin lookups —
-input → output only.
+Shared by the workflow-engine path and the runner. No DB, no async, no
+plugin lookups — input → output only.
 
 - `detect_language(diff)` — pick the dominant source language by file
   extension counts. Used for the agent's per-language prompt hint.

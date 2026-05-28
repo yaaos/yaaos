@@ -206,7 +206,7 @@ async def test_patch_org_rejects_non_positive(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_org_admin_can_set_workspace_provider_and_arn(seeded, db_session) -> None:
-    """Slice 86 SPA card PATCHes both fields together: provider + ARN. The
+    """The SPA card PATCHes both fields together: provider + ARN. The
     happy path returns 200 with the new values and a subsequent GET sees
     them — this is the SPA's save → re-hydrate round-trip."""
     sess = seeded["admin_sess"]

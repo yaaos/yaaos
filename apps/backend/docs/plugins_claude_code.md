@@ -53,9 +53,9 @@ Env: copy of `os.environ` with `ANTHROPIC_API_KEY` injected. Key never on argv.
 
 **Step 2 — assemble prompt + schema appendix:**
 
-`_assemble_review_prompt(ctx)` builds the parent-dispatcher prompt: explains the available `yaaos-*` subagents and their triggers (always-on vs conditional), instructs the parent to dispatch all relevant subagents in a single turn via parallel Task calls, collect findings tagged with `source_agent`, verify each finding by re-reading the cited code, drop hallucinated findings whose snippet doesn't match, rank, and emit one merged JSON. The diff itself is **not** inlined — instead the prompt names the base sha + head sha and instructs the agent to run `git diff base_sha..HEAD` (or per-file slices) itself using the restricted Bash access. PR title/body, optional repo-language block, and optional lessons are appended. `ctx.prior_yaaos_comment_bodies` is intentionally NOT surfaced — telling the agent to avoid duplicates fights the aggregate's fingerprint dedup (plan §10.10); the agent does a fresh analysis each run and the aggregate handles re-observation silently.
+`_assemble_review_prompt(ctx)` builds the parent-dispatcher prompt: explains the available `yaaos-*` subagents and their triggers (always-on vs conditional), instructs the parent to dispatch all relevant subagents in a single turn via parallel Task calls, collect findings tagged with `source_agent`, verify each finding by re-reading the cited code, drop hallucinated findings whose snippet doesn't match, rank, and emit one merged JSON. The diff itself is **not** inlined — instead the prompt names the base sha + head sha and instructs the agent to run `git diff base_sha..HEAD` (or per-file slices) itself using the restricted Bash access. PR title/body, optional repo-language block, and optional lessons are appended. `ctx.prior_yaaos_comment_bodies` is intentionally NOT surfaced — telling the agent to avoid duplicates fights the aggregate's fingerprint dedup; the agent does a fresh analysis each run and the aggregate handles re-observation silently.
 
-`_schema_appendix(_FindingDraftList)` appends a STRICT instruction with `_FindingDraftList.model_json_schema()` — plan §10.1 schema (severity: `blocker` / `major` / `minor` / `nit`; `rule_id`; `concrete_failure_scenario`; `confidence`; `file_path` / `line_start` / `line_end`). This is the only mechanism constraining output shape — Claude Code's `--output-format=json` controls the wrapper envelope, not content.
+`_schema_appendix(_FindingDraftList)` appends a STRICT instruction with `_FindingDraftList.model_json_schema()` — the finding-draft schema (severity: `blocker` / `major` / `minor` / `nit`; `rule_id`; `concrete_failure_scenario`; `confidence`; `file_path` / `line_start` / `line_end`). This is the only mechanism constraining output shape — Claude Code's `--output-format=json` controls the wrapper envelope, not content.
 
 **Step 3 — run via workspace:**
 
@@ -77,7 +77,7 @@ Strict JSON parse → validate against `_FindingDraftList`. No markdown-fence fa
 
 **Step 6 — convert to vendor-neutral types:**
 
-Each DTO maps to a `coding_agent.FindingDraft` (carrying `source_agent` set by the parent's synthesis). `_compute_state_v2(findings)`: empty → `APPROVED`, any `blocker`/`major` → `CHANGES_REQUESTED`, else `COMMENT`. The reviewer aggregate (in `domain/reviewer/queue.py`) applies the §10.1 admission pipeline and converts admitted survivors to `vcs.Finding` for posting — that mapping lives in `_findingdrafts_to_raw` + `_raw_to_vcs_findings`, not here.
+Each DTO maps to a `coding_agent.FindingDraft` (carrying `source_agent` set by the parent's synthesis). `_compute_state_v2(findings)`: empty → `APPROVED`, any `blocker`/`major` → `CHANGES_REQUESTED`, else `COMMENT`. The reviewer aggregate (in `domain/reviewer/queue.py`) applies the admission pipeline and converts admitted survivors to `vcs.Finding` for posting — that mapping lives in `_findingdrafts_to_raw` + `_raw_to_vcs_findings`, not here.
 
 ### `answer_question`
 

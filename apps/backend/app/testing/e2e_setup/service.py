@@ -57,7 +57,7 @@ async def seed_github_install(
 
     ``org_login`` is the GitHub-side ``account_login`` on the install row.
     ``target_org_slug``, when provided, picks the yaaos-side org row to attach
-    the rows to (looked up by slug); otherwise the legacy ``DEFAULT_ORG_ID`` stub
+    the rows to (looked up by slug); otherwise the ``DEFAULT_ORG_ID`` stub
     is used. Specs that also log a user in via ``bootstrap_owner`` pass the
     bootstrapped org's slug here so the install lives on the same org as the
     authenticated user — ``/orgs/<slug>/tickets`` then surfaces webhook-created

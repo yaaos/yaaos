@@ -34,7 +34,7 @@ dependencies = [
     # so non-eval callers don't pay for them.
     "braintrust>=0.4",
     "braintrust-langchain>=0.1",
-    # M02 — auth stack.
+    # Auth stack.
     # authlib: OAuth/OIDC client used by plugins/oauth_github.
     # python3-saml: SAML 2.0 (SP-initiated only) — requires libxmlsec1-dev
     # + xmlsec1 system packages, installed in apps/backend/Dockerfile.
@@ -46,10 +46,10 @@ dependencies = [
     "itsdangerous>=2.2",
     "pyotp>=2.9",
     "slowapi>=0.1.9",
-    # M05 — Redis pub/sub backs core/sse fanout; the same client is
-    # reused by core/tasks Phase 1's taskiq broker.
+    # Redis pub/sub backs core/sse fanout; the same client is reused by
+    # core/tasks' taskiq broker.
     "redis>=5.0",
-    # core/tasks Phase 1 — taskiq broker (Redis Streams) + result backend.
+    # core/tasks — taskiq broker (Redis Streams) + result backend.
     "taskiq>=0.11",
     "taskiq-redis>=1.0",
 ]
@@ -78,12 +78,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
-# `app/testing/` is the test-scaffolding layer (stubs, future recorders).
+# `app/testing/` is the test-scaffolding layer (stubs, recorders).
 # Excluded from wheel builds so production distributions physically cannot
 # enable stub mode — the conditional import in app/web.py fails loud.
 # The Docker image still copies everything via apps/backend/; a separate
-# Dockerfile stage or .dockerignore is the right tool for image-level
-# exclusion (out of scope for this change).
+# Dockerfile stage or .dockerignore is the right tool for image-level exclusion.
 exclude = ["app/testing", "app/testing/**"]
 
 [tool.pytest.ini_options]
@@ -106,7 +105,7 @@ extend = "../../pyproject.toml"
 extend-select = ["TID"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"unittest.mock.patch" = { msg = "Use dependency injection, not @patch. See plan/milestones/M01-code-review/patterns.md § DI over @patch." }
+"unittest.mock.patch" = { msg = "Use dependency injection, not @patch. See docs/patterns.md § DI over @patch." }
 "unittest.mock.patch.object" = { msg = "Use dependency injection, not @patch." }
 "unittest.mock.patch.multiple" = { msg = "Use dependency injection, not @patch." }
 "mock.patch" = { msg = "Use dependency injection, not @patch." }

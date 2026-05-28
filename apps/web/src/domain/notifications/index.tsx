@@ -6,7 +6,7 @@
  * mutation; "Mark all read" hits POST /api/notifications/mark-read.
  *
  * SSE wiring (`notification_created` / `notification_read` invalidations)
- * lands once the workflow engine emits those kinds — Phase 7 polish pass.
+ * lands once the workflow engine emits those kinds.
  */
 
 import {

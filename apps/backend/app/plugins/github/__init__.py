@@ -45,6 +45,6 @@ from app.domain.intake import register_intake_type  # noqa: E402
 try:
     register_intake_type(GithubIntakeType())
 except ValueError:
-    # Re-import in the same process (e.g., test reload). The previously
+    # Re-import in the same process (e.g., test reload). The already
     # registered handler is still in place.
     pass

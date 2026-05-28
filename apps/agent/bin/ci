@@ -2,7 +2,7 @@
 # Agent CI: gofmt, go mod tidy drift, golangci-lint, build, race-enabled
 # test, govulncheck, semgrep.
 #
-# Real-clone tests (workspace package, slice 69) call `git` against a
+# Real-clone tests (workspace package) call `git` against a
 # local bare repo. The test skips when git isn't on PATH, but the CI
 # environment SHOULD have it so the test actually runs. Alpine: `apk
 # add git`. Debian/Ubuntu: `apt-get install -y git`. macOS dev: comes

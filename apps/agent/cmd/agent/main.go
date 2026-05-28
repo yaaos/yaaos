@@ -3,14 +3,9 @@
 // Subcommands:
 //
 //	agent supervisor     — long-poll the control plane, dispatch
-//	                       AgentCommands, heartbeat. Phase 6 ships the
-//	                       skeleton; real workspace spawning lands in a
-//	                       follow-on iteration.
-//	agent workspace      — per-workspace child process. Slice 62 wires
-//	                       the IPC dispatcher (stdin → commands, stdout →
-//	                       events) against a stub handler. Real bodies
-//	                       (clone, WriteFiles, Claude Code invocation,
-//	                       cleanup) land in later slices.
+//	                       AgentCommands, heartbeat.
+//	agent workspace      — per-workspace child process running the IPC
+//	                       dispatcher (stdin → commands, stdout → events).
 //
 // Zero business logic — every threshold, prompt, lesson, depth, timeout
 // comes from the control plane via payload.
@@ -114,7 +109,7 @@ func runSupervisor() error {
 		BaseURL:          envOr("YAAOS_BACKEND_URL", defaultBackendURL),
 		AgentPodID:       envOr("YAAOS_AGENT_POD_ID", randomPodID()),
 		Version:          envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
-		SignedSTSRequest: envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-phase-7-wires-real-sts"),
+		SignedSTSRequest: envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-unsigned-sts"),
 		WorkspaceRoot:    envOr("YAAOS_WORKSPACE_ROOT", ""),
 	}
 	// No global timeout — long-poll needs to wait. Per-call timeouts come
@@ -147,9 +142,8 @@ func runWorkspace() error {
 	// writes events back.
 	//
 	// Mounts the RealHandler: tempdir lifecycle + file writes + auth
-	// refresh + cleanup all do real work. CreateWorkspace's git clone
-	// step and InvokeClaudeCode's subprocess wiring are still follow-on
-	// slices — see workspace/realhandler.go's doc.
+	// refresh + cleanup all do real work. See workspace/realhandler.go's
+	// doc for the scope of CreateWorkspace and InvokeClaudeCode.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	handler := workspace.NewRealHandler(workspace.RealHandlerConfig{

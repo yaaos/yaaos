@@ -80,7 +80,7 @@ async def test_detail_returns_status_meta_fields(seeded) -> None:
     assert body["status"] == "running"
     assert body["findings_count"] == 0
     assert body["builder_kind"] in {"user", "system"}
-    # `stages` is the Phase 6 extension — present when the workflow row exists.
+    # `stages` is present when the workflow row exists.
     # Bare ticket → empty list (not missing) so the SPA can safely .map.
     assert "stages" in body
 

@@ -127,7 +127,7 @@ func TestScanOrphanWorkspaces_TrimsWhitespace(t *testing.T) {
 	}
 }
 
-// ── Disk janitor (slice 75) ─────────────────────────────────────────────
+// ── Disk janitor ────────────────────────────────────────────────────────
 
 func TestCleanupForgottenWorkspaces_RemovesNamedPaths(t *testing.T) {
 	root := t.TempDir()

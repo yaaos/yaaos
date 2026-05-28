@@ -7,7 +7,7 @@ Entry points:
   path. Intake's pr-ready handler + `/yaaos full review` + the SPA `/rereview`
   endpoint all route through here.
 - `start_incremental_review(pr_id, *, new_head_sha, prev_head_sha, org_id)` —
-  runs the §7 trigger policy for incremental review on push. On `Run`,
+  runs the trigger policy for incremental review on push. On `Run`,
   dispatches an `incremental_review_v1` workflow_execution via
   `core/workflow.engine`; the `IncrementalReview` command body runs the
   full review end-to-end against the engine-provisioned workspace.
@@ -15,13 +15,10 @@ Entry points:
 - `cancel_workflows_for_ticket(ticket_id)` — `workflow.request_cancel` on
   every non-terminal `workflow_executions` row for the ticket.
 
-Generation 2 (`PRReviewAggregate` + `Finding`/`Review`/threads/acks with a
-state machine) is the durable layer; helpers like
-`SqlAlchemyAggregateRepository`, `acquire_pr_lock`, and the aggregate types
-are exported for extension by other modules.
-
-The legacy `ReviewJob` queue + `schedule_review` runner was retired with the
-queue.py dismantle (slices 40-61).
+The `PRReviewAggregate` (`Finding`/`Review`/threads/acks with a state
+machine) is the durable layer; helpers like `SqlAlchemyAggregateRepository`,
+`acquire_pr_lock`, and the aggregate types are exported for extension by
+other modules.
 """
 
 from app.domain.reviewer import web  # noqa: F401
@@ -223,9 +220,8 @@ class _TicketWorkflowContextProvider:
 async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]
     """Cancel any non-terminal `workflow_executions` rows for this ticket.
 
-    Replaces the legacy `cancel_pending` (which flipped `review_jobs` rows
-    + interrupted in-process asyncio tasks). The engine transitions each
-    affected workflow to `cancelled` at its next step boundary.
+    The engine transitions each affected workflow to `cancelled` at its
+    next step boundary.
 
     Returns the number of workflow rows that were transitioned to
     `cancelled` (or had `cancel_requested` set, depending on engine state).
@@ -252,12 +248,12 @@ async def start_pr_review(
 ):
     """Start a `pr_review_v1` workflow for a ticket.
 
-    Replaces the legacy `schedule_review` call for the full-review path.
     Intake + the /rereview endpoint use this so production has a single
     path into the engine. Returns the workflow_execution_id.
 
-    `trigger_reason` is recorded on the workflow's audit trail; the workflow doesn't gate behavior on it (legacy queue.py did) — kept
-    for observability + audit-log compatibility.
+    `trigger_reason` is recorded on the workflow's audit trail; the
+    workflow doesn't gate behavior on it — kept for observability +
+    audit-log compatibility.
     """
     from uuid import UUID  # noqa: PLC0415
 

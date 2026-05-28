@@ -6,9 +6,9 @@ for cookie shipping); the DB stores only `hashlib.sha256(raw).hexdigest()`.
 Rotation = create new row + delete old in the same transaction. Revoke-all =
 delete every row by `user_id`.
 
-Phase 6 wires session rotation into role-change + invite-accept; Phase 12
-extends `sso_satisfied_for_org_id` semantics. This module owns the table
-and the lifecycle primitives.
+This module owns the table and the lifecycle primitives. Session rotation
+hooks into role-change + invite-accept; `sso_satisfied_for_org_id` carries
+per-org SSO satisfaction.
 """
 
 from __future__ import annotations

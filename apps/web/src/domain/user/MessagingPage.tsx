@@ -1,9 +1,9 @@
 /**
  * User — Messaging.
  *
- * Placeholder per E2a.17. The Messaging feature (Slack/Telegram/Email
- * destination opt-ins) is deferred to a future milestone; ships the
- * route in place so the User popover's "Messaging" link doesn't 404.
+ * Placeholder route. The Messaging feature (Slack/Telegram/Email
+ * destination opt-ins) is not yet built; the route exists so the User
+ * popover's "Messaging" link doesn't 404.
  */
 
 import { EmptyState, PageHeader } from "@shared/components/layout";
@@ -15,8 +15,8 @@ export function MessagingPage() {
       <PageHeader title="Messaging" subtitle="Where yaaos pings you outside the app." />
       <EmptyState
         icon={MessageSquare}
-        headline="Messaging is coming soon."
-        body="In a future milestone you'll be able to opt in to Slack DMs, Telegram, or email digests. Today, all updates land in Notifications."
+        headline="All updates land in Notifications."
+        body="Today, yaaos delivers updates in Notifications. Opt-in destinations like Slack DMs, Telegram, or email digests aren't available yet."
       />
     </div>
   );

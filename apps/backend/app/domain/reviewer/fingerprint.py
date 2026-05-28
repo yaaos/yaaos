@@ -1,4 +1,4 @@
-"""`FindingFingerprint` computation + anchor hashing (plan §2.3).
+"""`FindingFingerprint` computation + anchor hashing.
 
 Two raw findings with the same fingerprint = the same `Finding`. The recipe:
 

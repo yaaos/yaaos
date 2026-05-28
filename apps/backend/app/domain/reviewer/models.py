@@ -1,7 +1,5 @@
 """SQLAlchemy models for the reviewer's persistent state.
 
-Schema after the §13 step 7 cut-over (plan/notes/full-pr-flow.md):
-
 - `ReviewRow` (`reviews`) — one row per PR run. Carries run-level state
   (status, heartbeat, model/effort, activity_log) PLUS the durable-findings
   view fields (`sequence_number`, `trigger_reason`, `scope_kind`, `scope_prev_sha`,
@@ -10,9 +8,8 @@ Schema after the §13 step 7 cut-over (plan/notes/full-pr-flow.md):
   `AcknowledgmentDecisionRow` — durable findings + acks + threads + messages
   as first-class entities with a state machine.
 
-`review_jobs` and `posted_comments` are gone — posted yaaos comments now live
-in `comment_messages`, and what `review_jobs.findings` JSONB used to hold is
-split across `findings` (first-class rows) + `finding_observations` (per-run
+Posted yaaos comments live in `comment_messages`. Findings are split
+across `findings` (first-class rows) + `finding_observations` (per-run
 sightings).
 """
 
@@ -40,7 +37,7 @@ from app.core.database import Base
 
 
 class ReviewRow(Base):
-    """One review run per PR. Plan §4.2.
+    """One review run per PR.
 
     Identity = `id` UUID. `sequence_number` is a per-PR ordinal (1, 2, 3, …)
     assigned at insert time inside the PG advisory lock so concurrent inserts
@@ -60,15 +57,14 @@ class ReviewRow(Base):
 
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
 
-    # Why this review was scheduled (plan §2.3 / §4.2). POC values:
+    # Why this review was scheduled. Values:
     # `pr_ready` | `push_incremental` | `manual_full` | `pr_synchronized` |
     # `rereview_command` | `ui_rereview`. The first three are the durable-
-    # findings vocabulary; the last three are kept so legacy intake paths
-    # don't need a flag-day rename.
+    # findings vocabulary; the last three are accepted aliases the intake
+    # paths emit.
     trigger_reason: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_ready")
 
-    # Where the review result goes. `vcs` (today). Future: `caller` for
-    # `run_review` callers that consume findings without posting.
+    # Where the review result goes. `vcs` posts findings to the PR.
     destination: Mapped[str] = mapped_column(String, nullable=False, server_default="vcs")
 
     # `full` (base..head) or `incremental` (prev_sha..head). `scope_prev_sha`
@@ -103,10 +99,9 @@ class ReviewRow(Base):
     review_external_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # Denormalized cache of the vcs.Finding payloads posted for this review.
     # Durable per-finding state lives in `findings` (FindingRow); this column
-    # exists so the legacy AgentCard view (snippet + applied_lesson_ids)
-    # doesn't have to reconstruct findings from anchors at read time. Dual-
-    # written by `queue.py` on review completion. Plan §13 step 7 originally
-    # called for dropping this column; kept for §9 augment-mode UI.
+    # exists so the AgentCard view (snippet + applied_lesson_ids) doesn't
+    # have to reconstruct findings from anchors at read time. Written on
+    # review completion; consumed by the augment-mode UI.
     findings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     # Chronological array of pre-rendered activity events captured from the
     # CLI's stream-json output. Cap 5 MB per row (enforced in app code).
@@ -132,7 +127,6 @@ class ReviewRow(Base):
 
 
 # ── Durable findings + state machine ─────────────────────────────────────────
-# Plan/notes/full-pr-flow.md §4.1.
 
 
 class FindingRow(Base):
@@ -140,8 +134,8 @@ class FindingRow(Base):
 
     `state` follows the FindingState machine (open → acknowledged | resolved_* | stale).
     `current_anchor` is the latest CodeAnchor (file, line range, surrounding hash,
-    commit_sha); see plan §2.3. `severity` is sticky across re-observations and
-    never escalates; `confidence` is `max(stored, new)` (plan §10.10).
+    commit_sha). `severity` is sticky across re-observations and
+    never escalates; `confidence` is `max(stored, new)`.
     """
 
     __tablename__ = "findings"
@@ -156,7 +150,7 @@ class FindingRow(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(String, nullable=False)
     rationale: Mapped[str] = mapped_column(String, nullable=False)
-    # Required per plan §10.1; finding is dropped before insert when missing.
+    # Required; finding is dropped before insert when missing.
     concrete_failure_scenario: Mapped[str] = mapped_column(String, nullable=False)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False)
     severity: Mapped[str] = mapped_column(String, nullable=False)
@@ -227,7 +221,7 @@ class CommentThreadRow(Base):
 class CommentMessageRow(Base):
     """Every message in every thread — yaaos and human alike. Append-only.
 
-    `classified_intent` populated only for human messages, by the §6.4
+    `classified_intent` populated only for human messages, by the
     reply-classifier path. The intent label itself encodes the routing
     decision (see `domain/reviewer/llm/classifier.py`) — no separate
     confidence column.

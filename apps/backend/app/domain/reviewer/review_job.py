@@ -1,10 +1,8 @@
-"""Pydantic value objects for the legacy `review_jobs` row + scheduler input.
+"""Pydantic value objects for the `review_jobs` row + scheduler input.
 
-Extracted from `queue.py` so the read-side endpoints (`web.py`,
-`__init__.py`) can import the API shape without depending on the legacy
-runner code. When `queue.py` is deleted these types stay — the read-side
-of the legacy `review_jobs` table outlives the runner by one more
-follow-on slice (rewire to `workflow_executions`, then drop the table).
+Lives apart from the runner so the read-side endpoints (`web.py`,
+`__init__.py`) can import the API shape without depending on the runner
+code.
 """
 
 from __future__ import annotations
@@ -19,9 +17,9 @@ from app.domain.reviewer.models import ReviewRow
 
 
 class ReviewJobInput(BaseModel):
-    """Argument bag for the legacy scheduler entry point.
+    """Argument bag for the scheduler entry point.
 
-    Carries the four ids needed to start a review run: the new
+    Carries the four ids needed to start a review run: the
     review_jobs row id (the `review_job_id`), the originating ticket,
     the org for scoping, and a debounce window the scheduler honors
     before kicking off the runner."""
@@ -35,8 +33,8 @@ class ReviewJobInput(BaseModel):
 class ReviewJob(BaseModel):
     """Read-side projection of a `review_jobs` row.
 
-    The legacy SPA reads this via the `jobs_by_ticket` endpoint in
-    `reviewer/web.py`. The new workflow-engine path doesn't emit this
+    The SPA reads this via the `jobs_by_ticket` endpoint in
+    `reviewer/web.py`. The workflow-engine path doesn't emit this
     shape — `workflow_executions` rows are the canonical job record.
     """
 

@@ -1,7 +1,7 @@
 """fake-linear FastAPI service.
 
 Implements just enough of the Linear OAuth + hosted-MCP surface to drive
-the yaaos M04 test suite end-to-end without registering a real Linear OAuth
+the yaaos test suite end-to-end without registering a real Linear OAuth
 app. The MCP endpoint accepts JSON-RPC 2.0 over POST (Streamable HTTP) at
 `/sse`; SSE upgrade isn't exercised by the yaaos proxy today, so we keep
 the response model JSON-only.

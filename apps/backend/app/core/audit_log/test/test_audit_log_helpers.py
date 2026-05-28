@@ -1,4 +1,4 @@
-"""Coverage for the Phase 8 audit-log helpers: `list_for_org` filters,
+"""Coverage for the audit-log helpers: `list_for_org` filters,
 `purge_older_than`, and the retention constant wiring."""
 
 from __future__ import annotations

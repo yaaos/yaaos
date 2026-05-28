@@ -65,7 +65,7 @@ func TestRealHandler_CreateWorkspace_AllocatesTempDir(t *testing.T) {
 		t.Errorf("repo: want acme/web got %v", out["repo"])
 	}
 	// Startup-reconciliation manifest is written for the supervisor to
-	// find on restart (slice 71).
+	// find on restart.
 	manifest, err := os.ReadFile(filepath.Join(path, ".workspace-id"))
 	if err != nil {
 		t.Errorf("manifest read: %v", err)
@@ -275,7 +275,7 @@ func TestRealHandler_InvokeClaudeCode_HappyPath_EchoesStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
-	// Slice 76 streams via OnStdoutLine; the per-line accumulator
+	// Streaming via OnStdoutLine; the per-line accumulator
 	// appends a newline after each scanner.Scan() line. cat's stdin
 	// had no trailing newline so the accumulated stdout gains one.
 	// Strip-and-compare keeps the test robust to that.

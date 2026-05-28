@@ -246,7 +246,7 @@ func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 
 // emittingInvokeHandler emits 3 progress events from InvokeClaudeCode then
 // succeeds. Used to test the supervisor.Pool → workspace.Run progress-
-// forwarding path end-to-end (slice 76).
+// forwarding path end-to-end.
 type emittingInvokeHandler struct{ workspace.StubHandler }
 
 func (emittingInvokeHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {

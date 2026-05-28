@@ -7,7 +7,7 @@
  *     stat cards; bands are still shown but typically empty.
  *
  * Single round-trip via `useDashboard()` → GET /api/tickets/dashboard.
- * `refetchInterval: 5_000` covers SSE gaps; Phase 5 invalidation wiring
+ * `refetchInterval: 5_000` covers SSE gaps; invalidation wiring
  * (workflow_state_changed → invalidate) lands once dashboard kinds emit.
  */
 
@@ -202,6 +202,6 @@ function NeedsAttentionRow({ ticket }: { ticket: Ticket }) {
   );
 }
 
-// Re-export so dashboard.test.tsx's existing import keeps resolving until
-// Phase 9 cleanup; the test mocks `useOnboarding` directly.
+// Re-export so dashboard.test.tsx's import keeps resolving;
+// the test mocks `useOnboarding` directly.
 export type { DashboardStats };

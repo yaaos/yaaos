@@ -76,8 +76,8 @@ def clear_queues() -> None:
 
 async def enqueue_command(agent_id: UUID, command: AgentCommand) -> None:
     """Push an AgentCommand onto the agent's FIFO and wake any blocked
-    long-poller. Called by Phase 7's `RemoteAgentWorkspaceProvider` from
-    inside the workflow engine's start_step transaction."""
+    long-poller. Called by `RemoteAgentWorkspaceProvider` from inside the
+    workflow engine's start_step transaction."""
     _queues[agent_id].append(command)
     cond = await _get_condition(agent_id)
     async with cond:
@@ -142,8 +142,7 @@ async def record_heartbeat(
     else:
         # Heartbeat arrived for a pod the control plane doesn't know about —
         # this happens transiently after a restart before identity exchange
-        # writes its row. Phase 7 follow-on tightens the contract; for now
-        # we just log.
+        # writes its row, so we just log.
         log.info(
             "agent.heartbeat.unknown_agent",
             agent_id=str(agent_id),

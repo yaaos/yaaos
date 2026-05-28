@@ -3,7 +3,7 @@ package protocol
 // Drift-detection: openapi/agent-api.yaml ↔ hand-written Go mirror.
 //
 // Mirror of `app/core/agent_gateway/test/test_openapi_mirror_drift.py`
-// (slice 66) on the Go side. The OpenAPI spec is the contract; this
+// on the Go side. The OpenAPI spec is the contract; this
 // file's structs are the hand-written Go mirror. The test walks every
 // schema in the spec that has a Go mirror, resolves allOf + $ref
 // composition, and asserts every YAML property name appears as a

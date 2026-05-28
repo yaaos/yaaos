@@ -14,10 +14,10 @@
 // event (handler error) before reading the next command. EOF on the
 // command pipe is the clean termination signal: Run returns nil.
 //
-// Phase 6 follow-on (slice 62) ships this dispatch frame + an in-process
-// stub `Handler` for tests. Real bodies (`git clone`, `WriteFiles`, the
-// Claude Code subprocess, `os.RemoveAll`) land in later slices and bolt
-// onto the same `Handler` interface — the dispatcher doesn't change.
+// The dispatch frame is decoupled from command bodies: `git clone`,
+// `WriteFiles`, the Claude Code subprocess, and `os.RemoveAll` all bolt
+// onto the `Handler` interface, so the dispatcher itself is agnostic to
+// the work each command does.
 package workspace
 
 import (
@@ -55,8 +55,8 @@ type Handler interface {
 // `Options.Now` so event timestamps are deterministic.
 type nowFunc func() time.Time
 
-// Options tunes Run for tests + future real impls. Zero values pick safe
-// production defaults.
+// Options tunes Run for tests and alternate Handler impls. Zero values
+// pick safe production defaults.
 type Options struct {
 	// Now overrides time.Now for event timestamps. Defaults to time.Now.
 	Now nowFunc
@@ -108,7 +108,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, h Handler, opts Optio
 // own traceparent onto the outgoing event so the supervisor sees the
 // workspace's span as the upstream child.
 //
-// Progress emission (slice 76): installs an `Emitter` into the handler's
+// Progress emission: installs an `Emitter` into the handler's
 // ctx that writes `kind=progress` AgentEvents to the same `enc`
 // dispatcher uses for the terminal event. Handlers (e.g.
 // `InvokeClaudeCode`'s stream-json line callback) read the emitter via

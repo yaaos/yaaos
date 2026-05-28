@@ -10,7 +10,7 @@ not persist itself (the repository does that too). Tests construct it
 directly with in-memory state.
 
 Concurrency: the aggregate is single-threaded by design. `service.py` takes
-a per-PR PG advisory lock (plan §5.7) before loading, so two webhook events
+a per-PR PG advisory lock before loading, so two webhook events
 for the same PR serialize.
 """
 
@@ -56,7 +56,7 @@ from app.domain.reviewer.types import (
     Severity,
 )
 
-# Per-severity post threshold (plan §10.2).
+# Per-severity post threshold.
 _POST_THRESHOLD: dict[Severity, int] = {
     "blocker": 75,
     "major": 75,
@@ -64,7 +64,7 @@ _POST_THRESHOLD: dict[Severity, int] = {
     "nit": 90,
 }
 
-# Per-severity weight for the per-review top-10 cap (plan §10.5).
+# Per-severity weight for the per-review top-10 cap.
 _SEVERITY_WEIGHT: dict[Severity, int] = {
     "blocker": 4,
     "major": 3,
@@ -75,15 +75,15 @@ _SEVERITY_WEIGHT: dict[Severity, int] = {
 _PER_PR_NIT_CAP = 5
 _PER_REVIEW_TOP_CAP = 10
 
-# Plan §10.1 + §10.6: `concrete_failure_scenario` must actually describe a
-# failure, not a one-word stand-in. Enforced at the boundary so any future
-# agent-output adapter still has to supply a real scenario.
+# `concrete_failure_scenario` must actually describe a failure, not a
+# one-word stand-in. Enforced at the boundary so every agent-output
+# adapter has to supply a real scenario.
 _MIN_SCENARIO_LEN = 20
 
 
 @dataclass
 class RawFinding:
-    """An ungated finding produced by a coding-agent task (plan §10.1).
+    """An ungated finding produced by a coding-agent task.
 
     The aggregate decides whether to admit it (schema/threshold/cap/dedup
     checks) and how to transition state. The mapping from
@@ -304,12 +304,12 @@ class PRReviewAggregate:
         of audit drops.
 
         `diff_files`: when supplied, findings whose anchor file isn't in the
-        set get dropped with reason `off_diff` (plan §10.9). The legacy
-        full-review caller doesn't pass it, so the suppression is opt-in.
+        set get dropped with reason `off_diff`. The full-review caller
+        doesn't pass it, so the suppression is opt-in.
         """
         drops: list[AdmissionDrop] = []
 
-        # 1. Schema gate + off-diff drop (plan §10.9).
+        # 1. Schema gate + off-diff drop.
         kept_a = []
         for rf in raw:
             if len(rf.concrete_failure_scenario.strip()) < _MIN_SCENARIO_LEN:
@@ -345,7 +345,7 @@ class PRReviewAggregate:
                 continue
             kept_a.append(rf)
 
-        # 2. Per-PR nit cap (plan §10.5). Count nits ever posted for this PR
+        # 2. Per-PR nit cap. Count nits ever posted for this PR
         # (all open or terminal findings count — once we post, we've used a slot).
         nits_already = sum(1 for f in self._state.findings.values() if f.severity == "nit")
         kept_b: list[RawFinding] = []
@@ -393,7 +393,7 @@ class PRReviewAggregate:
             if existing.state == FindingState.OPEN:
                 re_observed.append((rf, existing))
 
-        # 4. Cross-file dedup (plan §10.8). Merge `duplicate_of_rule_ids` on
+        # 4. Cross-file dedup. Merge `duplicate_of_rule_ids` on
         # candidates_new. Survivor's body gets a "Also in: …" footer listing
         # the duplicated file paths so the developer sees the full scope in
         # one comment instead of N.
@@ -424,7 +424,7 @@ class PRReviewAggregate:
 
             merged_new[key] = _dc_replace(rf, body=rf.body + footer)
 
-        # 5. Per-review top-10 cap (plan §10.5) — applied to candidates_new only.
+        # 5. Per-review top-10 cap — applied to candidates_new only.
         ranked = sorted(
             merged_new.values(),
             key=lambda r: _SEVERITY_WEIGHT[r.severity] * r.confidence,
@@ -481,7 +481,7 @@ class PRReviewAggregate:
         return f
 
     def _re_observe(self, existing: Finding, review_id: uuid.UUID, rf: RawFinding) -> None:
-        # Severity is sticky (plan §10.10); confidence is max(stored, new).
+        # Severity is sticky; confidence is max(stored, new).
         existing.confidence = max(existing.confidence, rf.confidence)
         existing.last_observed_review_id = review_id
         existing.current_anchor = rf.anchor
@@ -607,7 +607,7 @@ class PRReviewAggregate:
     def record_fix_verification(
         self, *, finding_id: uuid.UUID, still_present: bool, confidence: float, threshold: float = 0.80
     ) -> FindingState | None:
-        """Transition based on `verify_fix` result (plan §6.5).
+        """Transition based on `verify_fix` result.
 
         Returns the new state if we transitioned, else None. The aggregate
         does NOT post the reply — `service.py` does that based on the event +
@@ -652,7 +652,7 @@ class PRReviewAggregate:
         return new_state
 
     def mark_unverified_resolution(self, finding_id: uuid.UUID) -> FindingState:
-        """Anchor gone in the new commit and no verify-fix possible (plan §3)."""
+        """Anchor gone in the new commit and no verify-fix possible."""
         finding = self._state.findings[finding_id]
         new_state = state_machine.transition(finding.state, FindingState.RESOLVED_UNVERIFIED)
         prev = finding.state

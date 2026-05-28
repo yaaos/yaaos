@@ -2,8 +2,7 @@ import type { Config } from "tailwindcss";
 import tailwindcssAnimate from "tailwindcss-animate";
 
 /**
- * Tailwind config — shadcn-named semantic roles only. Yaaos-named transitional
- * tokens were removed at the end of M06 Phase 9; the underlying oklch CSS
+ * Tailwind config — shadcn-named semantic roles only. The underlying oklch CSS
  * variables live in `src/styles.css`.
  *
  * Note: shadcn's sidebar primitive expects `hsl(var(--sidebar-*))`; we store

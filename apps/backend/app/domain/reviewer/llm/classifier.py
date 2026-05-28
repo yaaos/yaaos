@@ -1,4 +1,4 @@
-"""`classify_reply` — the only direct LLM call yaaos makes today (plan §6.4).
+"""`classify_reply` — the only direct LLM call yaaos makes today.
 
 Text-only reasoning over the finding body, thread history, the developer's
 new message, and a small code snippet at the anchor. Code-touching work goes

@@ -11,8 +11,8 @@ bodies must tolerate duplicates.
 kinds are logged + left for a future dispatcher to handle.
 
 The SELECT uses `FOR UPDATE SKIP LOCKED` so multiple worker processes
-don't double-dispatch the same row — Phase 1 runs one worker, but the
-safety is cheap to keep.
+don't double-dispatch the same row — the safety holds even with a single
+worker and is cheap to keep.
 """
 
 from __future__ import annotations

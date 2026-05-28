@@ -12,10 +12,10 @@
 //     span around the Handler invocation.
 //  3. Workspace → Claude Code subprocess — the supervisor's spawn step
 //     exports `TRACEPARENT={parent}` into the workspace process's env;
-//     a future Claude Code shim would read that to start its span.
+//     a Claude Code shim can read that to start its span.
 //
-// No production exporter is wired today — milestone defers shipping
-// telemetry to a later iteration. Tests call `Init(true)` to register
+// No production exporter is wired; the agent emits no telemetry to an
+// external backend. Tests call `Init(true)` to register
 // the in-memory exporter + return it so assertions can read the
 // emitted spans.
 //

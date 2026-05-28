@@ -1,7 +1,7 @@
 """Anchor resolution + stale-check context for incremental review.
 
-Pure helpers extracted from the legacy `incremental.py`. The
-`IncrementalReview` engine command imports these to run the §6.2 step-4b
+Pure helpers for incremental review. The
+`IncrementalReview` engine command imports these to run the
 deterministic anchor pass and to build the per-finding `StaleCheckContext`
 that drives the LLM `stale_check` agent call.
 """
@@ -23,7 +23,7 @@ class ResolveAnchorsResult:
     """What `resolve_open_anchors` did, partitioned by outcome.
 
     - `moved`: anchor block now lives at a new line range. Caller should
-      run `verify_fix` on these (plan §6.2 step 4b).
+      run `verify_fix` on these.
     - `gone`: surrounding hash isn't in the new content (file deleted, or
       block removed/heavily edited). Aggregate state is set to
       `resolved_unverified`; LLM `stale_check` can still transition further.
@@ -47,8 +47,8 @@ def resolve_open_anchors(
 
     Pure helper — no I/O of its own. Caller supplies `read_file` (which
     inside the engine command reads from the workspace; in tests is a
-    pure dict lookup). Plan §6.2 step 4b: deterministic anchor lookup
-    before the LLM stale-check fires.
+    pure dict lookup). Deterministic anchor lookup before the LLM
+    stale-check fires.
     """
     out = ResolveAnchorsResult()
     for finding in aggregate.open_findings_in_files(touched_files):

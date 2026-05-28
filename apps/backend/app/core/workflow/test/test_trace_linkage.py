@@ -7,12 +7,11 @@ drives a complete workflow run with an `InMemorySpanExporter` attached
 and asserts every emitted span shares the same `trace_id` — proving one
 trace covers webhook → workflow start → all task bodies → terminal.
 
-The audit row in `requirements.md` ("trace ID continuous from webhook to
-PR comment") is shipped through to the workflow-engine layer here; the
-final hop (vcs.post_review) emits its own spans through SQLAlchemy/HTTP
-auto-instrumentation under the same trace context once
-[domain_reviewer.md PostFindings] runs inside a span. The Go-subprocess
-hop rides on the Phase 6 follow-on (env-passing `TRACEPARENT`).
+Trace ID stays continuous from webhook to PR comment through the
+workflow-engine layer here; the final hop (vcs.post_review) emits its own
+spans through SQLAlchemy/HTTP auto-instrumentation under the same trace
+context when [domain_reviewer.md PostFindings] runs inside a span. The
+Go-subprocess hop rides on env-passing `TRACEPARENT`.
 """
 
 from __future__ import annotations

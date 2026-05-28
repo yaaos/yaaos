@@ -1,8 +1,5 @@
-"""HTTP wiring for `core/identity` — currently just the on-startup hook that
-spawns the periodic cleanup loop.
-
-Concrete auth endpoints (`/api/auth/*`) land in Phase 4 once the OAuth
-provider plugins exist.
+"""HTTP wiring for `core/identity` — the on-startup hook that spawns the
+periodic cleanup loop.
 """
 
 from __future__ import annotations

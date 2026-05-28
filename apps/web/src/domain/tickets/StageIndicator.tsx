@@ -6,7 +6,7 @@
  * stage in order with the active one highlighted.
  *
  * Source of truth: the `stages` array on the extended `GET /api/tickets/{id}`
- * response (Phase 6 backend slice — see d725a98). When the field is absent
+ * response. When the field is absent
  * (older ticket payloads or partially populated cache entries) the component
  * renders nothing so callers can drop it in safely.
  */

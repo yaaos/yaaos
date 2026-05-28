@@ -1,7 +1,7 @@
 """`pull_requests.upsert` honors the required-session contract.
 
-Regression: previously `upsert` opened its own `db_session()` internally,
-which meant the github intake's PR-opened path inserted a `pull_requests`
+Regression: `upsert` must not open its own `db_session()` internally.
+Doing so meant the github intake's PR-opened path inserted a `pull_requests`
 row in a separate transaction from the freshly-inserted (not-yet-committed)
 ticket. The FK on `pull_requests.ticket_id` fired before commit and the
 whole webhook 500'd. The fix is the required-session pattern from

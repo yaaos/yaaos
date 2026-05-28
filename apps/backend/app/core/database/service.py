@@ -185,11 +185,11 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
 
 
 async def _apply_add_github_settings_slug(conn) -> None:  # type: ignore[no-untyped-def]
-    # No-op when `github_settings` is absent. The table's model was deleted as
-    # part of the platform-app cutover (migration 030 drops it on legacy
-    # DBs); fresh DBs never create it, so this column-add is meaningless and
-    # the bare ALTER would 42P01 with `relation "github_settings" does not
-    # exist`. Skip cleanly when the table isn't there.
+    # No-op when `github_settings` is absent. There is no `github_settings`
+    # model (migration 030 drops the table on legacy DBs; fresh DBs never
+    # create it), so this column-add is meaningless and the bare ALTER would
+    # 42P01 with `relation "github_settings" does not exist`. Skip cleanly
+    # when the table isn't there.
     await conn.execute(
         text(
             "DO $$ BEGIN "
@@ -288,8 +288,8 @@ async def _table_exists(conn, name: str) -> bool:  # type: ignore[no-untyped-def
 
 async def _apply_add_review_jobs_triggered_by_destination(conn) -> None:  # type: ignore[no-untyped-def]
     """Promote audit-only `trigger_reason` into a queryable column and add
-    `destination` so future `run_review` callers can be distinguished from
-    the legacy `schedule_review → post-to-VCS` flow (retired).
+    `destination` so `run_review` callers can be distinguished by where their
+    output goes.
 
     No-op on fresh DBs (post-cutover `001_create_all` produces `reviews`, not
     `review_jobs` — and `008_reviews_cutover` drops the old table anyway).
@@ -333,8 +333,8 @@ async def _apply_drop_reviewer_agents(conn) -> None:  # type: ignore[no-untyped-
 
     Drops `reviewer_agents` and the FKs that referenced it (`review_jobs.agent_id`,
     `posted_comments.agent_id`). Also drops the reply-related columns on
-    `review_jobs` (`kind`, `parent_comment_external_id`, `reply_body`) — replies
-    are deferred to a future `review_comments` table.
+    `review_jobs` (`kind`, `parent_comment_external_id`, `reply_body`) — the
+    schema does not model replies.
 
     No-op on fresh DBs — neither `review_jobs` nor `posted_comments` exists
     post-cutover. Idempotent for legacy DBs.
@@ -609,9 +609,8 @@ async def _apply_drop_github_poller_state(conn) -> None:  # type: ignore[no-unty
 async def _apply_create_bearer_tokens(conn) -> None:  # type: ignore[no-untyped-def]
     """bearer-token ledger table.
 
-    Backs the real `/identity/exchange` issuance (replaces the
-    `placeholder-{uuid4()}` returned by the Phase 7 stub) and the bearer
-    verifier on every other gateway endpoint. `token_hash` is sha256 of the
+    Backs `/identity/exchange` issuance and the bearer verifier on every
+    other gateway endpoint. `token_hash` is sha256 of the
     plaintext; plaintext is returned to the caller exactly once. Idempotent.
     """
     import importlib  # noqa: PLC0415
@@ -742,7 +741,7 @@ async def _apply_tickets_dedupe_external_id(conn) -> None:  # type: ignore[no-un
             """
         )
     )
-    # Constraint enforces uniqueness going forward.
+    # Unique index enforces one ticket per (org, source, external id).
     await conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tickets_org_source_external "

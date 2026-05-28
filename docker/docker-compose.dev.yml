@@ -34,8 +34,8 @@ services:
       timeout: 3s
       retries: 30
 
-  # Mailpit — local SMTP sink for dev. Invitation emails (M02) and any
-  # future outbound mail land here instead of a real SMTP relay. UI at
+  # Mailpit — local SMTP sink for dev. Invitation emails and any other
+  # outbound mail land here instead of a real SMTP relay. UI at
   # http://localhost:8025; SMTP on :1025 (point SMTP_HOST/SMTP_PORT there).
   mailpit:
     image: axllent/mailpit:latest
@@ -78,11 +78,11 @@ services:
       YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
       YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
       YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
-      # M02 — dev SMTP sink (Mailpit). Override SMTP_HOST/PORT for prod relays.
+      # Dev SMTP sink (Mailpit). Override SMTP_HOST/PORT for prod relays.
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
-      # M05 — Redis backs taskiq workflow tasks + sse_pubsub fanout.
+      # Redis backs taskiq workflow tasks + sse_pubsub fanout.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       postgres:
@@ -101,8 +101,8 @@ services:
       # immediately on browser refresh. No backend restart needed.
       - ../apps/web/dist:/app/apps/web/dist
 
-  # M05/core-tasks Phase 1: the worker process runs taskiq's broker
-  # consumer + the outbox→Redis drain loop. Without it, every
+  # The worker process runs taskiq's broker consumer + the
+  # outbox→Redis drain loop. Without it, every
   # workflow_execution created via `engine.start(...)` sits in `pending`
   # and intake-driven reviews never execute.
   worker:
@@ -150,12 +150,9 @@ services:
       timeout: 3s
       retries: 30
 
-  # M05 — local WorkspaceAgent talking to the backend over the docker
+  # Local WorkspaceAgent talking to the backend over the docker
   # network. Uses the placeholder identity-exchange verifier (any
-  # non-empty YAAOS_SIGNED_STS_REQUEST satisfies it). Phase 7 follow-on
-  # wires the real STS verifier, at which point this service grows an
-  # IAM-role-arn env var and the backend's `orgs.registered_iam_arn`
-  # has to match.
+  # non-empty YAAOS_SIGNED_STS_REQUEST satisfies it).
   agent:
     build:
       context: ../apps/agent

@@ -40,7 +40,7 @@ export type Ticket = {
   max_severity: "low" | "medium" | "high" | null;
   builder_kind: "user" | "system";
   builder_display_name: string | null;
-  // Present on GET /api/tickets/:id (Phase 6 extension). Absent on the list
+  // Present on GET /api/tickets/:id. Absent on the list
   // endpoint and on cached entries that predate the extension.
   stages?: Array<{
     name: string;

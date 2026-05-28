@@ -1,4 +1,4 @@
-"""Phase 8b — SubscriberRegistry demand-pull semantics: 0→1 fires
+"""SubscriberRegistry demand-pull semantics: 0→1 fires
 subscribe, 1→0 fires unsubscribe, idempotent at edges."""
 
 from __future__ import annotations

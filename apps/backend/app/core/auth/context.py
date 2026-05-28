@@ -3,7 +3,7 @@ through background work.
 
 HTTP middleware sets these per request (see `middleware.py`). Background jobs
 open `org_context(...)` to set the same vars + OTel span attrs + structlog
-contextvars (filled in by Phase 9).
+contextvars.
 """
 
 from __future__ import annotations

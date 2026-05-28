@@ -5,9 +5,8 @@ and drains its pending writes back to the DB on `save`. The caller is
 expected to hold a per-PR advisory lock (see `lock.py`) so concurrent
 mutators serialize.
 
-The implementation maps each generation-2 row model to/from the matching
-dataclass in `types.py`. Generation-1 `ReviewJobRow` is read separately by
-`queue.py` for back-compat during the §13 step 7 cut-over.
+The implementation maps each row model to/from the matching dataclass in
+`types.py`.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ def _anchor_to_jsonb(a: CodeAnchor) -> dict[str, Any]:
 
 
 def _anchor_from_jsonb(d: dict[str, Any]) -> CodeAnchor:
-    # `original_lines` is missing on rows that pre-date plan §6.5 — default to ().
+    # `original_lines` is missing on rows that don't carry it — default to ().
     return CodeAnchor(
         file_path=d["file_path"],
         line_start=int(d["line_start"]),
@@ -153,7 +152,7 @@ def _review_from_row(row: ReviewRow) -> Review:
         base_sha=row.scope_prev_sha or "",
         head_sha=row.commit_sha_at_start or "",
     )
-    # `trigger_reason` accepts the §13 vocabulary plus legacy values; the
+    # `trigger_reason` accepts the canonical vocabulary plus other values; the
     # ReviewTrigger enum covers the canonical set, anything else maps to
     # PR_READY for in-memory representation (the DB column keeps the real value).
     try:
@@ -275,11 +274,11 @@ class SqlAlchemyAggregateRepository:
     async def save(self, aggregate: PRReviewAggregate) -> None:
         pending = aggregate.pop_pending()
 
-        # Reviews. Legacy queue.py / incremental.py paths INSERT the
-        # ReviewRow externally before kicking off the runner; the aggregate
-        # mutations (mark_review_running, complete_review, supersede_review,
-        # set_pending_replay) flow through here as UPDATEs to an existing
-        # row. The `admission.admit_raw_findings` path calls
+        # Reviews. Some callers INSERT the ReviewRow externally before
+        # kicking off the runner; the aggregate mutations (mark_review_running,
+        # complete_review, supersede_review, set_pending_replay) flow through
+        # here as UPDATEs to an existing row. The `admission.admit_raw_findings`
+        # path calls
         # `aggregate.start_review` and expects the repo to materialize the
         # row — so when `pending.new_reviews` carries an id that's NOT yet
         # in the DB, we INSERT it. Existing rows fall through to the UPDATE
@@ -315,8 +314,8 @@ class SqlAlchemyAggregateRepository:
             row = await self._session.get(ReviewRow, r.id)
             if row is None:
                 # An UPDATE for an id never inserted is a bug; skip rather
-                # than blow up to preserve the legacy "tests insert
-                # externally" escape hatch.
+                # than blow up to preserve the "tests insert externally"
+                # escape hatch.
                 continue
             row.status = r.status
             row.commit_sha_at_start = r.commit_sha_at_start

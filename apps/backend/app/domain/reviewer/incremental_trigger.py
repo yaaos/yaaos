@@ -1,10 +1,10 @@
 """Push-driven incremental review: trigger policy + engine dispatch.
 
-Replaces the legacy `incremental.handle_push` direct-spawn path. Owns:
+Owns:
 
 - `start_incremental_review` — entry point called by intake on
   `pull_request synchronize` and on `@yaaos review` comments. Runs the
-  §7 trigger policy. On `Skip`/`Debounce`: returns the reason. On `Run`:
+  trigger policy. On `Skip`/`Debounce`: returns the reason. On `Run`:
   creates a `ReviewRow` (for the SPA's per-PR history UI) and dispatches
   an `incremental_review_v1` workflow_execution via `core/workflow.engine`.
   The `IncrementalReview` engine command in `commands/__init__.py`
@@ -64,7 +64,7 @@ async def start_incremental_review(
 ) -> str | None:
     """Engine-shaped entry point for push-driven incremental review.
 
-    Runs the §7 trigger policy. On `Skip`, returns the reason. On `Debounce`,
+    Runs the trigger policy. On `Skip`, returns the reason. On `Debounce`,
     spawns a delayed re-check. On `Run`, creates a `ReviewRow` (for the SPA's
     per-PR history UI) and dispatches an `incremental_review_v1` workflow
     via `core/workflow.engine`. The engine's `IncrementalReview` command
@@ -162,7 +162,7 @@ async def start_incremental_review(
     return "scheduled"
 
 
-# Back-compat alias for legacy callers / tests still on the old name.
+# Alias for callers / tests that use the `handle_push` name.
 handle_push = start_incremental_review
 
 
@@ -248,8 +248,7 @@ async def skip_review(review_id: UUID, reason: str) -> None:
         await s.commit()
 
 
-# Internal aliases used by the engine command body — keeping the old names
-# minimizes diff churn at the call sites that moved over from incremental.py.
+# Internal aliases used by the engine command body.
 _fail_review = fail_review
 _skip_review = skip_review
 

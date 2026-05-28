@@ -9,7 +9,7 @@
 
 ## Data flow
 
-- `useSsoDiscover` — `POST /api/auth/sso/discover` with `{email}`. Today returns `{provider: "github"}` for any well-formed email (D8.1 in DECISIONS.md); a future iteration will look up `sso_configs` by email domain.
+- `useSsoDiscover` — `POST /api/auth/sso/discover` with `{email}`. Returns `{provider: "github"}` for any well-formed email.
 - GitHub button POSTs to `/api/sso/start` (carries CSRF) and redirects.
 - TOTP step (when SSO returns a 2FA challenge) renders inline; not a separate route.
 

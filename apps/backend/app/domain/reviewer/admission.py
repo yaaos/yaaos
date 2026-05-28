@@ -7,16 +7,9 @@ dedup vs prior). `admit_raw_findings` wraps it with the repo lifecycle —
 loads the aggregate, runs the gate, saves the survivors — and returns a
 structured `AdmissionResult` callers can inspect.
 
-Used by:
-- `domain/reviewer/queue.py` (legacy `_run_review_job_inner`) — until the
-  queue dismantle replaces it.
-- The future `PostFindings` WorkflowCommand body (follow-on
-  alongside the queue.py dismantle).
-
-Per the Phase 4 plan item, this consolidates what was previously inline
-between `queue.py:769-834` and `aggregate.post_process_raw_findings` into
-one place. Callers don't need to know about the repository or the
-aggregate's `save()` lifecycle.
+Used by the `PostFindings` WorkflowCommand body. Consolidates the
+repository + aggregate `save()` lifecycle into one place so callers
+don't need to know about either.
 """
 
 from __future__ import annotations
@@ -35,8 +28,8 @@ from app.domain.reviewer.fingerprint import compute_fingerprint
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.types import Finding, FindingObservation, Severity
 
-# Severity tier collapse: plan §10.1's four reviewer severities mapped onto
-# the legacy three-tier vcs.Finding enum the GitHub plugin posts as.
+# Severity tier collapse: the four reviewer severities mapped onto the
+# three-tier vcs.Finding enum the GitHub plugin posts as.
 _SEVERITY_TO_VCS: dict[Severity, str] = {
     "blocker": "must-fix",
     "major": "must-fix",
@@ -50,8 +43,8 @@ log = structlog.get_logger("reviewer.admission")
 @dataclass(frozen=True)
 class AdmissionResult:
     """Outcome of running `admit_raw_findings`. Callers can audit `drops`,
-    post `admitted` to GitHub, persist `observations` against the legacy
-    review_jobs table (until the dismantle), etc."""
+    post `admitted` to GitHub, persist `observations` against the
+    review_jobs table, etc."""
 
     admitted: list[Finding]
     observations: list[FindingObservation]
@@ -84,7 +77,7 @@ async def admit_raw_findings(
     matches the `pr_review_v1` full-review path).
     `scope`: `coding_agent.ReviewScope` literal (default `full`).
     `diff_files`: when supplied, the gate drops findings whose anchor file
-    isn't in the set (plan §10.9 off-diff suppression). Pass None for
+    isn't in the set (off-diff suppression). Pass None for
     full-PR review paths that don't have a narrow diff scope.
     """
     if not raw:
@@ -115,9 +108,7 @@ async def admit_raw_findings(
         scope=scope,
     )
     if drops:
-        # Mirror queue.py's legacy `review_job.admission_drops` audit shape.
-        # Per-drop info goes to structured logs; durable audit-row emission
-        # rides on the future `audit_for_workflow_execution` helper.
+        # Per-drop info goes to structured logs.
         log.info(
             "admission.drops",
             pr_id=str(pr_id),
@@ -142,9 +133,9 @@ def findingdrafts_to_raw(
     read_file: Callable[[str], list[str] | None],
     source_agent: str = "coding_agent",
 ) -> list[RawFinding]:
-    """Convert §10.1 `FindingDraft`s from the coding agent into `RawFinding`s.
+    """Convert `FindingDraft`s from the coding agent into `RawFinding`s.
 
-    Plan §2.3: anchor + fingerprint hashes use real file content at the
+    Anchor + fingerprint hashes use real file content at the
     anchored line range — never the body text. Two findings at the same
     file:line with different body phrasings must produce IDENTICAL
     fingerprints so the aggregate deduplicates re-observations across
@@ -152,8 +143,8 @@ def findingdrafts_to_raw(
     fingerprint without real content.
 
     Shared between full review, incremental review, and the PostFindings
-    `WorkflowCommand` body (post queue.py dismantle). The `read_file`
-    callback typically wraps `workspace.read_text()`.
+    `WorkflowCommand` body. The `read_file` callback typically wraps
+    `workspace.read_text()`.
     """
     out: list[RawFinding] = []
     for d in drafts:
@@ -167,7 +158,7 @@ def findingdrafts_to_raw(
                 rule_id=d.rule_id,
             )
             continue
-        # Defensive clamp — plan §10.1 enforces a valid range on the agent
+        # Defensive clamp — the agent is required to emit a valid range,
         # but we don't want make_anchor to raise on off-by-one drafts.
         ls = max(1, min(d.anchor.line_start, len(file_lines)))
         le = max(ls, min(d.anchor.line_end, len(file_lines)))
@@ -211,11 +202,10 @@ def raw_to_vcs_findings(
     posting to GitHub (or whichever VCS plugin owns the PR).
 
     Only admitted findings (post-aggregate-gate) translate; rejected ones
-    never reach the VCS plugin. Severity collapses plan §10.1's four tiers
-    onto the legacy VCS three-tier enum via `_SEVERITY_TO_VCS`.
+    never reach the VCS plugin. Severity collapses the four reviewer tiers
+    onto the VCS three-tier enum via `_SEVERITY_TO_VCS`.
 
-    Used today by the legacy `queue.py:_run_review_job_inner`; will be used
-    by the future `PostFindings` GitHub-posting follow-on slice.
+    Used by the `PostFindings` GitHub-posting command.
     """
     from app.domain.vcs import Finding as VcsFinding  # noqa: PLC0415
 
@@ -269,8 +259,7 @@ async def post_admitted_findings_to_vcs(
     - `raw`: the original `RawFinding` list — needed by `raw_to_vcs_findings`
       to translate admitted fingerprints back to `vcs.Finding` payloads.
     - `summary_body`: top-level review body. May be None.
-    - `state`, `agent_tag`: vcs.Review fields. Defaults match the legacy
-      queue.py shape.
+    - `state`, `agent_tag`: vcs.Review fields.
 
     Returns the `ReviewPostResult` from the VCS plugin so callers can
     record metrics (tokens, latency, external_id).

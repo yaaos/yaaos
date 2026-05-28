@@ -1,6 +1,6 @@
-"""`POST /api/reviewer/cancel` dual-writes to legacy `cancel_pending` +
-new `workflow.request_cancel` for any non-terminal workflow_executions
-on the ticket. Service test for slice 49's wiring.
+"""`POST /api/reviewer/cancel` dual-writes to `cancel_pending` +
+`workflow.request_cancel` for any non-terminal workflow_executions
+on the ticket.
 """
 
 from __future__ import annotations
@@ -35,11 +35,10 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
 
 
-# single-tenant org id — the same constant /api/reviewer routes used to
-# hard-bind to before made the routers org-scoped. Tests still use it
-# as a stable test-fixture id; production code no longer references it.
+# Stable test-fixture org id. The /api/reviewer routers are org-scoped;
+# production code doesn't reference this constant.
 _DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
-_ORG_SLUG = "m01"
+_ORG_SLUG = "dual-write-test"
 
 
 async def _seed_ticket(db_session) -> tuple[TicketRow, object]:  # type: ignore[no-untyped-def]
@@ -122,7 +121,7 @@ async def test_cancel_endpoint_sets_cancel_requested_on_workflow_executions(  # 
 
 @pytest.mark.asyncio
 async def test_cancel_endpoint_no_workflows_returns_zero(db_session) -> None:  # type: ignore[no-untyped-def]
-    """No workflows + no legacy rows → cancelled_count == 0."""
+    """No workflows + no review_jobs rows → cancelled_count == 0."""
     ticket, sess = await _seed_ticket(db_session)
     await db_session.commit()
 

@@ -1,10 +1,9 @@
 """`WorkflowEngine` + the three core/tasks task bodies.
 
-Phase 1 (cont'd) ships:
+Provides:
 - `start_step` body — branches on command category. Local + HITL execute
-  inline; Workspace sets `awaiting_agent` and synthesizes a
-  `pending_agent_command_id` until Phase 3 wires real dispatch through
-  `core/workspace.dispatch`.
+  inline; Workspace sets `awaiting_agent` and assigns a
+  `pending_agent_command_id`.
 - `handle_agent_event` body — validates the event matches the pending
   command id, clears it, enqueues `route_workflow`. Idempotent: stale
   events exit cleanly.
@@ -13,10 +12,8 @@ Phase 1 (cont'd) ships:
   workflow terminal. Atomic state-change + outbox enqueue in one transaction.
 - `request_cancel` + `resume_hitl` admin APIs.
 
-The architecture's three-task split is what keeps workers free during
-long-running AgentCommands. See
-` § Workflow execution
-model`.
+The three-task split keeps workers free during long-running AgentCommands.
+See `apps/backend/docs/core_workflow.md`.
 """
 
 from __future__ import annotations
@@ -99,8 +96,8 @@ async def start_step(
     """Dispatch the step. Branches on the WorkflowCommand category:
 
     - **Workspace** — sets `state = awaiting_agent` and assigns
-      `pending_agent_command_id`. Real dispatch via `core/workspace.dispatch`
-      lands in Phase 3; for now the engine synthesizes the command id.
+      `pending_agent_command_id`. The engine synthesizes the command id while
+      real dispatch via `core/workspace.dispatch` is stubbed.
     - **Local** — runs the command inline, persists its outcome, enqueues
       `route_workflow` via the outbox in the same transaction.
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
@@ -218,10 +215,9 @@ async def _start_step_impl(
                 return
 
             # remote_agent: dispatch over the wire and wait for the
-            # terminal AgentEvent. Real `core/workspace.dispatch()` lands
-            # alongside the Go workspace subcommand body in the Phase 6
-            # follow-on; for now we synthesize the command id so the
-            # state-machine gate behaves end-to-end.
+            # terminal AgentEvent. This synthesizes the command id so the
+            # state-machine gate behaves end-to-end while real
+            # `core/workspace.dispatch()` is stubbed.
             wfx.pending_agent_command_id = uuid4()
             wfx.state = WorkflowState.AWAITING_AGENT.value
             log.info(
@@ -1090,7 +1086,7 @@ class WorkflowEngine:
         commits and the outbox drain delivers the task post-commit.
 
         `workspace_provider`: the org's workspace provider id (set on the
-        `orgs` row in Phase 7). When `in_memory` (or unset), Workspace
+        `orgs` row). When `in_memory` (or unset), Workspace
         commands run inline in the engine. When `remote_agent`, they
         dispatch over the wire and pause the workflow in `awaiting_agent`
         until the terminal AgentEvent arrives. Callers that don't know the

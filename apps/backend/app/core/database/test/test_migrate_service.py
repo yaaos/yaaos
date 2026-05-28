@@ -1,8 +1,8 @@
 """Concurrent `migrate()` must not double-apply a version.
 
 `migrate()` runs on startup from both the FastAPI process and the worker, and
-will be called from every web instance once we run more than one. Without
-serialization the two callers can both read an empty `applied` set, race to
+from every web instance. Without serialization the callers can both read an
+empty `applied` set, race to
 apply the same DDL, and one of them crashes on the duplicate
 `INSERT INTO schema_migrations` PK. A Postgres session-scoped advisory lock
 acquired on a dedicated connection serializes the body so only one process

@@ -64,8 +64,7 @@ DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 YAAOS_BOT_LOGIN = "yaaos[bot]"
 
 
-# Audit payload models (mirrored from the retired domain/intake/service.py
-# so the audit-log readers continue to see the same kinds + shapes).
+# Audit payload models — the kinds + shapes the audit-log readers expect.
 
 
 class _WebhookFilteredPayload(BaseModel):
@@ -220,8 +219,7 @@ class GithubIntakeType:
         pr_external_id = f"{repo_full}#{pr_number}" if pr_number is not None else None
 
         if action in ("opened", "reopened", "ready_for_review"):
-            # opened on a draft never enters review — match the legacy
-            # `payload_parser` behavior.
+            # opened on a draft never enters review.
             if action == "opened" and pr_payload.get("draft", False):
                 await self._audit_filtered(payload, "draft", org_id=org_id, delivery=delivery)
                 return IntakeSideEffect(detail="filtered_draft")

@@ -21,8 +21,8 @@ from copy import deepcopy
 from typing import Any
 
 # Allowed model + effort enumerations. Surfaced to the UI as dropdown
-# options via the same defaults endpoint (Phase 10 ships these inline
-# with the defaults so the SPA doesn't need a separate metadata fetch).
+# options via the same defaults endpoint, shipped inline with the
+# defaults so the SPA doesn't need a separate metadata fetch.
 MODELS: tuple[str, ...] = ("claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5")
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "max")
 VERSIONS: tuple[str, ...] = ("latest", "stable")

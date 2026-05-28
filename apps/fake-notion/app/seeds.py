@@ -9,14 +9,14 @@ _PAGES: dict[str, dict[str, Any]] = {
     "page-1": {
         "id": "page-1",
         "title": "yaaos engineering notes",
-        "content": "Working doc for the M04 hosted-MCP integration.",
+        "content": "Working doc for the hosted-MCP integration.",
         "database_id": "db-1",
         "comments": [],
     },
     "page-2": {
         "id": "page-2",
         "title": "Sessions architecture",
-        "content": "M02 design notes.",
+        "content": "Design notes.",
         "database_id": "db-1",
         "comments": [],
     },
@@ -78,14 +78,14 @@ def reset() -> None:
         "page-1": {
             "id": "page-1",
             "title": "yaaos engineering notes",
-            "content": "Working doc for the M04 hosted-MCP integration.",
+            "content": "Working doc for the hosted-MCP integration.",
             "database_id": "db-1",
             "comments": [],
         },
         "page-2": {
             "id": "page-2",
             "title": "Sessions architecture",
-            "content": "M02 design notes.",
+            "content": "Design notes.",
             "database_id": "db-1",
             "comments": [],
         },

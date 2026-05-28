@@ -1,4 +1,4 @@
-"""Phase 13 — startup secret-hygiene check."""
+"""Startup secret-hygiene check."""
 
 from __future__ import annotations
 

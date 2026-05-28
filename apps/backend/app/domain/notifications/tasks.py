@@ -3,7 +3,7 @@
 `handle_ticket_status_change` — receives a pre-computed list of recipient
 user IDs from the producer and writes one notification row per user via
 `service.record`. The `org_id` contextvar is set automatically by the
-`OrgContextMiddleware` in `core/tasks` (Phase 7b) — the body never calls
+`OrgContextMiddleware` in `core/tasks` — the body never calls
 `org_context` itself.
 
 Producers compute `member_user_ids` inside their own transaction, atomic

@@ -8,9 +8,8 @@
   subclass's `_run_in_workspace`
 
 The five concrete subclasses (CodeReview, IncrementalReview, VerifyFix,
-StaleCheck, AnswerQuestion) inherit this contract verbatim; their
-specific bodies land incrementally as `<Foo>Context` builders are
-extracted from queue.py.
+StaleCheck, AnswerQuestion) inherit this contract verbatim; each supplies
+its own `<Foo>Context` builder.
 """
 
 from __future__ import annotations

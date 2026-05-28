@@ -73,7 +73,7 @@ def test_all_five_modes_typecheck() -> None:
         del m
 
 
-# ── exec block shape (slice 72) ─────────────────────────────────────────
+# ── exec block shape ────────────────────────────────────────────────────
 
 
 def test_exec_block_has_argv_stdin_env() -> None:

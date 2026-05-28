@@ -1,7 +1,6 @@
-"""WorkflowEngine register + start coverage. The three task bodies stay
-stubbed in Phase 1 (foundations); these tests assert the engine writes a
-`workflow_executions` row and enqueues an initial `route_workflow` task
-via the outbox."""
+"""WorkflowEngine register + start coverage. With the three task bodies
+stubbed, these tests assert the engine writes a `workflow_executions` row
+and enqueues an initial `route_workflow` task via the outbox."""
 
 from __future__ import annotations
 

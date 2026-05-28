@@ -118,7 +118,7 @@ class PullRequestSynchronized(VCSEventBase):
     new_head_sha: str
     # `before` SHA from the GitHub webhook payload. Populated for `synchronize`
     # events; the reviewer uses it as the `prev_sha` boundary for incremental
-    # review scoping (plan §6.2). None when the upstream event didn't carry it.
+    # review scoping. None when the upstream event didn't carry it.
     prev_head_sha: str | None = None
     force_push: bool = False
 

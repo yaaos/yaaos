@@ -1,6 +1,6 @@
 /**
- * Phase 4 right-sizing — adds e2e coverage for three user-visible flows
- * that today's vitest + service tests can't catch:
+ * E2e coverage for three user-visible flows that vitest + service tests
+ * can't catch:
  *
  *  1. Broken-integrations banner + deep-link. An Owner whose org has a
  *     `mcp_credentials.last_refresh_status="failed"` row sees the red banner

@@ -1,4 +1,4 @@
-"""Per-PR PG advisory lock (plan §5.7).
+"""Per-PR PG advisory lock.
 
 `pg_advisory_xact_lock(hashtext('pr:' || pr_id::text)::bigint)` at the start
 of every aggregate-mutating transaction. Released automatically at transaction

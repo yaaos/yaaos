@@ -1,5 +1,5 @@
 /**
- * Phase 12 end-to-end: enable SSO → login without SSO blocked → SSO
+ * SSO end-to-end: enable SSO → login without SSO blocked → SSO
  * satisfies session → JIT creates a membership when enabled.
  *
  * Drives the test stack via /api/testing helpers. The `saml_test` stub

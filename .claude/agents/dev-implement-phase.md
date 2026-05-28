@@ -48,7 +48,7 @@ Editing files not listed in the phase's "Files touched" is allowed when necessar
 - **Never `git add`, `git commit`, `git push`, `git tag`, `gh pr ...`, or any branch operation.** The orchestrator owns git. Your job ends with a clean working tree containing your changes.
 - **Never recurse.** Do not spawn subagents.
 - **Never edit `plan.md` or `architecture.md`.** If reality contradicts the plan, make the call, proceed, log in `autonomous_decisions`.
-- **No planning artifacts in shipped code or docs.** Code / identifiers / `docs/` never reference `plan/` paths or ticket slugs. Name things by what they ARE.
+- **No planning vocabulary in shipped code or docs.** The phase block hands you "Phase N" and a ticket slug — those are scaffolding, not names. Milestone tags, phase/step/slice numbers, ticket slugs, and `plan/` paths never appear in identifiers, **filenames**, comments, or `docs/`. Name code, tests, and files by what they DO (`test_row_carries_status_meta`, not `test_phaseN_fields`; `DEFAULT_ORG_ID`, not `<slug>_ORG_ID`). Comments and docs are present tense — what it is and why, not how it came to be. (`_v1`-style contract versions are fine.)
 
 ## Return payload
 

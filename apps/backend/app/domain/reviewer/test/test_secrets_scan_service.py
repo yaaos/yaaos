@@ -1,13 +1,9 @@
 """SecretsScan Local WorkflowCommand — pre-flight secrets gate.
 
-Verifies the workflow-engine equivalent of the legacy_runner.py
-secrets detection: when the PR diff contains a known secret pattern,
-SecretsScan posts a warning Review via the VCS plugin and returns
+When the PR diff contains a known secret pattern, SecretsScan posts a
+warning Review via the VCS plugin and returns
 `Outcome.success(label="skip", outputs={"reason": "secrets_detected"})`
 so the workflow's `skip` transition terminates the run.
-
-Closes the feature-parity gap that was blocking queue.py file deletion
-(legacy `_run_review_job_inner` owns secrets detection today).
 """
 
 from __future__ import annotations

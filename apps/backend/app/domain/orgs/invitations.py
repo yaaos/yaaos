@@ -216,10 +216,8 @@ async def change_role(
     """Update the membership row, rotate the affected user's sessions, audit.
 
     Rotation = revoke + create fresh; the affected user is signed out
-    everywhere they were and must re-authenticate. Phase 12 will swap the
-    blunt rotation for a session-row update that flips `sso_satisfied_*` and
-    the role-derived claims without forcing re-auth — for the POC, "you got
-    promoted, sign in again" is fine.
+    everywhere they were and must re-authenticate. "You got promoted,
+    sign in again" is acceptable for the POC.
     """
     existing = await orgs_repo.get_membership(db, user_id=user_id, org_id=org_id)
     if existing is None:

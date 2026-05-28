@@ -31,7 +31,7 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 ## Mode by location
 
 - When editing in `plan/`: act as a product/requirements collaborator. Ask clarifying questions, refine scope, challenge assumptions. **Do not write code.**
-- When editing code: act as an implementer. Follow the active milestone. Don't redesign the product mid-task — if scope feels wrong, surface it and update the milestone first.
+- When editing code: act as an implementer. Follow the active milestone. Don't redesign the product mid-task — if scope feels wrong, surface it and update the milestone first. The milestone/phase/slug vocabulary you read in `plan/` is scaffolding — it stays in `plan/`. Translate it out as you write: name code by what it does, not the plan step that produced it. See **No planning vocabulary in shipped code** below.
 
 ## Discipline
 
@@ -52,6 +52,7 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 - **Cross-link, don't repeat.** When module X interacts with module Y, link to Y's doc. If you find yourself paraphrasing another module, the link is the answer.
 - **No `TBD` / `TODO` / `coming soon`.** If it isn't shipped, it isn't in `docs/` — that belongs in `plan/` or a ticket. If a doc would otherwise say TBD, describe what *is* there or omit the section.
 - **No date stamps in doc bodies.** "As of 2026-05-16, X works like this" rots. Use git blame for "when did this rule appear." Dated entries are fine in `plan/` (decisions still in flux there).
+- **No planning vocabulary.** Milestone tags, phase/slice numbers, ticket slugs, and `plan/` path citations never appear in `docs/`. This is the same rule as **No planning vocabulary in shipped code** under Implementation discipline — it binds docs too.
 - **The first line is a 1-sentence purpose statement** (the `> blockquote` under the H1 in per-module docs). Reader decides in 5 seconds whether to keep reading.
 - **One rule lives in one place.** If a discipline applies to N modules, write it once in `apps/<app>/docs/patterns.md` and link from each per-module doc. Don't repeat per-module discipline lists.
 - **Diagrams only when truly needed.** ASCII flow when something crosses 3+ modules and would be opaque without one. Otherwise prose.
@@ -65,7 +66,8 @@ Populated alongside the code. System-wide concerns live at the repo root; per-ap
 When writing or changing code:
 
 - **Red-Green-Refactor TDD.** Write the failing test first (Red), then the minimum code to make it pass (Green), then refactor. Do not write production code without a failing test that demands it.
-- **Read the module's existing docs before changing the module.** Context first; don't reinvent prior choices silently. Where to look: `apps/<app>/docs/<layer>_<module>.md` if the module has shipped, otherwise its deep-dive in `plan/milestones/<active-milestone>/`.
+- **Read the module's existing docs before changing the module.** Context first; don't reinvent prior choices silently. Where to look: `apps/<app>/docs/<layer>_<module>.md` if the module has shipped, otherwise its deep-dive in `plan/milestones/<active-milestone>/`. The milestone names, phase numbers, and `plan/` paths you encounter there are reading aids — never echo them into the code, identifiers, filenames, or comments you write.
+- **No planning vocabulary in shipped code.** Milestone tags (`M0x`), phase/step/slice numbers, ticket slugs, `plan/` paths, `PHASES.md`/`DECISIONS.md`, and "how we got here" prose (`previously`, `originally`, `used to X but now`, `will land in`, `deferred to a future milestone`) never appear in identifiers, filenames, comments, or `docs/`. Name things by what they ARE (`DEFAULT_ORG_ID`, not `M01_ORG_ID`; `test_row_carries_status_meta`, not `test_m06_fields`). Comments and docs say what the code does and why, present tense. The plan you execute is full of "Phase N" and slug names — strip them on the way into code. Planning vocabulary lives only in `plan/`; the git log is the history. (Proper version suffixes like `_v1` are fine — they describe a contract, not a plan step.)
 - **`bin/ci` IS THE TEST COMMAND. Run it before saying "done". No exceptions.** Don't run `pytest`, `pnpm test`, `ruff`, `tach`, `semgrep`, or `tsc` standalone for verification — they're each a slice of the full gate and skipping the others is how regressions slip in. The per-app scripts are the contract:
   - **Backend code changed** (anything under `apps/backend/` that isn't a `.md`) → `apps/backend/bin/ci`. Includes lint, format check, tach, table-access check, pytest, and semgrep against Python via the backend's own uv venv.
   - **Web code changed** (anything under `apps/web/` that isn't a `.md`) → `apps/web/bin/ci`. Includes biome, `tsc --noEmit`, vitest, vite build, and a semgrep scan (`p/typescript` + `p/react` + `p/owasp-top-ten`). Requires `semgrep` on PATH locally (`pipx install semgrep` or `pip install --user semgrep`); the RWX `web-ci` task pip-installs it.

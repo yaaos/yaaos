@@ -1,6 +1,6 @@
 """Reaper + cleanup-failsafe fault-injection tests.
 
-The reaper enforces three terminal guarantees the rest of depends on:
+The reaper enforces three terminal guarantees the rest of the system depends on:
 
 1. Expired workspaces eventually become `destroyed` — provider.destroy is
    retried up to 3 times across reaper sweeps, then status flips to

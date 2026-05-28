@@ -1,7 +1,7 @@
 /**
  * Ticket detail — anchor page (E2a.4).
  *
- * Composes the standalone composites built earlier in Phase 6:
+ * Composes the standalone composites:
  *   - StageIndicator
  *   - FindingRow (with inline ack / push-back wired to mutations)
  *   - ActivityEventRow
@@ -14,8 +14,7 @@
  *   4. Tab body — depends on active tab.
  *
  * Live updates flow via `useTicket` / `useFindingsForTicket` /
- * `useReviewJobsForTicket` / `useHitlHistory` polling. SSE invalidation
- * is a Phase 6 polish item.
+ * `useReviewJobsForTicket` / `useHitlHistory` polling.
  */
 
 import {

@@ -1,8 +1,7 @@
 // Package protocol mirrors the wire types defined in
 // apps/backend/openapi/agent-api.yaml.
 //
-// Hand-written today; future oapi-codegen wires this from the spec
-// directly. Field tags match the JSON keys the backend emits and accepts.
+// Hand-written. Field tags match the JSON keys the backend emits and accepts.
 //
 // AgentCommand is a discriminated union over `kind`. The wire form is a
 // flat JSON object — the decoder peeks at `kind` and routes into the

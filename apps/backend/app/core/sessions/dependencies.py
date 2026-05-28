@@ -80,8 +80,8 @@ async def _current_session_user_id(
     """Resolve the session cookie → user_id. Sets the `user_id` contextvar.
 
     Returns None when the cookie is absent or the session is expired/unknown.
-    Concrete session expiry checks ship in Phase 3; here we just attempt the
-    lookup so the contextvar is populated when a valid session exists.
+    Attempts the lookup so the contextvar is populated when a valid session
+    exists.
     """
     if not yaaos_session:
         return None
@@ -184,7 +184,7 @@ def require(action: Action) -> Callable[..., None]:
         # SSO satisfaction: if the org has SSO enabled, the session must
         # have `sso_satisfied_for_org_id == org_id` within the 8h TTL.
         # Break-glass: the exempt Owner bypasses this AND must have a
-        # verified TOTP secret (Phase 11 helper).
+        # verified TOTP secret.
         from app.core.identity import has_verified_totp  # noqa: PLC0415
         from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
         from app.domain.orgs import get_config  # noqa: PLC0415

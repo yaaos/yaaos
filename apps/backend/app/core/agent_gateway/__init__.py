@@ -1,17 +1,16 @@
 """core/agent_gateway — wire protocol to WorkspaceAgents.
 
 Five HTTPS endpoints under `/v1/`: identity-exchange, heartbeat,
-commands/claim (long-poll), commands/{id}/events, workspaces/{id}/events.
-The WebSocket activity stream lands in Phase 8b.
+commands/claim (long-poll), commands/{id}/events, workspaces/{id}/events,
+plus a WebSocket activity stream.
 
-Phase 5 ships:
+Provides:
 - Hand-written Pydantic wire types (mirror of `apps/backend/openapi/agent-api.yaml`).
 - Per-agent in-memory dispatch FIFO + async long-poll.
 - Heartbeat reconciliation (control-plane returns workspaces the agent
   should forget).
 - Event ingestion with the stale-claim guard (`410 Gone` on mismatch).
-- Placeholder identity verifier (accepts any non-empty bearer); real
-  STS-replay verifier lands in Phase 7.
+- A placeholder identity verifier that accepts any non-empty bearer.
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes

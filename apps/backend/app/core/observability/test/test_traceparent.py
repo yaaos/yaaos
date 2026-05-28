@@ -1,4 +1,4 @@
-"""Phase 8 — traceparent helpers + span continuity across the boundary."""
+"""traceparent helpers + span continuity across the boundary."""
 
 from __future__ import annotations
 

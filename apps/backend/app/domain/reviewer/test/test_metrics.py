@@ -1,4 +1,4 @@
-"""Plan §10.13 metrics: acceptance_rate + resolved_without_edit_rate.
+"""Eval metrics: acceptance_rate + resolved_without_edit_rate.
 
 `compute_acceptance_rate` counts findings whose state indicates the developer
 touched the flagged code — `resolved_confirmed` (agent verified) +
@@ -97,8 +97,8 @@ async def test_acceptance_rate_counts_resolved_confirmed_and_resolved_unverified
 
 @pytest.mark.asyncio
 async def test_acknowledged_does_not_count_as_acceptance(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Regression: previously `resolved_confirmed`-only proxy counted wontfix acks as proxy.
-    Plan §10.13 explicitly excludes them.
+    """Wontfix acks must not count toward the `resolved_confirmed` proxy.
+    The proxy excludes them.
     """
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()
     await _seed_pr(db_session, pr_id, org_id)
@@ -119,7 +119,7 @@ async def test_acknowledged_does_not_count_as_acceptance(db_session) -> None:  #
 
 @pytest.mark.asyncio
 async def test_resolved_without_edit_rate_counts_ack_stale_unverified(db_session) -> None:  # type: ignore[no-untyped-def]
-    """plan §10.13: resolved-without-edit captures acknowledged + stale + resolved_unverified."""
+    """Resolved-without-edit captures acknowledged + stale + resolved_unverified."""
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()
     await _seed_pr(db_session, pr_id, org_id)
     states = ["acknowledged", "stale", "resolved_unverified", "resolved_confirmed", "open"]

@@ -14,7 +14,7 @@ from app.domain.reviewer.types import CodeAnchor, FindingFingerprint
 
 def _short_scenario_raw() -> RawFinding:
     """A RawFinding whose `concrete_failure_scenario` is too short — the
-    aggregate's schema gate (plan §10.1, 20-char minimum) drops it."""
+    aggregate's schema gate (20-char minimum) drops it."""
     fp = FindingFingerprint(
         file_path="src/foo.py",
         rule_id="r1",

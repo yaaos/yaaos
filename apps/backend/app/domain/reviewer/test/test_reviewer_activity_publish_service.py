@@ -1,11 +1,10 @@
 """Service test: `_activity_publisher_for` fans `ActivityEvent`s out to the
 org-scoped workspace-activity channel via `publish_workspace_activity`.
 
-After the Phase 10a cutover, `_activity_publisher_for` calls
-`publish_workspace_activity(org_id=require_org_context(), ...)` instead of
-bare `sse_publish(channel_for(...), ...)`.  This test drives that publisher
-inside an `org_context` block and asserts the event arrives on
-`subscribe_workspace_activity(org_id, wfx_id)`.
+`_activity_publisher_for` calls
+`publish_workspace_activity(org_id=require_org_context(), ...)`. This test
+drives that publisher inside an `org_context` block and asserts the event
+arrives on `subscribe_workspace_activity(org_id, wfx_id)`.
 """
 
 from __future__ import annotations

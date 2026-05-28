@@ -97,7 +97,7 @@ services:
       # Server-side OAuth token POST — yaaos backend must reach fake-github
       # via the docker-internal host, not the browser-facing port.
       YAAOS_GITHUB_OAUTH_TOKEN_URL: http://fake-github:8080/login/oauth/access_token
-      # M04 — Linear + Notion fakes. Production URLs are the real upstreams;
+      # Linear + Notion fakes. Production URLs are the real upstreams;
       # tests override here so the autonomous suite needs no external OAuth.
       LINEAR_OAUTH_AUTHORIZE_URL: http://fake-linear:8080/oauth/authorize
       LINEAR_OAUTH_TOKEN_URL: http://fake-linear:8080/oauth/token

@@ -33,12 +33,12 @@ class TicketRow(Base):
     plugin_id: Mapped[str] = mapped_column(String, nullable=False, server_default="github")
     repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     pr_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
-    # ticket type (`pr_review` only today). Future types (`investigation`,
-    # `verify_fix`, etc.) reuse the same row shape.
+    # ticket type. `pr_review` is the value in use; other types reuse the
+    # same row shape.
     type: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_review")
     # idempotency key for intake-driven creation. Same key + same type →
-    # the existing ticket is returned. Sparse-unique; legacy ticket rows leave
-    # it NULL.
+    # the existing ticket is returned. Sparse-unique; rows created without
+    # a key leave it NULL.
     idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     # optional payload bag carrying intake-time parameters that the
     # workflow's first step consumes. Stays JSONB so future ticket types add

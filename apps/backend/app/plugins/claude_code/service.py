@@ -390,7 +390,7 @@ def _summarize_tool_input(tool: str, inp: dict[str, Any]) -> str:
 
 
 def _compute_state_v2(findings: list[FindingDraft]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
-    """Plan §10.1 severity tiers — `blocker`/`major` request changes."""
+    """Severity tiers — `blocker`/`major` request changes."""
     if not findings:
         return "APPROVED"
     if any(f.severity in {"blocker", "major"} for f in findings):
@@ -412,7 +412,7 @@ class ClaudeCodePlugin:
 
     def install_url(self, org_id: UUID) -> str | None:
         """No out-of-band install — Claude Code settings are pure form. The
-        bespoke settings page (Phase 10) handles it."""
+        bespoke settings page handles it."""
         del org_id
         return None
 
@@ -460,9 +460,9 @@ class ClaudeCodePlugin:
             return prep
         argv, env, timeout = prep
 
-        # Plan §6.1 + §13 cutover: full review emits the §10.1 schema
-        # (FindingDraft) — same shape as incremental review. The reviewer
-        # module (queue.py) handles admission + posting in one place.
+        # Full review emits the FindingDraft schema — same shape as
+        # incremental review. The reviewer module handles admission +
+        # posting in one place.
         full_prompt = _assemble_review_prompt(context) + _schema_appendix(_FindingDraftList)
 
         envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)

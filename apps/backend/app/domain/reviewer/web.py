@@ -46,10 +46,9 @@ def _org() -> UUID:
 async def rereview_ticket(req: RereviewRequest) -> dict[str, Any]:
     """Re-review a ticket — drives `pr_review_v1` via the workflow engine.
 
-    Replaces the legacy `schedule_review` / `review_jobs` flow. The SPA's
-    only contract with this endpoint is the `scheduled_count` field; the
-    response now carries `workflow_execution_id` instead of `review_job_id`
-    so the caller can poll workflow state if desired.
+    The SPA's only contract with this endpoint is the `scheduled_count`
+    field; the response carries `workflow_execution_id` so the caller can
+    poll workflow state if desired.
     """
     org_id = _org()
     try:

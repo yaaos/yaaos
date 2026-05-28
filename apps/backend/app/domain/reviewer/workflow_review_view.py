@@ -1,17 +1,14 @@
 """Workflow-execution → `ReviewJob` projection.
 
-During the queue.py dismantle (slices 40-50), the legacy `review_jobs`
-table stops receiving writes from new code paths — `pr_review_v1` /
-`incremental_review_v1` workflows run through `workflow_executions`
-instead. The SPA's existing `/api/reviewer/jobs/by-ticket/{id}` +
-`/api/reviewer/metrics` endpoints still return the legacy `ReviewJob`
-shape so the UI doesn't need a redesign mid-flight.
+`pr_review_v1` / `incremental_review_v1` workflows run through
+`workflow_executions`. The SPA's `/api/reviewer/jobs/by-ticket/{id}` +
+`/api/reviewer/metrics` endpoints return the `ReviewJob` shape, so this
+module projects `WorkflowExecutionSummary` into the same `ReviewJob`
+fields.
 
-This module projects `WorkflowExecutionSummary` into the same `ReviewJob`
-fields. Lossy by design — `workflow_executions` doesn't track
-per-finding output, token counts, or model/effort settings; those
-fields project as `None`. The SPA already tolerates `None` because the
-legacy queue path filled them lazily too.
+Lossy by design — `workflow_executions` doesn't track per-finding
+output, token counts, or model/effort settings; those fields project as
+`None`. The SPA tolerates `None`.
 
 Status mapping (workflow state → ReviewJob.status):
 - `pending` → `queued`
@@ -19,10 +16,6 @@ Status mapping (workflow state → ReviewJob.status):
 - `done` → `posted`
 - `failed` → `failed`
 - `cancelled` → `cancelled`
-
-When the legacy `review_jobs` table is dropped (migration 019), the
-read-side endpoints return only workflow-projected rows. Until then
-they merge both sources.
 """
 
 from __future__ import annotations
@@ -95,9 +88,9 @@ async def workflow_metrics_summary(*, org_id: UUID) -> dict[str, Any]:
     """Org-scoped counts-by-status over `workflow_executions`.
 
     NOTE: `workflow_executions` has no `org_id` column (it's per-ticket;
-    the org scope is enforced through the ticket). For the POC we
-    return ALL workflow_executions counts and let the legacy
-    `metrics_summary` add the org-scoped review_jobs counts on top.
+    the org scope is enforced through the ticket). This returns ALL
+    workflow_executions counts and lets `metrics_summary` add the
+    org-scoped review_jobs counts on top.
     """
     del org_id
     async with db_session() as s:

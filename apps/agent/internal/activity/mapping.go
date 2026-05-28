@@ -3,8 +3,8 @@ package activity
 import "sync"
 
 // WorkspaceMapping caches the workspace_id → workflow_execution_id
-// translation that the backend ships in `subscribe` messages
-// (slice 79). Outbound `activity_batch` frames need the workflow id
+// translation that the backend ships in `subscribe` messages.
+// Outbound `activity_batch` frames need the workflow id
 // to address the right SSE channel, but the agent only ever knows
 // workspace ids — the mapping closes that gap without a backend
 // round-trip per batch.

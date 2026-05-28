@@ -1,4 +1,4 @@
-"""`PRReviewAggregate` unit tests covering the §6 flows.
+"""`PRReviewAggregate` unit tests covering the review flows.
 
 Exercise the public methods via the in-memory repository to also catch
 load/save asymmetries.
@@ -146,10 +146,10 @@ async def test_post_process_drops_missing_scenario() -> None:
 
 
 async def test_post_process_drops_trivially_short_scenario() -> None:
-    """Plan §10.6 + §10.1: a finding whose `concrete_failure_scenario` is
-    too short to describe an actual failure mode is treated as malformed —
-    closes the synthesis loophole on the legacy full-review path where a
-    one-word body would otherwise pass the malformed gate with confidence=90.
+    """A finding whose `concrete_failure_scenario` is too short to describe
+    an actual failure mode is treated as malformed — closes the synthesis
+    loophole where a one-word body would otherwise pass the malformed gate
+    with confidence=90.
     """
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()
     agg = _agg(pr_id, org_id)
@@ -159,7 +159,7 @@ async def test_post_process_drops_trivially_short_scenario() -> None:
         commit_sha="h",
     )
 
-    # 19 chars — below the §10.1 minimum.
+    # 19 chars — below the minimum.
     new, _, drops = agg.post_process_raw_findings(review.id, [_raw(scenario="too short to use.")])
 
     assert new == []

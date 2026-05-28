@@ -82,10 +82,9 @@ class ReviewContext(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    """Plan §6.1 + §13 cutover: the parent reviewer emits `FindingDraft` per
-    plan §10.1 — `vcs.Finding` is now only used at the VCS-posting boundary.
-    Translation from FindingDraft → vcs.Finding happens inside
-    `domain/reviewer/queue.py` after admission, so rejected findings never
+    """The parent reviewer emits `FindingDraft`; `vcs.Finding` is only used
+    at the VCS-posting boundary. Translation from FindingDraft → vcs.Finding
+    happens in the reviewer after admission, so rejected findings never
     reach GitHub.
     """
 
@@ -120,7 +119,7 @@ class FindingAnchor(BaseModel):
 
 
 class FindingDraft(BaseModel):
-    """One raw finding produced by an agent task. Schema per plan §10.1.
+    """One raw finding produced by an agent task.
 
     The reviewer aggregate rejects any draft missing `concrete_failure_scenario`
     or below the per-severity confidence threshold before storing it. Severity

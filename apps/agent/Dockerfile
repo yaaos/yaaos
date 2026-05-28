@@ -2,12 +2,12 @@
 #
 # Two-stage build: golang:1.25-alpine compiles the static binary; the
 # runtime stage is `debian:bookworm-slim` because the agent shells out
-# to `git` for repo clone (and, later, hands off to the Claude Code CLI
-# which also expects `git` + a real userspace). Distroless/static was the
-# original target — see DECISIONS.md slice 69 for the trade-off
-# (security posture of "no shell, no pkg manager" vs. needing git).
+# to `git` for repo clone (and hands off to the Claude Code CLI which
+# also expects `git` + a real userspace). Distroless/static would be
+# smaller but offers no shell or package manager, which the git
+# dependency rules out.
 #
-# Image is ~80 MB (was ~25 MB on distroless/static). The agent is still
+# Image is ~80 MB. The agent is
 # PID 1; SIGTERM from ECS reaches it directly so graceful shutdown works
 # without an init wrapper.
 #

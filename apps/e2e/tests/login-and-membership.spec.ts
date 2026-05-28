@@ -1,5 +1,5 @@
 /**
- * Phase 7 end-to-end: login via `oauth_test` → land on dashboard → invite
+ * Login + membership end-to-end: login via `oauth_test` → land on dashboard → invite
  * member → accept invite → change role → logout-all.
  *
  * Drives the real backend, using `/api/testing/*` helpers to reset the DB
@@ -48,9 +48,9 @@ test.describe("auth + members", () => {
 
     // Regression: HARD-NAV directly to /orgs/acme/user/details (no SPA
     // history), then click Dashboard — must still land on /orgs/acme/dashboard.
-    // This is the case that broke originally: the module-global slug cache
-    // was null on first load, so the sidebar built bare `/dashboard` hrefs
-    // → NotFound. Slug now comes from the URL on every read.
+    // Invariant: the sidebar must read the active org slug from the URL on
+    // every render. A module-global slug cache that's null on first load
+    // would make the sidebar build bare `/dashboard` hrefs → NotFound.
     await page.goto(`${BASE}/orgs/acme/user/details`);
     await page.waitForURL(/\/orgs\/acme\/user\/details$/);
     await page.getByTestId("nav-dashboard").click();

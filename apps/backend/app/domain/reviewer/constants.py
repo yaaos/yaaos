@@ -1,8 +1,5 @@
-"""Reviewer-wide constants extracted from the legacy `queue.py` so the
-new workflow-engine path + the legacy runner can share one source of truth.
-
-Once `queue.py` is deleted, this module is the home for these values —
-no re-binding shims required.
+"""Reviewer-wide constants — one source of truth for the workflow-engine
+path and any runner that needs them.
 """
 
 from __future__ import annotations

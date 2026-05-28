@@ -1,9 +1,8 @@
 """`PostFindings` happy-path — drafts flow through the full admission
 pipeline and admitted findings land as FindingRow rows.
 
-This is the integration story for slice 19 of the Phase 4 follow-on:
-proves the wrapper actually drives `findingdrafts_to_raw` →
-`admit_raw_findings` end-to-end with realistic inputs.
+Proves the wrapper drives `findingdrafts_to_raw` → `admit_raw_findings`
+end-to-end with realistic inputs.
 """
 
 from __future__ import annotations

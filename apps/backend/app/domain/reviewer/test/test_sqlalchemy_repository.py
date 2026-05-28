@@ -155,7 +155,7 @@ async def test_repository_round_trips_thread_and_messages(db_session) -> None:  
 
 @pytest.mark.asyncio
 async def test_repository_persists_review_writes(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Plan §5.3: `complete_review`/`mark_review_running`/etc. on the aggregate
+    """`complete_review`/`mark_review_running`/etc. on the aggregate
     must reach the DB through the repository. Today this is a silent no-op
     (the SQLAlchemy save() skips reviews); this test pins the gap.
     """

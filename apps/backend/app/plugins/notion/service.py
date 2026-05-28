@@ -45,9 +45,8 @@ def _build_config() -> ProviderConfig:
         client_secret=s.yaaos_oauth_notion_client_secret,
         scope_separator=" ",
         # Notion uses capabilities at the integration level rather than
-        # OAuth scopes. yaaos passes an explicit `owner=user` flag via the
-        # authorize URL (`build_authorize_url` doesn't surface that yet);
-        # for now the scope list is empty.
+        # OAuth scopes, so the scope list is empty. yaaos passes an explicit
+        # `owner=user` flag via the authorize URL.
         default_scopes=(),
         known_read_tools=(
             "search",

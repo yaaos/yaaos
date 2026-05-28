@@ -7,14 +7,13 @@ in_memory provider, the engine's `start_step` Workspace branch runs
 them inline (see [core_workflow.md § Workspace dispatch](core_workflow.md))
 and these bodies own the workspace lifecycle calls directly.
 
-`CleanupWorkspace` ships with a real in-memory body — it only needs the
+`CleanupWorkspace` has a real in-memory body — it only needs the
 `workspace_id` from inputs, no cross-layer reads required.
-`ProvisionWorkspace` remains a stub: a real body needs to read ticket
+`ProvisionWorkspace` is a stub: a real body needs to read ticket
 fields (org_id, repo, sha) but `core/workspace` can't import
-`domain/tickets` (layer rule). The fix is a dependency-inversion
-callback registered by domain/reviewer at boot, landing in the next
-follow-on slice. `RefreshWorkspaceAuth` remains a stub pending the
-auth-refresh substrate.
+`domain/tickets` (layer rule). It reads ticket context through a
+dependency-inversion callback registered by domain/reviewer at boot.
+`RefreshWorkspaceAuth` is a stub pending the auth-refresh substrate.
 """
 
 from __future__ import annotations
@@ -36,9 +35,7 @@ from app.core.workspace.workflow_context import get_workflow_context_provider
 
 log = structlog.get_logger("core.workspace.commands")
 
-# Provider id used for the in-memory workspace plugin (registered as
-# `in_process` historically — kept stable through the rename to
-# in_memory_workspace per Phase 0a).
+# Provider id used for the in-memory workspace plugin.
 _IN_MEMORY_PROVIDER_ID = "in_process"
 
 
@@ -61,9 +58,8 @@ class ProvisionWorkspace(_LifecycleCommand):
     `WorkflowContextProvider`, builds a `WorkspaceSpec`, and calls
     `create_workspace()` directly. Returns the new `workspace_id` in
     outputs so downstream steps can claim against it via the `$provision`
-    input expression. For the remote_agent provider this would issue
-    `CreateWorkspace` over the wire — that path lands with the Phase 6
-    Go workspace subcommand body.
+    input expression. For the remote_agent provider this issues
+    `CreateWorkspace` over the wire to the Go workspace subcommand.
 
     Falls back to `Outcome.failure` when:
     - no `WorkflowContextProvider` is registered (bootstrap bug)
@@ -167,9 +163,9 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
     credential to refresh. Returning success lets the engine append the
     re-dispatch step cleanly.
 
-    For the **remote_agent** provider, a future iteration will issue a
-    `RefreshWorkspaceAuth` AgentCommand over the wire so the Go agent
-    can rotate its checkout's auth header before the retry.
+    For the **remote_agent** provider this issues a `RefreshWorkspaceAuth`
+    AgentCommand over the wire so the Go agent can rotate its checkout's
+    auth header before the retry.
     """
 
     kind = "RefreshWorkspaceAuth"

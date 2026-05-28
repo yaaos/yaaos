@@ -1,8 +1,7 @@
 """Actor value object — who-did-what for audit rows.
 
-Lives alongside the audit_log module since it is the row's `actor` column type.
-Previously in `core/primitives`; moved here in so the type's
-ownership matches its usage.
+Lives alongside the audit_log module since it is the row's `actor` column type,
+keeping the type's ownership matched to its usage.
 """
 
 from __future__ import annotations

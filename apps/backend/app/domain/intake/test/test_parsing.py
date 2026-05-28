@@ -9,7 +9,7 @@ from app.domain.intake import is_skippable_path, parse_rereview
     "body",
     [
         "hey @yaaos rereview please",
-        # Legacy `@yaaos-<specialty>` form still matches; specialty is ignored.
+        # The `@yaaos-<specialty>` form still matches; specialty is ignored.
         "hello @yaaos-architecture rereview",
         "@yaaos-security rereview thanks",
         "@YAAOS-style ReReview",

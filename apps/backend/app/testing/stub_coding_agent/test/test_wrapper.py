@@ -82,8 +82,7 @@ async def test_review_returns_canned_success() -> None:
     # One synthetic finding lets UI specs exercise the finding-expansion
     # and Teach-yaaos flow without needing a real LLM. See service.review.
     assert len(result.findings) == 1
-    # Plan §13 cutover: ReviewResult.findings is `FindingDraft` (§10.1
-    # schema), not legacy vcs.Finding.
+    # ReviewResult.findings is `FindingDraft`, not vcs.Finding.
     assert result.findings[0].anchor.file_path == "src/example.ts"
     assert result.findings[0].rule_id == "stub/sample-suggestion"
     assert result.telemetry.tokens_in == 1000

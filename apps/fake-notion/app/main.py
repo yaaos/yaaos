@@ -1,7 +1,7 @@
 """fake-notion FastAPI service.
 
 Implements just enough of Notion's OAuth + hosted-MCP surface to drive
-yaaos M04 end-to-end. MCP Streamable HTTP at `POST /mcp`. Notion's OAuth
+yaaos end-to-end. MCP Streamable HTTP at `POST /mcp`. Notion's OAuth
 uses HTTP Basic for `/oauth/token` rather than form-encoded client creds;
 yaaos's IntegrationProvider config encodes that quirk so the upstream
 provider plugin layer is the only place that knows.

@@ -1,17 +1,17 @@
 """Prompt assembly + structured-output DTOs for the five reviewer modes.
 
-These were the per-mode prompt builders inside `plugins/claude_code/service.py`
-until slice 72. They moved here because:
+The per-mode prompt builders live in the domain rather than inside
+`plugins/claude_code/service.py` because:
 
-1. `build_invocation` now ships the literal `{argv, stdin, env}` exec
+1. `build_invocation` ships the literal `{argv, stdin, env}` exec
    block on the wire so the Go workspace agent can spawn the Claude
    Code subprocess with zero biz logic of its own. To assemble that
    stdin the backend needs the rendered prompt — which means the
-   prompt-assembly functions can't stay inside the plugin (Tach: domain
+   prompt-assembly functions can't sit inside the plugin (Tach: domain
    doesn't import plugins).
-2. `plugins/claude_code` was the only renderer, so moving them up is
-   neutral on the in-process path — the plugin imports the same names
-   from the new location.
+2. `plugins/claude_code` is the only renderer, so keeping them in the
+   domain is neutral on the in-process path — the plugin imports the
+   same names from the domain.
 
 Five `assemble_<mode>_prompt(ctx) -> str` functions + `schema_appendix(
 response_model) -> str` (which renders the JSON-schema STRICT footer the
@@ -231,7 +231,7 @@ def assemble_answer_question_prompt(ctx: AnswerQuestionContext) -> str:
 
 
 class _FindingDraftDto(BaseModel):
-    """The agent's per-finding output shape (plan §10.1). Mirrors
+    """The agent's per-finding output shape. Mirrors
     `FindingDraft` field names without depending on the typed import (the
     agent emits JSON; we validate against this then convert). `severity`
     is a closed enum and `confidence` is the 0-100 integer the agent

@@ -17,7 +17,7 @@ _ISSUES: dict[str, dict[str, Any]] = {
     "ENG-2": {
         "id": "ENG-2",
         "title": "Refactor sessions to support workspace principals",
-        "description": "M02 follow-up.",
+        "description": "Sessions follow-up.",
         "state": "done",
         "assignee": None,
         "comments": [],
@@ -25,7 +25,7 @@ _ISSUES: dict[str, dict[str, Any]] = {
 }
 
 _PROJECTS: list[dict[str, Any]] = [
-    {"id": "proj-1", "name": "yaaos M04", "state": "started"},
+    {"id": "proj-1", "name": "yaaos", "state": "started"},
     {"id": "proj-2", "name": "Infrastructure cleanup", "state": "backlog"},
 ]
 
@@ -89,7 +89,7 @@ def reset() -> None:
         "ENG-2": {
             "id": "ENG-2",
             "title": "Refactor sessions to support workspace principals",
-            "description": "M02 follow-up.",
+            "description": "Sessions follow-up.",
             "state": "done",
             "assignee": None,
             "comments": [],

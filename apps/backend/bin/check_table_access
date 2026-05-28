@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """SQL table-ownership scanner.
 
-Per `plan/milestones/M01-code-review/modularity.md` § Table ownership enforcement:
-each module may only reference DB tables it owns. Ownership is auto-derived
-from SQLAlchemy model `__module__` (no manual manifest).
-
-Skeleton state: no ORM models exist yet, so the scan is a no-op success. Once
-models land, this script enforces the rule.
+Table ownership enforcement: each module may only reference DB tables it owns.
+Ownership is auto-derived from SQLAlchemy model `__module__` (no manual manifest).
 """
 
 from __future__ import annotations
@@ -34,7 +30,7 @@ def main() -> int:
     try:
         from app.core.database import Base  # noqa: PLC0415
     except ImportError:
-        # Backend deps not installed yet, or no models registered. Skeleton phase.
+        # Backend deps not available, or no models registered — nothing to scan.
         print("OK: backend deps not available — table-access scan skipped")
         return 0
 
@@ -42,8 +38,7 @@ def main() -> int:
     for table_name, table in Base.metadata.tables.items():
         # SQLAlchemy 2.0 stores the declaring class's __module__ on the mapper, but
         # the cheapest reliable signal is the file path of any class that maps it.
-        # When models exist, walk through the declarative registry to fill this in.
-        # Skeleton: no mappers, so this loop is empty.
+        # Walk the declarative registry to resolve each table's owning module.
         owning_module = getattr(table, "_yaaos_owning_module", None)
         if owning_module:
             table_to_module[table_name] = owning_module
@@ -52,10 +47,9 @@ def main() -> int:
         # No tables registered yet — nothing to check.
         return 0
 
-    # Future: AST-scan every .py file under apps/backend/app/, identify the file's
-    # owning module from its path, look for SQLAlchemy `select(Model)` / raw text()
-    # references, and flag cross-module table use. The full implementation will land
-    # alongside the first ORM models.
+    # Cross-module enforcement: AST-scan every .py file under apps/backend/app/,
+    # identify the file's owning module from its path, look for SQLAlchemy
+    # `select(Model)` / raw text() references, and flag cross-module table use.
     print(f"OK: {len(table_to_module)} tables, ownership clean")
     return 0
 

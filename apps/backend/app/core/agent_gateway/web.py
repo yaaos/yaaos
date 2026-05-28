@@ -276,7 +276,7 @@ async def post_command_event(
     return Response(status_code=200)
 
 
-# ── Activity WebSocket (Phase 8b) ───────────────────────────────────────
+# ── Activity WebSocket ──────────────────────────────────────────────────
 
 
 @router.websocket("/agents/{agent_id}/activity")

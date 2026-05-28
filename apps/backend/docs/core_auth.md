@@ -34,7 +34,7 @@ Every `/api/*` path classifies as exactly one of three:
 
 `classify_route(path, method)` is the single source of truth. Method-specific exact matches win over exact matches; exact wins over prefix. `POST /api/orgs` lives in `USER_SCOPED_METHOD_EXACT` so org-create works before the SPA has selected an org, while `GET /api/orgs` stays `ORG_SCOPED`.
 
-Unclassified `/api/*` paths fall through as `PUBLIC` — legacy routers (intake, parts of `/api/reviewer` not yet backfilled) keep working. The post-response guard catches any 2xx response that escapes without `route_security_resolved` being set.
+Unclassified `/api/*` paths fall through as `PUBLIC` — unclassified routers (intake, parts of `/api/reviewer`) keep working. The post-response guard catches any 2xx response that escapes without `route_security_resolved` being set.
 
 ### Middleware order on `/api/*`
 

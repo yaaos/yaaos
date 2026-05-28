@@ -1,11 +1,10 @@
-"""Plan §2.3: anchor_content_hash hashes actual file content at the anchored
-line range, NOT the finding's body text. Different body phrasings for the
+"""anchor_content_hash hashes actual file content at the anchored line
+range, NOT the finding's body text. Different body phrasings for the
 same anchored code must produce IDENTICAL fingerprints so the aggregate
 deduplicates re-observations across reviews.
 
-Regression: legacy `_findingdrafts_to_raw` used `[d.body or d.title]` as the
-"anchored lines" — fingerprint churned every time the model rephrased the
-finding body.
+Guards against using the body/title as the "anchored lines", which
+churns the fingerprint every time the model rephrases the finding body.
 """
 
 from __future__ import annotations

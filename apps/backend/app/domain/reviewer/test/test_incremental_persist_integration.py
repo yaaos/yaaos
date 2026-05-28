@@ -1,9 +1,9 @@
 """Integration test for the durable-findings persist + audit + dispatch chain.
 
 Doesn't spin up the workspace + agent + VCS plugins. Exercises the inner
-slice that the §13 cutover refactor reshapes:
+persist chain:
 
-1. Agent emits a `FindingDraft` (§10.1 schema).
+1. Agent emits a `FindingDraft`.
 2. `_findingdrafts_to_raw` converts to `RawFinding` using REAL file content
    (so anchor + fingerprint hashes are stable).
 3. `aggregate.post_process_raw_findings` admits the finding against the
@@ -15,9 +15,8 @@ slice that the §13 cutover refactor reshapes:
 6. `dispatch_events` (run last — drains the events list) publishes
    to the SSE bus via `core/sse`.
 
-Sits squarely on the path between Plan §6.1 (initial review) and §6.2
-(push incremental). Both call sites use the same helpers; this test
-catches wiring regressions in either path.
+Initial review and push-incremental review both use the same helpers;
+this test catches wiring regressions in either path.
 """
 
 from __future__ import annotations
@@ -128,7 +127,7 @@ async def test_finding_persists_with_audit_and_anchor_lines(db_session) -> None:
     # Translate admitted RawFinding → vcs.Finding for posting (simulated here).
     posted = _raw_to_vcs_findings(raw, new_findings)
     assert len(posted) == 1
-    # Plan §10.1 → vcs vocab: major → must-fix.
+    # severity → vcs vocab: major → must-fix.
     assert posted[0].severity == "must-fix"
 
     # Save persists findings + their anchors (with original_lines in JSONB).
@@ -163,7 +162,7 @@ async def test_finding_persists_with_audit_and_anchor_lines(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_off_diff_finding_is_dropped_end_to_end(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Plan §10.9: a finding whose anchor file isn't in the diff is rejected
+    """A finding whose anchor file isn't in the diff is rejected
     BEFORE posting + persisting. Verifies the diff_files= wiring engaged.
     """
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()

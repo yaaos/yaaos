@@ -52,9 +52,8 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
 
 /**
  * Both tests below depend on the outbox → taskiq dispatcher to
- * actually run the workflow. That infrastructure was scaffolded in
- * the broker + drain loop ("Phase 0c/1") never
- * landed — `taskiq_enqueue` outbox rows pile up and `workflow_executions`
+ * actually run the workflow. No broker + drain loop runs in the e2e
+ * stack — `taskiq_enqueue` outbox rows pile up and `workflow_executions`
  * stay in `pending` forever. Backend service tests cover the workflow
  * engine itself; the e2e flow stays skipped until the dispatcher exists.
  *

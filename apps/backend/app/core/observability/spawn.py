@@ -2,8 +2,7 @@
 
 Wraps `asyncio.create_task` with a try/except that logs `spawn.crashed`. Lives
 under `core/observability` because the job is exception logging for background
-tasks — production logs become unusable without it. Previously in
-`core/primitives`; relocated in .
+tasks — production logs become unusable without it.
 """
 
 from __future__ import annotations

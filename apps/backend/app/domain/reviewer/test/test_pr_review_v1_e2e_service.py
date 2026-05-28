@@ -1,4 +1,4 @@
-"""End-to-end composition test for the four shipped Phase 4 slices.
+"""End-to-end composition test for the `pr_review_v1` workflow.
 
 Drives a ticket through `pr_review_v1` with the in_memory workspace
 provider. Asserts:
@@ -208,7 +208,7 @@ async def test_pr_review_v1_runs_end_to_end_in_memory(db_session, _registered_en
     )
     # 3. Kick off pr_review_v1 with workspace_provider=in_memory so the
     #    engine routes Workspace commands inline. Register a fake
-    #    coding_agent so CodeReview's real body (slice 38) has a plugin
+    #    coding_agent so CodeReview's real body has a plugin
     #    to call. Fake returns 0 findings → PostFindings is a no-op.
     with register_fake_coding_agent():
         wfx_id = await _registered_engine.start(
@@ -431,11 +431,9 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     on the control plane — proves the engine treats provider as a
     dispatch concern, not a workflow-shape concern.
 
-    The actual Go-side workspace subprocess body lands in the Phase 6
-    follow-on. Today the remote-dispatch path is a synthesize-command-id
-    stub (`workflow.start_step.workspace_remote_dispatch_stub`) and the
-    test fills in for the agent. This audit-tier coverage is what the
-    Phase 10 provider-parity audit asks for.
+    The remote-dispatch path is a synthesize-command-id stub
+    (`workflow.start_step.workspace_remote_dispatch_stub`) and the test
+    fills in for the agent, giving provider-parity audit coverage.
     """
     org_id = uuid4()
     ticket_id, _ = await create_ticket(

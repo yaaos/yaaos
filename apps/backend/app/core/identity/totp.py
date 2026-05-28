@@ -92,10 +92,9 @@ async def has_verified_totp(session: AsyncSession, user_id: UUID) -> bool:
 
 
 async def can_be_sso_exempt_owner(session: AsyncSession, user_id: UUID) -> bool:
-    """Pre-flight check Phase 12's SSO-config UI calls before letting an
-    Owner be picked as the break-glass exempt. The rule: an exempt Owner
-    must already have a verified TOTP secret so they can authenticate
-    without SSO."""
+    """Pre-flight check the SSO-config UI calls before letting an Owner be
+    picked as the break-glass exempt. The rule: an exempt Owner must already
+    have a verified TOTP secret so they can authenticate without SSO."""
     return await has_verified_totp(session, user_id)
 
 

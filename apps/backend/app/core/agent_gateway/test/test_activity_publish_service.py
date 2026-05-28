@@ -1,10 +1,10 @@
 """Service tests: WS batch and HTTP republish paths deliver workspace-activity
 events through `publish_workspace_activity` on the org-scoped channel.
 
-Guards the Phase 10a publisher cutover — all three sites now call
+All three sites call
 `publish_workspace_activity(org_id=..., workflow_execution_id=..., payload=...)`
-so the SPA can subscribe to the namespaced `{org_id}:workspace_activity:{wfx_id}`
-channel instead of the legacy `activity:{wfx_id}` one.
+so the SPA subscribes to the namespaced `{org_id}:workspace_activity:{wfx_id}`
+channel.
 """
 
 from __future__ import annotations
