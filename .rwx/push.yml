@@ -10,8 +10,8 @@ on:
       commit-sha: ${{ event.git.sha }}
 
 base:
-  os: ubuntu 24.04
-  tag: 1.2
+  image: ubuntu 24.04
+  config: 1.2
   arch: arm64
 
 # Tool-cache vault. Each install-running task (web-ci, e2e-ci) declares
@@ -173,7 +173,7 @@ tasks:
   # ─── e2e ────────────────────────────────────────────────────────────
 
   - key: e2e-ci
-    if: ${{ mint.run.git.branch == 'main' }}
+    if: ${{ event.git.branch == 'main' }}
     use: [code, nodejs]
     tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
