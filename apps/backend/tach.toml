@@ -451,6 +451,7 @@ expose = [
   "publish_workspace_activity",
   "register_workspace_activity_ownership_check",
   "reset_pubsub",
+  "reset_workspace_activity_ownership_check",
   "serialize_for_sse",
   "shutdown",
   "subscribe_general",

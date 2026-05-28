@@ -58,7 +58,9 @@ class OrgContextMiddleware(TaskiqMiddleware):
 
     def __init__(self) -> None:
         super().__init__()
-        # Stores the active context manager per task_id so pre/post hooks pair up.
+        # Keyed on `task_id` (UUID per taskiq invocation), so concurrent tasks
+        # sharing this singleton middleware never collide. asyncio does not
+        # reuse Task objects, so contextvar state cannot leak across tasks.
         self._active: dict[str, Any] = {}
 
     async def pre_execute(self, message: TaskiqMessage) -> TaskiqMessage:

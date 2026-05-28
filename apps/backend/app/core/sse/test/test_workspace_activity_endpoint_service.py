@@ -23,10 +23,15 @@ from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, register_handler
 from app.core.identity import repository as identity_repo
-from app.core.sse import publish_workspace_activity, reset_pubsub
+from app.core.sse import (
+    publish_workspace_activity,
+    register_workspace_activity_ownership_check,
+    reset_pubsub,
+    reset_workspace_activity_ownership_check,
+)
 from app.core.sse.web import _workspace_activity_stream
 from app.core.workflow import WorkflowExecutionRow
-from app.domain.orgs import Role
+from app.domain.orgs import Role, assert_workflow_in_org
 from app.domain.orgs import repository as orgs_repo
 from app.domain.tickets import TicketRow
 
@@ -52,6 +57,19 @@ def _isolate_pubsub() -> None:
     reset_pubsub()
     yield
     reset_pubsub()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ownership_check() -> None:
+    """Register the real ownership check; reset on teardown.
+
+    `core/sse/web` raises if the check is unregistered, so a test session
+    that doesn't import `app.web` (this one) must wire it explicitly.
+    """
+    reset_workspace_activity_ownership_check()
+    register_workspace_activity_ownership_check(assert_workflow_in_org)
+    yield
+    reset_workspace_activity_ownership_check()
 
 
 def _make_ticket(org_id) -> TicketRow:

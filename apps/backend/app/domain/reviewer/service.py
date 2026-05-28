@@ -24,6 +24,7 @@ so the tests pin them too.
 
 from __future__ import annotations
 
+import enum
 import re
 import uuid
 from dataclasses import asdict, dataclass
@@ -629,8 +630,6 @@ def _json_safe(value: Any) -> Any:
     - `dict` / `list` → recurse
     - primitives (`str`, `int`, `float`, `bool`, `None`) → pass through
     """
-    import enum  # noqa: PLC0415
-
     if isinstance(value, uuid.UUID):
         return str(value)
     if isinstance(value, enum.Enum):

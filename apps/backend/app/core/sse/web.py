@@ -18,23 +18,33 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import Action, org_id_var
 from app.core.sessions import require
 from app.core.sse.service import (
-    _verify_workspace_activity_ownership,
     serialize_for_sse,
     subscribe_general,
     subscribe_workspace_activity,
+    verify_workspace_activity_ownership,
 )
 from app.core.webserver import RouteSpec, register_routes
 
 router = APIRouter()
 
 
-async def _general_stream(org_id) -> AsyncIterator[str]:
+async def _verify_workspace_activity_ownership(
+    workflow_execution_id: UUID = Path(...),
+) -> None:
+    """FastAPI `Depends` thunk that delegates to the registered check.
+
+    Kept in `web.py` so `core/sse/service.py` stays framework-agnostic.
+    """
+    await verify_workspace_activity_ownership(workflow_execution_id)
+
+
+async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
     """Translate general pub/sub events into SSE frames for the caller's org."""
     async for event in subscribe_general(org_id):
         yield serialize_for_sse(event)

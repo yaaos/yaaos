@@ -42,7 +42,8 @@ The workspace_activity route adds an ownership check via the `register_workspace
 
 **Shared:**
 
-- `register_workspace_activity_ownership_check(check)` — boot-time registrar for the workflow-in-org ownership dep used by the workspace_activity route. Idempotent for the same callable; raises on conflicting double-registration.
+- `register_workspace_activity_ownership_check(check)` — boot-time registrar for the workflow-in-org ownership dep used by the workspace_activity route. Idempotent for the same callable; raises on conflicting double-registration. The FastAPI `Depends` thunk lives in `core/sse/web` so `core/sse/service` stays framework-agnostic.
+- `reset_workspace_activity_ownership_check()` — drops the registered ownership check; used by tests that wire the check themselves without going through `app.web`.
 - `serialize_for_sse(payload)` — formats a `dict[str, Any]` as an HTTP `text/event-stream` data frame (`data: <json>\n\n`). Both general and workspace-activity subscribers use this before writing to the HTTP response.
 - `subscriber_count(channel)` — diagnostic; **local-process** subscriber count (Redis's `PUBSUB NUMSUB` is cluster-wide and not what callers want).
 - `RedisPubsub` — class form for callers that want to construct their own bus (mostly tests).

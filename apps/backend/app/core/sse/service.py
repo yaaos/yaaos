@@ -34,7 +34,6 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import Path
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -305,13 +304,22 @@ def register_workspace_activity_ownership_check(
     )
 
 
-async def _verify_workspace_activity_ownership(
-    workflow_execution_id: UUID = Path(...),
-) -> None:
-    """FastAPI Depends thunk that delegates to the registered ownership check."""
+async def verify_workspace_activity_ownership(workflow_execution_id: UUID) -> None:
+    """Delegate to the registered ownership check; raise if unregistered.
+
+    Pure (framework-agnostic) so it stays in the service layer. `core/sse/web`
+    wraps it in a FastAPI `Depends` thunk that plucks `workflow_execution_id`
+    from the path.
+    """
     if _workspace_activity_ownership_check is None:
         raise RuntimeError(
             "workspace_activity ownership check is not registered; "
             "bootstrap must call register_workspace_activity_ownership_check"
         )
     await _workspace_activity_ownership_check(workflow_execution_id)
+
+
+def reset_workspace_activity_ownership_check() -> None:
+    """Drop the registered ownership check. For test isolation only."""
+    global _workspace_activity_ownership_check
+    _workspace_activity_ownership_check = None
