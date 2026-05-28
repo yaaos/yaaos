@@ -14,8 +14,7 @@ Exported from `app/domain/identity/__init__.py`:
 - Exceptions — `UserNotFoundError`, `EmailAlreadyLinkedError`, `SessionNotFoundError`, `TotpError`.
 - Seed ops — `create_user(db, display_name)`, `create_email(db, user_id, email, is_primary, verified)`, `create_oauth_identity(db, user_id, provider, external_subject, verified)`, `create_session(db, token_hash, user_id, workspace_id, csrf_token, ip, user_agent, expires_at)`. Return the ORM row; caller owns the transaction.
 - Login orchestrator — `login_via_oauth(db, provider_id, profile)`.
-- `set_session_last_seen(db, *, token_hash, last_seen_at)` — write `last_seen_at` for a session row. Used by tests to simulate idle sessions.
-- `delete_user_artifacts(db, *, user_id)` — delete all identity-owned rows for a user (cascades to emails, OAuth identities, sessions, TOTP secrets). Cross-module cleanup (memberships, orgs) must be done by the caller.
+- Test-only helpers follow the `_*_for_tests` naming convention to flag their nature: `_set_session_last_seen_for_tests(db, *, token_hash, last_seen_at)` simulates idle sessions; `_delete_user_artifacts_for_tests(db, *, user_id)` deletes all identity-owned rows for a user (cascades to emails, OAuth identities, sessions, TOTP secrets — cross-module cleanup is the caller's responsibility). Exposed via `__init__.py` because cross-module test callers (sessions, orgs) need them; not used by production code.
 - Provider Protocol — `providers.Provider`, `providers.ProviderProfile`, `providers.ProviderError`, `providers.register_provider`, `providers.get_provider`, `providers.list_providers`.
 - Sessions namespace — `sessions.create`, `sessions.lookup`, `sessions.touch`, `sessions.revoke`, `sessions.revoke_all_for_user`, `sessions.rotate`, `sessions.mark_sso_satisfied`, `sessions.is_sso_satisfied`, `sessions.cleanup_expired`, `sessions.CreatedSession`, `sessions.SSO_TTL`.
 

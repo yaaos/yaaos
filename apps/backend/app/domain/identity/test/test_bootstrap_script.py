@@ -66,14 +66,14 @@ async def cleanup(db_session) -> AsyncIterator[None]:
     # Best-effort teardown.
     from sqlalchemy import delete  # noqa: PLC0415
 
-    from app.domain.identity import delete_user_artifacts  # noqa: PLC0415
+    from app.domain.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
     from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     for email in created_emails:
         user = await identity_repo.find_user_by_email(db_session, email)
         if user is not None:
             await db_session.execute(delete(MembershipRow).where(MembershipRow.user_id == user.id))
-            await delete_user_artifacts(db_session, user_id=user.id)
+            await _delete_user_artifacts_for_tests(db_session, user_id=user.id)
     for slug in created_org_slugs:
         org = await orgs_repo.get_org_by_slug(db_session, slug)
         if org is not None:
@@ -210,11 +210,11 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
 async def _cleanup_user_and_org(s, *, user_id, org_id) -> None:
     from sqlalchemy import delete  # noqa: PLC0415
 
-    from app.domain.identity import delete_user_artifacts  # noqa: PLC0415
+    from app.domain.identity.service import _delete_user_artifacts_for_tests  # noqa: PLC0415
     from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     await s.execute(delete(MembershipRow).where(MembershipRow.user_id == user_id))
-    await delete_user_artifacts(s, user_id=user_id)
+    await _delete_user_artifacts_for_tests(s, user_id=user_id)
     await s.execute(delete(OrgRow).where(OrgRow.id == org_id))
 
 

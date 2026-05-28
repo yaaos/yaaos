@@ -17,13 +17,13 @@ from app.domain.identity.service import (
     User,
     UserEmail,
     UserNotFoundError,
+    _delete_user_artifacts_for_tests,
+    _set_session_last_seen_for_tests,
     create_email,
     create_oauth_identity,
     create_session,
     create_user,
-    delete_user_artifacts,
     login_via_oauth,
-    set_session_last_seen,
 )
 from app.domain.identity.totp import can_be_sso_exempt_owner, has_verified_totp
 
@@ -42,12 +42,13 @@ __all__ = [
     "User",
     "UserEmail",
     "UserNotFoundError",
+    "_delete_user_artifacts_for_tests",
+    "_set_session_last_seen_for_tests",
     "can_be_sso_exempt_owner",
     "create_email",
     "create_oauth_identity",
     "create_session",
     "create_user",
-    "delete_user_artifacts",
     "get_provider",
     "has_verified_totp",
     "list_providers",
@@ -55,7 +56,6 @@ __all__ = [
     "register_provider",
     "repository",
     "sessions",
-    "set_session_last_seen",
     "totp",
     "user_web",
 ]

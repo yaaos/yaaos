@@ -26,7 +26,7 @@ Mirrors `meta` from the real provider. Wrapped provider is held but never delega
 
 ### `wrap_all_registered_workspace_providers()`
 
-Reaches into `core/workspace.service._PROVIDERS` and swaps in place. Idempotent. Logs `stub_workspace.wrapped_all` with the count. Future workspace providers (Docker, K8s) require zero changes here.
+Calls `list_workspace_providers()` + `clear_workspace_providers()` + `register_workspace_provider()` to swap every entry for a stub wrapping it. Idempotent. Logs `stub_workspace.wrapped_all` with the count. Future workspace providers (Docker, K8s) require zero changes here.
 
 ### Why a wrapper, not a free-standing fake
 

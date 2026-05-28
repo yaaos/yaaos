@@ -91,7 +91,7 @@ def _ensure_plugins_registered() -> None:
     entries (wrapped by `stub_coding_agent` + `stub_workspace`) present
     regardless of test ordering. Idempotent + cheap.
     """
-    from app.core.workspace.service import _PROVIDERS as _WS  # noqa: PLC0415
+    from app.core.workspace import is_workspace_provider_registered  # noqa: PLC0415
     from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
     from app.domain.vcs.registry import _PLUGINS as _VCS  # noqa: PLC0415
 
@@ -103,7 +103,7 @@ def _ensure_plugins_registered() -> None:
         from app.plugins.github.service import bootstrap as _gh  # noqa: PLC0415
 
         _gh()
-    if "in_process" not in _WS:
+    if not is_workspace_provider_registered("in_process"):
         from app.plugins.in_memory_workspace.service import bootstrap as _ws  # noqa: PLC0415
 
         _ws()

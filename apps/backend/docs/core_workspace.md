@@ -8,7 +8,7 @@ Owns the centralized lifecycle for every workspace yaaos creates. Defines the `W
 
 ## Public interface
 
-Exports value objects (`WorkspaceSpec`, `WorkspaceInfo`, `WorkspaceStatus`, `WorkspaceClaimState`, `WorkspaceCommandState`, `ResourceCaps`, `NetworkPolicy`, `RepoRefForSpec`, `CodingAgentCliResult`, `HealthStatus`), Protocols (`Workspace`, `WorkspaceProvider`), functions (`register_workspace_provider`, `get_provider`, `create_workspace`, `with_workspace`, `close_workspace`, `force_close_all`, `get_workspace_info`, `get_workspace_claim_state`, `get_workspace_command_state`, `get_workspace_statuses`, `update_workspace_status`, `start_reaper`, `startup_recovery`, `health_check_all`, `clear_workspace_providers`, `clear_recovery_policies`, `clear_workflow_context_provider`), error types. See `apps/backend/app/core/workspace/__init__.py`.
+Exports value objects (`WorkspaceSpec`, `WorkspaceInfo`, `WorkspaceStatus`, `WorkspaceClaimState`, `WorkspaceCommandState`, `ResourceCaps`, `NetworkPolicy`, `RepoRefForSpec`, `CodingAgentCliResult`, `HealthStatus`), Protocols (`Workspace`, `WorkspaceProvider`), functions (`register_workspace_provider`, `unregister_workspace_provider`, `scoped_workspace_provider`, `is_workspace_provider_registered`, `list_workspace_providers`, `get_provider`, `create_workspace`, `with_workspace`, `close_workspace`, `force_close_all`, `get_workspace_info`, `get_workspace_claim_state`, `get_workspace_command_state`, `get_workspace_statuses`, `update_workspace_status`, `start_reaper`, `startup_recovery`, `health_check_all`, `clear_workspace_providers`, `clear_recovery_policies`, `clear_workflow_context_provider`), error types. See `apps/backend/app/core/workspace/__init__.py`.
 
 HTTP routes registered by the module under `/api/workspaces/*` (list, get, force-close, force-close-all, retry-destroy). The explicit `url_prefix` overrides the default `/api/workspace` to use the plural form.
 
@@ -74,7 +74,7 @@ After 3 failed retries the row sits in `destroy_failed` for operator attention.
 
 ### Provider registry
 
-Module-level `_PROVIDERS: dict[str, WorkspaceProvider]`. `register_workspace_provider(provider)` at plugin import (raises on duplicate id). `get_provider(provider_id)` looks up, raising `WorkspaceError` if missing. `clear_workspace_providers()` clears the dict.
+Module-private dict of `WorkspaceProvider` keyed by plugin id. `register_workspace_provider(provider)` at plugin import (raises on duplicate id). `get_provider(provider_id)` looks up, raising `WorkspaceError` if missing. `is_workspace_provider_registered(plugin_id)` / `list_workspace_providers()` introspect without mutating. `unregister_workspace_provider(plugin_id)` removes (no-op if absent). `scoped_workspace_provider(plugin_id, provider)` is a context manager that installs and restores the prior entry on exit — used by tests that need to swap a provider temporarily. `clear_workspace_providers()` clears the dict.
 
 `health_check_all()` aggregates `provider.health_check()` across the registry — drives the settings page's Plugin Health card. Errors become `HealthStatus(healthy=False, message=str(e))` rather than propagating.
 

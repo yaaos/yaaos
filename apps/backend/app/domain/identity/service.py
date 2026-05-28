@@ -42,9 +42,7 @@ __all__ = [
     "create_oauth_identity",
     "create_session",
     "create_user",
-    "delete_user_artifacts",
     "login_via_oauth",
-    "set_session_last_seen",
 ]
 
 
@@ -165,23 +163,23 @@ async def create_session(
     )
 
 
-async def set_session_last_seen(
+async def _set_session_last_seen_for_tests(
     db: AsyncSession,
     *,
     token_hash: str,
     last_seen_at: datetime,
 ) -> None:
     """Write `last_seen_at` for a session row identified by `token_hash`.
-    Used by tests to simulate idle sessions without importing `SessionRow`."""
+    Test-only helper to simulate idle sessions without importing `SessionRow`."""
     row = await repo.get_session_by_hash(db, token_hash)
     assert row is not None, f"session not found for hash: {token_hash[:8]}..."
     row.last_seen_at = last_seen_at
     await db.flush()
 
 
-async def delete_user_artifacts(db: AsyncSession, *, user_id: UUID) -> None:
+async def _delete_user_artifacts_for_tests(db: AsyncSession, *, user_id: UUID) -> None:
     """Delete all identity-owned rows for `user_id` (user, emails, OAuth
     identities, sessions). DB-level CASCADE handles child rows when deleting
     the user row via SQL DELETE — callers that need cross-module cleanup
-    (e.g. memberships) must handle those separately."""
+    (e.g. memberships) must handle those separately. Test-only helper."""
     await db.execute(delete(UserRow).where(UserRow.id == user_id))
