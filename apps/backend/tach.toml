@@ -461,13 +461,17 @@ from = ["app.core.sessions"]
 
 [[interfaces]]
 expose = [
+  "GeneralEventKind",
   "RedisPubsub",
   "channel_for",
   "get_pubsub",
   "publish",
+  "publish_general",
+  "publish_general_after_commit",
   "reset_pubsub",
   "shutdown",
   "subscribe",
+  "subscribe_general",
   "subscriber_count",
 ]
 from = ["app.core.sse"]
