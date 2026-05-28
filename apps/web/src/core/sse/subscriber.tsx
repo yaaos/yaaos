@@ -95,7 +95,7 @@ function _ensureConnection(): void {
   if (_started) return;
   if (typeof window === "undefined" || typeof EventSource === "undefined") return;
   _started = true;
-  const es = new EventSource("/api/events");
+  const es = new EventSource("/api/sse/general", { withCredentials: true });
   _source = es;
   es.onmessage = (msg) => {
     let evt: ServerEvent;

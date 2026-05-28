@@ -28,7 +28,6 @@ from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.notifications import service as notif_service
-from app.domain.notifications.subscribers import start_subscriber
 
 router = APIRouter(dependencies=[Depends(public_route)])
 
@@ -134,6 +133,5 @@ register_routes(
         module_name="notifications",
         router=router,
         url_prefix="/api/notifications",
-        on_startup=[start_subscriber],
     )
 )

@@ -34,7 +34,7 @@ Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
 ### UI live update via SSE
 
-SPA mounts one `EventSource` on `GET /api/events` at app root. Each event invalidates TanStack Query caches:
+SPA mounts one `EventSource` on `GET /api/sse/general` (with `withCredentials: true`) at app root. Each event invalidates TanStack Query caches:
 
 | Event `kind` | Invalidates |
 |---|---|

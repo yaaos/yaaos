@@ -44,9 +44,9 @@ All four endpoints classify as `RouteSecurity.USER_SCOPED` (cross-org). The pref
 - **Mark read.** `mark_read(...) -> Notification | None` flips `read_at` to now if null (idempotent). `mark_all_read(org_id?, types?) -> int` does a single bulk UPDATE; returns the row count.
 - **Task handler — `handle_ticket_status_change`.** Accepts `ticket_id`, `member_user_ids`, `org_id`, `new_status`. Looks up the ticket title (for the notification body), maps `new_status` to a `notif_type` via a fixed table, and calls `record(...)` for each supplied `user_id`. Producers compute the recipient list inside their own transaction — atomic with the status change — so the task body does no membership query. The `org_id` contextvar is set by `core/tasks` middleware before the body runs; the handler never calls `org_context` itself. Idempotent: `record` deduplicates on `(user_id, type, ticket_id)`.
 
-### Subscriber (legacy path — still wired)
+### Task handler — the only write path
 
-`domain/notifications/subscribers.py` listens to `core/events` `ticket_status_changed` events, queries org members itself, and calls `record`. Remains active while producers have not yet migrated to `enqueue(handle_ticket_status_change, ...)`. Both paths write through the same idempotent `record` — coexistence is safe.
+Ticket-status notifications flow exclusively through `enqueue(handle_ticket_status_change, ...)`. The `subscribers.py` file still exists but is no longer wired — `on_startup` was removed from the `RouteSpec`; no `core/events` subscriber runs. The task handler is the sole path for writing notification rows.
 
 ## Data owned
 

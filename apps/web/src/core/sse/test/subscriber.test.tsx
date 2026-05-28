@@ -11,9 +11,11 @@ class FakeEventSource {
   onerror: (() => void) | null = null;
   closed = false;
   url: string;
+  withCredentials: boolean;
 
-  constructor(url: string) {
+  constructor(url: string, init?: { withCredentials?: boolean }) {
     this.url = url;
+    this.withCredentials = init?.withCredentials ?? false;
     FakeEventSource.instances.push(this);
   }
   close(): void {
@@ -51,7 +53,8 @@ describe("SSESubscriber", () => {
     const qc = new QueryClient();
     render(wrap(qc));
     expect(FakeEventSource.instances.length).toBe(1);
-    expect(FakeEventSource.instances[0]?.url).toBe("/api/events");
+    expect(FakeEventSource.instances[0]?.url).toBe("/api/sse/general");
+    expect(FakeEventSource.instances[0]?.withCredentials).toBe(true);
   });
 
   it("coalesces a burst of events into a single invalidateQueries per key", () => {

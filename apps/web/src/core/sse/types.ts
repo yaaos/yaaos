@@ -1,14 +1,14 @@
-/** Server-sent event from yaaos's `/api/events` stream.
+/** Server-sent event from yaaos's `/api/sse/general` stream.
  *
- * The backend's `Event` base class (see `app/core/events/service.py`) emits:
+ * The backend serializes `GeneralEventKind`-typed payloads into SSE frames.
+ * Each frame carries:
  * - `kind`: discriminator (e.g. "ticket_status_changed", "review_job_status_changed")
  * - `source_module`: which domain module published
  * - `ts`: ISO timestamp
- * - `ticket_id`: optional, used for filtered subscriptions
+ * - `ticket_id`: optional, present for ticket-scoped events
  *
- * Subclasses add extra fields (e.g. ReviewJobStatusChanged adds review_job_id,
- * agent_id, status). The FE treats the payload as opaque except for `kind`
- * and `ticket_id` — translation to cache invalidations lives in `subscriber.ts`.
+ * The FE treats the payload as opaque except for `kind` and `ticket_id` —
+ * translation to cache invalidations lives in `subscriber.ts`.
  */
 export type ServerEvent = {
   kind: string;
