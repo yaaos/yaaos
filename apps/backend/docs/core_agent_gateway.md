@@ -50,6 +50,19 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 - `VerifiedIdentity` — STS verifier result. `canonical_arn` (IAM role), `raw_arn` (as STS returned it), `region`.
 - `FailureCategory` — typed STS verifier failure: `parse_error`, `endpoint_disallowed`, `body_mismatch`, `replay_detected`, `aws_rejected`, `clock_skew`.
 
+### org_context wrap
+
+Every actor-resolving entry point enters `org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.id)` immediately after bearer auth resolves the agent. This ensures downstream `enqueue(...)`, `publish_general_after_commit(...)`, and `publish_workspace_activity(...)` see the org via contextvar without per-site arguments.
+
+Wrapped endpoints:
+- `POST /api/v1/agents/{id}/heartbeat`
+- `POST /api/v1/agents/{id}/commands/claim`
+- `POST /api/v1/workspaces/{id}/events`
+- `POST /api/v1/commands/{id}/events`
+- `WSS /api/v1/agents/{id}/activity` — wrap covers the entire connection lifetime (accept → receive loop → close); once per connection, not once per message.
+
+`POST /api/v1/identity/exchange` is **excluded** — it's the bootstrap endpoint that mints the bearer; no agent exists yet to enter context for.
+
 ### Core user flows
 
 1. **Identity exchange.** Agent pod boots, sigv4-signs an STS `GetCallerIdentity` request with its IAM credentials (IRSA / EC2 instance profile / ECS task role), posts the signed envelope + `agent_pod_id` to `/identity/exchange`. Control plane:
@@ -68,7 +81,7 @@ HTTP routes mounted under `/api/v1/` (architecture's `/v1/` namespace nested und
 
 The bidirectional `WSS /api/v1/agents/{id}/activity` carries demand-pull activity:
 
-- Auth on upgrade — `Bearer <token>` (placeholder verifier). Missing / empty → close with `4401`.
+- Auth on upgrade — `Bearer <token>` validated against `bearer_tokens` via `bearers.verify`. Missing / empty → close with `4401`.
 - **Agent → backend** `activity_batch` messages publish each event to `activity:{workflow_execution_id}` via [`core/sse`](core_sse.md).
 - **Backend → agent** `subscribe` / `unsubscribe` messages, dispatched by `SubscriberRegistry` on `0 → 1` / `1 → 0` UI-subscriber-count transitions. No activity flows when nobody's watching.
 - **WS reconnect**: `SubscriberRegistry.register_sender` replays a `subscribe` for every active route whose `agent_id` matches the reconnecting agent so the agent's rebuilt SubscriptionSet picks up where the old connection left off.

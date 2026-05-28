@@ -28,7 +28,7 @@ Every `/api/*` path classifies as exactly one of three:
 
 | `RouteSecurity` | Session required? | `X-Org-Slug` required? | Role check? | Examples |
 |---|---|---|---|---|
-| `PUBLIC` | no | no | n/a | `/api/auth/login`, `/api/auth/logout`, `/api/health`, `/api/sso/*`, `/api/mcp/*`, OAuth callbacks |
+| `PUBLIC` | no | no | n/a | `/api/auth/login`, `/api/auth/logout`, `/api/health`, `/api/sso/*`, `/api/mcp/*`, `/api/v1/*` (WorkspaceAgent bearer protocol), OAuth callbacks |
 | `USER_SCOPED` | yes (via route dep) | **no** | n/a | `/api/user/*`, `/api/auth/me`, `/api/notifications`, `/api/orgs/mine`, `POST /api/orgs` |
 | `ORG_SCOPED` | yes (via route dep) | **yes** | yes (`require(action)`) | `/api/memberships/*`, `/api/audit`, `/api/vcs/*`, `/api/coding-agents/*`, `GET /api/orgs/*`, `/api/tickets/*`, `/api/lessons/*`, `/api/reviewer/*` |
 

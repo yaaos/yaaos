@@ -43,7 +43,8 @@ from app.core.agent_gateway.types import (
     UnauthorizedError,
     WorkspaceEvent,
 )
-from app.core.auth import public_route
+from app.core.audit_log import ActorKind
+from app.core.auth import org_context, public_route
 from app.core.database import session as db_session
 from app.core.sse import channel_for
 from app.core.sse import publish as sse_publish
@@ -206,65 +207,73 @@ async def exchange_identity(
     )
 
 
-@router.post("/agents/{agent_id}/heartbeat", dependencies=[Depends(_bearer_dep)])
+@router.post("/agents/{agent_id}/heartbeat")
 async def heartbeat(
     request: HeartbeatRequest,
     agent_id: UUID = Path(...),
+    agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> HeartbeatResponse:
-    async with db_session() as s:
-        response = await record_heartbeat(agent_id, request, session=s)
-        await s.commit()
+    async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
+        async with db_session() as s:
+            response = await record_heartbeat(agent_id, request, session=s)
+            await s.commit()
     return response
 
 
-@router.post("/agents/{agent_id}/commands/claim", dependencies=[Depends(_bearer_dep)])
+@router.post("/agents/{agent_id}/commands/claim")
 async def claim_command(
     request: ClaimRequest,
     agent_id: UUID = Path(...),
+    agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
-    cmd = await claim_next(agent_id, wait_seconds=request.wait_seconds)
-    if cmd is None:
-        return Response(status_code=204)
-    return JSONResponse(status_code=200, content=cmd.model_dump(mode="json"))
+    async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
+        cmd = await claim_next(agent_id, wait_seconds=request.wait_seconds)
+        if cmd is None:
+            return Response(status_code=204)
+        return JSONResponse(status_code=200, content=cmd.model_dump(mode="json"))
 
 
-@router.post("/workspaces/{workspace_id}/events", dependencies=[Depends(_bearer_dep)])
+@router.post("/workspaces/{workspace_id}/events")
 async def post_workspace_event(
     event: WorkspaceEvent,
     workspace_id: UUID = Path(...),
+    agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
     if event.workspace_id != workspace_id:
         raise HTTPException(
             status_code=400,
             detail={"error": "bad_request", "detail": "path and body workspace_id disagree"},
         )
-    try:
-        async with db_session() as s:
-            await record_workspace_event(event, session=s)
-            await s.commit()
-    except StaleClaimError as exc:
-        log.info("agent.workspace_event.stale", workspace_id=str(workspace_id), error=str(exc))
-        return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
+    async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
+        try:
+            async with db_session() as s:
+                await record_workspace_event(event, session=s)
+                await s.commit()
+        except StaleClaimError as exc:
+            log.info("agent.workspace_event.stale", workspace_id=str(workspace_id), error=str(exc))
+            return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
     return Response(status_code=200)
 
 
-@router.post("/commands/{command_id}/events", dependencies=[Depends(_bearer_dep)])
+@router.post("/commands/{command_id}/events")
 async def post_command_event(
     event: AgentEvent,
     command_id: UUID = Path(...),
+    agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
     if event.command_id != command_id:
         raise HTTPException(
             status_code=400,
             detail={"error": "bad_request", "detail": "path and body command_id disagree"},
         )
-    try:
-        async with db_session() as s:
-            await record_agent_event(event, session=s)
-            await s.commit()
-    except StaleClaimError as exc:
-        log.info("agent.command_event.stale", command_id=str(command_id), error=str(exc))
-        return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
+    async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
+        try:
+            async with db_session() as s:
+                await record_agent_event(event, session=s)
+                await s.commit()
+        except StaleClaimError as exc:
+            log.info("agent.command_event.stale", command_id=str(command_id), error=str(exc))
+            return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
     return Response(status_code=200)
 
 
@@ -276,15 +285,13 @@ async def activity_ws(websocket: WebSocket, agent_id: UUID = Path(...)) -> None:
     """Bidirectional activity-stream channel.
 
     Auth on upgrade: the supervisor includes `Authorization: Bearer <token>`
-    in the WebSocket handshake. Phase 8b foundations uses the same
-    placeholder verifier as the HTTPS endpoints — any non-empty bearer
-    passes. Phase 7 follow-on swaps in the real STS-issued bearer check.
+    in the WebSocket handshake, validated against `bearer_tokens` via
+    `bearers.verify`.
 
     Protocol:
       - **WorkspaceAgent → backend:** `{"type": "activity_batch", "workflow_execution_id": "...", "events": [...]}`.
         Backend publishes each event to `activity:{workflow_execution_id}`
-        via `core/sse`. The SSE handler in `web.py` (Phase 8b
-        follow-on) consumes them per workflow execution.
+        via `core/sse`.
       - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "...", "workflow_execution_id": "..."}` /
         `{"type": "unsubscribe", "workspace_id": "...", "workflow_execution_id": "..."}`.
         Driven by the subscriber registry's 0→1 / 1→0 transitions.
@@ -294,9 +301,8 @@ async def activity_ws(websocket: WebSocket, agent_id: UUID = Path(...)) -> None:
 
     Failure modes:
       - Missing/malformed/expired/revoked bearer → close with 4401 on
-        upgrade, never accept the WebSocket. The bearer is validated
-        against `bearer_tokens` via `bearers.verify`; opaque rejection
-        (no oracle distinguishing expired from revoked from never-seen).
+        upgrade, never accept the WebSocket. Opaque rejection (no oracle
+        distinguishing expired from revoked from never-seen).
       - Bearer is valid but `agent_id` in the path doesn't match the
         bearer's resolved agent → 4403. Stops a stolen bearer from one
         pod being used to impersonate another pod's WebSocket.
@@ -325,43 +331,44 @@ async def activity_ws(websocket: WebSocket, agent_id: UUID = Path(...)) -> None:
     async def _send(message: dict) -> None:
         await websocket.send_text(json.dumps(message))
 
-    await registry.register_sender(agent_id, _send)
-    log.info("agent_gateway.ws.connected", agent_id=str(agent_id))
+    async with org_context(ctx.org_id, ActorKind.WORKSPACE, actor_id=ctx.agent_id):
+        await registry.register_sender(agent_id, _send)
+        log.info("agent_gateway.ws.connected", agent_id=str(agent_id))
 
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                log.warning("agent_gateway.ws.bad_json", agent_id=str(agent_id))
-                continue
-            kind = msg.get("type")
-            if kind == "activity_batch":
-                workflow_execution_id = msg.get("workflow_execution_id")
-                events = msg.get("events") or []
-                if not workflow_execution_id or not isinstance(events, list):
-                    log.warning(
-                        "agent_gateway.ws.malformed_batch",
-                        agent_id=str(agent_id),
-                        keys=list(msg.keys()),
-                    )
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    log.warning("agent_gateway.ws.bad_json", agent_id=str(agent_id))
                     continue
-                channel = channel_for(str(workflow_execution_id))
-                for event in events:
-                    if isinstance(event, dict):
-                        await sse_publish(channel, event)
-            else:
-                log.info(
-                    "agent_gateway.ws.unknown_kind",
-                    agent_id=str(agent_id),
-                    kind=kind,
-                )
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await registry.unregister_sender(agent_id)
-        log.info("agent_gateway.ws.disconnected", agent_id=str(agent_id))
+                kind = msg.get("type")
+                if kind == "activity_batch":
+                    workflow_execution_id = msg.get("workflow_execution_id")
+                    events = msg.get("events") or []
+                    if not workflow_execution_id or not isinstance(events, list):
+                        log.warning(
+                            "agent_gateway.ws.malformed_batch",
+                            agent_id=str(agent_id),
+                            keys=list(msg.keys()),
+                        )
+                        continue
+                    channel = channel_for(str(workflow_execution_id))
+                    for event in events:
+                        if isinstance(event, dict):
+                            await sse_publish(channel, event)
+                else:
+                    log.info(
+                        "agent_gateway.ws.unknown_kind",
+                        agent_id=str(agent_id),
+                        kind=kind,
+                    )
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await registry.unregister_sender(agent_id)
+            log.info("agent_gateway.ws.disconnected", agent_id=str(agent_id))
 
 
 register_routes(RouteSpec(module_name="agent_gateway", router=router, url_prefix="/api/v1"))
