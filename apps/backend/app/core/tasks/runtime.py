@@ -27,6 +27,7 @@ from app.core import database, observability
 from app.core.shutdown_registry import iter_worker_shutdown_hooks
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_loop
+from app.core.tasks.middleware import org_context_middleware
 
 log = structlog.get_logger("core.tasks.worker")
 
@@ -67,6 +68,7 @@ async def run() -> None:
     # `broker.task(...)` — no separate bind step needed.
     import app.core.workflow  # noqa: F401, PLC0415
 
+    broker.add_middlewares(org_context_middleware)
     log.info("tasks.worker.booting", broker=type(broker).__name__)
 
     await broker.startup()
