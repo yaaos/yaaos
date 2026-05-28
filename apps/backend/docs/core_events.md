@@ -58,7 +58,7 @@ No `Last-Event-ID` replay support. Events missed while disconnected are lost.
 
 ### Domain-event envelope adapter
 
-Domain modules whose events are plain `@dataclass`es (not Pydantic) wrap them in a lightweight `Event` subclass to dispatch through this bus — e.g. `domain/reviewer.service._DomainEventEnvelope` sets `kind` from the dataclass class name and carries the payload as a dict. The bus stays Pydantic-only; the adapter lives in the domain module that owns the events.
+Domain modules whose events are plain `@dataclass`es (not Pydantic) can wrap them in a lightweight `Event` subclass. `domain/reviewer.service._DomainEventEnvelope` is the existing example — it sets `kind` from the dataclass class name and carries the payload as a dict, and is used by `dispatch_audits` as a structured carrier to `audit_for_finding`. Reviewer domain events themselves now route to the SSE bus via `core/sse.publish_general_after_commit` (see [`domain_reviewer.md`](domain_reviewer.md)) rather than through this in-process bus.
 
 ### What it does not do
 

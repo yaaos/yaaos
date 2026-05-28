@@ -116,14 +116,21 @@ async def test_public_api_get_thread_callable(db_session) -> None:  # type: igno
 
 
 @pytest.mark.asyncio
-async def test_aggregate_events_dispatched_to_event_bus(db_session) -> None:  # type: ignore[no-untyped-def]
-    """When the service layer saves an aggregate, the aggregate's pending
-    domain events get published to `core/events` so SSE subscribers + audit
-    + downstream consumers see `FindingRaised`/`FindingStateChanged`/etc.
+@pytest.mark.service
+async def test_aggregate_events_dispatched_to_sse_bus(db_session, redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """When the service layer saves an aggregate and commits, the aggregate's
+    pending domain events are published to the org-scoped SSE channel so
+    subscribers see `finding_raised` / `review_completed` etc.
+
+    `dispatch_events` stashes events via `publish_general_after_commit`; the
+    flush fires on `after_commit` — so the subscriber must be up before the
+    commit.
     """
     import asyncio  # noqa: PLC0415
 
-    from app.core.events import EventFilter, subscribe  # noqa: PLC0415
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+    from app.core.sse import reset_pubsub, subscribe_general  # noqa: PLC0415
     from app.domain.reviewer.aggregate import RawFinding  # noqa: PLC0415
     from app.domain.reviewer.repository import SqlAlchemyAggregateRepository  # noqa: PLC0415
     from app.domain.reviewer.service import dispatch_events  # noqa: PLC0415
@@ -132,17 +139,7 @@ async def test_aggregate_events_dispatched_to_event_bus(db_session) -> None:  # 
         FindingFingerprint,
     )
 
-    received: list = []
-
-    async def _consume() -> None:
-        async for event in subscribe(EventFilter(kinds=["finding_raised"])):
-            received.append(event)
-            return  # one is enough
-
-    consumer = asyncio.create_task(_consume())
-    # Tiny yield so the subscriber registers before publish fires.
-    await asyncio.sleep(0)
-
+    reset_pubsub()
     pr_id, org_id = uuid.uuid4(), uuid.uuid4()
     await _seed_pr(db_session, pr_id, org_id)
     review_id = uuid.uuid4()
@@ -185,17 +182,33 @@ async def test_aggregate_events_dispatched_to_event_bus(db_session) -> None:  # 
             )
         ],
     )
-    # Service-layer dispatch helper drains aggregate events to the bus.
-    await dispatch_events(agg)
 
-    # Give the consumer one event-loop tick to pick up + record.
+    received: list = []
+
+    async def _consume() -> None:
+        async for event in subscribe_general(org_id):
+            received.append(event)
+            if len(received) >= 1:
+                return
+
+    consumer = asyncio.create_task(_consume())
+    # Tiny yield so the subscriber registers before publish fires.
+    await asyncio.sleep(0.05)
+
+    # Stash events; flush on commit.
+    async with org_context(org_id, ActorKind.SYSTEM):
+        dispatch_events(db_session, aggregate=agg)
+    await db_session.commit()
+
     try:
-        await asyncio.wait_for(consumer, timeout=1.0)
+        await asyncio.wait_for(consumer, timeout=2.0)
     except TimeoutError:
         consumer.cancel()
 
-    kinds = [e.kind for e in received]
-    assert "finding_raised" in kinds, f"Expected `finding_raised` to reach the event bus; got: {kinds}"
+    kinds = {e["kind"] for e in received}
+    assert kinds & {"finding_raised", "review_completed"}, (
+        f"Expected at least one reviewer event kind on the SSE bus; got: {kinds}"
+    )
 
 
 # ─── Eval metrics §10.13 ────────────────────────────────────────────────────

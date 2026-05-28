@@ -175,8 +175,8 @@ async def handle_developer_reply(
             )
         await agg_repo.save(aggregate)
         await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+        dispatch_events(s, aggregate=aggregate)
         await s.commit()
-        await dispatch_events(aggregate)
 
     if action.kind == "verify_fix_triggered":
         spawn(
@@ -367,8 +367,8 @@ async def _finalize_mid_band_ack(
         )
         await agg_repo.save(aggregate)
         await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+        dispatch_events(s, aggregate=aggregate)
         await s.commit()
-        await dispatch_events(aggregate)
 
 
 async def _original_mid_band_rationale(thread_id: UUID, author_external_id: str) -> str | None:
@@ -505,8 +505,8 @@ async def _run_verify_fix(
                 )
             await agg_repo.save(aggregate)
             await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            dispatch_events(s, aggregate=aggregate)
             await s.commit()
-            await dispatch_events(aggregate)
 
     except Exception:
         log.exception("verify_fix.crashed", finding_id=str(finding_id))
@@ -638,8 +638,8 @@ async def _run_answer_question(
             )
             await agg_repo.save(aggregate)
             await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
+            dispatch_events(s, aggregate=aggregate)
             await s.commit()
-            await dispatch_events(aggregate)
 
     except Exception:
         log.exception("answer_question.crashed", finding_id=str(finding_id))

@@ -583,7 +583,7 @@ class IncrementalReview(_WorkspaceReviewCommand):
             aggregate.complete_review(review_id, [f.id for f in new_findings])
             await agg_repo.save(aggregate)
             await dispatch_audits(aggregate, session=s, actor=Actor.system(), org_id=org_id)
-            await dispatch_events(aggregate)
+            dispatch_events(s, aggregate=aggregate)
 
             if drops:
                 log.info(

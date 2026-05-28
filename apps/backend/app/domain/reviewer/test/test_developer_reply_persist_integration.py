@@ -23,7 +23,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.core.audit_log import Actor
+from app.core.audit_log import Actor, ActorKind
+from app.core.auth import org_context
 from app.domain.reviewer.llm import ClassifyReplyOutput
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.service import (
@@ -156,7 +157,8 @@ async def test_high_confidence_wontfix_reply_acks_finding_with_audit(db_session)
     # Persist + dispatch.
     await repo.save(aggregate)
     await dispatch_audits(aggregate, session=db_session, actor=Actor.system(), org_id=org_id)
-    events = await dispatch_events(aggregate)
+    async with org_context(org_id, ActorKind.SYSTEM):
+        events = dispatch_events(db_session, aggregate=aggregate)
 
     # Aggregate state is `acknowledged`.
     state = (
@@ -241,7 +243,8 @@ async def test_acknowledgment_unclear_confirm_request_no_state_change_no_ack_aud
 
     await repo.save(aggregate)
     await dispatch_audits(aggregate, session=db_session, actor=Actor.system(), org_id=org_id)
-    await dispatch_events(aggregate)
+    async with org_context(org_id, ActorKind.SYSTEM):
+        dispatch_events(db_session, aggregate=aggregate)
 
     # State must still be `open` — no transition until the developer confirms.
     state = (

@@ -27,7 +27,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.core.audit_log import Actor
+from app.core.audit_log import Actor, ActorKind
+from app.core.auth import org_context
 from app.domain.coding_agent import FindingAnchor, FindingDraft
 from app.domain.reviewer.admission import (
     findingdrafts_to_raw as _findingdrafts_to_raw,
@@ -133,7 +134,8 @@ async def test_finding_persists_with_audit_and_anchor_lines(db_session) -> None:
     # Save persists findings + their anchors (with original_lines in JSONB).
     await repo.save(aggregate)
     await dispatch_audits(aggregate, session=db_session, actor=Actor.system(), org_id=org_id)
-    events = await dispatch_events(aggregate)
+    async with org_context(org_id, ActorKind.SYSTEM):
+        events = dispatch_events(db_session, aggregate=aggregate)
 
     # The aggregate emitted FindingRaised — dispatch_events drained it.
     kinds = [type(e).__name__ for e in events]

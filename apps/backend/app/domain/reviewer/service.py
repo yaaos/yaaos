@@ -26,9 +26,13 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import require_org_context
+from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.domain.reviewer.aggregate import PRReviewAggregate
 from app.domain.reviewer.llm import ClassifyReplyOutput
 from app.domain.reviewer.types import (
@@ -569,24 +573,76 @@ async def compute_resolved_without_edit_rate(*, org_id: uuid.UUID) -> float:
     return float(without_edit) / float(total) if total else 0.0
 
 
-# ─── Domain events dispatch (plan §5.2) ────────────────────────────────────
+# ─── Domain events dispatch ────────────────────────────────────────────────
+
+# Maps each reviewer domain-event dataclass name to its GeneralEventKind.
+# All 14 reviewer event types must be present — `_kind_for` raises on unknown
+# types so a missing entry surfaces at test time, not silently at runtime.
+_KIND_MAP: dict[str, GeneralEventKind] = {
+    "ReviewRequested": GeneralEventKind.REVIEW_REQUESTED,
+    "ReviewStarted": GeneralEventKind.REVIEW_STARTED,
+    "ReviewCompleted": GeneralEventKind.REVIEW_COMPLETED,
+    "ReviewFailed": GeneralEventKind.REVIEW_FAILED,
+    "ReviewSuperseded": GeneralEventKind.REVIEW_SUPERSEDED,
+    "FindingRaised": GeneralEventKind.FINDING_RAISED,
+    "FindingReObserved": GeneralEventKind.FINDING_RE_OBSERVED,
+    "FindingAnchorUpdated": GeneralEventKind.FINDING_ANCHOR_UPDATED,
+    "FindingStateChanged": GeneralEventKind.FINDING_STATE_CHANGED,
+    "FindingAcknowledged": GeneralEventKind.FINDING_ACKNOWLEDGED,
+    "FindingResolutionDetected": GeneralEventKind.FINDING_RESOLUTION_DETECTED,
+    "FindingStaleDetected": GeneralEventKind.FINDING_STALE_DETECTED,
+    "CommentReplyReceived": GeneralEventKind.COMMENT_REPLY_RECEIVED,
+    "AgentReplyPosted": GeneralEventKind.AGENT_REPLY_POSTED,
+}
 
 
-async def dispatch_events(aggregate: PRReviewAggregate) -> list[Any]:
-    """Drain the aggregate's pending events to `core/events` subscribers.
+def _kind_for(event: Any) -> GeneralEventKind:
+    """Resolve a reviewer domain-event dataclass instance to its GeneralEventKind.
 
-    Returns the list of events that were dispatched (mostly for tests / audit).
-    Service-layer callers invoke this after `repo.save(aggregate)` so the
-    in-process event bus sees domain transitions.
+    Raises `KeyError` for unknown types — catches missing entries at test time.
     """
-    from app.core.events import publish  # noqa: PLC0415
+    return _KIND_MAP[type(event).__name__]
 
+
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce non-JSON-serializable values to wire-safe types.
+
+    `asdict` on reviewer domain events produces UUIDs and StrEnum values that
+    `json.dumps` can't serialize natively. Coercion rules:
+    - `uuid.UUID` → `str`
+    - `enum.Enum` (including `StrEnum`) → `.value`
+    - `tuple` → `list` (dataclasses.asdict preserves tuples in nested structures)
+    - `dict` / `list` → recurse
+    - primitives (`str`, `int`, `float`, `bool`, `None`) → pass through
+    """
+    import enum  # noqa: PLC0415
+
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def dispatch_events(session: AsyncSession, *, aggregate: PRReviewAggregate) -> list[Any]:
+    """Queue the aggregate's pending events for publish after the session commits.
+
+    Uses `publish_general_after_commit` — events are stashed on the SQLAlchemy
+    session and flushed to Redis only after a successful `await session.commit()`.
+    Rollbacks silently discard the stash, so rolled-back transactions never emit
+    phantom SPA events.
+
+    Returns the list of events that were queued (for tests / audit).
+    """
+    org_id = require_org_context()
     events = aggregate.pop_events()
     for event in events:
-        # Wrap the dataclass event in a Pydantic core/events `Event` shape on
-        # the fly so the in-process bus can dispatch by `kind`. The dispatch
-        # path turns the dataclass into a generic dict-carrier event.
-        await publish(_DomainEventEnvelope.wrap(event))
+        payload = _json_safe(asdict(event))
+        publish_general_after_commit(session, org_id=org_id, kind=_kind_for(event), payload=payload)
     return events
 
 
