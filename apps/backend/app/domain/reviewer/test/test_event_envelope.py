@@ -1,58 +1,13 @@
-"""`_DomainEventEnvelope.wrap` must produce JSON-safe payloads.
+"""JSON-safety of reviewer domain event payloads.
 
-Plan §5.2: domain events flow through `core/events`. The Pydantic-based bus
-serializes events; UUIDs and StrEnums must survive `model_dump(mode="json")`
-without raising. The legacy `asdict(event)` approach left UUIDs/enums as
-raw Python types — silent breakage at publish time.
+`_DomainEventEnvelope` has been removed — reviewer events now route to the
+SSE bus directly via `core/sse.publish_general_after_commit` (using
+`_json_safe` + `asdict`), and to the audit log via `FindingAuditPayload`.
+
+The `_json_safe` coercion is exercised through the `dispatch_events` path
+which is covered by `test_dispatch_events_service.py`.  The audit payload
+shape is covered by `test_dispatch_audits_service.py`.
+
+This file is intentionally empty — it exists to mark that the old envelope
+tests were removed when the envelope class was deleted.
 """
-
-from __future__ import annotations
-
-import json
-import uuid
-
-from app.domain.reviewer.events import (
-    FindingAcknowledged,
-    FindingRaised,
-    FindingStateChanged,
-)
-from app.domain.reviewer.service import _DomainEventEnvelope
-from app.domain.reviewer.types import FindingState
-
-
-def test_envelope_uuid_payload_serializes_as_string() -> None:
-    finding_id = uuid.uuid4()
-    pr_id = uuid.uuid4()
-    env = _DomainEventEnvelope.wrap(FindingRaised(finding_id=finding_id, pr_id=pr_id))
-
-    # Round-trip through JSON — the bus does this for SSE.
-    blob = env.model_dump_json()
-    parsed = json.loads(blob)
-
-    assert parsed["payload"]["finding_id"] == str(finding_id)
-    assert parsed["payload"]["pr_id"] == str(pr_id)
-
-
-def test_envelope_state_enum_payload_serializes_as_string() -> None:
-    env = _DomainEventEnvelope.wrap(
-        FindingStateChanged(
-            finding_id=uuid.uuid4(),
-            from_state=FindingState.OPEN,
-            to_state=FindingState.ACKNOWLEDGED,
-        )
-    )
-    parsed = json.loads(env.model_dump_json())
-    assert parsed["payload"]["from_state"] == "open"
-    assert parsed["payload"]["to_state"] == "acknowledged"
-
-
-def test_envelope_ackkind_enum_payload_serializes_as_string() -> None:
-    env = _DomainEventEnvelope.wrap(
-        FindingAcknowledged(
-            finding_id=uuid.uuid4(),
-            ack_id=uuid.uuid4(),
-            kind="wontfix",
-        )
-    )
-    parsed = json.loads(env.model_dump_json())
-    assert parsed["payload"]["kind"] == "wontfix"

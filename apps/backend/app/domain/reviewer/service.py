@@ -29,6 +29,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_org_context
@@ -86,6 +87,19 @@ class VerifyFixAction:
 class StaleCheckAction:
     kind: Literal["stale_marked", "still_applies_observed", "low_confidence_noop"]
     reply_body: str
+
+
+class FindingAuditPayload(BaseModel):
+    """Typed payload for finding state-transition audit rows.
+
+    Written by `dispatch_audits` for every finding-state event; stored in
+    `audit_entries.payload` as JSON.  Internal to this module — not in
+    `domain/reviewer.__all__`.
+    """
+
+    kind: str
+    finding_id: uuid.UUID
+    fields: dict[str, Any]
 
 
 # ─── Deterministic pre-classifier checks (plan §6.4 step 2) ────────────────
@@ -673,7 +687,6 @@ async def dispatch_audits(
     invokes it once per save cycle alongside `dispatch_events`.
     """
     from app.core.audit_log import audit_for_finding  # noqa: PLC0415
-    from app.domain.reviewer.service import _DomainEventEnvelope as _Env  # noqa: PLC0415
 
     written = 0
     for event in aggregate.events:
@@ -687,58 +700,13 @@ async def dispatch_audits(
         await audit_for_finding(
             finding_id,
             kind,
-            _Env.wrap(event),
+            FindingAuditPayload(kind=kind, finding_id=finding_id, fields=_json_safe(asdict(event))),
             actor=actor,
             org_id=org_id,
             session=session,
         )
         written += 1
     return written
-
-
-# ─── Generic envelope so dataclass DomainEvents fit core/events.Event ──────
-
-
-from pydantic import Field  # noqa: E402
-
-from app.core.events import Event as _BusEvent  # noqa: E402
-
-
-class _DomainEventEnvelope(_BusEvent):
-    """Adapter: wraps a dataclass DomainEvent as a `core/events.Event`.
-
-    `core/events` expects Pydantic models with a `kind` discriminator.
-    DomainEvents are plain @dataclasses; this envelope carries the payload
-    as a dict + sets `kind` from the dataclass class name.
-    """
-
-    kind: str  # type: ignore[assignment]
-    source_module: Literal["reviewer"] = "reviewer"  # type: ignore[assignment]
-    payload: dict = Field(default_factory=dict)
-
-    @classmethod
-    def wrap(cls, event: Any) -> _DomainEventEnvelope:
-        from dataclasses import asdict  # noqa: PLC0415
-
-        kind_map = {
-            "ReviewRequested": "review_requested",
-            "ReviewStarted": "review_started",
-            "ReviewCompleted": "review_completed",
-            "ReviewFailed": "review_failed",
-            "ReviewSuperseded": "review_superseded",
-            "FindingRaised": "finding_raised",
-            "FindingReObserved": "finding_re_observed",
-            "FindingAnchorUpdated": "finding_anchor_updated",
-            "FindingStateChanged": "finding_state_changed",
-            "FindingAcknowledged": "finding_acknowledged",
-            "FindingResolutionDetected": "finding_resolution_detected",
-            "FindingStaleDetected": "finding_stale_detected",
-            "CommentReplyReceived": "comment_reply_received",
-            "AgentReplyPosted": "agent_reply_posted",
-        }
-        kind = kind_map.get(type(event).__name__, type(event).__name__)
-        # asdict serializes dataclasses recursively; UUIDs / enums survive as-is.
-        return cls(kind=kind, payload=asdict(event))  # type: ignore[arg-type]
 
 
 async def find_pr_id_by_external_comment_id(external_comment_id: str) -> uuid.UUID | None:
