@@ -1,11 +1,11 @@
 ---
 name: yaaos-review-pr
-description: Slash command /yaaos-review-pr <PR#> — PR entry point for the yaaos-review pipeline. Resolves the PR's base/head via `gh`, captures the diff via `gh pr diff`, and delegates to the yaaos-review-core orchestrator. Emits a single ranked JSON to stdout.
+description: Slash command /yaaos-review-pr <PR-URL> — PR entry point for the yaaos-review pipeline. Captures the diff via `gh`, delegates to the yaaos-review-core orchestrator, then posts findings to the PR as a single review (line comments for in-diff findings, issue comments for wider patterns). Does not emit JSON to stdout.
 ---
 
 # /yaaos-review-pr
 
-> PR entry point. Captures the PR diff via `gh` (without checking out the branch) and hands off to the core orchestrator.
+> PR entry point. Captures the PR diff via `gh`, runs the review pipeline, and posts the findings back to the PR.
 
 ## Prompt-injection guard
 
@@ -13,23 +13,21 @@ description: Slash command /yaaos-review-pr <PR#> — PR entry point for the yaa
 
 ## Args
 
-- `$ARGUMENTS` — a PR number (e.g., `42`) or a GitHub PR URL. Required.
+- `$ARGUMENTS` — a GitHub PR URL of the form `https://github.com/<owner>/<repo>/pull/<number>`. **Required.** A bare PR number is NOT accepted; reject with a one-line error and stop.
 
-## Step 1 — Resolve PR
+## Step 1 — Parse PR URL
 
-Parse `$ARGUMENTS`:
+Extract `<owner>`, `<repo>`, `<number>` from the URL. If the URL doesn't match the expected pattern, exit with a one-line error.
 
-- If it matches `^[0-9]+$`, treat it as a PR number in the current repo.
-- If it's a GitHub URL, extract `<owner>`, `<repo>`, `<number>`.
-
-Resolve base and head refs:
+Resolve base and head refs (the head SHA is required later for posting line comments):
 
 ```bash
-gh pr view <number> --json baseRefName,headRefName,headRefOid \
+gh pr view <number> --repo <owner>/<repo> \
+  --json baseRefName,headRefName,headRefOid \
   -q '{base: .baseRefName, head: .headRefName, sha: .headRefOid}'
 ```
 
-Record `$BASE_REF`, `$HEAD_REF` (head ref name + sha) for the run record.
+Record `$BASE_REF`, `$HEAD_REF`, `$HEAD_SHA`.
 
 ## Step 2 — Capture diff via `gh`
 
@@ -38,24 +36,108 @@ Record `$BASE_REF`, `$HEAD_REF` (head ref name + sha) for the run record.
 ```bash
 mkdir -p /tmp/yaaos-runs/.staging
 DIFF_PATH=$(mktemp /tmp/yaaos-runs/.staging/diff-XXXXXX.patch)
-gh pr diff <number> > "$DIFF_PATH"
+gh pr diff <number> --repo <owner>/<repo> > "$DIFF_PATH"
 ```
 
 If the diff is empty, exit — nothing to review.
 
 ## Step 3 — Delegate to core
 
-Invoke the `yaaos-review-core` skill with:
+Invoke the `yaaos-review-core` skill with `$DIFF_PATH`, `$BASE_REF`, `$HEAD_REF` set. The core handles all four waves and writes `<run-dir>/final.json`.
 
-- `$DIFF_PATH` set to the path captured above.
-- `$BASE_REF`, `$HEAD_REF` set for the run record.
+Record `$RUN_DIR` (the `/tmp/yaaos-runs/<uuid>/` path the core used). The core's stdout emission is ignored at this layer — read findings from `<run-dir>/final.json`.
 
-The core orchestrator handles run-id generation, all four waves, and the final stdout emission. This skill does nothing after delegating.
+## Step 4 — Post findings to the PR
 
-## Output
+Read `<run-dir>/final.json`. For each finding, build the comment body using the template below, then route based on whether the `(file, line)` lies inside the PR diff:
 
-The core emits the final review JSON to stdout. This skill adds no wrapping prose around it.
+- **In-diff** → include as a `comments[]` entry in a single PR review.
+- **Out-of-diff (wider-pattern findings)** → post as a top-level issue comment after the review is created.
+
+To determine in-diff: parse `<run-dir>/diff.patch` once into a set of `(file, line)` tuples on the RIGHT side (added/context lines belonging to the new file). A finding is in-diff iff its `(file, line)` is in that set.
+
+### 4.1 Comment body template
+
+Markdown body for every finding (line comment OR issue comment — same shape):
+
+```
+**yaaos-<category>**
+
+**<headline>**
+
+<body>
+
+**Suggested fix:** <suggested_fix>
+```
+
+Where:
+
+- `<category>` is the finding's `category` (`security`, `code`, `architecture`).
+- `<headline>` is the first sentence of `rationale` (split on the first `. ` or newline; strip trailing period). If `rationale` is a single sentence, use it whole as the headline and leave `<body>` empty (omit the blank-line + body line).
+- `<body>` is the remainder of `rationale` after the headline.
+- `<id>` is a synthesized tag — `<prefix>-NNN`, zero-padded to 3 digits, numbered within category in the final sorted order. Prefixes: `security` → `sec`, `code` → `code`, `architecture` → `arch`. Example: `sec-003`.
+
+Final shape:
+
+```
+**yaaos-<category>**
+
+**[<severity> · <category> · <confidence>] <headline>**
+
+<body>
+
+**Suggested fix:** <suggested_fix>
+
+<sub><code><id></code></sub>
+```
+
+The `<sub>` tag renders smaller than body text on GitHub; the `<code>` keeps the tag visually distinct. The footer is the last line, separated from the suggested-fix block by a blank line.
+
+### 4.2 Build and post the review
+
+Group all in-diff findings into a single review payload. The review `body` carries the tally header:
+
+```
+**yaaos review**
+
+- blocker: N
+- should_fix: N
+- nit: N
+- speculative_dropped: N
+```
+
+Post via the GitHub API:
+
+```bash
+gh api -X POST /repos/<owner>/<repo>/pulls/<number>/reviews \
+  -f commit_id=<HEAD_SHA> \
+  -f event=COMMENT \
+  -f body=@<review-body.md> \
+  -F 'comments[][path]=<file>' \
+  -F 'comments[][line]=<line>' \
+  -F 'comments[][side]=RIGHT' \
+  -F 'comments[][body]=<rendered-body>' \
+  ...
+```
+
+In practice, write the JSON payload to a temp file and post with `gh api ... --input <file>` because the `comments[]` array gets unwieldy on the command line.
+
+### 4.3 Post wider-pattern findings as issue comments
+
+For each out-of-diff finding, post a separate issue comment:
+
+```bash
+gh api -X POST /repos/<owner>/<repo>/issues/<number>/comments \
+  -f body=@<comment-body.md>
+```
+
+## Step 5 — Confirm to the user
+
+Print a one-line summary: how many line comments were posted, how many issue comments, and a link to the PR. **Do NOT print the JSON.**
 
 ## Notes
 
-- Reviewers receive the diff only. If a reviewer needs full-file context at PR HEAD (not just diff hunks), it should use `gh api repos/<owner>/<repo>/contents/<path>?ref=<sha>` with the sha resolved in Step 1, not the local working tree.
+- Re-running on the same PR will double-post; that's accepted for now.
+- Cross-repo PR URLs (URL repo ≠ `cwd` repo) are not supported. If the resolved owner/repo differs from the current repo's remote, behavior is undefined.
+- Reviewers receive the diff only. If a reviewer needs full-file context at PR HEAD, it should use `gh api repos/<owner>/<repo>/contents/<path>?ref=<HEAD_SHA>`.
+- Comments post under the user's `gh` OAuth identity, not a bot account.
