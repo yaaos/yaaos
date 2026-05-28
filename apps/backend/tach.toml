@@ -776,6 +776,7 @@ expose = [
   "SsoConfigError",
   "VcsState",
   "accept_invitation",
+  "assert_workflow_in_org",
   "audit_web",
   "change_role",
   "clear_vcs",

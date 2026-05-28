@@ -60,6 +60,7 @@ from app.domain.orgs.vcs import (
     get_vcs,
     set_vcs,
 )
+from app.domain.orgs.workflow_ownership import assert_workflow_in_org
 
 # NOTE: `orgs.web`, `orgs.audit_web`, and `orgs.sso_web` are registered from
 # `main.py` (after `core.sessions` loads), not imported here — they cycle
@@ -90,6 +91,7 @@ __all__ = [
     "SsoConfigError",
     "VcsState",
     "accept_invitation",
+    "assert_workflow_in_org",
     "audit_web",
     "change_role",
     "clear_vcs",

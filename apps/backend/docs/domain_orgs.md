@@ -12,6 +12,7 @@ Exported from `app/domain/orgs/__init__.py`:
 
 - Types — `Org`, `Membership`, `Invitation`, `SsoConfig`, `Role`, `VcsState`, `CodingAgentInstall`.
 - Lookups — `get_org(org_id) -> Org | None`; `find_saml_org_slug_for_domain(domain) -> str | None` (returns the org slug for the first enabled SSO config whose `email_domains` contains `domain`, or `None`); `list_active_member_ids(org_id, *, session) -> list[UUID]` — returns the `user_id` of every current member of the org (membership rows are presence-is-active; removal deletes the row).
+- FastAPI deps — `assert_workflow_in_org(workflow_execution_id: UUID = Path(...)) -> None` — raises `HTTPException(404)` if the wfx doesn't exist or its ticket belongs to a different org than the caller's. 404 on cross-org access matches yaaos's existence-non-disclosure default.
 - Bootstrap primitives — `create_org(session, *, slug, display_name, actor) -> Org`; `create_membership(session, *, user_id, org_id, role, handle, actor) -> Membership`. Shape (a) session-taking fns; never commit. Emit `org.created` / `membership.created` audit entries. Use for admin-onboarding or seed paths where the org owner is already known (no invitation token needed). See [patterns.md § Service-fn session-handling convention](patterns.md).
 - Lifecycle — `invite`, `accept_invitation`, `change_role`, `remove_member`, `delete_expired_invitations() -> int`.
 - VCS — `get_vcs`, `set_vcs`, `clear_vcs`. One VCS per org; state lives on the `orgs` row.
