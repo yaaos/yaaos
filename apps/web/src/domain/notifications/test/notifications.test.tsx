@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const notificationsMock = vi.fn();
 const markOneMock = vi.fn();
@@ -20,10 +20,11 @@ function wrap(node: React.ReactNode) {
   return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
 }
 
-const today = new Date();
-const yesterday = new Date(today.getTime() - 26 * 3_600_000);
-const lastWeek = new Date(today.getTime() - 3 * 86_400_000);
-const older = new Date(today.getTime() - 60 * 86_400_000);
+const FIXED_NOW = new Date("2026-05-15T12:00:00Z");
+const today = FIXED_NOW;
+const yesterday = new Date(FIXED_NOW.getTime() - 26 * 3_600_000);
+const lastWeek = new Date(FIXED_NOW.getTime() - 3 * 86_400_000);
+const older = new Date(FIXED_NOW.getTime() - 60 * 86_400_000);
 
 const fixture = [
   {
@@ -73,6 +74,14 @@ const fixture = [
 ];
 
 describe("NotificationsPage", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("loading state renders skeletons", () => {
     notificationsMock.mockReturnValue({ data: undefined, isLoading: true });
     render(wrap(<NotificationsPage />));
