@@ -336,10 +336,10 @@ class GithubIntakeType:
         from app.core.notifications import fanout  # noqa: PLC0415
         from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
         from app.core.tasks import enqueue  # noqa: PLC0415
-        from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
+        from app.core.tenancy import list_active_member_ids  # noqa: PLC0415
         from app.domain.tickets import build_status_change_specs  # noqa: PLC0415
 
-        members = await list_active_member_ids(org_id, session=session)
+        members = await list_active_member_ids(session, org_id)
         publish_general_after_commit(
             session,
             org_id=org_id,
@@ -367,9 +367,9 @@ class GithubIntakeType:
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.
         from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.domain.orgs import get_org  # noqa: PLC0415
+        from app.core.tenancy import get_org_full  # noqa: PLC0415
 
-        org = await get_org(org_id)
+        org = await get_org_full(session, org_id)
         workspace_provider = (org.workspace_provider if org is not None else None) or "in_memory"
 
         workflow_execution_id = await get_engine().start(

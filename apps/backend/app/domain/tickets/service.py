@@ -16,6 +16,7 @@ from app.core.database import session as db_session
 from app.core.notifications import fanout
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
+from app.core.tenancy import list_active_member_ids
 from app.domain.tickets.models import TicketRow
 from app.domain.tickets.notifications import build_status_change_specs
 
@@ -178,9 +179,7 @@ async def create(
         org_id=org_id,
         session=session,
     )
-    from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-    members = await list_active_member_ids(org_id, session=session)
+    members = await list_active_member_ids(session, org_id)
     publish_general_after_commit(
         session,
         org_id=org_id,
@@ -270,9 +269,7 @@ async def create_for_pr(
             org_id=org_id,
             session=s,
         )
-        from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-        members = await list_active_member_ids(org_id, session=s)
+        members = await list_active_member_ids(s, org_id)
         publish_general_after_commit(
             s,
             org_id=org_id,
@@ -584,9 +581,7 @@ async def _transition(
             org_id=org_id,
             session=s,
         )
-        from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-        members = await list_active_member_ids(org_id, session=s)
+        members = await list_active_member_ids(s, org_id)
         publish_general_after_commit(
             s,
             org_id=org_id,
