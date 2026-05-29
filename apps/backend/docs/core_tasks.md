@@ -15,6 +15,7 @@
 - **`TaskMetadata` is JSON-dumped on the wire** — avoids the prior `str(dict)` / `ast.literal_eval` round-trip. Consumer parses with `model_validate_json`.
 - **`OrgContextMiddleware`** enters `org_context(metadata.org_id, ActorKind.SYSTEM)` before every task body — `current_org_id()` is reliably available inside any task.
 - **Task bodies must tolerate duplicate delivery.** The drain stamps `dispatched_at` only after a successful Redis push — a crash between push and stamp redispatches. Bodies look up state from DB rather than trusting args alone.
+- **`@task` registration happens at composition root, not inside `runtime`.** `app/worker.py` imports all task-defining modules before calling `runtime.run()`, so `@task` decorators are registered with the broker before the worker loop starts. `runtime.run()` itself does not import task-defining modules.
 - **Worker races three tasks via `asyncio.wait(FIRST_COMPLETED):** drain loop, taskiq receiver, stop signal. Stop signal wins on SIGTERM; the others tear down gracefully.
 - **`drain_loop` and the taskiq receiver catch their own errors** — a defect logs `tasks.worker.child_crashed` and exits cleanly rather than silently discarding the exception.
 
