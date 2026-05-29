@@ -30,9 +30,9 @@ from app.core.agent_gateway.report_sink import (
     register_report_sink,
 )
 from app.core.agent_gateway.service import (
-    _seed_agent_for_tests,
+    AgentQueues,
+    bind_agent_queues,
     claim_next,
-    clear_queues,
     connection_status_for_org,
     enqueue_command,
     ensure_agent_row,
@@ -47,6 +47,7 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
+    bind_subscriber_registry,
     shutdown,
 )
 from app.core.agent_gateway.subscribers import (
@@ -86,6 +87,7 @@ __all__ = [
     "AgentCommandKind",
     "AgentEvent",
     "AgentEventKind",
+    "AgentQueues",
     "AgentRef",
     "AuthBlock",
     "CleanupWorkspaceCommand",
@@ -111,9 +113,9 @@ __all__ = [
     "WorkspaceEventReport",
     "WriteFilesCommand",
     "WriteFilesEntry",
-    "_seed_agent_for_tests",
+    "bind_agent_queues",
+    "bind_subscriber_registry",
     "claim_next",
-    "clear_queues",
     "connection_status_for_org",
     "enqueue_command",
     "ensure_agent_row",

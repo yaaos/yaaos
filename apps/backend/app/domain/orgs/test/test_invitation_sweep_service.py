@@ -11,16 +11,7 @@ from app.core.auth import Role
 from app.core.identity import repository as identity_repo
 from app.domain.orgs import delete_expired_invitations, invite
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.email import get_test_inbox
 from app.domain.orgs.models import InvitationRow
-
-
-@pytest.fixture(autouse=True)
-def _clear_inbox():
-    inbox = get_test_inbox()
-    inbox.clear()
-    yield
-    inbox.clear()
 
 
 @pytest.mark.service

@@ -22,7 +22,6 @@ from app.core.agent_gateway import (
     WorkspaceEvent,
     WorkspaceEventKind,
     claim_next,
-    clear_queues,
     enqueue_command,
     has_any_reachable_agent,
     pick_agent_for_org,
@@ -43,13 +42,6 @@ from app.core.workflow import (
     scoped_engine,
 )
 from app.core.workspace import _seed_workspace_for_tests
-
-
-@pytest.fixture(autouse=True)
-def _isolate_queues() -> None:
-    clear_queues()
-    yield
-    clear_queues()
 
 
 def _make_create_command() -> CreateWorkspaceCommand:

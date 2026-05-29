@@ -31,7 +31,6 @@ from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import get_test_inbox
 from app.domain.orgs import repository as orgs_repo
 from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import (
@@ -43,6 +42,7 @@ from app.domain.reviewer import (
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
 from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
+from app.testing.isolation import read_email_inbox
 
 
 def _config() -> ProviderConfig:
@@ -109,8 +109,7 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
        AND records the provider in the per-review broken-creds tracker.
     6. The reviewer drains the tracker and the review-summary prefix carries the provider.
     """
-    inbox = get_test_inbox()
-    inbox.clear()
+    inbox = read_email_inbox()
     stub_provider.next_validate = False
 
     # 1. Seed org + Owner + email + credential (initially "ok").

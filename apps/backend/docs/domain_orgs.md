@@ -79,4 +79,7 @@ See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/codi
 - `test/test_repository.py` — repository helpers (invitation + shim calls to tenancy) against real Postgres.
 - `test/test_invitations.py` — invite, accept, used-token, expired-token, garbage-token, remove revokes sessions, role change revokes sessions.
 - `test/test_membership_endpoints.py` — ASGI-driven: invite + email sent, role enforcement, accept happy path, accept-expired → 410, accept-used → 410, remove/change_role session revocation.
+- `test/test_inbox_binding.py` — ContextVar isolation for the email inbox: `send_plain` writes to the bound inbox; fresh bind hides prior messages; fail-fast `RuntimeError` before bind.
 - `test/test_tenancy_delegation.py` — service tests verifying `create_org` + `create_membership` delegate through `core/tenancy`, and SSO authz flags are written via `set_sso_authz_for_org`.
+
+Email inbox isolation between tests is provided by the `email_inbox_isolation` autouse fixture in `app/testing/isolation`. Tests read sent emails via `app.testing.isolation.read_email_inbox()`.

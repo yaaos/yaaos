@@ -14,7 +14,7 @@ from app.domain.orgs.coding_agents import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
-from app.domain.orgs.email import SentEmail, get_test_inbox, send_plain
+from app.domain.orgs.email import SentEmail, send_plain
 from app.domain.orgs.invitations import (
     InvitationExpiredError,
     InvitationInvalidError,
@@ -103,7 +103,6 @@ __all__ = [
     "get_onboarding_status",
     "get_org",
     "get_org_by_slug",
-    "get_test_inbox",
     "get_vcs",
     "install_coding_agent",
     "invite",

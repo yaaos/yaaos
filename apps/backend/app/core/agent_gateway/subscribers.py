@@ -17,12 +17,19 @@ imports and lets tests inject a list-collecting fake.
 
 In-process. Multi-instance backends route the subscribe / unsubscribe
 via Redis pub/sub, the same mechanism as the Redis backend for `core/sse`.
+
+The active `SubscriberRegistry` instance is ContextVar-bound.
+`bind_subscriber_registry` is the production DI seam — the composition root
+calls it at startup; the `subscriber_registry_isolation` fixture in
+`app/testing/isolation` binds a fresh instance per test.
+`get_registry()` raises `RuntimeError` if called before any bind.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
@@ -187,25 +194,32 @@ class SubscriberRegistry:
         return agent_id in self._senders
 
 
-_singleton: SubscriberRegistry | None = None
+_registry_var: ContextVar[SubscriberRegistry | None] = ContextVar("_registry_var", default=None)
+
+
+def bind_subscriber_registry(instance: SubscriberRegistry) -> None:
+    """Bind `instance` as the active subscriber registry for the current Context.
+
+    Called once at process startup (composition root) and once per test
+    (isolation fixture). Subsequent calls in the same Context replace the
+    prior binding.
+    """
+    _registry_var.set(instance)
 
 
 def get_registry() -> SubscriberRegistry:
-    global _singleton
-    if _singleton is None:
-        _singleton = SubscriberRegistry()
-    return _singleton
+    """Return the active subscriber registry. Raises `RuntimeError` if
+    `bind_subscriber_registry` has not been called — fail-fast so forgotten
+    startup binds surface immediately rather than silently producing wrong state."""
+    instance = _registry_var.get()
+    if instance is None:
+        raise RuntimeError(
+            "subscriber registry not bound: call bind_subscriber_registry(SubscriberRegistry()) "
+            "at process startup or use the subscriber_registry_isolation fixture in tests."
+        )
+    return instance
 
 
 async def shutdown() -> None:
-    """Drop the subscriber registry singleton. Called by the web-process shutdown registry."""
-    global _singleton
-    _singleton = None
-
-
-def _reset_subscriber_singleton_for_tests() -> None:
-    """Drop the subscriber-registry singleton synchronously. Intra-module test
-    helper — reach for it via direct submodule import from this module's own
-    `test/` directory. Not part of the public interface."""
-    global _singleton
-    _singleton = None
+    """Drop the subscriber registry binding. Called by the web-process shutdown registry."""
+    _registry_var.set(None)

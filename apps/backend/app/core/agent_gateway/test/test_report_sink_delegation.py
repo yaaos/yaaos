@@ -20,7 +20,6 @@ from app.core.agent_gateway import (
     WorkspaceEventKind,
     WorkspaceEventOutcome,
     WorkspaceEventReport,
-    clear_queues,
     record_heartbeat,
     record_workspace_event,
     register_report_sink,
@@ -84,7 +83,7 @@ class _StubSink:
 
 
 @pytest.fixture(autouse=True)
-def _reset_queues_and_sink():
+def _reset_sink():
     from app.core.agent_gateway import get_report_sink  # noqa: PLC0415
 
     # Save the previously-registered sink (may raise if none registered) so
@@ -95,10 +94,8 @@ def _reset_queues_and_sink():
     except RuntimeError:
         prior = None
 
-    clear_queues()
     clear_report_sink()
     yield
-    clear_queues()
     clear_report_sink()
     if prior is not None:
         register_report_sink(prior)

@@ -17,8 +17,8 @@ from app.core.secrets import encrypt
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
-from app.domain.orgs import get_test_inbox
 from app.domain.orgs import repository as orgs_repo
+from app.testing.isolation import read_email_inbox
 
 # Drives the hourly health-check loop end-to-end: provider.validate →
 # `mcp_credentials.last_refresh_status` flip → audit row → owner email.
@@ -105,8 +105,7 @@ async def test_validate_success_keeps_status_ok(db_session, stub_provider) -> No
 
 @pytest.mark.asyncio
 async def test_validate_failure_flips_status_audits_and_notifies(db_session, stub_provider) -> None:
-    inbox = get_test_inbox()
-    inbox.clear()
+    inbox = read_email_inbox()
     stub_provider.next_validate = False
     org, _ = await _seed(db_session, owner_email="o1@example.com")
 
@@ -129,8 +128,6 @@ async def test_validate_failure_flips_status_audits_and_notifies(db_session, stu
 
 @pytest.mark.asyncio
 async def test_failure_dedups_within_24h(db_session, stub_provider) -> None:
-    inbox = get_test_inbox()
-    inbox.clear()
     stub_provider.next_validate = False
     _org, _row = await _seed(db_session, owner_email="o2@example.com")
 
@@ -143,8 +140,6 @@ async def test_failure_dedups_within_24h(db_session, stub_provider) -> None:
 
 @pytest.mark.asyncio
 async def test_failure_resends_after_dedup_window(db_session, stub_provider) -> None:
-    inbox = get_test_inbox()
-    inbox.clear()
     stub_provider.next_validate = False
     org, _ = await _seed(db_session, owner_email="o3@example.com")
 

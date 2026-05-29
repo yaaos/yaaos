@@ -5,14 +5,19 @@ relay the operator configured. Synchronous `smtplib` wrapped in
 `asyncio.to_thread` — invitation volume is low and `aiosmtplib` would only
 add a dep for no real win.
 
-Test mode (`yaaos_env == "test"`) short-circuits the send and accumulates
-the message into a process-global list. Tests assert against that list.
+The active `_Inbox` instance is ContextVar-bound. `bind_email_inbox` is the
+production DI seam — the composition root calls it at startup; the
+`email_inbox_isolation` fixture in `app/testing/isolation` binds a fresh
+instance per test and exposes a `read_email_inbox` accessor. `send_plain`
+writes to the ContextVar-bound inbox in test env instead of hitting SMTP.
+`get_email_inbox()` raises `RuntimeError` if called before any bind in test env.
 """
 
 from __future__ import annotations
 
 import asyncio
 import smtplib
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 
@@ -28,20 +33,35 @@ class SentEmail:
 
 @dataclass
 class _Inbox:
-    """Captures emails in `test` env. Tests read + reset by clearing the list."""
+    """Captures emails in `test` env."""
 
     messages: list[SentEmail] = field(default_factory=list)
 
 
-_test_inbox = _Inbox()
+_inbox_var: ContextVar[_Inbox | None] = ContextVar("_inbox_var", default=None)
 
 
-def get_test_inbox() -> list[SentEmail]:
-    """Return the in-memory list of emails captured when `yaaos_env == "test"`.
+def bind_email_inbox(instance: _Inbox) -> None:
+    """Bind `instance` as the active email inbox for the current Context.
 
-    The list is mutated in place — tests clear it via `.clear()` between cases.
+    Called once at process startup (composition root) and once per test
+    (isolation fixture). Subsequent calls in the same Context replace the
+    prior binding.
     """
-    return _test_inbox.messages
+    _inbox_var.set(instance)
+
+
+def get_email_inbox() -> _Inbox:
+    """Return the active email inbox. Raises `RuntimeError` if
+    `bind_email_inbox` has not been called — fail-fast so forgotten startup
+    binds surface immediately rather than silently dropping emails."""
+    instance = _inbox_var.get()
+    if instance is None:
+        raise RuntimeError(
+            "email inbox not bound: call bind_email_inbox(_Inbox()) at process "
+            "startup or use the email_inbox_isolation fixture in tests."
+        )
+    return instance
 
 
 def _send_blocking(msg: EmailMessage) -> None:
@@ -60,11 +80,12 @@ def _send_blocking(msg: EmailMessage) -> None:
 
 
 async def send_plain(*, to: str, subject: str, body: str) -> None:
-    """Send a plain-text email. In `test` env, append to the in-memory inbox
-    and skip the SMTP round-trip; tests assert against `get_test_inbox()`."""
+    """Send a plain-text email. In `test` env, append to the ContextVar-bound
+    inbox and skip the SMTP round-trip; tests read the inbox via the
+    `email_inbox_isolation` fixture's accessor."""
     settings = get_settings()
     if settings.yaaos_env == "test":
-        _test_inbox.messages.append(SentEmail(to=to, subject=subject, body=body))
+        get_email_inbox().messages.append(SentEmail(to=to, subject=subject, body=body))
         return
     msg = EmailMessage()
     msg["From"] = settings.smtp_from
@@ -74,4 +95,4 @@ async def send_plain(*, to: str, subject: str, body: str) -> None:
     await asyncio.to_thread(_send_blocking, msg)
 
 
-__all__ = ["SentEmail", "get_test_inbox", "send_plain"]
+__all__ = ["SentEmail", "_Inbox", "bind_email_inbox", "get_email_inbox", "send_plain"]

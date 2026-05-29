@@ -167,7 +167,7 @@ depends_on = ["app.core.config", "app.domain.orgs"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.webserver", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.webserver", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test", "app.testing.isolation"]
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
@@ -195,6 +195,7 @@ expose = [
   "AgentCommandKind",
   "AgentEvent",
   "AgentEventKind",
+  "AgentQueues",
   "AgentRef",
   "AuthBlock",
   "CleanupWorkspaceCommand",
@@ -221,9 +222,9 @@ expose = [
   "WorkspaceEventReport",
   "WriteFilesCommand",
   "WriteFilesEntry",
-  "_seed_agent_for_tests",
+  "bind_agent_queues",
+  "bind_subscriber_registry",
   "claim_next",
-  "clear_queues",
   "connection_status_for_org",
   "enqueue_command",
   "ensure_agent_row",
@@ -810,7 +811,6 @@ expose = [
   "get_onboarding_status",
   "get_org",
   "get_org_by_slug",
-  "get_test_inbox",
   "get_vcs",
   "install_coding_agent",
   "invite",

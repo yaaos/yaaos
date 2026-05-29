@@ -32,7 +32,12 @@ os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 # Re-export autouse isolation fixtures so pytest auto-discovers them. The import
 # is deferred until after env vars are set because app.testing.isolation triggers
 # app.core.redis → app.core.config at import time.
-from app.testing.isolation import pubsub_isolation  # noqa: F401
+from app.testing.isolation import (  # noqa: F401
+    agent_queues_isolation,
+    email_inbox_isolation,
+    pubsub_isolation,
+    subscriber_registry_isolation,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)

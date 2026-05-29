@@ -16,12 +16,13 @@
 - **`OrgArnLookup` IoC seam** — `/identity/exchange` needs to resolve a canonical IAM ARN to an org id + aws_region, but `core` cannot import `domain`. `org_arn_lookup.py` declares `OrgArnRef` (a frozen dataclass) + `register_org_arn_lookup` / `lookup_org_by_arn`. `domain/orgs` registers its implementation at import time; the endpoint calls `lookup_org_by_arn` without any `core → domain` edge.
 - **`org_context` wrap on every actor-resolving endpoint** — heartbeat, claim, workspace-events, command-events, and the activity WebSocket (entire connection lifetime). Excluded: `/identity/exchange` (bootstraps the bearer; no agent identity yet).
 - **ARN canonicalization** — `assumed-role/ROLE/SESSION` → `iam::ACCT:role/ROLE`, lowercased. IAM role names are case-insensitive in AWS; lowering both sides avoids mismatches without losing uniqueness.
-- **`SubscriberRegistry` is process-local.** On WebSocket reconnect it replays `subscribe` for every active route so the agent's rebuilt SubscriptionSet picks up where the old connection left off.
+- **`AgentQueues` is ContextVar-bound.** The active dispatch-queue registry is held in a ContextVar. `bind_agent_queues` is the production DI seam — called at startup in `app/web.py` and `app/worker.py`. The `agent_queues_isolation` autouse fixture in `app/testing/isolation` binds a fresh `AgentQueues()` per test so there is no shared per-agent FIFO state between tests.
+- **`SubscriberRegistry` is ContextVar-bound.** Same pattern as `AgentQueues`. `bind_subscriber_registry` is the production DI seam; `subscriber_registry_isolation` autouse fixture resets per test. On WebSocket reconnect it replays `subscribe` for every active route so the agent's rebuilt SubscriptionSet picks up where the old connection left off.
 - **No activity flows from agent → SPA when nobody's watching** — the `SubscriberRegistry` only sends `subscribe` on `0 → 1` subscriber-count transitions.
+- **`seed_agent` lives in `app/testing/seed`.** The production `ensure_agent_row` API is what callers use; `seed_agent` is a test convenience wrapper that adds a random pod_id and optional heartbeat back-dating. Cross-module tests import it from `app.testing.seed`.
 
 ## Gotchas
 
-- **`clear_queues()`** must be called between test runs to reset in-memory dispatch state (per-agent FIFO + `asyncio.Condition`).
 - **Replay-LRU window is 10 min** — clock skew > 5 min on the agent side will produce `clock_skew` rejections.
 - Bearer plaintext is returned exactly once from `bearers.issue` and never persisted; `verify` returns `None` for every failure (no oracle).
 
@@ -42,6 +43,10 @@
 
 `test/test_service.py` covers: per-agent FIFO independence; long-poll wakes on enqueue and times out cleanly; heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `pick_agent_for_org` returns least-loaded `AgentRef` or `None`; `has_any_reachable_agent` respects the 90s cutoff.
 
+`test/test_queue_binding.py` covers ContextVar isolation for `AgentQueues` and `SubscriberRegistry`: fresh bind hides prior state; fail-fast `RuntimeError` fires before bind; `claim_next` drains from the bound registry.
+
 `test/test_report_sink_delegation.py` covers sink delegation: heartbeat reconciliation via stub sink; workspace-event dispatch and rejection via stub sink; stale-claim guard raises `StaleClaimError` on `accepted=False` outcome.
 
 `test/test_activity_publish_service.py` covers the WS `activity_batch` path delivering events to `subscribe_workspace_activity`.
+
+Queue + registry isolation between tests is provided by the `agent_queues_isolation` and `subscriber_registry_isolation` autouse fixtures in `app/testing/isolation` — no explicit reset needed in tests. Seed an agent row via `app.testing.seed.seed_agent`.

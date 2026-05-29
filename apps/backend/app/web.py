@@ -30,13 +30,19 @@ from app.core import audit_log, workspace  # noqa: F401, E402
 # 4a. workflow engine + agent gateway. Workflow engine registers the
 # three taskiq task names at import; agent_gateway registers `/v1/*` routes.
 from app.core import workflow as _core_workflow  # noqa: F401, E402
-from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
+from app.core import agent_gateway as _core_agent_gateway  # noqa: E402
+
+_core_agent_gateway.bind_agent_queues(_core_agent_gateway.AgentQueues())
+_core_agent_gateway.bind_subscriber_registry(_core_agent_gateway.SubscriberRegistry())
 
 # 4b. Identity + tenancy + auth middleware. Must be imported before
 # any domain module that declares `Depends(require(...))` or
 # `Depends(public_route)` so the contextvars + middleware classes exist.
 from app.core import identity  # noqa: F401, E402
 from app.domain import orgs  # noqa: F401, E402
+from app.domain.orgs.email import _Inbox, bind_email_inbox  # noqa: E402
+
+bind_email_inbox(_Inbox())
 from app.core import auth  # noqa: F401, E402
 from app.core import sessions  # noqa: F401, E402
 

@@ -19,9 +19,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from app.core.agent_gateway import bearers, clear_queues
+from app.core.agent_gateway import bearers
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.core.agent_gateway.subscribers import _reset_subscriber_singleton_for_tests
 from app.core.auth import current_org_id
 from app.domain.orgs import repository as orgs_repo
 
@@ -69,12 +68,8 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    clear_queues()
-    _reset_subscriber_singleton_for_tests()
     bearers.set_verify_override(None)
     yield
-    clear_queues()
-    _reset_subscriber_singleton_for_tests()
     bearers.set_verify_override(None)
 
 

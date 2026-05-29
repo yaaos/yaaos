@@ -290,9 +290,9 @@ def stage_oauth_test_profile(
 def read_and_clear_email_inbox() -> list[dict[str, str]]:
     """Return + clear the in-memory inbox ``domain.orgs.email.send_plain`` writes
     to in test env."""
-    from app.domain.orgs import get_test_inbox  # noqa: PLC0415
+    from app.testing.isolation import read_email_inbox  # noqa: PLC0415
 
-    inbox = get_test_inbox()
+    inbox = read_email_inbox()
     out = [{"to": m.to, "subject": m.subject, "body": m.body} for m in inbox]
     inbox.clear()
     return out

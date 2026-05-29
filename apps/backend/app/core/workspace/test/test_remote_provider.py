@@ -11,8 +11,6 @@ from app.core.agent_gateway import (
     AuthBlock,
     HeartbeatRequest,
     RepoRef,
-    _seed_agent_for_tests,
-    clear_queues,
     connection_status_for_org,
     ensure_agent_row,
     get_agent_info,
@@ -24,13 +22,7 @@ from app.core.workspace.remote_provider import (
     RemoteAgentWorkspaceProvider,
     dispatch_create_workspace,
 )
-
-
-@pytest.fixture(autouse=True)
-def _isolate_queues() -> None:
-    clear_queues()
-    yield
-    clear_queues()
+from app.testing.seed import seed_agent
 
 
 async def _seed_reachable_agent(
@@ -40,7 +32,7 @@ async def _seed_reachable_agent(
     heartbeat_age_seconds: int = 0,
 ) -> dict:
     org_id = org_id or uuid4()
-    return await _seed_agent_for_tests(
+    return await seed_agent(
         org_id=org_id,
         session=db_session,
         heartbeat_age_seconds=heartbeat_age_seconds,

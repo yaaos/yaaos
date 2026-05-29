@@ -16,7 +16,6 @@ from app.core.agent_gateway import (
     bearers,
     get_subscriber_registry,
 )
-from app.core.agent_gateway.subscribers import _reset_subscriber_singleton_for_tests
 from app.core.sse import subscribe_workspace_activity
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
@@ -55,9 +54,7 @@ def _app() -> FastAPI:
 
 @pytest.fixture(autouse=True)
 def _isolate() -> None:
-    _reset_subscriber_singleton_for_tests()
     yield
-    _reset_subscriber_singleton_for_tests()
     bearers.set_verify_override(None)
 
 

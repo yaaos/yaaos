@@ -11,14 +11,6 @@ from app.core.agent_gateway import (
     SubscriberRegistry,
     get_subscriber_registry,
 )
-from app.core.agent_gateway.subscribers import _reset_subscriber_singleton_for_tests
-
-
-@pytest.fixture(autouse=True)
-def _isolate_singleton() -> None:
-    _reset_subscriber_singleton_for_tests()
-    yield
-    _reset_subscriber_singleton_for_tests()
 
 
 @pytest.mark.asyncio

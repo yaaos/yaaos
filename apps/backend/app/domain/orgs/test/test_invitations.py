@@ -20,15 +20,7 @@ from app.domain.orgs import (
     remove_member,
 )
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.email import get_test_inbox
-
-
-@pytest.fixture(autouse=True)
-def _clear_inbox():
-    inbox = get_test_inbox()
-    inbox.clear()
-    yield
-    inbox.clear()
+from app.testing.isolation import read_email_inbox
 
 
 async def _bootstrap_org_and_owner(db):
@@ -54,7 +46,7 @@ async def test_invite_happy_path(db_session) -> None:
     assert invitation.email == "newbie@example.com"
     assert invitation.role == Role.BUILDER
     assert raw  # raw signed token returned to caller (tests + email body)
-    inbox = get_test_inbox()
+    inbox = read_email_inbox()
     assert len(inbox) == 1
     assert inbox[0].to == "Newbie@example.com"
     assert raw in inbox[0].body

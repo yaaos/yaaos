@@ -18,7 +18,7 @@ from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.d
 from app.domain.orgs import invite as invite_service
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
-from app.domain.orgs.email import get_test_inbox
+from app.testing.isolation import read_email_inbox
 
 
 def _app() -> FastAPI:
@@ -37,7 +37,6 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    get_test_inbox().clear()
     owner_user = await identity_repo.insert_user(db_session, display_name="Owner")
     member_user = await identity_repo.insert_user(db_session, display_name="Member")
     org = await orgs_repo.insert_org(db_session, slug="endpoints-org")
@@ -57,7 +56,6 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
         "owner_session": owner_session,
         "member_session": member_session,
     }
-    get_test_inbox().clear()
 
 
 @pytest.mark.asyncio
@@ -78,7 +76,7 @@ async def test_invite_happy_path_sends_email(seeded) -> None:
     body = resp.json()
     assert body["email"] == "new@example.com"
     assert body["role"] == "builder"
-    inbox = get_test_inbox()
+    inbox = read_email_inbox()
     assert any(m.to == "new@example.com" for m in inbox)
 
 

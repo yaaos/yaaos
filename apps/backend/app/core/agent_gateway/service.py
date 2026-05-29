@@ -9,12 +9,20 @@ Event ingestion (`record_agent_event`) delegates the stale-claim guard lookup
 to the registered `WorkspaceAgentReportSink` (owned by `core/workspace`), then
 enqueues `core/workflow.handle_agent_event` via the outbox in the same
 transaction when the event is terminal.
+
+The active `AgentQueues` instance is ContextVar-bound. `bind_agent_queues` is
+the production DI seam — the composition root calls it at startup; the
+`agent_queues_isolation` fixture in `app/testing/isolation` binds a fresh
+instance per test. `get_agent_queues()` raises `RuntimeError` if called before
+any bind — fail-fast so forgotten startup binds surface immediately.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -43,31 +51,58 @@ log = structlog.get_logger("core.agent_gateway")
 # ── In-memory dispatch queues ───────────────────────────────────────────
 
 
-_queues: dict[UUID, deque[AgentCommand]] = defaultdict(deque)
-# One condition per agent so a long-poll wakes immediately when a command
-# is enqueued for that specific agent. Created lazily.
-_conditions: dict[UUID, asyncio.Condition] = {}
-_conditions_lock = asyncio.Lock()
+@dataclass
+class AgentQueues:
+    """Per-process in-memory FIFO registry for agent dispatch.
+
+    Holds one queue and one asyncio.Condition per agent_id. ContextVar-bound
+    so each test context gets a fresh, isolated instance.
+    """
+
+    queues: dict[UUID, deque[AgentCommand]] = field(default_factory=lambda: defaultdict(deque))
+    conditions: dict[UUID, asyncio.Condition] = field(default_factory=dict)
+    conditions_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+_agent_queues_var: ContextVar[AgentQueues | None] = ContextVar("_agent_queues_var", default=None)
+
+
+def bind_agent_queues(instance: AgentQueues) -> None:
+    """Bind `instance` as the active agent-queues registry for the current Context.
+
+    Called once at process startup (composition root) and once per test
+    (isolation fixture). Subsequent calls in the same Context replace the
+    prior binding.
+    """
+    _agent_queues_var.set(instance)
+
+
+def get_agent_queues() -> AgentQueues:
+    """Return the active agent-queues registry. Raises `RuntimeError` if
+    `bind_agent_queues` has not been called — fail-fast so forgotten startup
+    binds surface immediately rather than silently producing wrong state."""
+    instance = _agent_queues_var.get()
+    if instance is None:
+        raise RuntimeError(
+            "agent queues not bound: call bind_agent_queues(AgentQueues()) at "
+            "process startup or use the agent_queues_isolation fixture in tests."
+        )
+    return instance
 
 
 async def _get_condition(agent_id: UUID) -> asyncio.Condition:
-    async with _conditions_lock:
-        cond = _conditions.get(agent_id)
+    registry = get_agent_queues()
+    async with registry.conditions_lock:
+        cond = registry.conditions.get(agent_id)
         if cond is None:
             cond = asyncio.Condition()
-            _conditions[agent_id] = cond
+            registry.conditions[agent_id] = cond
         return cond
 
 
 def queue_depth(agent_id: UUID) -> int:
-    """Test helper — number of commands pending for `agent_id`."""
-    return len(_queues.get(agent_id, ()))
-
-
-def clear_queues() -> None:
-    """Drop every in-memory queue and condition."""
-    _queues.clear()
-    _conditions.clear()
+    """Number of commands pending for `agent_id`."""
+    return len(get_agent_queues().queues.get(agent_id, ()))
 
 
 # ── Dispatch ────────────────────────────────────────────────────────────
@@ -77,7 +112,7 @@ async def enqueue_command(agent_id: UUID, command: AgentCommand) -> None:
     """Push an AgentCommand onto the agent's FIFO and wake any blocked
     long-poller. Called by `RemoteAgentWorkspaceProvider` from inside the
     workflow engine's start_step transaction."""
-    _queues[agent_id].append(command)
+    get_agent_queues().queues[agent_id].append(command)
     cond = await _get_condition(agent_id)
     async with cond:
         cond.notify()
@@ -92,7 +127,7 @@ async def claim_next(
     arrive. Returns None on timeout (the agent then re-arms the poll).
 
     `wait_seconds=0` is a non-blocking peek — useful in tests."""
-    queue = _queues[agent_id]
+    queue = get_agent_queues().queues[agent_id]
     if queue:
         return queue.popleft()
     if wait_seconds <= 0:
@@ -331,39 +366,6 @@ async def get_agent_info(
         "state": row.state,
         "last_heartbeat_at": row.last_heartbeat_at,
     }
-
-
-async def _seed_agent_for_tests(
-    *,
-    org_id: UUID,
-    session: AsyncSession,
-    iam_arn: str = "arn:aws:iam::123456789012:role/yaaos-agent",
-    version: str = "0.0.1",
-    heartbeat_age_seconds: int = 0,
-) -> dict:
-    """Insert a reachable workspace-agent row for testing.
-
-    Returns a dict with `id` (row PK), `agent_pod_id` (pod UUID), and
-    `org_id`. Backdates `last_heartbeat_at` when `heartbeat_age_seconds > 0`.
-    """
-    from uuid import uuid4 as _uuid4  # noqa: PLC0415
-
-    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
-
-    pod_id = _uuid4()
-    agent_id = await ensure_agent_row(
-        org_id=org_id,
-        agent_pod_id=pod_id,
-        iam_arn=iam_arn,
-        version=version,
-        session=session,
-    )
-    if heartbeat_age_seconds > 0:
-        row = await session.get(WorkspaceAgentRow, agent_id)
-        if row is not None:
-            row.last_heartbeat_at = datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds)
-            await session.flush()
-    return {"id": agent_id, "agent_pod_id": pod_id, "org_id": org_id}
 
 
 async def pick_agent_for_org(
