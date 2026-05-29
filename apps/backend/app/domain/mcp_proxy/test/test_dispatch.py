@@ -149,7 +149,7 @@ async def _seed_review(db_session):  # type: ignore[no-untyped-def]
         type="pr_review",
         payload={},
         idempotency_key=ext_id,
-        org_id=org.id,
+        org_id=org.org_id,
         title="t",
         source="github_pr",
         source_external_id=ext_id,
@@ -179,10 +179,10 @@ async def _seed_review(db_session):  # type: ignore[no-untyped-def]
             updated_at=datetime.now(UTC),
         ),
         ticket_id=ticket_id,
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
-    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.id)
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
     review: Review = agg.start_review(
         trigger=ReviewTrigger.MANUAL_FULL,
         scope=ReviewScope.full(base_sha="0", head_sha="1"),
@@ -190,7 +190,7 @@ async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     )
     repo = SqlAlchemyAggregateRepository(db_session)
     await repo.save(agg)
-    raw_token = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw_token = await mint_token(review.id, org_id=org.org_id, session=db_session)
     await db_session.commit()
     return review, raw_token
 

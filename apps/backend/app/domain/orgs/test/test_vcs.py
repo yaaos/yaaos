@@ -48,13 +48,13 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="vcs-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     owner_sess = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
@@ -75,7 +75,7 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     state = await set_vcs(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         plugin_id="github",
         settings={"installation_id": 999},
         actor=actor,
@@ -83,11 +83,11 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
     assert state.plugin_id == "github"
     assert state.settings == {"installation_id": 999}
 
-    reloaded = await get_vcs(db_session, org.id)
+    reloaded = await get_vcs(db_session, org.org_id)
     assert reloaded.plugin_id == "github"
     assert reloaded.settings == {"installation_id": 999}
 
-    rows = await list_for_org(org_id=org.id, actions=["vcs.installed"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.installed"])
     assert len(rows) == 1
     assert rows[0].payload == {"plugin_id": "github"}
 
@@ -96,14 +96,14 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
 async def test_clear_vcs_removes_and_audits(seeded, db_session) -> None:
     org = seeded["org"]
     actor = Actor.user(user_id=seeded["owner"].id)
-    await set_vcs(db_session, org_id=org.id, plugin_id="github", settings={}, actor=actor)
-    removed = await clear_vcs(db_session, org_id=org.id, actor=actor)
+    await set_vcs(db_session, org_id=org.org_id, plugin_id="github", settings={}, actor=actor)
+    removed = await clear_vcs(db_session, org_id=org.org_id, actor=actor)
     assert removed is True
-    state = await get_vcs(db_session, org.id)
+    state = await get_vcs(db_session, org.org_id)
     assert state.plugin_id is None
     assert state.settings == {}
 
-    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.cleared"])
     assert len(rows) == 1
 
 
@@ -111,9 +111,9 @@ async def test_clear_vcs_removes_and_audits(seeded, db_session) -> None:
 async def test_clear_vcs_noop_returns_false_and_no_audit(seeded, db_session) -> None:
     org = seeded["org"]
     actor = Actor.user(user_id=seeded["owner"].id)
-    removed = await clear_vcs(db_session, org_id=org.id, actor=actor)
+    removed = await clear_vcs(db_session, org_id=org.org_id, actor=actor)
     assert removed is False
-    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.cleared"])
     assert rows == []
 
 
@@ -188,7 +188,7 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     await set_vcs(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="github",
         settings={"installation_id": 1},
         actor=actor,
@@ -197,7 +197,7 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
     # credentials live in env vars, so there's no per-org settings row.
     await record_app_install(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         install_external_id="9999",
         account_login="acme-org",
     )
@@ -222,7 +222,7 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
         count = (
             await s.execute(
                 _text("SELECT COUNT(*) FROM github_app_installations WHERE org_id = :oid"),
-                {"oid": seeded["org"].id},
+                {"oid": seeded["org"].org_id},
             )
         ).scalar_one()
     assert count == 0

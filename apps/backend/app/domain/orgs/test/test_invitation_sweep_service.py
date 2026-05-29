@@ -33,14 +33,14 @@ async def test_orgs_self_sweeps_invitations(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="sweep-test-org")
     owner = await identity_repo.insert_user(db_session, display_name="Sweeper")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     actor = Actor.user(user_id=owner.id)
 
     # Create two invitations — we'll expire one of them manually.
     _, _raw_expired = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="expired@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner.id,
@@ -48,7 +48,7 @@ async def test_orgs_self_sweeps_invitations(db_session) -> None:
     )
     _, _raw_fresh = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="fresh@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner.id,
@@ -68,7 +68,7 @@ async def test_orgs_self_sweeps_invitations(db_session) -> None:
     assert purged == 1
 
     remaining = (
-        (await db_session.execute(select(InvitationRow).where(InvitationRow.org_id == org.id)))
+        (await db_session.execute(select(InvitationRow).where(InvitationRow.org_id == org.org_id)))
         .scalars()
         .all()
     )

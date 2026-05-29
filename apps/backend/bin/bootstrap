@@ -187,12 +187,12 @@ async def _run(stream: IO[str]) -> int:
         )
         org, org_created = await _ensure_org(s, slug=org_slug, display_name=org_name)
         _, membership_created = await _ensure_owner_membership(
-            s, user_id=user.id, org_id=org.id, handle=handle
+            s, user_id=user.id, org_id=org.org_id, handle=handle
         )
         if user_created or org_created or membership_created:
             await _emit_bootstrap_audit(
                 s,
-                org_id=org.id,
+                org_id=org.org_id,
                 user_id=user.id,
                 user_created=user_created,
                 org_created=org_created,
@@ -203,7 +203,7 @@ async def _run(stream: IO[str]) -> int:
     summary = (
         f"user_id={user.id} user={'created' if user_created else 'exists'}; "
         f"oauth_identity={'created' if identity_created else 'exists'}; "
-        f"org_id={org.id} org={'created' if org_created else 'exists'}; "
+        f"org_id={org.org_id} org={'created' if org_created else 'exists'}; "
         f"membership={'created' if membership_created else 'exists'}"
     )
     sys.stdout.write(summary + "\n")

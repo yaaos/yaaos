@@ -42,10 +42,10 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
     org_a = await orgs_repo.insert_org(db_session, slug="me-org-a", display_name="A")
     org_b = await orgs_repo.insert_org(db_session, slug="me-org-b", display_name="B")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="jack"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="jack"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.ADMIN, handle="jk"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.ADMIN, handle="jk"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -70,7 +70,9 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
 
     async with get_sessionmaker()() as cleanup:
         await cleanup.execute(text("DELETE FROM memberships WHERE user_id = :uid"), {"uid": user.id})
-        await cleanup.execute(text("DELETE FROM orgs WHERE id = ANY(:ids)"), {"ids": [org_a.id, org_b.id]})
+        await cleanup.execute(
+            text("DELETE FROM orgs WHERE id = ANY(:ids)"), {"ids": [org_a.org_id, org_b.org_id]}
+        )
         await _delete_user_artifacts_for_tests(cleanup, user_id=user.id)
         await cleanup.commit()
 
@@ -105,7 +107,7 @@ async def test_me_memberships_have_no_broken_integrations_field(db_session) -> N
     user = await identity_repo.insert_user(db_session, display_name="A")
     org = await orgs_repo.insert_org(db_session, slug="me-no-broken-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

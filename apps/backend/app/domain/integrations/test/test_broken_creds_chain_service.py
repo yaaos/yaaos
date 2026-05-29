@@ -120,11 +120,11 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
         db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="owner"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
     )
     db_session.add(
         McpCredentialRow(
-            org_id=org.id,
+            org_id=org.org_id,
             provider="stub_chain",
             encrypted_access_token=encrypt("upstream-access").decode(),
             encrypted_refresh_token=None,
@@ -145,7 +145,7 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     assert counts["notified"] == 1
     assert any(m.to == "owner@example.com" for m in inbox)
 
-    failure_audits = await list_for_org(org_id=org.id, actions=["mcp.stub_chain.token_refresh_failed"])
+    failure_audits = await list_for_org(org_id=org.org_id, actions=["mcp.stub_chain.token_refresh_failed"])
     assert len(failure_audits) == 1
 
     # 4. Seed a review + mint its bearer.
@@ -154,7 +154,7 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
         type="pr_review",
         payload={},
         idempotency_key=ext_id,
-        org_id=org.id,
+        org_id=org.org_id,
         title="t",
         source="github_pr",
         source_external_id=ext_id,
@@ -184,10 +184,10 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
             updated_at=datetime.now(UTC),
         ),
         ticket_id=ticket_id,
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
-    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.id)
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
     review = agg.start_review(
         trigger=ReviewTrigger.MANUAL_FULL,
         scope=ReviewScope.full(base_sha="0", head_sha="1"),
@@ -195,7 +195,7 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     )
     repo = SqlAlchemyAggregateRepository(db_session)
     await repo.save(agg)
-    raw_token = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw_token = await mint_token(review.id, org_id=org.org_id, session=db_session)
     await db_session.commit()
 
     # 5. Agent calls a tool through the proxy. Proxy sees broken creds.

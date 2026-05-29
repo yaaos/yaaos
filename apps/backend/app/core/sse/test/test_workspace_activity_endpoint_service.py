@@ -62,7 +62,7 @@ async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
 
     org_a = await orgs_repo.insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="owner-a"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 
     raw_token = f"wfa-{uuid.uuid4().hex[:8]}"
@@ -92,7 +92,7 @@ async def test_non_owned_wfx_yields_empty_stream(cross_org_seed, redis_or_skip) 
     nothing. Drives `_workspace_activity_stream` directly because httpx-ASGITransport
     hangs on close for infinite streams.
     """
-    gen = _workspace_activity_stream(cross_org_seed["org_a"].id, cross_org_seed["foreign_wfx_id"])
+    gen = _workspace_activity_stream(cross_org_seed["org_a"].org_id, cross_org_seed["foreign_wfx_id"])
     collector = asyncio.create_task(gen.__anext__())
     # Yield control to let the subscription register, then publish to a
     # different org's channel for the same wfx id — should NOT reach the stream.

@@ -26,6 +26,7 @@ from app.core.agent_gateway.sts_verifier import (
     reset_nonce_cache_for_tests,
     set_verify_identity_override,
 )
+from app.core.tenancy import update_org_fields
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -65,8 +66,11 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-agent/task-abc"
     org = await orgs_repo.insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
-    org.registered_iam_arn = canonical_arn
-    org.aws_region = "us-east-1"
+    await update_org_fields(
+        db_session,
+        org.org_id,
+        {"registered_iam_arn": canonical_arn, "aws_region": "us-east-1"},
+    )
     await db_session.commit()
 
     async def _stub(_payload: str) -> VerifiedIdentity:
@@ -93,7 +97,7 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
     assert body["agent_id"]
 
     rows = (
-        (await db_session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.org_id == org.id)))
+        (await db_session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.org_id == org.org_id)))
         .scalars()
         .all()
     )
@@ -103,7 +107,7 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
 
     # Bearer ledger row exists, hashed (no plaintext).
     bearer_rows = (
-        (await db_session.execute(select(BearerTokenRow).where(BearerTokenRow.org_id == org.id)))
+        (await db_session.execute(select(BearerTokenRow).where(BearerTokenRow.org_id == org.org_id)))
         .scalars()
         .all()
     )
@@ -143,8 +147,11 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
     region than the org's pinned `aws_region` → 401 region_mismatch."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
     org = await orgs_repo.insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
-    org.registered_iam_arn = canonical_arn
-    org.aws_region = "us-east-1"
+    await update_org_fields(
+        db_session,
+        org.org_id,
+        {"registered_iam_arn": canonical_arn, "aws_region": "us-east-1"},
+    )
     await db_session.commit()
 
     async def _stub(_payload: str) -> VerifiedIdentity:

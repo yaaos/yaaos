@@ -27,21 +27,21 @@ async def test_list_active_member_ids_returns_active_only(db_session) -> None:
     user_b = await identity_repo.insert_user(db_session, display_name="UserB")
 
     await orgs_repo.insert_membership(
-        db_session, user_id=user1.id, org_id=org_a.id, role=Role.OWNER, handle="u1"
+        db_session, user_id=user1.id, org_id=org_a.org_id, role=Role.OWNER, handle="u1"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user2.id, org_id=org_a.id, role=Role.ADMIN, handle="u2"
+        db_session, user_id=user2.id, org_id=org_a.org_id, role=Role.ADMIN, handle="u2"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user3.id, org_id=org_a.id, role=Role.BUILDER, handle="u3"
+        db_session, user_id=user3.id, org_id=org_a.org_id, role=Role.BUILDER, handle="u3"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user_b.id, org_id=org_b.id, role=Role.OWNER, handle="ub"
+        db_session, user_id=user_b.id, org_id=org_b.org_id, role=Role.OWNER, handle="ub"
     )
 
     await db_session.flush()
 
-    result = await list_active_member_ids(org_a.id, session=db_session)
+    result = await list_active_member_ids(org_a.org_id, session=db_session)
 
     assert set(result) == {user1.id, user2.id, user3.id}
     assert user_b.id not in result
@@ -54,6 +54,6 @@ async def test_list_active_member_ids_empty_org(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="lam-empty")
     await db_session.flush()
 
-    result = await list_active_member_ids(org.id, session=db_session)
+    result = await list_active_member_ids(org.org_id, session=db_session)
 
     assert result == []

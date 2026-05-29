@@ -154,7 +154,7 @@ async def test_no_connected_providers_returns_none(db_session, stub_providers) -
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-none")
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -162,9 +162,9 @@ async def test_no_connected_providers_returns_none(db_session, stub_providers) -
 async def test_disabled_provider_excluded(db_session, stub_providers) -> None:
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-disabled")
-    await _seed_credential(db_session, org_id=org.id, provider="linear_stub", enabled=False)
+    await _seed_credential(db_session, org_id=org.org_id, provider="linear_stub", enabled=False)
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -174,12 +174,12 @@ async def test_broken_creds_provider_excluded(db_session, stub_providers) -> Non
     org = await _seed_org(db_session, slug="mcp-broken")
     await _seed_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="linear_stub",
         last_refresh_status="failed",
     )
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -187,17 +187,17 @@ async def test_broken_creds_provider_excluded(db_session, stub_providers) -> Non
 async def test_connected_provider_mints_token_and_surfaces_servers(db_session, stub_providers) -> None:
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-connected")
-    review = await _seed_review_row(db_session, org_id=org.id)
+    review = await _seed_review_row(db_session, org_id=org.org_id)
     await _seed_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="linear_stub",
         allowed_tools=["update_issue"],
     )
-    await _seed_credential(db_session, org_id=org.id, provider="notion_stub", allowed_tools=[])
+    await _seed_credential(db_session, org_id=org.org_id, provider="notion_stub", allowed_tools=[])
     await db_session.commit()
 
-    payload = await _build_mcp_payload(review.id, org_id=org.id)
+    payload = await _build_mcp_payload(review.id, org_id=org.org_id)
     assert payload is not None
     assert payload["base_url"].endswith(f"/api/mcp/{review.id}")
 

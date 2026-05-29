@@ -66,12 +66,12 @@ async def seeded(db_session):
     user = await identity_repo.insert_user(db_session, display_name="B")
     org = await orgs_repo.insert_org(db_session, slug="list-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
-    await _seed_ticket(db_session, org_id=org.id, status="running", title="alpha", repo="x/y")
-    await _seed_ticket(db_session, org_id=org.id, status="running", title="beta", repo="x/y")
-    await _seed_ticket(db_session, org_id=org.id, status="done", title="gamma", repo="x/z")
+    await _seed_ticket(db_session, org_id=org.org_id, status="running", title="alpha", repo="x/y")
+    await _seed_ticket(db_session, org_id=org.org_id, status="running", title="beta", repo="x/y")
+    await _seed_ticket(db_session, org_id=org.org_id, status="done", title="gamma", repo="x/z")
     await db_session.commit()
     yield {"org": org, "sess": sess}
 

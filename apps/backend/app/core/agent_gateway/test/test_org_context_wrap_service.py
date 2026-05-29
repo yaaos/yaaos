@@ -47,7 +47,7 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(
         id=uuid4(),
-        org_id=org.id,
+        org_id=org.org_id,
         agent_pod_id=uuid4(),
         iam_arn=org.registered_iam_arn,
         version="0.0.1",
@@ -57,11 +57,11 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     await db_session.commit()
 
     plaintext, _ = await bearers.issue(
-        agent_id=agent.id, org_id=org.id, session=db_session, source_ip="127.0.0.1"
+        agent_id=agent.id, org_id=org.org_id, session=db_session, source_ip="127.0.0.1"
     )
     await db_session.commit()
 
-    return org.id, agent.id, plaintext
+    return org.org_id, agent.id, plaintext
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

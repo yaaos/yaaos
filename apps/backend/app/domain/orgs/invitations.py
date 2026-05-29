@@ -25,6 +25,18 @@ from app.core.audit_log import Actor, audit
 from app.core.auth import Role
 from app.core.config import get_settings
 from app.core.identity import sessions as session_lifecycle
+from app.core.tenancy import (
+    change_role as _tenancy_change_role,
+)
+from app.core.tenancy import (
+    create_membership as _tenancy_create_membership,
+)
+from app.core.tenancy import (
+    get_membership_info,
+)
+from app.core.tenancy import (
+    remove_member as _tenancy_remove_member,
+)
 from app.domain.orgs import email as org_email
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.service import Invitation, Membership
@@ -153,15 +165,21 @@ async def accept_invitation(
     if str(row.org_id) != payload.get("org_id") or row.email.lower() != payload.get("email", "").lower():
         raise InvitationInvalidError("token does not match invitation row")
 
-    # Idempotent: if a membership already exists, bail with the existing row.
-    existing = await orgs_repo.get_membership(db, user_id=user_id, org_id=row.org_id)
+    # Idempotent: if a membership already exists, bail with the existing membership.
+    existing = await get_membership_info(db, user_id=user_id, org_id=row.org_id)
     if existing is not None:
         row.accepted_at = datetime.now(UTC)
         await db.flush()
-        return Membership.from_row(existing)
+        return Membership(
+            user_id=existing.user_id,
+            org_id=existing.org_id,
+            role=existing.role,
+            handle=existing.handle,
+            created_at=datetime.now(UTC),
+        )
 
     handle = row.email.split("@", 1)[0][:64].lower()
-    membership_row = await orgs_repo.insert_membership(
+    await _tenancy_create_membership(
         db, user_id=user_id, org_id=row.org_id, role=Role(row.role), handle=handle
     )
     row.accepted_at = datetime.now(UTC)
@@ -169,14 +187,20 @@ async def accept_invitation(
 
     await audit(
         "membership",
-        membership_row.user_id,
+        user_id,
         "joined",
         _MembershipChangePayload(user_id=user_id, to_role=Role(row.role)),
         actor,
         org_id=row.org_id,
         session=db,
     )
-    return Membership.from_row(membership_row)
+    return Membership(
+        user_id=user_id,
+        org_id=row.org_id,
+        role=Role(row.role),
+        handle=handle,
+        created_at=datetime.now(UTC),
+    )
 
 
 async def remove_member(
@@ -188,11 +212,11 @@ async def remove_member(
 ) -> None:
     """Delete the membership, revoke every session belonging to the user,
     write an audit row. No-op if the membership is already gone."""
-    existing = await orgs_repo.get_membership(db, user_id=user_id, org_id=org_id)
+    existing = await get_membership_info(db, user_id=user_id, org_id=org_id)
     if existing is None:
         return
-    from_role = Role(existing.role)
-    await orgs_repo.delete_membership(db, user_id=user_id, org_id=org_id)
+    from_role = existing.role
+    await _tenancy_remove_member(db, user_id=user_id, org_id=org_id)
     await session_lifecycle.revoke_all_for_user(db, user_id)
 
     await audit(
@@ -220,11 +244,11 @@ async def change_role(
     everywhere they were and must re-authenticate. "You got promoted,
     sign in again" is acceptable for the POC.
     """
-    existing = await orgs_repo.get_membership(db, user_id=user_id, org_id=org_id)
+    existing = await get_membership_info(db, user_id=user_id, org_id=org_id)
     if existing is None:
         raise LookupError("membership not found")
-    from_role = Role(existing.role)
-    row = await orgs_repo.update_role(db, user_id=user_id, org_id=org_id, role=new_role)
+    from_role = existing.role
+    await _tenancy_change_role(db, user_id=user_id, org_id=org_id, role=new_role)
     await session_lifecycle.revoke_all_for_user(db, user_id)
 
     await audit(
@@ -236,7 +260,13 @@ async def change_role(
         org_id=org_id,
         session=db,
     )
-    return Membership.from_row(row)
+    return Membership(
+        user_id=user_id,
+        org_id=org_id,
+        role=new_role,
+        handle=existing.handle,
+        created_at=datetime.now(UTC),
+    )
 
 
 __all__ = [

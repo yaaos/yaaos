@@ -184,7 +184,7 @@ async def test_callback_invitation_alone_does_not_provision(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="inviteorg")
     await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="newbie@example.com",
         role=Role.BUILDER,
         invited_by_user_id=None,

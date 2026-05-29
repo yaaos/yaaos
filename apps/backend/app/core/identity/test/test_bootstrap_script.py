@@ -127,10 +127,10 @@ async def test_bootstrap_creates_all_rows(github_user_lookup, db_session) -> Non
         assert identity is not None and identity.user_id == user.id
         org = await orgs_repo.get_org_by_slug(s, "acme-boot")
         assert org is not None
-        membership = await orgs_repo.get_membership(s, user_id=user.id, org_id=org.id)
+        membership = await orgs_repo.get_membership(s, user_id=user.id, org_id=org.org_id)
         assert membership is not None and membership.role == "owner"
 
-        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.id)
+        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
 
 
@@ -155,7 +155,7 @@ async def test_bootstrap_is_idempotent(github_user_lookup) -> None:
         assert user is not None
         org = await orgs_repo.get_org_by_slug(s, "idem-org")
         assert org is not None
-        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.id)
+        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
 
 
@@ -173,7 +173,7 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
         assert user is not None
         org = await orgs_repo.get_org_by_slug(s, "retry-org")
         assert org is not None
-        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.id)
+        await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
 
 

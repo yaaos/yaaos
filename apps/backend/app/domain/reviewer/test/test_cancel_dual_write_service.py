@@ -57,7 +57,7 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
         existing = org
     user = await identity_repo.insert_user(db_session, display_name="Builder")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=existing.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=existing.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
@@ -66,7 +66,7 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
         type="pr_review",
         payload={},
         idempotency_key=ext_id,
-        org_id=existing.id,
+        org_id=existing.org_id,
         title="cancel-test",
         source="github_pr",
         source_external_id=ext_id,

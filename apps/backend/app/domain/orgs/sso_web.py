@@ -89,11 +89,11 @@ async def sso_discover(request: Request, email: Annotated[str, Query()]) -> dict
 @router.get("/{slug}/metadata")
 async def sp_metadata(slug: str) -> Response:
     """Public endpoint — operators hand this URL to the IdP."""
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import sp_metadata_xml  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
     if org is None:
         raise _err(404, "org_not_found")
     base_url = get_settings().yaaos_app_base_url
@@ -106,14 +106,14 @@ async def sso_login_start(slug: str) -> Response:
     """SP-initiated login. In POC test env we redirect to the test stub IdP
     page (which the test then POSTs back via `/acs`). Production builds the
     AuthnRequest XML via `plugins/saml`."""
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import get_config  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
         if org is None:
             raise _err(404, "org_not_found")
-        cfg = await get_config(s, org_id=org.id)
+        cfg = await get_config(s, org_id=org.org_id)
     if cfg is None or not cfg.enabled:
         raise _err(404, "sso_not_configured")
     # POC redirect target: the SPA's hand-off page. Tests POST directly to /acs.
@@ -134,14 +134,16 @@ async def sso_acs(
     from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import create_membership as _create_membership  # noqa: PLC0415
+    from app.core.tenancy import get_membership_info  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import get_config  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
         if org is None:
             raise _err(404, "org_not_found")
-        cfg = await get_config(s, org_id=org.id)
+        cfg = await get_config(s, org_id=org.org_id)
         if cfg is None or not cfg.enabled:
             raise _err(404, "sso_not_configured")
 
@@ -158,16 +160,16 @@ async def sso_acs(
                 raise _err(403, "user_not_provisioned")
             user_row = await identity_repo.insert_user(s, display_name=email.split("@")[0])
             await identity_repo.add_email(s, user_id=user_row.id, email=email, is_primary=True, verified=True)
-            await orgs_repo.insert_membership(
+            await _create_membership(
                 s,
                 user_id=user_row.id,
-                org_id=org.id,
+                org_id=org.org_id,
                 role=Role.BUILDER,
                 handle=email.split("@")[0][:64].lower(),
             )
             jit_created = True
 
-        membership = await orgs_repo.get_membership(s, user_id=user_row.id, org_id=org.id)
+        membership = await get_membership_info(s, user_id=user_row.id, org_id=org.org_id)
         if membership is None:
             raise _err(403, "no_membership")
 
@@ -175,15 +177,15 @@ async def sso_acs(
         # mint a fresh session.
         if yaaos_session:
             try:
-                updated = await session_lifecycle.mark_sso_satisfied(s, yaaos_session, org_id=org.id)
+                updated = await session_lifecycle.mark_sso_satisfied(s, yaaos_session, org_id=org.org_id)
                 created = None
             except Exception:
                 updated = None
                 created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-                await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.id)
+                await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
         else:
             created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-            await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.id)
+            await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
             updated = None
 
         await audit_write(
@@ -192,7 +194,7 @@ async def sso_acs(
             "sso_satisfied",
             _SsoSatisfiedAuditPayload(email=email, jit_created=jit_created),
             Actor(kind="sso", login=email),
-            org_id=org.id,
+            org_id=org.org_id,
             session=s,
         )
 
@@ -270,7 +272,6 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     from app.core.identity import can_be_sso_exempt_owner  # noqa: PLC0415
     from app.core.sessions import current_actor  # noqa: PLC0415
     from app.domain.orgs import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     org_id = org_id_var.get()
     assert org_id is not None
@@ -279,8 +280,10 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
 
     async with db_session() as s:
         if body.exempt_owner_user_id is not None:
-            membership = await orgs_repo.get_membership(s, user_id=body.exempt_owner_user_id, org_id=org_id)
-            if membership is None or membership.role != "owner":
+            from app.core.tenancy import get_membership_info  # noqa: PLC0415
+
+            membership = await get_membership_info(s, user_id=body.exempt_owner_user_id, org_id=org_id)
+            if membership is None or membership.role.value != "owner":
                 raise _err(400, "exempt_must_be_owner")
             if not await can_be_sso_exempt_owner(s, body.exempt_owner_user_id):
                 raise _err(400, "exempt_owner_no_totp")

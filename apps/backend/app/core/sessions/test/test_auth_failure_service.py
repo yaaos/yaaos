@@ -63,7 +63,7 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     user = await identity_repo.insert_user(db_session, display_name="Owner")
     org = await orgs_repo.insert_org(db_session, slug=f"af-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
 
     raw_token = f"af-owner-{uuid.uuid4().hex[:8]}"
@@ -157,7 +157,9 @@ async def test_org_scoped_idle_timeout_clears_cookies_and_writes_audit(seeded, d
     _assert_cookies_cleared(resp)
 
     # Audit row must be present.
-    audit_rows = await list_for_entity("user", seeded["user"].id, org_id=seeded["org"].id, kinds=["logout"])
+    audit_rows = await list_for_entity(
+        "user", seeded["user"].id, org_id=seeded["org"].org_id, kinds=["logout"]
+    )
     assert len(audit_rows) == 1, f"expected 1 idle-timeout audit row, got {len(audit_rows)}"
     assert audit_rows[0].payload == {"kind": "idle_timeout"}
     assert audit_rows[0].entity_id == seeded["user"].id

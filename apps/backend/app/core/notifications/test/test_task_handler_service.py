@@ -35,10 +35,10 @@ async def seeded(db_session):
     bob = await identity_repo.insert_user(db_session, display_name="Bob")
     org = await orgs_repo.insert_org(db_session, slug="task-org", display_name="TaskOrg")
     await orgs_repo.insert_membership(
-        db_session, user_id=alice.id, org_id=org.id, role=Role.BUILDER, handle="alice"
+        db_session, user_id=alice.id, org_id=org.org_id, role=Role.BUILDER, handle="alice"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=bob.id, org_id=org.id, role=Role.BUILDER, handle="bob"
+        db_session, user_id=bob.id, org_id=org.org_id, role=Role.BUILDER, handle="bob"
     )
     await db_session.commit()
     yield {"alice": alice, "bob": bob, "org": org}
@@ -50,7 +50,7 @@ async def test_fanout_creates_per_spec(seeded, db_session) -> None:
     """fanout with two specs writes exactly two notification rows."""
     alice_id = seeded["alice"].id
     bob_id = seeded["bob"].id
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
     subject_id = uuid4()
 
     specs = [
@@ -94,7 +94,7 @@ async def test_fanout_is_idempotent_on_redelivery(seeded, db_session) -> None:
     """Calling fanout twice with identical specs yields exactly two rows, not four."""
     alice_id = seeded["alice"].id
     bob_id = seeded["bob"].id
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
     subject_id = uuid4()
 
     specs = [
@@ -135,7 +135,7 @@ async def test_fanout_durability_via_outbox(seeded, db_session) -> None:
     """fanout survives the outbox drain path (enqueue → drain → body)."""
     alice_id = seeded["alice"].id
     bob_id = seeded["bob"].id
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
     subject_id = uuid4()
 
     specs = [
@@ -191,7 +191,7 @@ async def test_fanout_durability_via_outbox(seeded, db_session) -> None:
 async def test_create_enforces_subject_pair(seeded, db_session) -> None:
     """create() raises when exactly one of subject_type/subject_id is set."""
     alice_id = seeded["alice"].id
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
 
     with pytest.raises(ValueError, match="both be null or both be set"):
         await create(
@@ -223,7 +223,7 @@ async def test_create_enforces_subject_pair(seeded, db_session) -> None:
 async def test_dedup_on_subject_tuple(seeded, db_session) -> None:
     """create() deduplicates on (user_id, type, subject_type, subject_id)."""
     alice_id = seeded["alice"].id
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
     subject_id = uuid4()
 
     first = await create(

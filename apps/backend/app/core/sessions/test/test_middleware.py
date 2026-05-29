@@ -69,10 +69,10 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     member_user = await identity_repo.insert_user(db_session, display_name="Member")
     org = await orgs_repo.insert_org(db_session, slug="acme")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member_user.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 
     raw_owner = "owner-raw-token"

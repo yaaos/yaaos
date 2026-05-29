@@ -59,7 +59,7 @@ async def _notify_owners(row: McpCredentialRow) -> int:
         if org is None:
             return 0
         memberships = await orgs_repo.list_memberships_for_org(s, row.org_id)
-        owner_ids = [m.user_id for m in memberships if Role(m.role) == Role.OWNER]
+        owner_ids = [m.user_id for m in memberships if m.role == Role.OWNER]
         if not owner_ids:
             return 0
         # Collect verified email addresses for each owner.

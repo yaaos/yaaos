@@ -47,10 +47,10 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="audit-a")
     org_b = await orgs_repo.insert_org(db_session, slug="audit-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="la"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.BUILDER, handle="la"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.ADMIN, handle="la2"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.ADMIN, handle="la2"
     )
     await db_session.commit()
     yield {"user": user, "org_a": org_a, "org_b": org_b}
@@ -75,8 +75,8 @@ async def test_login_emits_one_audit_per_org(seeded) -> None:
         )
     assert r.status_code in (302, 303)
 
-    rows_a = await list_for_org(org_id=seeded["org_a"].id, actions=["logged_in"])
-    rows_b = await list_for_org(org_id=seeded["org_b"].id, actions=["logged_in"])
+    rows_a = await list_for_org(org_id=seeded["org_a"].org_id, actions=["logged_in"])
+    rows_b = await list_for_org(org_id=seeded["org_b"].org_id, actions=["logged_in"])
     assert len(rows_a) >= 1
     assert len(rows_b) >= 1
     assert rows_a[0].actor.user_id == seeded["user"].id
@@ -95,5 +95,5 @@ async def test_logout_all_emits_audit(db_session, seeded) -> None:
     await _emit_logout_audit(db_session, user_id=seeded["user"].id, kind="logout_all")
     await db_session.commit()
 
-    rows = await list_for_org(org_id=seeded["org_a"].id, actions=["logout_all"])
+    rows = await list_for_org(org_id=seeded["org_a"].org_id, actions=["logout_all"])
     assert any(r.actor.user_id == seeded["user"].id for r in rows)

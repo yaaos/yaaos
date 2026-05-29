@@ -41,7 +41,7 @@ async def seeded(db_session):
     # One notification for Alice, one for Bob — proves per-user scoping.
     n_alice = await create(
         user_id=alice.id,
-        org_id=org.id,
+        org_id=org.org_id,
         type="hitl_waiting",
         title="HITL prompt on PR #42",
         body="Reviewer needs a Builder decision before continuing.",
@@ -49,7 +49,7 @@ async def seeded(db_session):
     )
     await create(
         user_id=bob.id,
-        org_id=org.id,
+        org_id=org.org_id,
         type="ticket_completed",
         title="Review done on PR #99",
         body="No high-severity findings.",
@@ -150,7 +150,7 @@ async def test_create_is_idempotent_by_user_type_subject(seeded, db_session) -> 
     subject_id = _uuid4()
     first = await create(
         user_id=seeded["alice"].id,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         type="ticket_completed",
         title="X",
         body="Y",
@@ -160,7 +160,7 @@ async def test_create_is_idempotent_by_user_type_subject(seeded, db_session) -> 
     )
     second = await create(
         user_id=seeded["alice"].id,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         type="ticket_completed",
         title="X (re-emit)",
         body="Y (re-emit)",

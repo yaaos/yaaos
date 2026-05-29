@@ -16,11 +16,12 @@ from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
-from app.core.tenancy.models import OrgRow
+from app.core.tenancy import clear_vcs_state as _tenancy_clear_vcs
+from app.core.tenancy import get_vcs_state as _tenancy_get_vcs
+from app.core.tenancy import set_vcs_state as _tenancy_set_vcs
 
 log = structlog.get_logger("orgs.vcs")
 
@@ -58,12 +59,8 @@ class VcsAuditPayload(BaseModel):
 
 
 async def get_vcs(session: AsyncSession, org_id: UUID) -> VcsState:
-    row = (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
-    return VcsState(
-        org_id=org_id,
-        plugin_id=row.vcs_plugin_id,
-        settings=dict(row.vcs_settings or {}),
-    )
+    plugin_id, settings = await _tenancy_get_vcs(session, org_id)
+    return VcsState(org_id=org_id, plugin_id=plugin_id, settings=settings)
 
 
 async def set_vcs(
@@ -75,9 +72,7 @@ async def set_vcs(
     actor: Actor,
 ) -> VcsState:
     """Persist the chosen VCS plugin + its settings. Emits `vcs.installed`."""
-    await session.execute(
-        update(OrgRow).where(OrgRow.id == org_id).values(vcs_plugin_id=plugin_id, vcs_settings=settings)
-    )
+    await _tenancy_set_vcs(session, org_id, plugin_id=plugin_id, settings=settings)
     await audit(
         "org",
         org_id,
@@ -100,16 +95,11 @@ async def clear_vcs(
     `vcs.cleared` only when something was actually cleared.
 
     Also wipes plugin-owned credentials/install rows so Remove means "fully
-    disconnected" — the next Add starts from a blank slate. has one VCS
-    plugin (github), so the cleanup is inlined here rather than dispatched
-    through a plugin hook; revisit when a second VCS plugin ships.
+    disconnected" — the next Add starts from a blank slate.
     """
-    row = (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
-    if row.vcs_plugin_id is None:
+    prior = await _tenancy_clear_vcs(session, org_id)
+    if prior is None:
         return False
-    prior = row.vcs_plugin_id
-    row.vcs_plugin_id = None
-    row.vcs_settings = None
     # Call registered VCS plugin cleanup hooks (e.g. deleting github install
     # rows). Plugins register via `register_vcs_clear_hook` at boot; no
     # direct plugin-model import needed here.

@@ -104,10 +104,10 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="integ-ep")
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
@@ -190,7 +190,7 @@ async def test_callback_round_trip_persists_credential(
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -208,7 +208,7 @@ async def test_callback_round_trip_persists_credential(
     rows = (
         (
             await db_session.execute(
-                select(McpCredentialRow).where(McpCredentialRow.org_id == seeded["org"].id)
+                select(McpCredentialRow).where(McpCredentialRow.org_id == seeded["org"].org_id)
             )
         )
         .scalars()
@@ -237,7 +237,7 @@ async def test_callback_rejects_wrong_provider_in_state(seeded, stub_provider) -
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -260,7 +260,7 @@ async def test_delete_endpoint_clears_row(seeded, stub_provider, stub_exchange, 
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -290,7 +290,7 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -313,7 +313,7 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
     assert body["allowed_tools"] == ["update_thing"]
     assert body["enabled"] is False
     # Audit row was written.
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.allowlist_updated"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.allowlist_updated"])
     assert len(rows) == 1
 
 
@@ -324,7 +324,7 @@ async def test_validate_endpoint_returns_provider_result(seeded, stub_provider, 
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -415,7 +415,7 @@ async def test_broken_summary_endpoint_returns_broken_creds_for_admin(
         salt="yaaos-integration-connect",
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -430,7 +430,7 @@ async def test_broken_summary_endpoint_returns_broken_creds_for_admin(
     # Flip the credential to "failed" directly in the DB.
     await db_session.execute(
         sa_update(McpCredentialRow)
-        .where(McpCredentialRow.org_id == seeded["org"].id)
+        .where(McpCredentialRow.org_id == seeded["org"].org_id)
         .values(last_refresh_status="failed")
     )
     await db_session.commit()
@@ -444,7 +444,7 @@ async def test_broken_summary_endpoint_returns_broken_creds_for_admin(
     assert r.status_code == 200, r.text
     body = r.json()
     assert "orgs" in body
-    matching = [e for e in body["orgs"] if e["org_id"] == str(seeded["org"].id)]
+    matching = [e for e in body["orgs"] if e["org_id"] == str(seeded["org"].org_id)]
     assert len(matching) == 1
     assert any(b["provider"] == "stub" for b in matching[0]["broken_integrations"])
 
@@ -467,7 +467,7 @@ async def test_broken_summary_endpoint_builder_sees_empty(
         salt="yaaos-integration-connect",
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -480,7 +480,7 @@ async def test_broken_summary_endpoint_builder_sees_empty(
         )
     await db_session.execute(
         sa_update(McpCredentialRow)
-        .where(McpCredentialRow.org_id == seeded["org"].id)
+        .where(McpCredentialRow.org_id == seeded["org"].org_id)
         .values(last_refresh_status="failed")
     )
     await db_session.commit()

@@ -98,7 +98,7 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
         type="pr_review",
         payload={},
         idempotency_key=ext_id,
-        org_id=org.id,
+        org_id=org.org_id,
         title="t",
         source="github_pr",
         source_external_id=ext_id,
@@ -128,10 +128,10 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
             updated_at=datetime.now(UTC),
         ),
         ticket_id=ticket_id,
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
-    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.id)
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
     _review = agg.start_review(
         trigger=ReviewTrigger.MANUAL_FULL,
         scope=ReviewScope.full(base_sha="0", head_sha="1"),
@@ -142,7 +142,7 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
     review = await db_session.get(ReviewRow, _review.id)
     await create_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="stub_pipeline",
         encrypted_access_token=encrypt("upstream-access").decode(),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -153,7 +153,7 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
         last_refresh_status="failed",
         last_refresh_failed_at=datetime.now(UTC),
     )
-    raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     await db_session.commit()
     return review, raw
 

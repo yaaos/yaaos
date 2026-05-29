@@ -42,10 +42,10 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     member_user = await identity_repo.insert_user(db_session, display_name="Member")
     org = await orgs_repo.insert_org(db_session, slug="endpoints-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner_user.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner_user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member_user.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 
     owner_session = await session_lifecycle.create(db_session, user_id=owner_user.id, workspace_id=None)
@@ -105,7 +105,7 @@ async def test_accept_invitation_happy_path(seeded, db_session) -> None:
     owner_user = seeded["owner_user"]
     _, raw = await invite_service(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="alice@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
@@ -132,7 +132,7 @@ async def test_accept_expired_returns_410(seeded, db_session) -> None:
     owner_user = seeded["owner_user"]
     _, raw = await invite_service(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="ex@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
@@ -167,7 +167,7 @@ async def test_accept_used_returns_410(seeded, db_session) -> None:
     owner_user = seeded["owner_user"]
     _, raw = await invite_service(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="used@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner_user.id,
@@ -212,22 +212,11 @@ async def test_remove_member_revokes_sessions(seeded, db_session) -> None:
         )
     assert resp.status_code == 200
     from app.core.database import get_sessionmaker  # noqa: PLC0415
+    from app.core.tenancy import delete_org  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
         assert await session_lifecycle.lookup(s, member_session.raw_token) is None
-        await s.execute(
-            __import__("sqlalchemy")
-            .delete(__import__("app.domain.orgs.models", fromlist=["MembershipRow"]).MembershipRow)
-            .where(
-                __import__("app.domain.orgs.models", fromlist=["MembershipRow"]).MembershipRow.org_id
-                == org.id
-            )
-        )
-        await s.execute(
-            __import__("sqlalchemy")
-            .delete(__import__("app.domain.orgs.models", fromlist=["OrgRow"]).OrgRow)
-            .where(__import__("app.domain.orgs.models", fromlist=["OrgRow"]).OrgRow.id == org.id)
-        )
+        await delete_org(s, org.org_id)
         await s.commit()
 
 
@@ -256,12 +245,9 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
     async with get_sessionmaker()() as s:
         assert await session_lifecycle.lookup(s, member_session.raw_token) is None
         # Cleanup the seeded org so other tests see a clean slate.
-        from sqlalchemy import delete  # noqa: PLC0415
+        from app.core.tenancy import delete_org  # noqa: PLC0415
 
-        from app.core.tenancy.models import MembershipRow, OrgRow  # noqa: PLC0415
-
-        await s.execute(delete(MembershipRow).where(MembershipRow.org_id == org.id))
-        await s.execute(delete(OrgRow).where(OrgRow.id == org.id))
+        await delete_org(s, org.org_id)
         await s.commit()
 
 

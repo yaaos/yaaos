@@ -76,7 +76,7 @@ async def claimed_org(db_session):
     org = await orgs_repo.insert_org(db_session, slug="discover-acme", display_name="Acme")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor/>",
         jit_enabled=False,
         enabled=True,
@@ -103,7 +103,7 @@ async def test_sso_discover_skips_disabled_config(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="discover-off", display_name="Off")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor/>",
         jit_enabled=False,
         enabled=False,

@@ -47,7 +47,7 @@ async def seeded(db_session):
     user = await identity_repo.insert_user(db_session, display_name="B")
     org = await orgs_repo.insert_org(db_session, slug="detail-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
@@ -59,7 +59,7 @@ async def seeded(db_session):
             " VALUES (:id, :org_id, 'github_pr', 'x/y#1', 'Tighten retries', 'running',"
             " 'github', 'x/y')"
         ),
-        {"id": ticket_id, "org_id": org.id},
+        {"id": ticket_id, "org_id": org.org_id},
     )
     await db_session.commit()
     yield {"org": org, "sess": sess, "ticket_id": ticket_id}
@@ -107,7 +107,7 @@ async def test_detail_404_on_cross_org_access(seeded, db_session) -> None:
             " plugin_id, repo_external_id)"
             " VALUES (:id, :org_id, 'github_pr', 'x/y#9', 'other', 'running', 'github', 'x/y')"
         ),
-        {"id": other_ticket, "org_id": other_org.id},
+        {"id": other_ticket, "org_id": other_org.org_id},
     )
     await db_session.commit()
     async with _client() as c:

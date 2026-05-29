@@ -9,14 +9,13 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import _set_session_last_seen_for_tests
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.core.tenancy.models import OrgRow
+from app.core.tenancy import get_org_full, update_org_fields
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401
@@ -60,13 +59,13 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="ts-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
@@ -111,11 +110,16 @@ async def test_get_org_settings_returns_current_values(seeded, db_session) -> No
     """GET /api/orgs returns the current org's top-level settings so the SPA
     can show what's set before the user edits."""
     # Seed some non-default values to assert they round-trip.
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    org_row.session_timeout_override = 42
-    org_row.workspace_provider = "remote_agent"
-    org_row.registered_iam_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
-    org_row.aws_region = "us-east-1"
+    await update_org_fields(
+        db_session,
+        seeded["org"].org_id,
+        {
+            "session_timeout_override": 42,
+            "workspace_provider": "remote_agent",
+            "registered_iam_arn": "arn:aws:iam::123456789012:role/yaaos-agent",
+            "aws_region": "us-east-1",
+        },
+    )
     await db_session.commit()
 
     sess = seeded["admin_sess"]
@@ -167,15 +171,15 @@ async def test_patch_org_admin_can_set_override(seeded, db_session) -> None:
     assert body["slug"] == seeded["org"].slug
     assert body["session_timeout_override"] == 30
 
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    assert org_row.session_timeout_override == 30
+    full = await get_org_full(db_session, seeded["org"].org_id)
+    assert full is not None
+    assert full.session_timeout_override == 30
 
 
 @pytest.mark.asyncio
 async def test_patch_org_admin_can_clear_override(seeded, db_session) -> None:
     # Pre-set, then clear.
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    org_row.session_timeout_override = 30
+    await update_org_fields(db_session, seeded["org"].org_id, {"session_timeout_override": 30})
     await db_session.commit()
 
     sess = seeded["admin_sess"]
@@ -263,10 +267,15 @@ async def test_patch_org_can_clear_workspace_provider(seeded, db_session) -> Non
     null`, which clears the column. ARN persists by default unless the
     SPA also clears it."""
     # Pre-set to remote_agent + ARN.
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    org_row.workspace_provider = "remote_agent"
-    org_row.registered_iam_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
-    org_row.aws_region = "us-east-1"
+    await update_org_fields(
+        db_session,
+        seeded["org"].org_id,
+        {
+            "workspace_provider": "remote_agent",
+            "registered_iam_arn": "arn:aws:iam::123456789012:role/yaaos-agent",
+            "aws_region": "us-east-1",
+        },
+    )
     await db_session.commit()
 
     sess = seeded["admin_sess"]
@@ -395,8 +404,7 @@ async def _backdate_session_last_seen(db_session, *, token_hash: str, minutes_ag
 async def test_idle_session_rejected_when_override_set(seeded, db_session) -> None:
     """Admin pins the override to 10 minutes; a session last seen 30 minutes
     ago is rejected by the require() dep with 401 session_idle_expired."""
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    org_row.session_timeout_override = 10
+    await update_org_fields(db_session, seeded["org"].org_id, {"session_timeout_override": 10})
     sess = seeded["admin_sess"]
     await _backdate_session_last_seen(
         db_session, token_hash=identity_repo.hash_token(sess.raw_token), minutes_ago=30
@@ -415,8 +423,7 @@ async def test_idle_session_rejected_when_override_set(seeded, db_session) -> No
 @pytest.mark.asyncio
 async def test_idle_session_within_override_passes(seeded, db_session) -> None:
     """Within the override window: passes."""
-    org_row = (await db_session.execute(select(OrgRow).where(OrgRow.id == seeded["org"].id))).scalar_one()
-    org_row.session_timeout_override = 60
+    await update_org_fields(db_session, seeded["org"].org_id, {"session_timeout_override": 60})
     sess = seeded["admin_sess"]
     await _backdate_session_last_seen(
         db_session, token_hash=identity_repo.hash_token(sess.raw_token), minutes_ago=30

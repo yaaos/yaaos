@@ -49,7 +49,7 @@ async def seeded(db_session):
     user = await identity_repo.insert_user(db_session, display_name="Picker User")
     org = await orgs_repo.insert_org(db_session, slug="picker-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="pick"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="pick"
     )
     session = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

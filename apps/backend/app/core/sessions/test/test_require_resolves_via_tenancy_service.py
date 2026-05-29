@@ -52,7 +52,7 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     user = await identity_repo.insert_user(db_session, display_name="Probe")
     org = await orgs_repo.insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="probe"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe"
     )
     from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
 
@@ -137,7 +137,7 @@ async def test_require_returns_403_for_insufficient_role(db_session) -> None:
     user = await identity_repo.insert_user(db_session, display_name="Builder")
     org = await orgs_repo.insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="bld"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld"
     )
     from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
 

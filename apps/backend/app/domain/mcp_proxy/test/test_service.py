@@ -34,7 +34,7 @@ async def _seed_review(db_session) -> tuple:  # type: ignore[return]
         type="pr_review",
         payload={},
         idempotency_key=f"{ext_id}-{uuid4().hex[:6]}",
-        org_id=org.id,
+        org_id=org.org_id,
         title="t",
         source="github_pr",
         source_external_id=ext_id,
@@ -64,10 +64,10 @@ async def _seed_review(db_session) -> tuple:  # type: ignore[return]
             updated_at=datetime.now(UTC),
         ),
         ticket_id=ticket_id,
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
-    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.id)
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
     review: Review = agg.start_review(
         trigger=ReviewTrigger.MANUAL_FULL,
         scope=ReviewScope.full(base_sha="0", head_sha="1"),
@@ -81,7 +81,7 @@ async def _seed_review(db_session) -> tuple:  # type: ignore[return]
 @pytest.mark.asyncio
 async def test_mint_returns_raw_token_persists_hash(db_session) -> None:
     _, org, _, review = await _seed_review(db_session)
-    raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     assert len(raw) > 32  # URL-safe base64 of 32 random bytes
     rows = (
         (await db_session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.review_id == review.id)))
@@ -98,24 +98,24 @@ async def test_mint_returns_raw_token_persists_hash(db_session) -> None:
 async def test_mint_token_stores_org_id(db_session) -> None:
     """org_id is persisted on the token row so the proxy reads tenancy without a reviewer back-lookup."""
     _, org, _, review = await _seed_review(db_session)
-    raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     rows = (
         (await db_session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.review_id == review.id)))
         .scalars()
         .all()
     )
     assert len(rows) == 1
-    assert rows[0].org_id == org.id
+    assert rows[0].org_id == org.org_id
     # Cross-check via lookup_token value object.
     token = await lookup_token(raw, session=db_session)
     assert token is not None
-    assert token.org_id == org.id
+    assert token.org_id == org.org_id
 
 
 @pytest.mark.asyncio
 async def test_lookup_returns_row_for_valid_token(db_session) -> None:
     _, org, _, review = await _seed_review(db_session)
-    raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     row = await lookup_token(raw, session=db_session)
     assert row is not None
     assert row.review_id == review.id
@@ -129,7 +129,7 @@ async def test_lookup_returns_none_for_unknown(db_session) -> None:
 @pytest.mark.asyncio
 async def test_lookup_returns_none_for_expired(db_session) -> None:
     _, org, _, review = await _seed_review(db_session)
-    raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     # Backdate so lookup_token sees it as expired.
     row = (
         await db_session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.review_id == review.id))
@@ -142,7 +142,7 @@ async def test_lookup_returns_none_for_expired(db_session) -> None:
 @pytest.mark.asyncio
 async def test_revoke_drops_all_rows_for_review(db_session) -> None:
     _, org, _, review = await _seed_review(db_session)
-    await mint_token(review.id, org_id=org.id, session=db_session)
+    await mint_token(review.id, org_id=org.org_id, session=db_session)
     n = await revoke_token(review.id, session=db_session)
     assert n == 1
     rows = (
@@ -158,8 +158,8 @@ async def test_sweep_drops_expired_keeps_fresh(db_session) -> None:
     import hashlib  # noqa: PLC0415
 
     _, org, _, review = await _seed_review(db_session)
-    fresh = await mint_token(review.id, org_id=org.id, session=db_session)
-    expired = await mint_token(review.id, org_id=org.id, session=db_session)
+    fresh = await mint_token(review.id, org_id=org.org_id, session=db_session)
+    expired = await mint_token(review.id, org_id=org.org_id, session=db_session)
     # Backdate the expired token by targeting its sha256 hash directly.
     expired_hash = hashlib.sha256(expired.encode()).hexdigest()
     row = (
@@ -187,7 +187,7 @@ async def test_mcp_proxy_sweep_loop_deletes_expired(db_session) -> None:
     import hashlib  # noqa: PLC0415
 
     _, org, _, review = await _seed_review(db_session)
-    expired_raw = await mint_token(review.id, org_id=org.id, session=db_session)
+    expired_raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     # Backdate via the same test session so it's visible to the loop's own session.
     expired_hash = hashlib.sha256(expired_raw.encode()).hexdigest()
     row = (

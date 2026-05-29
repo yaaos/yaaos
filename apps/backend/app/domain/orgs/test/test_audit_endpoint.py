@@ -40,10 +40,10 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="Member")
     org = await orgs_repo.insert_org(db_session, slug="audit-endpoint")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     owner_session = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
     member_session = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
@@ -54,7 +54,7 @@ async def seeded(db_session):
         "logged_in",
         _Payload(note="a"),
         Actor.user(user_id=owner.id),
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
     await audit(
@@ -63,7 +63,7 @@ async def seeded(db_session):
         "logout",
         _Payload(note="b"),
         Actor.user(user_id=owner.id),
-        org_id=org.id,
+        org_id=org.org_id,
         session=db_session,
     )
     await db_session.commit()

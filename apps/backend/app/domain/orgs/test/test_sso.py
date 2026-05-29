@@ -48,11 +48,11 @@ async def sso_org(db_session):
     await identity_repo.add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
     org = await orgs_repo.insert_org(db_session, slug="sso-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="sso"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso"
     )
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor>fake</EntityDescriptor>",
         jit_enabled=False,
         enabled=True,
@@ -101,7 +101,7 @@ async def test_acs_jit_creates_user_when_enabled(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="jit-org")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor/>",
         jit_enabled=True,
         enabled=True,
@@ -129,7 +129,7 @@ async def test_acs_no_jit_rejects_unknown_user(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="nojit-org")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor/>",
         jit_enabled=False,
         enabled=True,
@@ -159,7 +159,7 @@ async def test_middleware_blocks_without_sso_satisfaction(sso_org, db_session) -
 @pytest.mark.asyncio
 async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None:
     s = await session_lifecycle.create(db_session, user_id=sso_org["user"].id, workspace_id=None)
-    await session_lifecycle.mark_sso_satisfied(db_session, s.raw_token, org_id=sso_org["org"].id)
+    await session_lifecycle.mark_sso_satisfied(db_session, s.raw_token, org_id=sso_org["org"].org_id)
     await db_session.commit()
 
     async with _client() as c:
@@ -177,13 +177,13 @@ async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
     await identity_repo.add_email(db_session, user_id=owner.id, email="owner@example.com", verified=True)
     org = await orgs_repo.insert_org(db_session, slug="exempt-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="ow"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow"
     )
     seed, _ = await totp_lifecycle.enroll(db_session, user_id=owner.id)
     await totp_lifecycle.verify(db_session, user_id=owner.id, code=pyotp.TOTP(seed).now())
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<EntityDescriptor/>",
         enabled=True,
         exempt_owner_user_id=owner.id,

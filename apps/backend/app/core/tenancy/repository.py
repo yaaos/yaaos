@@ -84,6 +84,18 @@ async def update_role(session: AsyncSession, *, user_id: UUID, org_id: UUID, rol
     return row
 
 
+async def get_org_row_by_iam_arn(session: AsyncSession, canonical_arn: str) -> OrgRow | None:
+    """Return the OrgRow whose `registered_iam_arn` matches *canonical_arn*, or None."""
+    return (
+        await session.execute(
+            select(OrgRow).where(
+                OrgRow.registered_iam_arn == canonical_arn,
+                OrgRow.archived_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def set_sso_authz(
     session: AsyncSession,
     *,
@@ -97,4 +109,24 @@ async def set_sso_authz(
         raise LookupError(f"org {org_id} not found")
     row.sso_enabled = enabled
     row.sso_exempt_owner_user_id = exempt_owner
+    await session.flush()
+
+
+async def update_member_handle_row(
+    session: AsyncSession, *, user_id: UUID, org_id: UUID, handle: str
+) -> MembershipRow:
+    """Set a member's handle. Raises `LookupError` if no membership exists."""
+    row = await get_membership(session, user_id=user_id, org_id=org_id)
+    if row is None:
+        raise LookupError("membership not found")
+    row.handle = handle
+    await session.flush()
+    return row
+
+
+async def delete_org(session: AsyncSession, org_id: UUID) -> None:
+    """Hard-delete an org row (cascades to memberships, invitations, etc.)."""
+    from sqlalchemy import delete as sql_delete  # noqa: PLC0415
+
+    await session.execute(sql_delete(OrgRow).where(OrgRow.id == org_id))
     await session.flush()

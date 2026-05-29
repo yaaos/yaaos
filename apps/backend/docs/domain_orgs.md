@@ -4,7 +4,9 @@
 
 ## Scope
 
-Org and membership rows are owned by [`core/tenancy`](core_tenancy.md); `domain/orgs` owns the feature layer on top of them. Invitations are the sole access gate for new members — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) live here. Every non-user row is `org_id`-scoped.
+`domain/orgs` is a feature aggregate over [`core/tenancy`](core_tenancy.md). All org and membership state (read, write, CRUD) is delegated to `core/tenancy` service primitives — `domain/orgs` never queries `orgs` or `memberships` rows directly. Feature work (invitations, SSO config, VCS binding, coding agents, onboarding) lives here; org/membership IAM is tenancy's concern.
+
+Invitations are the sole access gate for new members — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) live here. Every non-user row is `org_id`-scoped.
 
 ## Entities
 
@@ -53,7 +55,7 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 ## Data owned
 
-Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` reads them via `core/tenancy` service primitives. See `models.py` + [core_database.md](core_database.md) for columns.
+Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `get_org_full`, `list_memberships_for_org`, `update_org_fields`, etc.). `domain/orgs/repository.py` exposes compatibility shims over those service functions for callers in this module and tests. See `models.py` + [core_database.md](core_database.md) for columns.
 
 Notable constraints:
 - `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.
@@ -74,6 +76,7 @@ See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/codi
 
 ## How it's tested
 
-- `test/test_repository.py` — repository helpers against real Postgres.
+- `test/test_repository.py` — repository helpers (invitation + shim calls to tenancy) against real Postgres.
 - `test/test_invitations.py` — invite, accept, used-token, expired-token, garbage-token, remove revokes sessions, role change revokes sessions.
 - `test/test_membership_endpoints.py` — ASGI-driven: invite + email sent, role enforcement, accept happy path, accept-expired → 410, accept-used → 410, remove/change_role session revocation.
+- `test/test_tenancy_delegation.py` — service tests verifying `create_org` + `create_membership` delegate through `core/tenancy`, and SSO authz flags are written via `set_sso_authz_for_org`.

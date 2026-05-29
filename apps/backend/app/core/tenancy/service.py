@@ -19,13 +19,19 @@ from app.core.tenancy.repository import (
     delete_membership,
     get_membership,
     get_org_row,
+    get_org_row_by_iam_arn,
     get_org_row_by_slug,
     insert_membership,
     insert_org,
     list_active_member_id_rows,
+    list_memberships_for_org_rows,
     list_memberships_for_user_rows,
     set_sso_authz,
+    update_member_handle_row,
     update_role,
+)
+from app.core.tenancy.repository import (
+    delete_org as _delete_org_row,
 )
 
 # ── Value objects ────────────────────────────────────────────────────────────
@@ -63,6 +69,51 @@ class MembershipView(BaseModel):
     org_name: str
     role: Role
     handle: str
+
+
+class OrgMembershipInfo(BaseModel):
+    """Per-org membership projection — identity + role + handle.
+
+    Returned by `list_memberships_for_org`. Does not carry org name/slug;
+    callers already have org context.
+    """
+
+    user_id: UUID
+    org_id: UUID
+    role: Role
+    handle: str
+
+
+class OrgFullView(BaseModel):
+    """Full read-side view of an org row including feature-level columns.
+
+    Returned by `get_org_full`, `update_org_fields`, and VCS state helpers so
+    `domain/orgs` callers never need to import `OrgRow` directly.
+    """
+
+    org_id: UUID
+    slug: str
+    display_name: str
+    session_timeout_override: int | None = None
+    workspace_provider: str | None = None
+    registered_iam_arn: str | None = None
+    aws_region: str | None = None
+    vcs_plugin_id: str | None = None
+    vcs_settings: dict | None = None
+
+    @classmethod
+    def from_row(cls, row: OrgRow) -> OrgFullView:
+        return cls(
+            org_id=row.id,
+            slug=row.slug,
+            display_name=row.display_name,
+            session_timeout_override=row.session_timeout_override,
+            workspace_provider=row.workspace_provider,
+            registered_iam_arn=row.registered_iam_arn,
+            aws_region=row.aws_region,
+            vcs_plugin_id=row.vcs_plugin_id,
+            vcs_settings=dict(row.vcs_settings) if row.vcs_settings else None,
+        )
 
 
 # ── Exceptions ───────────────────────────────────────────────────────────────
@@ -126,6 +177,19 @@ async def get_member_role(
     """Return the user's role in the org, or None if they have no membership."""
     membership = await get_membership(session, user_id=user_id, org_id=org_id)
     return Role(membership.role) if membership is not None else None
+
+
+async def get_membership_info(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    org_id: UUID,
+) -> OrgMembershipInfo | None:
+    """Return the full membership projection for (user_id, org_id), or None."""
+    row = await get_membership(session, user_id=user_id, org_id=org_id)
+    if row is None:
+        return None
+    return OrgMembershipInfo(user_id=row.user_id, org_id=row.org_id, role=Role(row.role), handle=row.handle)
 
 
 async def list_memberships_for_user(
@@ -233,3 +297,113 @@ async def set_sso_authz_for_org(
     Raises `LookupError` if the org is not found.
     """
     await set_sso_authz(session, org_id=org_id, enabled=enabled, exempt_owner=exempt_owner)
+
+
+async def list_memberships_for_org(session: AsyncSession, org_id: UUID) -> list[OrgMembershipInfo]:
+    """Return all memberships for *org_id* as `OrgMembershipInfo` VOs."""
+    rows = await list_memberships_for_org_rows(session, org_id)
+    return [
+        OrgMembershipInfo(user_id=r.user_id, org_id=r.org_id, role=Role(r.role), handle=r.handle)
+        for r in rows
+    ]
+
+
+async def update_member_handle(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    org_id: UUID,
+    handle: str,
+) -> OrgMembershipInfo:
+    """Update a member's @handle. Raises `LookupError` if no membership exists."""
+    row = await update_member_handle_row(session, user_id=user_id, org_id=org_id, handle=handle)
+    return OrgMembershipInfo(user_id=row.user_id, org_id=row.org_id, role=Role(row.role), handle=row.handle)
+
+
+async def get_org_full(session: AsyncSession, org_id: UUID) -> OrgFullView | None:
+    """Return the full org view including feature columns, or None."""
+    row = await get_org_row(session, org_id)
+    return OrgFullView.from_row(row) if row is not None else None
+
+
+async def get_org_full_by_slug(session: AsyncSession, slug: str) -> OrgFullView | None:
+    """Return the full org view by slug, or None."""
+    row = await get_org_row_by_slug(session, slug)
+    return OrgFullView.from_row(row) if row is not None else None
+
+
+async def update_org_fields(
+    session: AsyncSession,
+    org_id: UUID,
+    updates: dict,
+) -> OrgFullView:
+    """Apply a dict of column name → value updates to the org row.
+
+    Only keys present in *updates* are touched. Raises `LookupError` if
+    the org is not found. Does not commit — shape (a).
+    """
+    row = await get_org_row(session, org_id)
+    if row is None:
+        raise LookupError(f"org {org_id} not found")
+    for key, value in updates.items():
+        setattr(row, key, value)
+    await session.flush()
+    await session.refresh(row)
+    return OrgFullView.from_row(row)
+
+
+async def get_vcs_state(session: AsyncSession, org_id: UUID) -> tuple[str | None, dict]:
+    """Return (plugin_id, settings) for the org's current VCS choice."""
+    row = await get_org_row(session, org_id)
+    if row is None:
+        raise LookupError(f"org {org_id} not found")
+    return row.vcs_plugin_id, dict(row.vcs_settings or {})
+
+
+async def set_vcs_state(
+    session: AsyncSession,
+    org_id: UUID,
+    *,
+    plugin_id: str,
+    settings: dict,
+) -> None:
+    """Persist the VCS plugin choice + settings on the org row."""
+    from sqlalchemy import update as sql_update  # noqa: PLC0415
+
+    await session.execute(
+        sql_update(OrgRow).where(OrgRow.id == org_id).values(vcs_plugin_id=plugin_id, vcs_settings=settings)
+    )
+    await session.flush()
+
+
+async def clear_vcs_state(session: AsyncSession, org_id: UUID) -> str | None:
+    """Clear the org's VCS choice. Returns the prior plugin_id, or None if none was set."""
+    row = await get_org_row(session, org_id)
+    if row is None:
+        raise LookupError(f"org {org_id} not found")
+    prior = row.vcs_plugin_id
+    if prior is None:
+        return None
+    row.vcs_plugin_id = None
+    row.vcs_settings = None
+    await session.flush()
+    return prior
+
+
+async def delete_org(session: AsyncSession, org_id: UUID) -> None:
+    """Hard-delete an org row. Cascades to memberships, invitations, etc.
+
+    Used in test cleanup; not exposed in normal feature flows.
+    """
+    await _delete_org_row(session, org_id)
+
+
+async def get_org_full_by_iam_arn(session: AsyncSession, canonical_arn: str) -> OrgFullView | None:
+    """Return the full org view for the org registered with *canonical_arn*, or None.
+
+    Callers must canonicalize the ARN (lowercase) before calling.
+    """
+    row = await get_org_row_by_iam_arn(session, canonical_arn)
+    if row is None:
+        return None
+    return OrgFullView.from_row(row)

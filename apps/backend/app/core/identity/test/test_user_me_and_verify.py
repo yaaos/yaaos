@@ -40,10 +40,10 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="org-a")
     org_b = await orgs_repo.insert_org(db_session, slug="org-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="alpha"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.BUILDER, handle="alpha"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.BUILDER, handle="beta"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="beta"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -160,7 +160,7 @@ async def test_patch_own_handle_updates(seeded) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "renamed"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -176,7 +176,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     await orgs_repo.insert_membership(
         db_session,
         user_id=other.id,
-        org_id=seeded["org_a"].id,
+        org_id=seeded["org_a"].org_id,
         role=Role.BUILDER,
         handle="taken",
     )
@@ -184,7 +184,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "taken"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -197,7 +197,7 @@ async def test_patch_own_handle_rejects_blank(seeded) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "  "},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},

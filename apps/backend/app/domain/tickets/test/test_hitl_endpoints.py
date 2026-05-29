@@ -43,7 +43,7 @@ async def seeded(db_session):
     user = await identity_repo.insert_user(db_session, display_name="B")
     org = await orgs_repo.insert_org(db_session, slug="hitl-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
@@ -56,7 +56,7 @@ async def seeded(db_session):
             " plugin_id, repo_external_id)"
             " VALUES (:id, :org_id, 'github_pr', 'x/y#hitl', 't', 'running', 'github', 'x/y')"
         ),
-        {"id": ticket_id, "org_id": org.id},
+        {"id": ticket_id, "org_id": org.org_id},
     )
     wfx_id = uuid.uuid4()
     await db_session.execute(
@@ -123,7 +123,7 @@ async def test_history_returns_empty_for_ticket_with_no_hitl(seeded, db_session)
             " plugin_id, repo_external_id)"
             " VALUES (:id, :org_id, 'github_pr', 'x/y#bare', 't', 'running', 'github', 'x/y')"
         ),
-        {"id": bare_ticket, "org_id": seeded["org"].id},
+        {"id": bare_ticket, "org_id": seeded["org"].org_id},
     )
     await db_session.commit()
     async with _client() as c:

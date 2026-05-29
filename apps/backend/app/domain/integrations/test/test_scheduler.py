@@ -70,10 +70,10 @@ async def _seed(db_session, *, owner_email: str | None = "owner@example.com"):
             db_session, user_id=owner.id, email=owner_email, is_primary=True, verified=True
         )
         await orgs_repo.insert_membership(
-            db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+            db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
         )
     row = McpCredentialRow(
-        org_id=org.id,
+        org_id=org.org_id,
         provider="stub_sched",
         encrypted_access_token=encrypt("access-1").decode(),
         encrypted_refresh_token=None,
@@ -97,7 +97,7 @@ async def test_validate_success_keeps_status_ok(db_session, stub_provider) -> No
     counts = await run_health_check_once()
     assert counts["ok"] >= 1
     refreshed = (
-        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.id))
+        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.org_id))
     ).scalar_one()
     await db_session.refresh(refreshed)
     assert refreshed.last_refresh_status == "ok"
@@ -115,14 +115,14 @@ async def test_validate_failure_flips_status_audits_and_notifies(db_session, stu
     assert counts["notified"] == 1
 
     refreshed = (
-        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.id))
+        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.org_id))
     ).scalar_one()
     await db_session.refresh(refreshed)
     assert refreshed.last_refresh_status == "failed"
     assert refreshed.last_refresh_failed_at is not None
     assert refreshed.last_failure_notified_at is not None
 
-    audits = await list_for_org(org_id=org.id, actions=["mcp.stub_sched.token_refresh_failed"])
+    audits = await list_for_org(org_id=org.org_id, actions=["mcp.stub_sched.token_refresh_failed"])
     assert len(audits) == 1
     assert any(m.to == "o1@example.com" for m in inbox)
 
@@ -151,7 +151,7 @@ async def test_failure_resends_after_dedup_window(db_session, stub_provider) -> 
     await run_health_check_once()
     # Backdate the notified-at by 25h and re-run; second email should fire.
     row = (
-        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.id))
+        await db_session.execute(select(McpCredentialRow).where(McpCredentialRow.org_id == org.org_id))
     ).scalar_one()
     row.last_failure_notified_at = datetime.now(UTC) - timedelta(hours=25)
     await db_session.commit()

@@ -26,6 +26,7 @@ from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, Role, limiter, org_i
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
 from app.core.sessions import current_actor, public_route, require
+from app.core.tenancy import update_member_handle as _update_member_handle
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.orgs import invitations as inv
 from app.domain.orgs import repository as orgs_repo
@@ -85,7 +86,7 @@ async def list_members() -> list[MemberView]:
                 MemberView(
                     user_id=row.user_id,
                     handle=row.handle,
-                    role=Role(row.role),
+                    role=row.role,
                     display_name=user.display_name if user else "",
                     primary_email=primary.email if primary else None,
                 )
@@ -184,18 +185,24 @@ async def patch_own_membership_handle(
     handle = body.handle.strip()
     if not handle or len(handle) > 64:
         raise _err(422, "invalid_handle")
+    from datetime import UTC, datetime  # noqa: PLC0415
+
     async with db_session() as s:
-        membership_row = await orgs_repo.get_membership(s, user_id=self_user_id, org_id=org_id)
-        if membership_row is None:
+        existing = await orgs_repo.get_membership(s, user_id=self_user_id, org_id=org_id)
+        if existing is None:
             raise _err(404, "membership_not_found")
-        membership_row.handle = handle
         try:
-            await s.flush()
+            info = await _update_member_handle(s, user_id=self_user_id, org_id=org_id, handle=handle)
         except IntegrityError as exc:
             raise _err(409, "handle_taken") from exc
         await s.commit()
-        await s.refresh(membership_row)
-    return Membership.from_row(membership_row)
+    return Membership(
+        user_id=info.user_id,
+        org_id=info.org_id,
+        role=info.role,
+        handle=info.handle,
+        created_at=datetime.now(UTC),
+    )
 
 
 @router.patch("/{target_user_id}", dependencies=[Depends(require(Action.MEMBERS_CHANGE_ROLE))])

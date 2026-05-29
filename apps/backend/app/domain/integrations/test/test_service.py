@@ -92,7 +92,7 @@ async def test_connect_callback_persists_encrypted_tokens(
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
         upstream_identity="service@example.test",
@@ -100,7 +100,7 @@ async def test_connect_callback_persists_encrypted_tokens(
     # Tokens are encrypted at rest; verify via the intra-module row.
     from app.domain.integrations.service import _get_row  # noqa: PLC0415
 
-    row = await _get_row(db_session, seeded["org"].id, "stub")
+    row = await _get_row(db_session, seeded["org"].org_id, "stub")
     assert row is not None
     assert row.encrypted_access_token != "access-1"
     assert decrypt(row.encrypted_access_token.encode()) == b"access-1"
@@ -117,11 +117,11 @@ async def test_connect_callback_emits_audit(seeded, stub_provider, stub_exchange
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.connected"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.connected"])
     assert len(rows) == 1
 
 
@@ -134,13 +134,13 @@ async def test_connect_callback_reconnect_keeps_allowlist(
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
     await integ.update_allowlist(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         provider="stub",
         allowed_tools=["update_thing"],
         actor=seeded["actor"],
@@ -151,7 +151,7 @@ async def test_connect_callback_reconnect_keeps_allowlist(
         db_session,
         provider="stub",
         code="def",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
@@ -165,22 +165,26 @@ async def test_clear_removes_and_audits(seeded, stub_provider, stub_exchange, db
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
-    removed = await integ.clear(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+    removed = await integ.clear(
+        db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"]
+    )
     assert removed is True
-    assert await integ.get(db_session, seeded["org"].id, "stub") is None
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.disconnected"])
+    assert await integ.get(db_session, seeded["org"].org_id, "stub") is None
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.disconnected"])
     assert len(rows) == 1
 
 
 @pytest.mark.asyncio
 async def test_clear_no_op_returns_false_no_audit(seeded, db_session) -> None:
-    removed = await integ.clear(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+    removed = await integ.clear(
+        db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"]
+    )
     assert removed is False
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.disconnected"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.disconnected"])
     assert rows == []
 
 
@@ -191,14 +195,14 @@ async def test_validate_flips_status_on_failure(seeded, stub_provider, stub_exch
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
     stub_provider.validate_returns = False
-    ok = await integ.validate(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+    ok = await integ.validate(db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"])
     assert ok is False
-    row = await integ.get(db_session, seeded["org"].id, "stub")
+    row = await integ.get(db_session, seeded["org"].org_id, "stub")
     assert row is not None
     assert row.last_refresh_status == "failed"
     assert row.last_refresh_failed_at is not None
@@ -211,18 +215,18 @@ async def test_validate_recovers_status_on_success(seeded, stub_provider, stub_e
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
     # Mark broken first.
     stub_provider.validate_returns = False
-    await integ.validate(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+    await integ.validate(db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"])
     # Now recover.
     stub_provider.validate_returns = True
-    ok = await integ.validate(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+    ok = await integ.validate(db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"])
     assert ok is True
-    row = await integ.get(db_session, seeded["org"].id, "stub")
+    row = await integ.get(db_session, seeded["org"].org_id, "stub")
     assert row is not None
     assert row.last_refresh_status == "ok"
     assert row.last_refresh_failed_at is None
@@ -231,7 +235,7 @@ async def test_validate_recovers_status_on_success(seeded, stub_provider, stub_e
 @pytest.mark.asyncio
 async def test_validate_missing_install_raises(seeded, stub_provider, db_session) -> None:
     with pytest.raises(IntegrationNotConnectedError):
-        await integ.validate(db_session, org_id=seeded["org"].id, provider="stub", actor=seeded["actor"])
+        await integ.validate(db_session, org_id=seeded["org"].org_id, provider="stub", actor=seeded["actor"])
 
 
 @pytest.mark.asyncio
@@ -241,13 +245,13 @@ async def test_update_allowlist_replaces_and_audits(seeded, stub_provider, stub_
         db_session,
         provider="stub",
         code="abc",
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         redirect_uri="http://test/cb",
         actor=seeded["actor"],
     )
     row = await integ.update_allowlist(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         provider="stub",
         allowed_tools=["update_thing", "ghost_tool"],
         actor=seeded["actor"],
@@ -256,13 +260,13 @@ async def test_update_allowlist_replaces_and_audits(seeded, stub_provider, stub_
     # Replacement, not append:
     row = await integ.update_allowlist(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         provider="stub",
         allowed_tools=[],
         actor=seeded["actor"],
     )
     assert row.allowed_tools == []
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.allowlist_updated"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.allowlist_updated"])
     assert len(rows) == 2
 
 
@@ -273,7 +277,7 @@ async def test_list_broken_credentials_for_org(seeded, db_session) -> None:
 
     from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
 
-    org_id = seeded["org"].id
+    org_id = seeded["org"].org_id
 
     def _row(provider: str, *, enabled: bool, status: str) -> McpCredentialRow:
         return McpCredentialRow(

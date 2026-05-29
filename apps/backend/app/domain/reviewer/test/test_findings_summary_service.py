@@ -164,12 +164,12 @@ async def ack_seeded(db_session):  # type: ignore[no-untyped-def]
     org = await orgs_repo.insert_org(db_session, slug=f"sum-org-{uuid.uuid4().hex[:6]}")
     user = await identity_repo.insert_user(db_session, display_name="Alice")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="a"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="a"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
-    ticket_id, pr_id = await _seed_ticket_and_pr(db_session, org_id=org.id)
-    finding_id = await _seed_finding(db_session, pr_id=pr_id, org_id=org.id, severity="high", seq=1)
+    ticket_id, pr_id = await _seed_ticket_and_pr(db_session, org_id=org.org_id)
+    finding_id = await _seed_finding(db_session, pr_id=pr_id, org_id=org.org_id, severity="high", seq=1)
     # Pre-populate the rollup so we can verify it changes after ack.
     await update_findings_summary(ticket_id, findings_count=1, max_severity="high", session=db_session)
     await db_session.commit()
@@ -206,7 +206,7 @@ async def test_findings_summary_refreshed_on_ack(ack_seeded, db_session) -> None
 
     # The finding is acknowledged; it's still counted in the rollup (state
     # change doesn't remove it from the aggregate query).
-    row = await get_ticket(ticket_id, org_id=ack_seeded["org"].id)
+    row = await get_ticket(ticket_id, org_id=ack_seeded["org"].org_id)
     # findings_count is refreshed — acknowledged findings are still findings.
     assert row.findings_count == 1
     assert row.max_severity == "high"
