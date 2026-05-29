@@ -258,7 +258,7 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
         # Cleanup the seeded org so other tests see a clean slate.
         from sqlalchemy import delete  # noqa: PLC0415
 
-        from app.domain.orgs.models import MembershipRow, OrgRow  # noqa: PLC0415
+        from app.core.tenancy.models import MembershipRow, OrgRow  # noqa: PLC0415
 
         await s.execute(delete(MembershipRow).where(MembershipRow.org_id == org.id))
         await s.execute(delete(OrgRow).where(OrgRow.id == org.id))

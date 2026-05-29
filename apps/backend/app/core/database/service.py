@@ -167,6 +167,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("031_notifications_generalize_subject", "notifications_generalize_subject"),
     ("032_tickets_findings_rollup", "tickets_findings_rollup"),
     ("033_mcp_review_tokens_org_id", "mcp_review_tokens_org_id"),
+    ("034_orgs_sso_authz_columns", "orgs_sso_authz_columns"),
 )
 
 
@@ -446,6 +447,7 @@ async def _apply_create_all_identity(conn) -> None:  # type: ignore[no-untyped-d
     import importlib  # noqa: PLC0415
 
     importlib.import_module("app.core.identity.models")
+    importlib.import_module("app.core.tenancy.models")
     importlib.import_module("app.domain.orgs.models")
     new_tables = [
         Base.metadata.tables[name]
@@ -977,6 +979,29 @@ async def _apply_mcp_review_tokens_org_id(conn) -> None:  # type: ignore[no-unty
         await conn.execute(text(stmt))
 
 
+async def _apply_orgs_sso_authz_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add denormalized SSO authz columns to `orgs`.
+
+    Adds `sso_enabled BOOL NOT NULL DEFAULT false` and
+    `sso_exempt_owner_user_id UUID NULL` to the `orgs` table, then backfills
+    from `sso_configs.enabled` / `sso_configs.exempt_owner_user_id` for orgs
+    that already have an SSO config row. The source columns lack the `sso_`
+    prefix — rename-on-copy, not a straight move.
+
+    Idempotent: `ADD COLUMN IF NOT EXISTS` on repeated runs.
+    """
+    statements: list[str] = [
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN NOT NULL DEFAULT false",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS sso_exempt_owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL",
+        # Backfill from sso_configs for orgs that already have a config row.
+        "UPDATE orgs o SET sso_enabled = s.enabled, "
+        "sso_exempt_owner_user_id = s.exempt_owner_user_id "
+        "FROM sso_configs s WHERE s.org_id = o.id",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 # Postgres advisory lock key for `migrate()`. Arbitrary stable bigint — pick
 # any value that doesn't collide with another advisory lock; this codebase
 # has no other advisory-lock users.
@@ -1086,6 +1111,8 @@ async def _apply_pending() -> None:
                 await _apply_tickets_findings_rollup(conn)
             elif kind == "mcp_review_tokens_org_id":
                 await _apply_mcp_review_tokens_org_id(conn)
+            elif kind == "orgs_sso_authz_columns":
+                await _apply_orgs_sso_authz_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

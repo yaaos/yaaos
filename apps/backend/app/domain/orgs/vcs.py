@@ -20,7 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
-from app.domain.orgs.models import OrgRow
+from app.core.tenancy.models import OrgRow
 
 log = structlog.get_logger("orgs.vcs")
 

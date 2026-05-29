@@ -1,15 +1,15 @@
 # domain/orgs
 
-> Orgs, memberships, roles, invitations, SSO config, onboarding aggregator.
+> Org feature aggregate — invitations, SSO config, VCS binding, coding agents, onboarding.
 
 ## Scope
 
-Owns the tenancy boundary. Every non-user yaaos row is `org_id`-scoped; this module owns the `orgs` table and the membership rows that decide who's in it and at what role. Invitations are the sole access gate — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) also live here.
+Org and membership rows are owned by [`core/tenancy`](core_tenancy.md); `domain/orgs` owns the feature layer on top of them. Invitations are the sole access gate for new members — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) live here. Every non-user row is `org_id`-scoped.
 
 ## Entities
 
-- **Org** — UUID PK + immutable unique `slug` (used in `X-Org-Slug` header). Soft-deleted via `archived_at`.
-- **Membership** — composite PK `(user_id, org_id)`. Per-membership `@handle` (a user can have different handles per org); one of three roles. Removal deletes the row (presence = active).
+- **Org** — UUID PK + immutable unique `slug` (used in `X-Org-Slug` header). Soft-deleted via `archived_at`. Row owned by [`core/tenancy`](core_tenancy.md).
+- **Membership** — composite PK `(user_id, org_id)`. Per-membership `@handle` (a user can have different handles per org); one of three roles. Removal deletes the row (presence = active). Row owned by [`core/tenancy`](core_tenancy.md).
 - **Invitation** — stores `sha256(raw_token)`, never the raw value. Single-use: `accepted_at` clamps the row.
 - **SsoConfig** — at most one per org. Holds IdP metadata XML, JIT toggle, exempt-Owner pointer, SP private key (encrypted via [core/secrets](core_secrets.md)).
 
@@ -52,7 +52,7 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 ## Data owned
 
-Tables: `orgs`, `memberships`, `invitations`, `sso_configs`. See `models.py` + [core_database.md](core_database.md) for columns.
+Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` reads them via `core/tenancy` service primitives. See `models.py` + [core_database.md](core_database.md) for columns.
 
 Notable constraints:
 - `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.

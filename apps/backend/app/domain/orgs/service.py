@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit
 from app.core.auth import Role
 from app.core.database import session as db_session
-from app.domain.orgs.models import InvitationRow, MembershipRow, OrgRow, SsoConfigRow
+from app.core.tenancy.models import MembershipRow, OrgRow
+from app.domain.orgs.models import InvitationRow, SsoConfigRow
 from app.domain.orgs.repository import get_org as _repo_get_org
 from app.domain.orgs.types import (
     InsufficientRoleError,

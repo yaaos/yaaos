@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.orgs.models import MembershipRow
+from app.core.tenancy.models import MembershipRow
 
 
 async def list_active_member_ids(org_id: UUID, *, session: AsyncSession) -> list[UUID]:

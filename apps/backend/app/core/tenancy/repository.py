@@ -1,9 +1,7 @@
-"""Raw row access for `domain/orgs`."""
+"""Raw row access for `core/tenancy` — orgs and memberships tables."""
 
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -11,11 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import Role
 from app.core.tenancy.models import MembershipRow, OrgRow
-from app.domain.orgs.models import InvitationRow, SsoConfigRow
-
-
-def hash_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 async def insert_org(session: AsyncSession, *, slug: str, display_name: str = "") -> OrgRow:
@@ -25,20 +18,14 @@ async def insert_org(session: AsyncSession, *, slug: str, display_name: str = ""
     return row
 
 
-async def get_org_by_slug(session: AsyncSession, slug: str) -> Org | None:  # noqa: F821
-    from app.domain.orgs.service import Org  # noqa: PLC0415
-
-    row = (
+async def get_org_row_by_slug(session: AsyncSession, slug: str) -> OrgRow | None:
+    return (
         await session.execute(select(OrgRow).where(OrgRow.slug == slug, OrgRow.archived_at.is_(None)))
     ).scalar_one_or_none()
-    return Org.from_row(row) if row is not None else None
 
 
-async def get_org(session: AsyncSession, org_id: UUID) -> Org | None:  # noqa: F821
-    from app.domain.orgs.service import Org  # noqa: PLC0415
-
-    row = (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one_or_none()
-    return Org.from_row(row) if row is not None else None
+async def get_org_row(session: AsyncSession, org_id: UUID) -> OrgRow | None:
+    return (await session.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one_or_none()
 
 
 async def insert_membership(
@@ -63,16 +50,22 @@ async def get_membership(session: AsyncSession, *, user_id: UUID, org_id: UUID) 
     ).scalar_one_or_none()
 
 
-async def list_memberships_for_user(session: AsyncSession, user_id: UUID) -> list[MembershipRow]:
+async def list_memberships_for_user_rows(session: AsyncSession, user_id: UUID) -> list[MembershipRow]:
     return list(
         (await session.execute(select(MembershipRow).where(MembershipRow.user_id == user_id))).scalars().all()
     )
 
 
-async def list_memberships_for_org(session: AsyncSession, org_id: UUID) -> list[MembershipRow]:
+async def list_memberships_for_org_rows(session: AsyncSession, org_id: UUID) -> list[MembershipRow]:
     return list(
         (await session.execute(select(MembershipRow).where(MembershipRow.org_id == org_id))).scalars().all()
     )
+
+
+async def list_active_member_id_rows(session: AsyncSession, org_id: UUID) -> list[UUID]:
+    """Return all user_ids that have a membership in org_id."""
+    rows = await list_memberships_for_org_rows(session, org_id)
+    return [r.user_id for r in rows]
 
 
 async def delete_membership(session: AsyncSession, *, user_id: UUID, org_id: UUID) -> None:
@@ -91,37 +84,17 @@ async def update_role(session: AsyncSession, *, user_id: UUID, org_id: UUID, rol
     return row
 
 
-async def insert_invitation(
+async def set_sso_authz(
     session: AsyncSession,
     *,
     org_id: UUID,
-    email: str,
-    role: Role,
-    token_hash: str,
-    expires_at: datetime,
-    invited_by_user_id: UUID | None,
-) -> InvitationRow:
-    row = InvitationRow(
-        id=uuid4(),
-        org_id=org_id,
-        email=email,
-        role=role.value,
-        token_hash=token_hash,
-        expires_at=expires_at,
-        invited_by_user_id=invited_by_user_id,
-    )
-    session.add(row)
+    enabled: bool,
+    exempt_owner: UUID | None,
+) -> None:
+    """Update the denormalized SSO authz columns on the org row."""
+    row = await get_org_row(session, org_id)
+    if row is None:
+        raise LookupError(f"org {org_id} not found")
+    row.sso_enabled = enabled
+    row.sso_exempt_owner_user_id = exempt_owner
     await session.flush()
-    return row
-
-
-async def get_invitation_by_token_hash(session: AsyncSession, token_hash: str) -> InvitationRow | None:
-    return (
-        await session.execute(select(InvitationRow).where(InvitationRow.token_hash == token_hash))
-    ).scalar_one_or_none()
-
-
-async def get_sso_config(session: AsyncSession, org_id: UUID) -> SsoConfigRow | None:
-    return (
-        await session.execute(select(SsoConfigRow).where(SsoConfigRow.org_id == org_id))
-    ).scalar_one_or_none()

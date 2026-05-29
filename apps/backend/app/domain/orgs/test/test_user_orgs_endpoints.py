@@ -110,7 +110,7 @@ async def test_config_status_fully_configured(seeded, db_session) -> None:
     register_onboarding_contributor("anthropic_key_set", yes)
     from sqlalchemy import select as _select  # noqa: PLC0415
 
-    from app.domain.orgs.models import OrgRow as _OrgRow  # noqa: PLC0415
+    from app.core.tenancy.models import OrgRow as _OrgRow  # noqa: PLC0415
 
     org_row = (
         await db_session.execute(_select(_OrgRow).where(_OrgRow.id == seeded["org_a"].id))
