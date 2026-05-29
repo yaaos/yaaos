@@ -1,6 +1,7 @@
-"""Periodic cleanup of expired sessions, expired invitations,
-unverified-TOTP secrets older than 24h, and audit-log entries older
-than `AUDIT_LOG_RETENTION`.
+"""Periodic cleanup of expired sessions, unverified-TOTP secrets older
+than 24h, and audit-log entries older than `AUDIT_LOG_RETENTION`.
+
+Invitation expiry is swept by `domain/orgs`'s own startup loop.
 
 Single background loop owned by `core/identity`. Spawned in the FastAPI
 lifespan via the module's `RouteSpec.on_startup` hook (see `web.py`).
@@ -20,15 +21,10 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.identity import sessions
 from app.core.identity.models import UserTotpSecretRow
-from app.domain.orgs import delete_expired_invitations
 
 log = structlog.get_logger("identity.cleanup")
 
 UNVERIFIED_TOTP_TTL = timedelta(hours=24)
-
-
-async def _purge_expired_invitations() -> int:
-    return await delete_expired_invitations()
 
 
 async def _purge_stale_unverified_totp_secrets() -> int:
@@ -57,7 +53,7 @@ async def _purge_expired_sessions() -> int:
     from app.core.audit_log import Actor as _Actor  # noqa: PLC0415
     from app.core.audit_log import audit as _audit  # noqa: PLC0415
     from app.core.identity.models import SessionRow  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
     class _ExpiryPayload(_BaseModel):
         kind: str = "expiry"
@@ -75,7 +71,7 @@ async def _purge_expired_sessions() -> int:
         for _token_hash, user_id in expired:
             if user_id is None:
                 continue
-            for m in await orgs_repo.list_memberships_for_user(s, user_id):
+            for m in await _list_memberships(s, user_id):
                 await _audit(
                     "user",
                     user_id,
@@ -103,14 +99,12 @@ async def run_cleanup_loop() -> None:
     while True:
         try:
             sessions_purged = await _purge_expired_sessions()
-            invitations_purged = await _purge_expired_invitations()
             totps_purged = await _purge_stale_unverified_totp_secrets()
             audit_purged = await _purge_old_audit_entries()
-            if sessions_purged or invitations_purged or totps_purged or audit_purged:
+            if sessions_purged or totps_purged or audit_purged:
                 log.info(
                     "identity.cleanup.ran",
                     sessions_purged=sessions_purged,
-                    invitations_purged=invitations_purged,
                     totps_purged=totps_purged,
                     audit_purged=audit_purged,
                 )

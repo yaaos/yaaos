@@ -33,8 +33,6 @@ LAYERS = ("core", "domain", "plugins", "testing")
 # Each tuple is (from_module, to_module) where both are fully-qualified app paths.
 PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset(
     [
-        # core/identity may read domain/orgs for membership creation at signup.
-        ("app.core.identity", "app.domain.orgs"),
         # core/sessions reads domain/integrations (broken OAuth credential check in /me).
         ("app.core.sessions", "app.domain.integrations"),
     ]

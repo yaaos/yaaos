@@ -1,0 +1,29 @@
+"""Periodic sweep of expired, unaccepted invitations.
+
+Spawned in the FastAPI lifespan via `orgs.web`'s `RouteSpec.on_startup`
+hook. Runs on the same cadence as the identity cleanup loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import structlog
+
+from app.core.config import get_settings
+from app.domain.orgs.service import delete_expired_invitations
+
+log = structlog.get_logger("orgs.invitation_sweep")
+
+
+async def run_invitation_sweep_loop() -> None:
+    """Forever-loop: every `yaaos_auth_cleanup_interval_seconds`, purge expired invitations."""
+    interval = get_settings().yaaos_auth_cleanup_interval_seconds
+    while True:
+        try:
+            purged = await delete_expired_invitations()
+            if purged:
+                log.info("orgs.invitations.swept", purged=purged)
+        except Exception:
+            log.exception("orgs.invitations.sweep.failed")
+        await asyncio.sleep(interval)

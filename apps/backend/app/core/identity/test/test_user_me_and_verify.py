@@ -218,3 +218,28 @@ async def test_patch_own_handle_rejects_membership_not_found(seeded) -> None:
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
+
+
+# ── service: /me reads memberships via core/tenancy ──────────────────────
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_me_lists_memberships_via_tenancy(seeded) -> None:
+    """`/api/user/me` membership list is backed by `core/tenancy` — returned
+    payload includes `org_id`, `slug`, `display_name`, `role`, and `handle`."""
+    async with _client() as c:
+        r = await c.get(
+            "/api/user/me",
+            cookies={"yaaos_session": seeded["session"].raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    memberships = body["memberships"]
+    slugs = {m["slug"] for m in memberships}
+    assert slugs == {"org-a", "org-b"}
+    for m in memberships:
+        assert "org_id" in m
+        assert "display_name" in m
+        assert "role" in m
+        assert "handle" in m

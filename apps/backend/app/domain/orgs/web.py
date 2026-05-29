@@ -236,7 +236,14 @@ async def _resolve_session_user(s, raw_token: str) -> UUID | None:
     return row.user_id
 
 
-register_routes(RouteSpec(module_name="memberships", router=router))
+async def _sweep_expired_invitations() -> None:
+    from app.core.observability import spawn  # noqa: PLC0415
+    from app.domain.orgs.invitation_sweeper import run_invitation_sweep_loop  # noqa: PLC0415
+
+    spawn("orgs.invitation_sweep", run_invitation_sweep_loop())
+
+
+register_routes(RouteSpec(module_name="memberships", router=router, on_startup=[_sweep_expired_invitations]))
 
 
 __all__ = ["router"]

@@ -135,7 +135,7 @@ class _PatchUserRequest(BaseModel):
 async def user_me() -> _UserMeResponse:
     """Profile payload for the User > Details page."""
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
@@ -145,21 +145,17 @@ async def user_me() -> _UserMeResponse:
         if user is None:
             raise _err(404, "user_not_found")
         emails = await identity_repo.list_emails_for_user(s, user_id)
-        rows = await orgs_repo.list_memberships_for_user(s, user_id)
-        memberships_view = []
-        for m in rows:
-            org = await orgs_repo.get_org(s, m.org_id)
-            if org is None:
-                continue
-            memberships_view.append(
-                {
-                    "org_id": str(org.id),
-                    "slug": org.slug,
-                    "display_name": org.display_name,
-                    "role": m.role,
-                    "handle": m.handle,
-                }
-            )
+        membership_views = await list_memberships_for_user(s, user_id)
+        memberships_view = [
+            {
+                "org_id": str(m.org_id),
+                "slug": m.slug,
+                "display_name": m.org_name,
+                "role": m.role,
+                "handle": m.handle,
+            }
+            for m in membership_views
+        ]
     return _UserMeResponse(
         user_id=user.id,
         display_name=user.display_name,
