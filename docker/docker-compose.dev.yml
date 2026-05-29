@@ -19,7 +19,7 @@ name: yaaos
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: yaaos
       POSTGRES_PASSWORD: yaaos
@@ -27,7 +27,10 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - yaaos-pgdata:/var/lib/postgresql/data
+      # PG18 images store data under /var/lib/postgresql/<major>/data/ — mount
+      # the parent so pg_upgrade --link can work across major versions without
+      # crossing a mount-point boundary. See github.com/docker-library/postgres/pull/1259.
+      - yaaos-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U yaaos -d yaaos"]
       interval: 2s

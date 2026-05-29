@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, func
+from sqlalchemy import DateTime, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,7 +17,9 @@ from app.core.database import Base
 class WorkspaceRow(Base):
     __tablename__ = "workspaces"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     provider_id: Mapped[str] = mapped_column(String, nullable=False)
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

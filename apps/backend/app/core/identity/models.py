@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -31,7 +32,9 @@ from app.core.database import Base
 class UserRow(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     # Verified GitHub login. Written by `plugins/github` (OAuth callback) on
     # every login, or via the verify-only flow in `domain/account`. Nullable
@@ -48,7 +51,9 @@ class UserRow(Base):
 class UserEmailRow(Base):
     __tablename__ = "user_emails"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -70,7 +75,9 @@ class UserEmailRow(Base):
 class OAuthIdentityRow(Base):
     __tablename__ = "oauth_identities"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )

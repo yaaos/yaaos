@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,7 +21,7 @@ class WorkflowExecutionRow(Base):
 
     __tablename__ = "workflow_executions"
 
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()"))
     ticket_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     workflow_name: Mapped[str] = mapped_column(String, nullable=False)
     workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -52,7 +52,7 @@ class PendingHumanDecisionRow(Base):
 
     __tablename__ = "pending_human_decisions"
 
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()"))
     workflow_execution_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     question_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     resolution_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

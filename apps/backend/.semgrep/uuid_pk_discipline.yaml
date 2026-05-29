@@ -1,0 +1,36 @@
+rules:
+  - id: uuid-pk-no-python-default
+    languages: [python]
+    severity: ERROR
+    message: >-
+      UUID primary-key columns must use `server_default=text("uuidv7()")`, not
+      `default=uuid.uuid4`. The DB mints the PK; Python never passes one.
+      See `apps/backend/docs/patterns.md` § UUID primary keys.
+    pattern-either:
+      - pattern: mapped_column(..., default=uuid.uuid4, ...)
+      - pattern: mapped_column(..., default=uuid4, ...)
+
+  - id: uuid-pk-no-explicit-id-in-row-constructor
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >-
+      A Python-generated UUID reaches `id=` on a `*Row` constructor — directly
+      (`Row(id=uuid4(), ...)`) or through a local variable
+      (`new_id = uuid4(); ...; Row(id=new_id, ...)`). Drop `id=`; the DB mints a
+      v7 UUID via `server_default`. Call `await session.flush()` before reading
+      `row.id` if you need the PK before commit.
+      See `apps/backend/docs/patterns.md` § UUID primary keys.
+    # Taint mode (not a literal pattern) so the rule follows the UUID across
+    # statements and the `async with` boundary — the variable-indirection form
+    # is exactly how a violation slipped past the old literal-only rule.
+    pattern-sources:
+      - pattern: uuid4(...)
+      - pattern: uuid.uuid4(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $ROW(id=$ID, ...)
+          - focus-metavariable: $ID
+          - metavariable-regex:
+              metavariable: $ROW
+              regex: .*Row$

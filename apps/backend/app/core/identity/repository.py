@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +29,7 @@ def hash_token(raw_token: str) -> str:
 
 
 async def insert_user(session: AsyncSession, *, display_name: str = "") -> UserRow:
-    row = UserRow(id=uuid4(), display_name=display_name)
+    row = UserRow(display_name=display_name)
     session.add(row)
     await session.flush()
     return row
@@ -73,7 +73,6 @@ async def add_email(
     verified: bool = False,
 ) -> UserEmailRow:
     row = UserEmailRow(
-        id=uuid4(),
         user_id=user_id,
         email=email,
         is_primary=is_primary,
@@ -144,7 +143,6 @@ async def add_oauth_identity(
     verified: bool = True,
 ) -> OAuthIdentityRow:
     row = OAuthIdentityRow(
-        id=uuid4(),
         user_id=user_id,
         provider=provider,
         external_subject=external_subject,

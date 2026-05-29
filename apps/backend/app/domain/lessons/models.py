@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, func
+from sqlalchemy import DateTime, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +20,9 @@ from app.core.database import Base
 class LessonRow(Base):
     __tablename__ = "lessons"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     plugin_id: Mapped[str] = mapped_column(String, nullable=False, server_default="github")
     repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")

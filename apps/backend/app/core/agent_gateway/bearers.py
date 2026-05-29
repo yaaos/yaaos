@@ -26,7 +26,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,7 +106,6 @@ async def issue(
     plaintext = secrets.token_urlsafe(_TOKEN_BYTES)
     now = datetime.now(UTC)
     row = BearerTokenRow(
-        id=uuid4(),
         org_id=org_id,
         agent_id=agent_id,
         token_hash=_hash(plaintext),

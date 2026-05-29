@@ -208,6 +208,13 @@ The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call
 
 Alembic CLI is only used for `alembic revision --autogenerate -m "..."`. Direct `alembic upgrade` is forbidden.
 
+### UUID primary keys
+
+- Every UUID PK column carries `server_default=text("uuidv7()")`. No `default=uuid.uuid4` — if the Python default is set, SQLAlchemy fills the value app-side and the DB default is dead.
+- Services and repositories never pass `id=` to a Row constructor. Drop it; the DB mints a v7 UUID on INSERT.
+- Call `await session.flush()` before reading `row.id` if the PK is needed before commit (audit-log FK, child-row FK, return value). Where the row is added and never read before commit, no flush is needed beyond what the transaction already provides.
+- Enforced by `apps/backend/.semgrep/uuid_pk_discipline.yaml` (two rules: `uuid-pk-no-python-default`, `uuid-pk-no-explicit-id-in-row-constructor`). Both red-fail CI.
+
 ## Durable tasks via `core/tasks`
 
 Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a workflow. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.

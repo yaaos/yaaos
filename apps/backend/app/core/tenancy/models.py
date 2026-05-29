@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -30,7 +31,9 @@ from app.core.database import Base
 class OrgRow(Base):
     __tablename__ = "orgs"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

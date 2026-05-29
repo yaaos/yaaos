@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
@@ -220,10 +220,8 @@ async def create_workspace(
     # we always overwrite to keep the parameter authoritative.
     spec = spec.model_copy(update={"org_id": org_id})
 
-    ws_id = uuid4()
     async with get_session() as s:
         row = WorkspaceRow(
-            id=ws_id,
             org_id=org_id,
             provider_id=provider_id,
             spec=spec.model_dump(mode="json"),
@@ -231,6 +229,8 @@ async def create_workspace(
             expires_at=expires_at,
         )
         s.add(row)
+        await s.flush()
+        ws_id = row.id
         await s.commit()
 
     try:
@@ -388,11 +388,8 @@ async def _seed_workspace_for_tests(
     """
     from datetime import timedelta  # noqa: PLC0415
 
-    ws_id = uuid4()
-
     def _build_row() -> WorkspaceRow:
         return WorkspaceRow(
-            id=ws_id,
             org_id=org_id,
             provider_id=provider_id,
             spec={"sha": sha},
@@ -407,11 +404,14 @@ async def _seed_workspace_for_tests(
         row = _build_row()
         caller_session.add(row)
         await caller_session.flush()
-    else:
-        async with get_session() as s:
-            row = _build_row()
-            s.add(row)
-            await s.commit()
+        return str(row.id)
+
+    async with get_session() as s:
+        row = _build_row()
+        s.add(row)
+        await s.flush()
+        ws_id = row.id
+        await s.commit()
     return str(ws_id)
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -85,7 +85,6 @@ async def audit(
 
     payload_json = _payload_to_jsonable(payload)
     row = AuditEntryRow(
-        id=uuid4(),
         org_id=org_id,
         entity_kind=entity_kind,
         entity_id=entity_id,
@@ -213,7 +212,7 @@ async def list_for_entity(
                 AuditEntryRow.entity_kind == entity_kind,
                 AuditEntryRow.entity_id == entity_id,
             )
-            .order_by(AuditEntryRow.created_at.desc())
+            .order_by(AuditEntryRow.created_at.desc(), AuditEntryRow.id.desc())
             .limit(limit)
         )
         if before_ts is not None:
@@ -255,7 +254,7 @@ async def list_for_org(
         stmt = (
             select(AuditEntryRow)
             .where(AuditEntryRow.org_id == org_id)
-            .order_by(AuditEntryRow.created_at.desc())
+            .order_by(AuditEntryRow.created_at.desc(), AuditEntryRow.id.desc())
             .limit(capped_limit)
         )
         if actor_kinds:

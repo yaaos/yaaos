@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import select, update
@@ -112,7 +112,6 @@ async def upsert(
         if ticket_id is None:
             raise ValueError("ticket_id required on insert")
         row = PullRequestRow(
-            id=uuid4(),
             org_id=org_id,
             plugin_id=pr.plugin_id,
             external_id=pr.external_id,

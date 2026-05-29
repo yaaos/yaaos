@@ -143,7 +143,7 @@ SPA renders data and dispatches actions. It does not compute verdicts, derive st
 |---|---|
 | Backend | Python 3.13, FastAPI |
 | Frontend | Node 22, React + TanStack Router + TanStack Query + Tailwind |
-| Data store | Postgres 16 |
+| Data store | Postgres 18 |
 | ORM / migrations | SQLAlchemy 2.0 async + Alembic (hand-edited) |
 | Background work | `asyncio.create_task` via `core/primitives.spawn` |
 | API | REST + SSE |

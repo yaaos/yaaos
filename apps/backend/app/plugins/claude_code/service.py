@@ -1003,14 +1003,11 @@ async def set_api_key(session, *, org_id: UUID, encrypted_anthropic_api_key: byt
     composes with sibling writes inside one ``async with db_session()`` block.
     See ``apps/backend/docs/patterns.md`` § Service-fn session-handling convention.
     """
-    from uuid import uuid4 as _uuid4  # noqa: PLC0415
-
     row = (
         await session.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
     ).scalar_one_or_none()
     if row is None:
         row = ClaudeCodeSettingsRow(
-            id=_uuid4(),
             org_id=org_id,
             encrypted_anthropic_api_key=encrypted_anthropic_api_key,
         )
@@ -1022,8 +1019,6 @@ async def set_api_key(session, *, org_id: UUID, encrypted_anthropic_api_key: byt
 
 async def _set_anthropic_key(org_id: UUID, raw_key: SecretStr) -> None:
     """Encrypt + upsert the Anthropic key on `claude_code_settings`."""
-    from uuid import uuid4  # noqa: PLC0415
-
     plaintext = raw_key.get_secret_value()
     fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
     enc = fernet.encrypt(plaintext.encode())
@@ -1033,7 +1028,6 @@ async def _set_anthropic_key(org_id: UUID, raw_key: SecretStr) -> None:
         ).scalar_one_or_none()
         if row is None:
             row = ClaudeCodeSettingsRow(
-                id=uuid4(),
                 org_id=org_id,
                 encrypted_anthropic_api_key=enc,
             )

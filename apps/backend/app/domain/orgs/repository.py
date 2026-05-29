@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,7 +103,6 @@ async def insert_invitation(
     invited_by_user_id: UUID | None,
 ) -> InvitationRow:
     row = InvitationRow(
-        id=uuid4(),
         org_id=org_id,
         email=email,
         role=role.value,

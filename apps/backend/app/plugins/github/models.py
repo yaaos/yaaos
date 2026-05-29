@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,7 +17,9 @@ from app.core.database import Base
 class GitHubAppInstallationRow(Base):
     __tablename__ = "github_app_installations"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     install_external_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     account_login: Mapped[str] = mapped_column(String, nullable=False)
@@ -33,7 +35,9 @@ class GitHubAppInstallationRow(Base):
 class GitHubWebhookEventRow(Base):
     __tablename__ = "github_webhook_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     source_event_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     event_type: Mapped[str] = mapped_column(String, nullable=False)

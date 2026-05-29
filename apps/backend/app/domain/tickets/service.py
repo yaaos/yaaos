@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -154,7 +154,6 @@ async def create(
         return existing.id, False
 
     row = TicketRow(
-        id=uuid4(),
         org_id=org_id,
         source=source,
         source_external_id=source_external_id or idempotency_key,
@@ -247,7 +246,6 @@ async def create_for_pr(
             await s.refresh(existing)
             return Ticket.from_row(existing)
         row = TicketRow(
-            id=uuid4(),
             org_id=org_id,
             source="github_pr",
             source_external_id=source_external_id,
@@ -480,11 +478,9 @@ async def upsert_ticket_for_pr(
     `(None, False)` — the caller should exit without doing further work.
     Caller commits; never commits here.
     """
-    new_id = uuid4()
     stmt = (
         pg_insert(TicketRow)
         .values(
-            id=new_id,
             org_id=org_id,
             source="github_pr",
             source_external_id=source_external_id,

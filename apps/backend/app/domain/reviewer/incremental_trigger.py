@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 from sqlalchemy import desc, select, update
@@ -179,7 +179,6 @@ async def _create_incremental_review(*, pr_id: UUID, org_id: UUID, prev_sha: str
     """Insert the per-PR-history `ReviewRow` and return its id."""
     from sqlalchemy import func as sa_func  # noqa: PLC0415
 
-    new_id = uuid4()
     async with db_session() as s:
         await acquire_pr_lock(s, pr_id)
         max_seq = (
@@ -189,22 +188,22 @@ async def _create_incremental_review(*, pr_id: UUID, org_id: UUID, prev_sha: str
                 )
             )
         ).scalar_one()
-        s.add(
-            ReviewRow(
-                id=new_id,
-                org_id=org_id,
-                pr_id=pr_id,
-                sequence_number=max_seq + 1,
-                status="queued",
-                trigger_reason="push_incremental",
-                destination="vcs",
-                scope_kind="incremental",
-                scope_prev_sha=prev_sha,
-                commit_sha_at_start=head_sha,
-                model=_DEFAULT_MODEL,
-                effort=_DEFAULT_EFFORT,
-            )
+        row = ReviewRow(
+            org_id=org_id,
+            pr_id=pr_id,
+            sequence_number=max_seq + 1,
+            status="queued",
+            trigger_reason="push_incremental",
+            destination="vcs",
+            scope_kind="incremental",
+            scope_prev_sha=prev_sha,
+            commit_sha_at_start=head_sha,
+            model=_DEFAULT_MODEL,
+            effort=_DEFAULT_EFFORT,
         )
+        s.add(row)
+        await s.flush()
+        new_id = row.id
         await s.commit()
     return new_id
 

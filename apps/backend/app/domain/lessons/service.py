@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete
@@ -98,7 +98,6 @@ async def create(
         raise LessonValidationError("repo_external_id is required")
     async with db_session() as s:
         row = LessonRow(
-            id=uuid4(),
             org_id=org_id,
             plugin_id=plugin_id,
             repo_external_id=repo_external_id,

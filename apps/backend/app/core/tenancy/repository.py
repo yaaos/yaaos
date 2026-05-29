@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +12,7 @@ from app.core.tenancy.models import MembershipRow, OrgRow
 
 
 async def insert_org(session: AsyncSession, *, slug: str, display_name: str = "") -> OrgRow:
-    row = OrgRow(id=uuid4(), slug=slug, display_name=display_name or slug)
+    row = OrgRow(slug=slug, display_name=display_name or slug)
     session.add(row)
     await session.flush()
     return row

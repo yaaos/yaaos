@@ -168,6 +168,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("032_tickets_findings_rollup", "tickets_findings_rollup"),
     ("033_mcp_review_tokens_org_id", "mcp_review_tokens_org_id"),
     ("034_orgs_sso_authz_columns", "orgs_sso_authz_columns"),
+    ("035_uuid_pk_uuidv7_defaults", "uuid_pk_uuidv7_defaults"),
 )
 
 
@@ -979,6 +980,44 @@ async def _apply_mcp_review_tokens_org_id(conn) -> None:  # type: ignore[no-unty
         await conn.execute(text(stmt))
 
 
+async def _apply_uuid_pk_uuidv7_defaults(conn) -> None:  # type: ignore[no-untyped-def]
+    """Set `DEFAULT uuidv7()` on every UUID primary-key column.
+
+    All UUID PK columns now carry `server_default=text("uuidv7()")` on
+    the SQLAlchemy model. Fresh DBs created via `create_all` already get
+    the default. This migration backfills the default on existing tables.
+    Idempotent: `ALTER COLUMN ... SET DEFAULT` on an already-defaulted
+    column is a no-op.
+    """
+    # One literal per table. Non-literal text() args are rejected by
+    # check_table_access; every SQL string is a plain literal.
+    await conn.execute(text("ALTER TABLE users ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE user_emails ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE oauth_identities ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE orgs ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE audit_entries ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE workspaces ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE workspace_agents ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE bearer_tokens ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE outbox_entries ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE workflow_executions ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE pending_human_decisions ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE notifications ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE claude_code_settings ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE github_app_installations ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE github_webhook_events ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE tickets ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE pull_requests ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE invitations ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE lessons ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE reviews ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE findings ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE finding_observations ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE comment_threads ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE comment_messages ALTER COLUMN id SET DEFAULT uuidv7()"))
+    await conn.execute(text("ALTER TABLE acknowledgment_decisions ALTER COLUMN id SET DEFAULT uuidv7()"))
+
+
 async def _apply_orgs_sso_authz_columns(conn) -> None:  # type: ignore[no-untyped-def]
     """Add denormalized SSO authz columns to `orgs`.
 
@@ -1008,8 +1047,33 @@ async def _apply_orgs_sso_authz_columns(conn) -> None:  # type: ignore[no-untype
 _MIGRATION_LOCK_KEY = 0x7AA05_DB_5C_4E11A
 
 
+_MIN_PG_VERSION_NUM = 180000
+_MIN_PG_MAJOR = 18
+
+
+def _assert_min_pg_version(server_version_num: str) -> None:
+    """Raise RuntimeError if server_version_num (e.g. '170004') is below the minimum.
+
+    Accepts the integer string returned by ``SHOW server_version_num``.
+    Called at the top of ``migrate()`` so a wrong engine fails before any
+    DDL is touched.
+    """
+    actual = int(server_version_num)
+    if actual < _MIN_PG_VERSION_NUM:
+        actual_major = actual // 10000
+        raise RuntimeError(
+            f"yaaos requires Postgres {_MIN_PG_MAJOR} or later; "
+            f"connected engine reports version {actual_major} "
+            f"(server_version_num={server_version_num}). "
+            f"Upgrade the database engine to Postgres {_MIN_PG_MAJOR}."
+        )
+
+
 async def migrate() -> None:
     """Apply any un-applied migrations. Idempotent and concurrency-safe.
+
+    Asserts the engine is Postgres >= 18 before touching any DDL — a wrong
+    engine fails loudly here rather than deep inside a migration.
 
     Serializes via a Postgres session-scoped advisory lock held on a dedicated
     connection that spans the whole call. Two processes starting at once (web
@@ -1023,6 +1087,9 @@ async def migrate() -> None:
     PgBouncer transaction pooling (session affinity is lost between
     statements) so a pooler in this path would need to be bypassed.
     """
+    async with get_engine().connect() as conn:
+        result = await conn.execute(text("SHOW server_version_num"))
+        _assert_min_pg_version(result.scalar_one())
     await ensure_schema_migrations_table()
     async with get_engine().connect() as lock_conn:
         await lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
@@ -1113,6 +1180,8 @@ async def _apply_pending() -> None:
                 await _apply_mcp_review_tokens_org_id(conn)
             elif kind == "orgs_sso_authz_columns":
                 await _apply_orgs_sso_authz_columns(conn)
+            elif kind == "uuid_pk_uuidv7_defaults":
+                await _apply_uuid_pk_uuidv7_defaults(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

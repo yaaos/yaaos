@@ -21,7 +21,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 from sqlalchemy import select, update
@@ -51,7 +51,7 @@ async def write(
     """
     if not kind:
         raise ValueError("outbox write requires a non-empty kind")
-    row = OutboxEntryRow(id=uuid4(), kind=kind, payload=payload)
+    row = OutboxEntryRow(kind=kind, payload=payload)
     db_session.add(row)
     await db_session.flush()
     return row.id

@@ -7,7 +7,7 @@ import hmac
 import time
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 import jwt as pyjwt
@@ -460,7 +460,6 @@ async def record_app_install(
     """
     session.add(
         GitHubAppInstallationRow(
-            id=uuid4(),
             org_id=org_id,
             install_external_id=install_external_id,
             account_login=account_login,
@@ -489,7 +488,6 @@ async def upsert_installation(
         if existing is None:
             s.add(
                 GitHubAppInstallationRow(
-                    id=uuid4(),
                     org_id=org_id,
                     install_external_id=install_external_id,
                     account_login=account_login,
@@ -651,15 +649,15 @@ async def record_webhook_event(
         ).scalar_one_or_none()
         if existing is not None:
             return None
-        row_id = uuid4()
         row = GitHubWebhookEventRow(
-            id=row_id,
             org_id=org_id,
             source_event_id=source_event_id,
             event_type=event_type,
             payload=payload,
         )
         s.add(row)
+        await s.flush()
+        row_id = row.id
         try:
             await s.commit()
         except Exception as e:
