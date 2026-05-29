@@ -4,9 +4,9 @@
 
 ## Scope
 
-- **Owns:** `Workspace` + `WorkspaceProvider` Protocols, provider registry, `workspaces` table lifecycle, reaper background loop, single-flight claim registry, three `WorkflowCommand` impls (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`).
+- **Owns:** `Workspace` + `WorkspaceProvider` Protocols, provider registry, `workspaces` table lifecycle, reaper background loop, single-flight claim registry, three `WorkflowCommand` impls (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`). Implements and registers `WorkspaceAgentReportSink` (the IoC seam to [`core/agent_gateway`](core_agent_gateway.md)).
 - **Does not own:** lifecycle *policy* (that's callers); workspace filesystem internals (plugin-private); `domain/tickets` data (bridged via [Workflow-context callback](#workflow-context-callback)).
-- **Receives:** `WorkspaceSpec` from callers; terminal AgentEvents from [`core/agent_gateway`](core_agent_gateway.md) trigger reaper. **Emits:** `workspace.transitioned` audit rows via [`core/audit_log`](core_audit_log.md); `WorkflowCommand` events to [`core/workflow`](core_workflow.md).
+- **Receives:** `WorkspaceSpec` from callers; AgentEvent ingestion goes through the registered sink. **Emits:** `workspace.transitioned` audit rows via [`core/audit_log`](core_audit_log.md); `WorkflowCommand` events to [`core/workflow`](core_workflow.md).
 
 ## Why / invariants
 
@@ -15,6 +15,7 @@
 - **Each new workspace capability is a deliberate named method** (`run_coding_agent_cli`, `read_text`). A generic `exec(argv)` would silently broaden.
 - **`release_claim` preserves `current_holder_workflow_id`** even after clearing `current_command_id` — audit/reconciliation lookups still find which workflow last touched the workspace.
 - **Workspace-context callback bridges `core → domain`** without violating layer order: `domain/reviewer` registers a concrete `WorkflowContextProvider` at boot; `ProvisionWorkspace` reads it to fetch ticket context. See [`domain/reviewer/__init__.py`](domain_reviewer.md).
+- **`WorkspaceAgentReportSink` is registered at import time** (`workspace/__init__.py` line 66). agent_gateway's service functions call the sink for workspace-state reads/writes; the sink implementation lives in `app/core/workspace/agent_report.py`. The stale-claim guard (kind mismatch or unknown workspace) returns `accepted=False`; agent_gateway maps that to `StaleClaimError` / 410 Gone.
 
 ## Gotchas
 
@@ -40,4 +41,4 @@
 
 ## How it's tested
 
-`app/core/workspace/test/test_dispatch.py` covers `try_claim` / `release_claim` contention. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; retry increment; `destroy_failed` after 3 attempts; `startup_recovery`) lives in reviewer integration tests and the workspace plugin's own tests. `app/core/workspace/test/test_connection_status_endpoint.py` covers the HTTP route: auth enforcement (401, 403) and the `not_configured` happy path. Recovery-policy tests live in `app/core/workflow/test/test_recovery_registry.py` (registry lives in [`core/workflow`](core_workflow.md)).
+`app/core/workspace/test/test_dispatch.py` covers `try_claim` / `release_claim` contention. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; retry increment; `destroy_failed` after 3 attempts; `startup_recovery`) lives in reviewer integration tests and the workspace plugin's own tests. `app/core/workspace/test/test_connection_status_endpoint.py` covers the HTTP route: auth enforcement (401, 403) and the `not_configured` happy path. Recovery-policy tests live in `app/core/workflow/test/test_recovery_registry.py` (registry lives in [`core/workflow`](core_workflow.md)). `app/core/workspace/test/test_agent_report.py` covers the sink implementation: kind→status map, stale-claim guard, heartbeat reconciliation, and claim resolution.

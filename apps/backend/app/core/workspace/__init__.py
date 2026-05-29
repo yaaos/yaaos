@@ -1,5 +1,11 @@
 """core/workspace — provisioning + centralized lifecycle."""
 
+# Register the workspace sink into agent_gateway's single-slot registry so
+# agent_gateway never imports core/workspace directly. The canonical import
+# direction is workspace → agent_gateway (workspace uses the transport and
+# registers its sink here).
+from app.core.agent_gateway import register_report_sink as _register_report_sink
+from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
 from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
 from app.core.workspace.dispatch import (
     release_claim,
@@ -57,6 +63,8 @@ from app.core.workspace.workflow_context import (
     register_workflow_context_provider,
 )
 
+_register_report_sink(WorkspaceAgentReportSinkImpl())
+
 __all__ = [
     "ALL_LIFECYCLE_COMMANDS",
     "CodingAgentCliResult",
@@ -67,6 +75,7 @@ __all__ = [
     "ResourceCaps",
     "WorkflowContextProvider",
     "Workspace",
+    "WorkspaceAgentReportSinkImpl",
     "WorkspaceClaimState",
     "WorkspaceCommandState",
     "WorkspaceDestroyError",

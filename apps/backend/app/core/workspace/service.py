@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org
 from app.core.audit_log import Actor, ActorKind, audit_for_workspace
 from app.core.database import session as get_session
 from app.core.observability import spawn
@@ -550,8 +551,6 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     ).fetchall()
     if not stale_orgs:
         return
-
-    from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org  # noqa: PLC0415
 
     for (org_id,) in stale_orgs:
         rows = (

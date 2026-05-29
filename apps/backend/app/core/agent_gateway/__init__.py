@@ -11,11 +11,21 @@ Provides:
   should forget).
 - Event ingestion with the stale-claim guard (`410 Gone` on mismatch).
 - A placeholder identity verifier that accepts any non-empty bearer.
+- `WorkspaceAgentReportSink` Protocol + single-slot registry; `core/workspace`
+  registers its implementation at import so agent_gateway never imports workspace.
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
 from app.core.agent_gateway.bearers import revoke_all_for_org
 from app.core.agent_gateway.models import WorkspaceAgentRow
+from app.core.agent_gateway.report_sink import (
+    WorkspaceAgentReportSink,
+    WorkspaceEventOutcome,
+    WorkspaceEventReport,
+    clear_report_sink,
+    get_report_sink,
+    register_report_sink,
+)
 from app.core.agent_gateway.service import (
     claim_next,
     clear_queues,
@@ -87,16 +97,21 @@ __all__ = [
     "StaleClaimError",
     "SubscriberRegistry",
     "UnauthorizedError",
+    "WorkspaceAgentReportSink",
     "WorkspaceAgentRow",
     "WorkspaceEvent",
     "WorkspaceEventKind",
+    "WorkspaceEventOutcome",
+    "WorkspaceEventReport",
     "WriteFilesCommand",
     "WriteFilesEntry",
     "claim_next",
     "clear_queues",
+    "clear_report_sink",
     "connection_status_for_org",
     "enqueue_command",
     "ensure_agent_row",
+    "get_report_sink",
     "get_subscriber_registry",
     "has_any_reachable_agent",
     "pick_agent_for_org",
@@ -104,6 +119,7 @@ __all__ = [
     "record_agent_event",
     "record_heartbeat",
     "record_workspace_event",
+    "register_report_sink",
     "revoke_all_for_org",
     "shutdown",
 ]
