@@ -774,6 +774,30 @@ async def aggregate_findings_by_prs(
     return out
 
 
+async def refresh_ticket_findings_summary(
+    ticket_id: uuid.UUID,
+    pr_id: uuid.UUID,
+    *,
+    org_id: uuid.UUID,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Recompute findings rollup for *pr_id* and write it to the ticket row.
+
+    Runs inside the caller's session; caller commits. Invoked after findings
+    are posted (review end) and after an ack/push-back in reviewer/web.py.
+    """
+    from app.domain.tickets import update_findings_summary  # noqa: PLC0415
+
+    rollup = await aggregate_findings_by_prs([pr_id], org_id=org_id)
+    count, severity = rollup.get(pr_id, (0, None))
+    await update_findings_summary(
+        ticket_id,
+        findings_count=count,
+        max_severity=severity,
+        session=session,
+    )
+
+
 def review_summary(aggregate: PRReviewAggregate, review: Review) -> dict[str, int]:
     """Counters for the per-review section header: N new, M re-observed, K resolved."""
     new = 0

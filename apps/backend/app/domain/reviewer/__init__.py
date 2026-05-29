@@ -70,7 +70,6 @@ from app.domain.reviewer.service import (
     ThreadMessageView,
     ThreadView,
     VerifyFixAction,
-    aggregate_findings_by_prs,
     all_conversations_view,
     apply_classified_reply,
     apply_stale_check_result,
@@ -117,6 +116,7 @@ from app.domain.reviewer.types import (
     ReviewTrigger,
     Severity,
 )
+from app.domain.tickets import get_workspace_ticket_context as _get_workspace_ticket_context
 
 __all__ = [
     "VERIFY_ACT_THRESHOLD",
@@ -176,7 +176,6 @@ __all__ = [
     "TriggerInputs",
     "VerifyFixAction",
     "acquire_pr_lock",
-    "aggregate_findings_by_prs",
     "all_conversations_view",
     "apply_classified_reply",
     "apply_stale_check_result",
@@ -212,9 +211,7 @@ class _TicketWorkflowContextProvider:
     by `_register_workflows()` at module import."""
 
     async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        from app.domain.tickets import get_workspace_ticket_context  # noqa: PLC0415
-
-        return await get_workspace_ticket_context(ticket_id)
+        return await _get_workspace_ticket_context(ticket_id)
 
 
 async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]

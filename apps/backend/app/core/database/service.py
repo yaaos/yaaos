@@ -165,6 +165,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("029_drop_github_installations", "drop_github_installations"),
     ("030_drop_github_settings", "drop_github_settings"),
     ("031_notifications_generalize_subject", "notifications_generalize_subject"),
+    ("032_tickets_findings_rollup", "tickets_findings_rollup"),
 )
 
 
@@ -905,6 +906,52 @@ async def _apply_notifications_generalize_subject(conn) -> None:  # type: ignore
         await conn.execute(text(stmt))
 
 
+async def _apply_tickets_findings_rollup(conn) -> None:  # type: ignore[no-untyped-def]
+    """Denormalize findings rollup onto tickets.
+
+    - Add `findings_count INT NOT NULL DEFAULT 0`.
+    - Add `max_severity VARCHAR NULL`.
+    - Backfill from existing findings via a grouped aggregate.
+    Idempotent.
+    """
+    statements: list[str] = [
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS findings_count INT NOT NULL DEFAULT 0",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS max_severity VARCHAR",
+        # Backfill: for each ticket with a linked PR, compute rollup from findings.
+        # severity_rank: high=3, medium=2, low=1, else=0.
+        """
+        UPDATE tickets t
+        SET
+            findings_count = COALESCE(agg.cnt, 0),
+            max_severity = CASE agg.max_rank
+                WHEN 3 THEN 'high'
+                WHEN 2 THEN 'medium'
+                WHEN 1 THEN 'low'
+                ELSE NULL
+            END
+        FROM (
+            SELECT
+                f.pr_id,
+                COUNT(f.id) AS cnt,
+                MAX(
+                    CASE f.severity
+                        WHEN 'high'   THEN 3
+                        WHEN 'medium' THEN 2
+                        WHEN 'low'    THEN 1
+                        ELSE 0
+                    END
+                ) AS max_rank
+            FROM findings f
+            GROUP BY f.pr_id
+        ) agg
+        WHERE t.pr_id = agg.pr_id
+          AND t.findings_count = 0
+        """,
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 # Postgres advisory lock key for `migrate()`. Arbitrary stable bigint — pick
 # any value that doesn't collide with another advisory lock; this codebase
 # has no other advisory-lock users.
@@ -1010,6 +1057,8 @@ async def _apply_pending() -> None:
                 await _apply_drop_github_settings(conn)
             elif kind == "notifications_generalize_subject":
                 await _apply_notifications_generalize_subject(conn)
+            elif kind == "tickets_findings_rollup":
+                await _apply_tickets_findings_rollup(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

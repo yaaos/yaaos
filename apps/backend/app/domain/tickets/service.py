@@ -66,6 +66,8 @@ class Ticket(BaseModel):
             pr_id=row.pr_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            findings_count=row.findings_count,
+            max_severity=row.max_severity,  # type: ignore[arg-type]
         )
 
 
@@ -357,16 +359,23 @@ async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
     return Ticket.from_row(row) if row is not None else None
 
 
-async def get_by_id(ticket_id: UUID) -> Ticket | None:
-    """Return the `Ticket` for *ticket_id* without an org_id filter, or ``None``.
+async def update_findings_summary(
+    ticket_id: UUID,
+    *,
+    findings_count: int,
+    max_severity: str | None,
+    session: AsyncSession,
+) -> None:
+    """Write the denormalized findings rollup onto the ticket row.
 
-    Use when the caller does not yet know the org (e.g. resolving org context
-    from a ticket reference). Callers that DO know the org should use `get`
-    which applies the org scope.
+    Called by reviewer after each review run and on ack/push-back.
+    Caller commits. No-op when the ticket is missing (defensive).
     """
-    async with db_session() as s:
-        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
-    return Ticket.from_row(row) if row is not None else None
+    await session.execute(
+        update(TicketRow)
+        .where(TicketRow.id == ticket_id)
+        .values(findings_count=findings_count, max_severity=max_severity)
+    )
 
 
 async def list_running_older_than(cutoff: datetime) -> list[tuple[UUID, UUID, UUID | None]]:
@@ -397,13 +406,11 @@ async def list_tickets(
 ) -> list[Ticket]:
     """List tickets for the org, applying the requested filters + sort.
 
-    `findings_count` + `max_severity` are computed by a grouped query over
-    `findings` rather than denormalized on the ticket row — POC simpler than
-    maintaining a trigger-fed column, and the result set is small.
+    `findings_count` + `max_severity` are read directly from the ticket row
+    — reviewer writes the rollup after each review run and on ack/push-back.
     """
     from app.domain.pull_requests import PullRequest  # noqa: PLC0415
     from app.domain.pull_requests import list_by_ids as list_prs_by_ids  # noqa: PLC0415
-    from app.domain.reviewer import aggregate_findings_by_prs  # noqa: PLC0415
 
     async with db_session() as s:
         stmt = select(TicketRow).where(TicketRow.org_id == org_id)
@@ -423,20 +430,14 @@ async def list_tickets(
             "updated_asc": TicketRow.updated_at.asc(),
             "created_desc": TicketRow.created_at.desc(),
             "status": TicketRow.status.asc(),
+            "findings_count": TicketRow.findings_count.desc(),
         }.get(filter.sort, TicketRow.updated_at.desc())
-        # `findings_count` sort is handled post-fetch — keyset-paginating on a
-        # computed aggregate isn't worth the SQL gymnastics in POC.
         stmt = stmt.order_by(sort_clause).limit(limit)
 
         rows = (await s.execute(stmt)).scalars().all()
 
-    # Batch-aggregate findings per pr_id via the reviewer public op.
-    pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
-    findings_by_pr: dict[UUID, tuple[int, str | None]] = {}
-    if pr_ids:
-        findings_by_pr = await aggregate_findings_by_prs(pr_ids, org_id=org_id)
-
     # Batch-enrich PR data via the public pull_requests op (one query, not N+1).
+    pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
     prs_by_id: dict[UUID, PullRequest] = {}
     if pr_ids:
         prs_by_id = {p.id: p for p in await list_prs_by_ids(pr_ids)}
@@ -451,14 +452,7 @@ async def list_tickets(
             t.author_login = pr.author_login
             t.is_draft = pr.is_draft
             t.builder_display_name = pr.author_login
-        if r.pr_id and r.pr_id in findings_by_pr:
-            count, severity = findings_by_pr[r.pr_id]
-            t.findings_count = count
-            t.max_severity = severity  # type: ignore[assignment]
         out.append(t)
-
-    if filter.sort == "findings_count":
-        out.sort(key=lambda t: t.findings_count, reverse=True)
     return out
 
 

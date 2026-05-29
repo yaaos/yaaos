@@ -17,13 +17,13 @@ from app.domain.tickets.service import (
     create_for_pr,
     fail,
     get,
-    get_by_id,
     get_by_pr,
     get_payload,
     get_workspace_ticket_context,
     list_running_older_than,
     list_tickets,
     set_workflow_execution,
+    update_findings_summary,
     upsert_ticket_for_pr,
 )
 
@@ -43,12 +43,12 @@ __all__ = [
     "create_for_pr",
     "fail",
     "get",
-    "get_by_id",
     "get_by_pr",
     "get_payload",
     "get_workspace_ticket_context",
     "list_running_older_than",
     "list_tickets",
     "set_workflow_execution",
+    "update_findings_summary",
     "upsert_ticket_for_pr",
 ]

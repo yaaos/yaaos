@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -50,6 +50,10 @@ class TicketRow(Base):
     current_workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), nullable=True
     )
+    # Denormalized rollup written by reviewer after each review run or ack.
+    # Avoids a cross-module import from tickets → reviewer at list time.
+    findings_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    max_severity: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -868,7 +868,6 @@ expose = [
   "VERIFY_OBSERVE_THRESHOLD",
   "VerifyFixAction",
   "acquire_pr_lock",
-  "aggregate_findings_by_prs",
   "all_conversations_view",
   "apply_classified_reply",
   "apply_stale_check_result",
@@ -915,13 +914,13 @@ expose = [
   "create_for_pr",
   "fail",
   "get",
-  "get_by_id",
   "get_by_pr",
   "get_payload",
   "get_workspace_ticket_context",
   "list_running_older_than",
   "list_tickets",
   "set_workflow_execution",
+  "update_findings_summary",
   "upsert_ticket_for_pr",
 ]
 from = ["app.domain.tickets"]

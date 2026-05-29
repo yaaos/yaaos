@@ -2,7 +2,7 @@
 
 Covers: upsert_ticket_for_pr (idempotency + race-safe insert),
 attach_pr_to_ticket (pr_id IS NULL guard), set_workflow_execution,
-get_by_id, and list_running_older_than.
+list_running_older_than, and list_tickets findings rollup columns.
 """
 
 from __future__ import annotations
@@ -13,12 +13,13 @@ import pytest
 
 from app.domain.tickets import (
     attach_pr_to_ticket,
-    get_by_id,
     list_running_older_than,
+    list_tickets,
     set_workflow_execution,
+    update_findings_summary,
     upsert_ticket_for_pr,
 )
-from app.domain.tickets.service import get
+from app.domain.tickets.service import TicketFilter, get
 
 
 @pytest.mark.service
@@ -185,40 +186,6 @@ async def test_set_workflow_execution(db_session) -> None:  # type: ignore[no-un
 
 
 @pytest.mark.service
-async def test_get_by_id_returns_ticket(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Happy path: get_by_id returns the Ticket without org_id filter."""
-    org_id = uuid4()
-    source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
-
-    ticket_id, _ = await upsert_ticket_for_pr(
-        org_id=org_id,
-        source_external_id=source_external_id,
-        title="get-by-id PR",
-        description=None,
-        repo_external_id="myorg/repo",
-        plugin_id="github",
-        idempotency_key=f"delivery-{uuid4().hex}",
-        payload={},
-        session=db_session,
-    )
-    await db_session.commit()
-    assert ticket_id is not None
-
-    ticket = await get_by_id(ticket_id)
-    assert ticket is not None
-    assert ticket.id == ticket_id
-    assert ticket.org_id == org_id
-    assert ticket.title == "get-by-id PR"
-
-
-@pytest.mark.service
-async def test_get_by_id_returns_none_when_missing(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Unknown UUID returns None."""
-    result = await get_by_id(uuid4())
-    assert result is None
-
-
-@pytest.mark.service
 async def test_list_running_older_than_filters_correctly(db_session) -> None:  # type: ignore[no-untyped-def]
     """Returns only running tickets older than cutoff; skips fresh ones."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
@@ -279,3 +246,65 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     # verify pr_id slot is present (may be None for tickets without pr)
     stale_result = next(r for r in results if r[0] == stale_id)
     assert len(stale_result) == 3  # (ticket_id, org_id, pr_id)
+
+
+@pytest.mark.service
+async def test_list_tickets_reads_findings_columns(db_session) -> None:  # type: ignore[no-untyped-def]
+    """list_tickets reads findings_count + max_severity from the ticket row,
+    and update_findings_summary writes the rollup correctly."""
+    org_id = uuid4()
+
+    ticket_id, _ = await upsert_ticket_for_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="rollup PR",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"k-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+    assert ticket_id is not None
+
+    # Before any rollup write, findings_count should default to 0.
+    tickets = await list_tickets(TicketFilter(), org_id=org_id)
+    assert any(t.id == ticket_id for t in tickets)
+    target = next(t for t in tickets if t.id == ticket_id)
+    assert target.findings_count == 0
+    assert target.max_severity is None
+
+    # Write a rollup via update_findings_summary.
+    await update_findings_summary(
+        ticket_id,
+        findings_count=3,
+        max_severity="high",
+        session=db_session,
+    )
+    await db_session.commit()
+
+    # list_tickets must now reflect the persisted rollup — no live aggregation.
+    tickets2 = await list_tickets(TicketFilter(), org_id=org_id)
+    target2 = next(t for t in tickets2 if t.id == ticket_id)
+    assert target2.findings_count == 3
+    assert target2.max_severity == "high"
+
+    # findings_count sort is done at DB level — verify the ordering holds.
+    # Create a second ticket with zero findings.
+    ticket_id2, _ = await upsert_ticket_for_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="zero findings PR",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"k-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+
+    tickets3 = await list_tickets(TicketFilter(sort="findings_count"), org_id=org_id)
+    ids_in_order = [t.id for t in tickets3]
+    assert ids_in_order.index(ticket_id) < ids_in_order.index(ticket_id2)
