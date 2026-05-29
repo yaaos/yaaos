@@ -31,12 +31,7 @@ LAYERS = ("core", "domain", "plugins", "testing")
 
 # Permitted core→domain edges (auth/identity infra only — see docs/architecture.md).
 # Each tuple is (from_module, to_module) where both are fully-qualified app paths.
-PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset(
-    [
-        # core/sessions reads domain/integrations (broken OAuth credential check in /me).
-        ("app.core.sessions", "app.domain.integrations"),
-    ]
-)
+PERMITTED_CROSS_LAYER_EDGES: frozenset[tuple[str, str]] = frozenset()
 LAYER_ORDER = {name: i for i, name in enumerate(LAYERS)}
 
 

@@ -66,7 +66,7 @@ depends_on = ["app.core.config"]
 
 [[modules]]
 path = "app.core.sessions"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.tenancy", "app.core.webserver", "app.domain.integrations"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.sse"
@@ -102,7 +102,7 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "a
 
 [[modules]]
 path = "app.domain.integrations"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.sessions", "app.core.webserver", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.sessions", "app.core.tenancy", "app.core.webserver", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.lessons"

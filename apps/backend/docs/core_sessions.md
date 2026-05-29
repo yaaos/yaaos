@@ -5,7 +5,7 @@
 ## Scope
 
 - Owns: `require(action)`, `public_route` dependency factories; `/api/auth/*` HTTP routes; `_REQUIRED_ROLE` registry.
-- Does NOT own: session rows (those are in [`core/identity`](core_identity.md)), the middleware/`Action` enum (those are in [`core/auth`](core_auth.md)), org/membership tables (those are in [`core/tenancy`](core_tenancy.md)), or the SSO discover route (moved to [`domain/orgs`](domain_orgs.md) at `/api/sso/discover`).
+- Does NOT own: session rows (those are in [`core/identity`](core_identity.md)), the middleware/`Action` enum (those are in [`core/auth`](core_auth.md)), org/membership tables (those are in [`core/tenancy`](core_tenancy.md)), the SSO discover route (moved to [`domain/orgs`](domain_orgs.md) at `/api/sso/discover`), or broken-credential data (that's [`domain/integrations`](domain_integrations.md) at `GET /api/integrations/broken-summary`).
 - Pure core — no `domain/*` import at any layer. All org/membership resolution goes through [`core/tenancy`](core_tenancy.md).
 
 ## Why / invariants
@@ -31,4 +31,6 @@
 6. Open-redirect defeated by `_safe_next`: only same-origin absolute paths honored.
 
 **State vs TOTP-challenge cookie** use different `itsdangerous` salts (`yaaos-oauth-state` vs `yaaos-totp-challenge`) so a login state can't be replayed at the step-up endpoint.
+
+**`GET /api/auth/me` response shape** — `{ user, memberships }`. Each membership entry carries `org_id`, `slug`, `role`, `handle`, `display_name`. No `broken_integrations` field — that data is served by `GET /api/integrations/broken-summary` (see [`domain_integrations.md`](domain_integrations.md)), keeping integrations concerns out of the core auth surface.
 

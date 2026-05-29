@@ -90,7 +90,7 @@ def _app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
-    mount_specs(app, only={"integrations"})
+    mount_specs(app, only={"integrations", "integrations_summary"})
     return app
 
 
@@ -364,3 +364,134 @@ async def test_validate_endpoint_404_when_not_connected(seeded, stub_provider) -
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
+
+
+# ── broken-summary endpoint ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_unauthenticated_401(seeded) -> None:
+    """No cookie → 401."""
+    async with _client() as c:
+        r = await c.get("/api/integrations/broken-summary")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_empty_when_no_broken_creds(seeded) -> None:
+    """Admin with no broken credentials gets an empty orgs list."""
+    sess = seeded["admin_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "orgs" in body
+    # May have orgs entries but each must have empty broken_integrations.
+    for org_entry in body["orgs"]:
+        assert org_entry["broken_integrations"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_returns_broken_creds_for_admin(
+    seeded, stub_provider, stub_exchange, db_session
+) -> None:
+    """Admin whose org has a broken credential sees it in broken-summary."""
+    del stub_provider, stub_exchange
+    from itsdangerous import URLSafeTimedSerializer  # noqa: PLC0415
+    from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+
+    # Connect the stub provider for the org.
+    state = URLSafeTimedSerializer(
+        get_settings().yaaos_invitation_token_secret.get_secret_value(),
+        salt="yaaos-integration-connect",
+    ).dumps(
+        {
+            "org_id": str(seeded["org"].id),
+            "user_initiating": str(seeded["admin"].id),
+            "provider": "stub",
+        }
+    )
+    async with _client() as c:
+        await c.get(
+            "/api/mcp-proxy/stub/callback",
+            params={"code": "abc", "state": state},
+            follow_redirects=False,
+        )
+
+    # Flip the credential to "failed" directly in the DB.
+    await db_session.execute(
+        sa_update(McpCredentialRow)
+        .where(McpCredentialRow.org_id == seeded["org"].id)
+        .values(last_refresh_status="failed")
+    )
+    await db_session.commit()
+
+    sess = seeded["admin_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "orgs" in body
+    matching = [e for e in body["orgs"] if e["org_id"] == str(seeded["org"].id)]
+    assert len(matching) == 1
+    assert any(b["provider"] == "stub" for b in matching[0]["broken_integrations"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_builder_sees_empty(
+    seeded, stub_provider, stub_exchange, db_session
+) -> None:
+    """Builder-role users get empty broken_integrations for all orgs."""
+    del stub_provider, stub_exchange
+    from itsdangerous import URLSafeTimedSerializer  # noqa: PLC0415
+    from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+
+    state = URLSafeTimedSerializer(
+        get_settings().yaaos_invitation_token_secret.get_secret_value(),
+        salt="yaaos-integration-connect",
+    ).dumps(
+        {
+            "org_id": str(seeded["org"].id),
+            "user_initiating": str(seeded["admin"].id),
+            "provider": "stub",
+        }
+    )
+    async with _client() as c:
+        await c.get(
+            "/api/mcp-proxy/stub/callback",
+            params={"code": "abc", "state": state},
+            follow_redirects=False,
+        )
+    await db_session.execute(
+        sa_update(McpCredentialRow)
+        .where(McpCredentialRow.org_id == seeded["org"].id)
+        .values(last_refresh_status="failed")
+    )
+    await db_session.commit()
+
+    sess = seeded["member_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for org_entry in body["orgs"]:
+        assert org_entry["broken_integrations"] == []

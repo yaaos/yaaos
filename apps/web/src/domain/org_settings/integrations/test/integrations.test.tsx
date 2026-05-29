@@ -32,11 +32,11 @@ vi.mock("@domain/auth", () => ({
     data: {
       memberships: [
         {
+          org_id: "o1",
           slug: "acme",
           role: "owner",
           handle: "j",
           display_name: "Acme",
-          broken_integrations: [],
         },
       ],
       user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },

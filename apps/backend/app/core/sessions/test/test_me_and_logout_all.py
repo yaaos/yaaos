@@ -99,43 +99,21 @@ async def test_logout_all_revokes_every_session(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_me_exposes_broken_integrations_for_admins(db_session) -> None:
-    """Admins (and Owners) see the org's broken MCP integrations; Members don't."""
-    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
-
-    from app.domain.integrations import create_credential  # noqa: PLC0415
-
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="brokens-org")
+async def test_me_memberships_have_no_broken_integrations_field(db_session) -> None:
+    """/api/auth/me memberships do not expose broken_integrations — that lives
+    in GET /api/integrations/broken-summary (domain/integrations)."""
+    user = await identity_repo.insert_user(db_session, display_name="A")
+    org = await orgs_repo.insert_org(db_session, slug="me-no-broken-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=user.id, org_id=org.id, role=Role.ADMIN, handle="adm"
     )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
-    )
-    await create_credential(
-        db_session,
-        org_id=org.id,
-        provider="linear",
-        encrypted_access_token="enc",
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        scopes=["read"],
-        allowed_tools=[],
-        enabled=True,
-        upstream_identity="bot",
-        last_refresh_status="failed",
-        last_refresh_failed_at=datetime.now(UTC),
-    )
-    a_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    m_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
-        a_resp = await c.get("/api/auth/me", cookies={"yaaos_session": a_sess.raw_token})
-        m_resp = await c.get("/api/auth/me", cookies={"yaaos_session": m_sess.raw_token})
+        resp = await c.get("/api/auth/me", cookies={"yaaos_session": sess.raw_token})
 
-    a_membership = next(m for m in a_resp.json()["memberships"] if m["slug"] == "brokens-org")
-    m_membership = next(m for m in m_resp.json()["memberships"] if m["slug"] == "brokens-org")
-    assert [b["provider"] for b in a_membership["broken_integrations"]] == ["linear"]
-    assert m_membership["broken_integrations"] == []
+    assert resp.status_code == 200
+    body = resp.json()
+    membership = next(m for m in body["memberships"] if m["slug"] == "me-no-broken-org")
+    assert "broken_integrations" not in membership

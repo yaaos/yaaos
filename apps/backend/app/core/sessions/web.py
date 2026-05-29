@@ -282,18 +282,17 @@ async def me(
 ) -> Response:
     """Return `{user, memberships}` for the cookie-bearer.
 
-    `memberships` is the authenticated user's current memberships (revoked
-    ones disappear next call). The server has no opinion about which org is
-    "current" — that's view state and lives in the URL.
+    `memberships` lists the caller's current org memberships (slug, role,
+    handle, display_name). Revoked memberships disappear on the next call.
+    No `broken_integrations` — that field is served by
+    `GET /api/integrations/broken-summary` so integrations data stays in
+    the integrations module.
 
     Lives on the public allowlist because the SPA hits it before any org
-    URL is selected; on routes that need it, the SPA adds `X-Org-Slug` from
-    the URL path. 401 when there's no session.
+    URL is selected. 401 when there's no session.
     """
-    from app.core.auth import Role as _Role  # noqa: PLC0415
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
-    from app.domain.integrations import list_broken_credentials_for_org  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
@@ -304,30 +303,16 @@ async def me(
         user_row = await identity_repo.get_user(s, session.user_id)
         emails = await identity_repo.list_emails_for_user(s, session.user_id)
         membership_views = await _list_memberships(s, session.user_id)
-        memberships_view = []
-        for m in membership_views:
-            broken: list[dict[str, str | None]] = []
-            # Owners + Admins see broken integrations; Members get an empty list.
-            if m.role.covers(_Role.ADMIN):
-                broken_creds = await list_broken_credentials_for_org(s, m.org_id)
-                broken = [
-                    {
-                        "provider": c.provider,
-                        "last_refresh_failed_at": (
-                            c.last_refresh_failed_at.isoformat() if c.last_refresh_failed_at else None
-                        ),
-                    }
-                    for c in broken_creds
-                ]
-            memberships_view.append(
-                {
-                    "slug": m.slug,
-                    "display_name": m.org_name,
-                    "role": m.role.value,
-                    "handle": m.handle,
-                    "broken_integrations": broken,
-                }
-            )
+        memberships_view = [
+            {
+                "org_id": str(m.org_id),
+                "slug": m.slug,
+                "display_name": m.org_name,
+                "role": m.role.value,
+                "handle": m.handle,
+            }
+            for m in membership_views
+        ]
     primary_email = next((e.email for e in emails if e.is_primary), emails[0].email if emails else None)
     return JSONResponse(
         content={
