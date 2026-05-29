@@ -13,9 +13,10 @@ import pytest
 from taskiq import InMemoryBroker
 
 from app.core.auth import current_org_id
-from app.core.tasks import drain_once, enqueue, scoped_task_registration, task
+from app.core.tasks import drain_once, enqueue, task
 from app.core.tasks.drain import _taskiq_dispatcher_for
 from app.core.tasks.middleware import OrgContextMiddleware
+from app.core.tasks.service import scoped_task_registration
 
 
 @pytest.mark.asyncio

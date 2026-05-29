@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -113,26 +112,6 @@ def list_workspace_providers() -> list[WorkspaceProvider]:
 def clear_workspace_providers() -> None:
     """Clear the workspace provider registry."""
     _PROVIDERS.clear()
-
-
-@contextmanager
-def scoped_workspace_provider(plugin_id: str, provider: WorkspaceProvider) -> Iterator[WorkspaceProvider]:
-    """Context manager: install *provider* under *plugin_id* for the duration of
-    the block, then restore the prior entry (if any) on exit — even if an
-    exception is raised.
-
-    If *plugin_id* is already registered, the prior entry is saved and replaced;
-    on exit the prior entry is restored. If the id was not registered, the
-    provider is simply unregistered on exit."""
-    prior = _PROVIDERS.get(plugin_id)
-    _PROVIDERS[plugin_id] = provider
-    try:
-        yield provider
-    finally:
-        if prior is None:
-            _PROVIDERS.pop(plugin_id, None)
-        else:
-            _PROVIDERS[plugin_id] = prior
 
 
 class _WorkspaceImpl:

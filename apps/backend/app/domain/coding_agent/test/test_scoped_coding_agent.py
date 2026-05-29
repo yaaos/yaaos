@@ -7,8 +7,8 @@ import pytest
 from app.domain.coding_agent import (
     get_plugin,
     registered_plugin_ids,
-    scoped_coding_agent,
 )
+from app.domain.coding_agent.service import scoped_coding_agent
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
 
 

@@ -22,7 +22,7 @@
 ## Gotchas
 
 - **`spawn()` vs `enqueue`** — use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work. Use `enqueue` for work that must survive restarts, has retry policy, or participates in a workflow.
-- **`scoped_task_registration`** — required for test isolation when registering tasks dynamically; see [patterns.md § `scoped_*` context managers](patterns.md).
+- **`scoped_task_registration`** (in `app.core.tasks.service`, not re-exported from the package) — required for test isolation when registering tasks dynamically; tests reach it via direct submodule import. See [patterns.md § `scoped_*` context managers](patterns.md).
 - **`shutdown()` does not drop the broker singleton** — task registrations set at import time remain intact.
 
 ## Data owned

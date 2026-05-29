@@ -19,7 +19,7 @@
 
 **Custom migration runner** — `_MIGRATIONS` tuple in `service.py` is the sole source of truth. `alembic upgrade head` is forbidden; the runner applies idempotently. `_apply_create_all` explicitly imports every module's `models` — new modules with tables must be added to that import list.
 
-**`set_test_session_override`** — routes every `async with session()` call to the fixture-bound `AsyncSession` so production code runs inside the test's outer transaction. The `db_session` fixture uses a `restart_savepoint` listener so production `await s.commit()` becomes a SAVEPOINT release; teardown rolls back the outer transaction.
+**`set_test_session_override`** (in `app.core.database.service`, not re-exported from the package) — routes every `async with session()` call to the fixture-bound `AsyncSession` so production code runs inside the test's outer transaction. The `db_session` fixture in `conftest.py` imports it directly from the submodule. The `restart_savepoint` listener turns production `await s.commit()` into a SAVEPOINT release; teardown rolls back the outer transaction.
 
 **UUID primary keys via `uuidv7()`** — Postgres 18 ships `uuidv7()` natively. Every UUID PK column carries `server_default=text("uuidv7()")` so the DB mints a time-ordered UUID v7 on INSERT. Services never pass `id=` to Row constructors. See `apps/backend/docs/patterns.md` § UUID primary keys for the full convention and the semgrep enforcer.
 

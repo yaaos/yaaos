@@ -16,8 +16,9 @@ from sqlalchemy import select
 
 from app.core.audit_log import ActorKind
 from app.core.auth import org_context
-from app.core.tasks import enqueue, scoped_task_registration, task
+from app.core.tasks import enqueue, task
 from app.core.tasks.models import OutboxEntryRow
+from app.core.tasks.service import scoped_task_registration
 
 
 @pytest.mark.asyncio

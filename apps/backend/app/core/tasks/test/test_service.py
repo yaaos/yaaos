@@ -5,9 +5,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.core.tasks import enqueue, scoped_task_registration, task
+from app.core.tasks import enqueue, task
 from app.core.tasks.broker import get_broker
 from app.core.tasks.models import OutboxEntryRow
+from app.core.tasks.service import scoped_task_registration
 
 
 def test_task_decorator_registers_name() -> None:

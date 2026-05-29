@@ -378,9 +378,9 @@ Tests obey the **same import rules as production code** — enforced by `tach ch
 - No `*Row` types in cross-module imports. If a test in module B needs to inspect persisted state owned by module A, use module A's targeted public read function (e.g. `get_token_by_hash`, `get_session_by_hash`) or assert on the observable outcome instead.
 - No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` — but `app/testing/` is itself tach-governed; it may only import from `__all__`-gated module paths.
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
-- Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead. Two flavors by reach:
-  - **Cross-module reach** (module A's tests reset module B's state) → public symbol in B's `__all__` and tach interface. Example: `redis.reset_pubsub()` — called from reviewer / tickets / github / agent_gateway tests that exercise SSE flows.
-  - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in B's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Examples: `redis._reset_clients_for_tests`, `agent_gateway.subscribers._reset_subscriber_singleton_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
+- Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead.
+  - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in the module's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Examples: `redis._reset_clients_for_tests`, `agent_gateway.subscribers._reset_subscriber_singleton_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
+  - **Cross-module test machinery** (isolation fixtures, seed/cleanup, workflow harness) → lives in `app/testing/`, which calls each module's *production* `bind_*`/`register_*` APIs only. A test helper must NEVER be reachable across modules — not in `__all__`, not imported from another module's tests.
 
 ### DI over `@patch`
 
@@ -425,15 +425,17 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 Modules with import-time registries expose `register_*`, `unregister_*`, and `scoped_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception.
 
-Modules with this pattern today: `core.workflow` (`scoped_engine`, `scoped_workflow`), `domain.vcs` (`scoped_vcs_plugin`), `domain.coding_agent` (`scoped_coding_agent`), `core.tasks` (`scoped_task_registration`).
+Modules with this pattern today: `core.workflow` (`scoped_engine`, `scoped_workflow`), `domain.vcs` (`scoped_vcs_plugin`).
 
 `core.workflow.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It saves the current engine, creates a fresh one, yields it, then restores the prior one on exit — replacing the former `svc._engine = None; eng = get_engine(); svc._engine = eng; ... svc._engine = None` pattern.
+
+`domain.coding_agent.service.scoped_coding_agent(plugin)` and `core.tasks.service.scoped_task_registration(task_ref)` follow the same contract but are intra-module helpers — they live in their submodule's `service.py` and are NOT re-exported from the package `__all__`. Tests inside those modules import them via direct submodule import.
 
 Rules:
 - No wholesale-wipe between tests. Test exactly what you need, clean it up with the scoped helper.
 - `unregister_*` is a no-op if the id is absent — safe to call in finally blocks.
 - `scoped_*` registers on entry, unregisters on exit. The yielded value is the same object passed in.
-- `scoped_task_registration(task_ref)` is the tasks variant: call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
+- `scoped_task_registration(task_ref)` — call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
 ## Subscription self-cleanup (async generator pattern)
 

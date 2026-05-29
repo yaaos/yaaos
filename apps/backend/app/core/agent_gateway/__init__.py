@@ -26,7 +26,6 @@ from app.core.agent_gateway.report_sink import (
     WorkspaceAgentReportSink,
     WorkspaceEventOutcome,
     WorkspaceEventReport,
-    clear_report_sink,
     get_report_sink,
     register_report_sink,
 )
@@ -115,7 +114,6 @@ __all__ = [
     "_seed_agent_for_tests",
     "claim_next",
     "clear_queues",
-    "clear_report_sink",
     "connection_status_for_org",
     "enqueue_command",
     "ensure_agent_row",

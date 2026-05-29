@@ -41,10 +41,6 @@ def register_vcs_clear_hook(hook: VcsClearHook) -> None:
     _VCS_CLEAR_HOOKS.append(hook)
 
 
-def _reset_vcs_clear_hooks_for_tests() -> None:
-    _VCS_CLEAR_HOOKS.clear()
-
-
 class VcsState(BaseModel):
     """Read-side view of an org's VCS choice. `plugin_id` is None when no
     VCS is configured; `settings` is empty in that case."""

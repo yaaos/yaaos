@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.tasks import scoped_task_registration, task
+from app.core.tasks import task
 from app.core.tasks.broker import get_broker
+from app.core.tasks.service import scoped_task_registration
 
 
 @pytest.mark.service

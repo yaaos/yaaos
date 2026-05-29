@@ -38,15 +38,6 @@ route_security_resolved: ContextVar[SecurityResolution | None] = ContextVar(
 )
 
 
-def clear_request_context() -> None:
-    """Reset every var to None. Called by middleware at request start."""
-    org_id_var.set(None)
-    user_id_var.set(None)
-    actor_kind_var.set(None)
-    actor_id_var.set(None)
-    route_security_resolved.set(None)
-
-
 def current_org_id() -> UUID | None:
     return org_id_var.get()
 

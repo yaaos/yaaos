@@ -161,7 +161,8 @@ async def db_session(_migrated_schema: None) -> AsyncIterator:
     from sqlalchemy import event  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
 
-    from app.core.database import get_engine, set_test_session_override  # noqa: PLC0415
+    from app.core.database import get_engine  # noqa: PLC0415
+    from app.core.database.service import set_test_session_override  # noqa: PLC0415
 
     engine = get_engine()
     async with engine.connect() as connection:

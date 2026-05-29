@@ -294,13 +294,6 @@ def _get_replay_client() -> httpx.AsyncClient:
     return _replay_client
 
 
-def set_replay_client_for_tests(client: httpx.AsyncClient | None) -> None:
-    """Test hook: replace the shared replay client with a MockTransport-backed
-    one. Pass `None` to restore production behaviour on the next call."""
-    global _replay_client
-    _replay_client = client
-
-
 async def replay_caller_identity(
     signed: SignedSTSRequest,
     *,
@@ -387,8 +380,5 @@ __all__ = [
     "canonicalize_arn",
     "parse_signed_request",
     "replay_caller_identity",
-    "reset_nonce_cache_for_tests",
-    "set_replay_client_for_tests",
-    "set_verify_identity_override",
     "verify_identity",
 ]

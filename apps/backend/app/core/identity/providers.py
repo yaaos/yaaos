@@ -84,8 +84,3 @@ def get_provider(provider_id: str) -> Provider | None:
 
 def list_providers() -> list[str]:
     return sorted(_REGISTRY.keys())
-
-
-def clear_registry() -> None:
-    """Test hook — not used in production code."""
-    _REGISTRY.clear()

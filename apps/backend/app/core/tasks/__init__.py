@@ -33,7 +33,6 @@ from app.core.tasks.service import (
     enqueue,
     get_pending_outbox_payloads,
     get_pending_task_names,
-    scoped_task_registration,
     shutdown,
     task,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "get_pending_task_names",
     "iter_worker_shutdown_hooks",
     "register_worker_shutdown_hook",
-    "scoped_task_registration",
     "shutdown",
     "task",
 ]

@@ -21,11 +21,11 @@ from app.core.agent_gateway import (
     WorkspaceEventOutcome,
     WorkspaceEventReport,
     clear_queues,
-    clear_report_sink,
     record_heartbeat,
     record_workspace_event,
     register_report_sink,
 )
+from app.core.agent_gateway.report_sink import clear_report_sink
 
 # ── Stub sink ──────────────────────────────────────────────────────────
 
