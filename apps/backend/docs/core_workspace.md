@@ -34,6 +34,10 @@
 
 - `workspaces` — `(id, org_id, provider_id, spec jsonb, plugin_state jsonb, status, provider, current_command_id, current_holder_workflow_id, max_idle_seconds, created_at, activated_at, expires_at, destroyed_at, destroy_attempts, last_destroy_attempt_at, last_destroy_error)`. Indexes: `(status, expires_at)`, `(org_id, created_at)`, `current_holder_workflow_id`, `org_id`.
 
+## Routes
+
+- `GET /api/workspaces/connection_status` — `ORG_SETTINGS_READ` (Admin+). Aggregated heartbeat state for the current org. Returns `{state, pod_count, latest_heartbeat_at}`. State values: `connected`, `lost`, `not_configured`. Implemented in `app/core/workspace/web.py`; delegates to [`core/agent_gateway`](core_agent_gateway.md) `connection_status_for_org`.
+
 ## How it's tested
 
-`app/core/workspace/test/test_dispatch.py` covers `try_claim` / `release_claim` contention and the recovery-policy registry. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; retry increment; `destroy_failed` after 3 attempts; `startup_recovery`) lives in reviewer integration tests and the workspace plugin's own tests.
+`app/core/workspace/test/test_dispatch.py` covers `try_claim` / `release_claim` contention and the recovery-policy registry. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; retry increment; `destroy_failed` after 3 attempts; `startup_recovery`) lives in reviewer integration tests and the workspace plugin's own tests. `app/core/workspace/test/test_connection_status_endpoint.py` covers the HTTP route: auth enforcement (401, 403) and the `not_configured` happy path.

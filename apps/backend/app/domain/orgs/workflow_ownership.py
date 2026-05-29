@@ -1,7 +1,7 @@
 """FastAPI dependency that 404s on cross-org workflow execution access.
 
-Kept separate from `workspace_status_web.py` so callers that only need
-the ownership guard don't pull in the SSE stream wiring.
+Kept in a dedicated file so callers that only need the ownership guard
+don't pull in SSE stream wiring or other HTTP surface.
 """
 
 from __future__ import annotations

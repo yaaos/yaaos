@@ -1,4 +1,4 @@
-"""HTTP wiring for the workspace-agent connection status.
+"""HTTP wiring for `core/workspace`.
 
 | Method | Path                                | Action                                                                    |
 |--------|-------------------------------------|---------------------------------------------------------------------------|
