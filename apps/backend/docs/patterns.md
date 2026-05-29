@@ -66,6 +66,10 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
 - Module-level only (heavy-ML exception requires `# noqa: PLC0415`).
 - Other modules import only `__all__` exports. Internal cross-module imports are Tach-rejected.
 - **No `*Row` types in `__all__`.** SQLAlchemy Row/mapped classes never appear in any module's `__all__` or `tach expose` list. Every public API that surfaces persisted state returns the module's Pydantic value object, not the Row. Foreign table access via an imported Row name fails tach `check --interfaces` — the intended path is the owning module's public service API.
+- **`bin/sync_modules` enforces two AST-level rules at every CI run:**
+  - **Rule-1** — a name in `__all__` that resolves to a SQLAlchemy mapped/Row class (class inheriting from `*Base*`, or any name imported `from <any>.models`) is rejected with exit 2.
+  - **Rule-5** — a function listed in `__all__` whose return annotation or parameter annotations reference a Row type is rejected with exit 2.
+  - Both rules are AST-based (import-free, env-free, `# noqa`-immune). `apps/backend/bin/test_module_boundaries.py` carries three canary tests that inject real violations into the tickets module and assert non-zero exit.
 - Tests obey the same import rules. A test needing another module's persisted state drives the same service API real callers use, or constructs a VO directly (in-memory). No `*Row` constructor across module boundaries.
 
 ## Module structure
@@ -103,8 +107,8 @@ Runs the full module-sync sequence:
 2. Write `tach.toml` — `[[modules]]` entries + `[[interfaces]]` blocks (expose lists from `__all__`).
 3. Check internal imports (no relative imports across boundaries, no `__init__` self-imports).
 4. Check layering.
-5. Run `tach check --interfaces`.
-6. Run `bin/check_table_access`.
+5. Check `__all__` boundary violations (Rule-1: no Row class in `__all__`; Rule-5: no Row type in a public function's annotations).
+6. Run `tach check --interfaces`.
 
 Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing a module interface.
 

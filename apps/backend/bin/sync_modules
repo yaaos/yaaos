@@ -198,6 +198,143 @@ def _module_to_module_deps(layer: str, name: str) -> list[str]:
     return sorted(deps)
 
 
+def _collect_row_names(tree: ast.Module) -> set[str]:
+    """Return local names that are SQLAlchemy Row/mapped classes in this AST.
+
+    A name is a Row if it was imported ``from <any>.models import X`` or is a
+    class defined here that inherits from a name containing "Base".  Detection
+    is purely textual — import-free and env-free.
+    """
+    row_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            # Any import whose source ends in ".models" (or equals "models")
+            # is considered a Row import — that convention is enforced
+            # project-wide; every SQLAlchemy mapped class lives in models.py.
+            if mod.endswith(".models") or mod == "models":
+                for alias in node.names:
+                    local = alias.asname if alias.asname else alias.name
+                    row_names.add(local)
+        elif isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                base_name = ""
+                if isinstance(base, ast.Name):
+                    base_name = base.id
+                elif isinstance(base, ast.Attribute):
+                    base_name = base.attr
+                if "Base" in base_name:
+                    row_names.add(node.name)
+    return row_names
+
+
+def _annotation_names(annotation: ast.expr) -> set[str]:
+    """Return all bare Name ids referenced anywhere in an annotation expression.
+
+    Handles nested subscripts (``list[X]``, ``X | None``, ``tuple[X, Y]``),
+    string annotations (resolved by re-parsing), and attributes (``mod.X``
+    yields ``X``).
+    """
+    names: set[str] = set()
+
+    def _walk(node: ast.expr) -> None:
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Subscript):
+            _walk(node.value)
+            _walk(node.slice)
+        elif isinstance(node, ast.BinOp):
+            # X | None
+            _walk(node.left)
+            _walk(node.right)
+        elif isinstance(node, ast.Tuple):
+            for elt in node.elts:
+                _walk(elt)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Forward-reference string annotation — re-parse.
+            try:
+                inner = ast.parse(node.value, mode="eval")
+                _walk(inner.body)  # type: ignore[arg-type]
+            except SyntaxError:
+                pass
+
+    _walk(annotation)
+    return names
+
+
+def check_all_boundary_violations(modules: list[tuple[str, str]]) -> list[str]:
+    """Return human-readable Rule-1 / Rule-5 violations across modules.
+
+    Rule-1: a name in ``__all__`` resolves to a SQLAlchemy mapped/Row class.
+    Rule-5: a function listed in ``__all__`` carries a Row type in its signature
+            (return annotation or parameter annotation).
+
+    Detection is AST-based: import-free, env-free, noqa-immune.
+    """
+    errors: list[str] = []
+    for layer, name in modules:
+        init = APP / layer / name / "__init__.py"
+        if not init.exists():
+            continue
+        try:
+            tree = ast.parse(init.read_text(), filename=str(init))
+        except SyntaxError:
+            continue
+
+        row_names = _collect_row_names(tree)
+        if not row_names:
+            continue
+
+        public_names = set(parse_module_interface(layer, name))
+        if not public_names:
+            continue
+
+        # Rule-1: any __all__ name that is itself a Row/mapped class.
+        for sym in sorted(public_names):
+            if sym in row_names:
+                errors.append(
+                    f"Rule-1 violation: app.{layer}.{name}: "
+                    f'"{sym}" in __all__ is a SQLAlchemy Row/mapped class'
+                )
+
+        # Rule-5: any __all__ function whose annotation references a Row name.
+        # Collect top-level function and async-function definitions.
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in public_names:
+                continue
+
+            # Gather all annotation nodes for this function.
+            annotation_nodes: list[ast.expr] = []
+            if node.returns is not None:
+                annotation_nodes.append(node.returns)
+            for arg in (
+                node.args.args
+                + node.args.posonlyargs
+                + node.args.kwonlyargs
+                + ([node.args.vararg] if node.args.vararg else [])
+                + ([node.args.kwarg] if node.args.kwarg else [])
+            ):
+                if arg.annotation is not None:
+                    annotation_nodes.append(arg.annotation)
+
+            for ann in annotation_nodes:
+                referenced = _annotation_names(ann)
+                offending = referenced & row_names
+                if offending:
+                    errors.append(
+                        f"Rule-5 violation: app.{layer}.{name}: "
+                        f'function "{node.name}" in __all__ uses Row type(s) '
+                        f"in its signature: {sorted(offending)}"
+                    )
+                    break  # one error per function is enough
+
+    return errors
+
+
 def check_layering(modules: list[tuple[str, str]]) -> list[str]:
     """Return human-readable layering violations, empty list if clean.
 
@@ -269,6 +406,13 @@ def main() -> int:
     if errs:
         print("layering violations:", file=sys.stderr)
         for e in errs:
+            print(f"  {e}", file=sys.stderr)
+        return 2
+
+    boundary_errs = check_all_boundary_violations(modules)
+    if boundary_errs:
+        print("__all__ boundary violations (Rule-1 / Rule-5):", file=sys.stderr)
+        for e in boundary_errs:
             print(f"  {e}", file=sys.stderr)
         return 2
 
