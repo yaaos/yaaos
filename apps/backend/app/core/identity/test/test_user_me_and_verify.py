@@ -9,12 +9,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.identity import user_web as _user_web  # noqa: F401
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -41,10 +40,10 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="org-a")
     org_b = await orgs_repo.insert_org(db_session, slug="org-b")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.BUILDER, handle="alpha"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.BUILDER, handle="alpha"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.BUILDER, handle="beta"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="beta"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -161,7 +160,7 @@ async def test_patch_own_handle_updates(seeded) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "renamed"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -177,7 +176,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     await orgs_repo.insert_membership(
         db_session,
         user_id=other.id,
-        org_id=seeded["org_a"].id,
+        org_id=seeded["org_a"].org_id,
         role=Role.BUILDER,
         handle="taken",
     )
@@ -185,7 +184,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "taken"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -198,7 +197,7 @@ async def test_patch_own_handle_rejects_blank(seeded) -> None:
     sess = seeded["session"]
     async with _memberships_client() as c:
         r = await c.patch(
-            f"/api/memberships/me/{seeded['org_a'].id}",
+            f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "  "},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
@@ -219,3 +218,28 @@ async def test_patch_own_handle_rejects_membership_not_found(seeded) -> None:
             headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
+
+
+# ── service: /me reads memberships via core/tenancy ──────────────────────
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_me_lists_memberships_via_tenancy(seeded) -> None:
+    """`/api/user/me` membership list is backed by `core/tenancy` — returned
+    payload includes `org_id`, `slug`, `display_name`, `role`, and `handle`."""
+    async with _client() as c:
+        r = await c.get(
+            "/api/user/me",
+            cookies={"yaaos_session": seeded["session"].raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    memberships = body["memberships"]
+    slugs = {m["slug"] for m in memberships}
+    assert slugs == {"org-a", "org-b"}
+    for m in memberships:
+        assert "org_id" in m
+        assert "display_name" in m
+        assert "role" in m
+        assert "handle" in m

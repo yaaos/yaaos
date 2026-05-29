@@ -2,6 +2,7 @@
 
 | Method | Path                                       | Action               |
 |--------|--------------------------------------------|----------------------|
+| GET    | `/api/integrations/broken-summary`      | cookie-auth (public_route) — cross-org broken-creds summary for the caller |
 | GET    | `/api/mcp-proxy`                        | `INTEGRATIONS_READ`  — list providers + status |
 | GET    | `/api/mcp-proxy/{provider}/connect`     | `INTEGRATIONS_WRITE` — 303 to provider authorize URL with signed state |
 | GET    | `/api/mcp-proxy/{provider}/callback`    | public_route         — OAuth redirect target; validates signed state |
@@ -25,14 +26,14 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.audit_log import Actor
-from app.core.auth import Action, org_id_var, public_route, user_id_var
+from app.core.auth import Action, Role, org_id_var, public_route, user_id_var
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.oauth import OAuthError, build_authorize_url
@@ -52,6 +53,7 @@ from app.domain.integrations.types import (
 log = structlog.get_logger("integrations.web")
 
 router = APIRouter()
+summary_router = APIRouter()
 
 
 _STATE_MAX_AGE_SECONDS = 600
@@ -228,14 +230,18 @@ async def patch_integration(provider: str, body: PatchIntegrationRequest) -> Int
         raise _err(400, "no_org_context")
     actor = current_actor()
     async with db_session() as s:
-        row = await integ.get(s, org_id, provider)
-        if row is None:
+        cred = await integ.get(s, org_id, provider)
+        if cred is None:
             raise _err(404, "not_connected")
         if body.enabled is not None:
-            row.enabled = body.enabled
+            from app.domain.integrations.service import _get_row as _get_cred_row  # noqa: PLC0415
+
+            raw_row = await _get_cred_row(s, org_id, provider)
+            if raw_row is not None:
+                raw_row.enabled = body.enabled
         if body.allowed_tools is not None:
             try:
-                await integ.update_allowlist(
+                cred = await integ.update_allowlist(
                     s,
                     org_id=org_id,
                     provider=provider,
@@ -245,16 +251,17 @@ async def patch_integration(provider: str, body: PatchIntegrationRequest) -> Int
             except IntegrationNotConnectedError as exc:
                 raise _err(404, "not_connected") from exc
         await s.commit()
-        await s.refresh(row)
-    status = "broken" if row.last_refresh_status == "failed" else "configured"
+        # Re-read to pick up all committed state.
+        cred = await integ.get(s, org_id, provider) or cred
+    status = "broken" if cred.last_refresh_status == "failed" else "configured"
     return IntegrationStatus(
         provider=provider,
         status=status,
-        enabled=row.enabled,
-        upstream_identity=row.upstream_identity,
-        last_validated_at=row.last_validated_at,
-        last_refresh_failed_at=row.last_refresh_failed_at,
-        allowed_tools=list(row.allowed_tools or []),
+        enabled=cred.enabled,
+        upstream_identity=cred.upstream_identity,
+        last_validated_at=None,
+        last_refresh_failed_at=cred.last_refresh_failed_at,
+        allowed_tools=list(cred.allowed_tools or []),
     )
 
 
@@ -270,9 +277,51 @@ async def clear_endpoint(provider: str) -> dict[str, bool]:
     return {"removed": removed}
 
 
+@summary_router.get("/broken-summary", dependencies=[Depends(public_route)])
+async def broken_summary(
+    yaaos_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Return per-org broken-credential counts for the cookie-bearer.
+
+    Response: `{ orgs: [{ org_id, broken_integrations: [{ provider }] }] }`.
+    Only Owners + Admins receive non-empty `broken_integrations` lists; Builder-role
+    memberships always yield an empty list. 401 when there is no valid session.
+    """
+    from fastapi.responses import JSONResponse as _JSONResponse  # noqa: PLC0415
+
+    from app.core.auth import auth_failure_response as _auth_failure  # noqa: PLC0415
+    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
+
+    if not yaaos_session:
+        return _auth_failure("unauthenticated")
+    async with db_session() as s:
+        session = await session_lifecycle.lookup(s, yaaos_session)
+        if session is None or session.user_id is None:
+            return _auth_failure("unauthenticated")
+        memberships = await _list_memberships(s, session.user_id)
+        orgs_out = []
+        for m in memberships:
+            broken: list[dict[str, str]] = []
+            if m.role.covers(Role.ADMIN):
+                broken_creds = await integ.list_broken_credentials_for_org(s, m.org_id)
+                broken = [{"provider": c.provider} for c in broken_creds]
+            orgs_out.append({"org_id": str(m.org_id), "broken_integrations": broken})
+
+    return _JSONResponse(content={"orgs": orgs_out})
+
+
 async def _start_scheduler() -> None:
     spawn("integrations.scheduler", run_scheduler_loop())
 
+
+register_routes(
+    RouteSpec(
+        module_name="integrations_summary",
+        router=summary_router,
+        url_prefix="/api/integrations",
+    )
+)
 
 register_routes(
     RouteSpec(

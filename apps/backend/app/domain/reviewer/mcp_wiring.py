@@ -65,7 +65,7 @@ async def build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any] 
         log.info("review.mcp.no_connected_providers", org_id=str(org_id))
         return None
     async with db_session() as s:
-        raw_token = await mcp_proxy.mint_token(review_id, session=s)
+        raw_token = await mcp_proxy.mint_token(review_id, org_id=org_id, session=s)
         await s.commit()
     return {
         "token": raw_token,

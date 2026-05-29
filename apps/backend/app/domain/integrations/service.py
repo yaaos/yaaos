@@ -47,7 +47,12 @@ log = structlog.get_logger("domain.integrations")
 
 
 class McpCredential(BaseModel):
-    """Value object — a single (org, provider) MCP credential. Read-only view."""
+    """Metadata value object — a single (org, provider) MCP credential.
+
+    Carries no secret material. Call sites that must decrypt the upstream
+    token fetch `McpCredentialSecret` via `get_secret` and decrypt at the
+    point of use.
+    """
 
     org_id: UUID
     provider: str
@@ -55,6 +60,31 @@ class McpCredential(BaseModel):
     last_refresh_status: str | None
     last_refresh_failed_at: datetime | None
     upstream_identity: str | None
+    allowed_tools: list[str]
+    expires_at: datetime
+
+    @classmethod
+    def from_row(cls, row: McpCredentialRow) -> McpCredential:
+        return cls(
+            org_id=row.org_id,
+            provider=row.provider,
+            enabled=row.enabled,
+            last_refresh_status=row.last_refresh_status,
+            last_refresh_failed_at=row.last_refresh_failed_at,
+            upstream_identity=row.upstream_identity,
+            allowed_tools=list(row.allowed_tools or []),
+            expires_at=row.expires_at,
+        )
+
+
+class McpCredentialSecret(BaseModel):
+    """Secret value object — the encrypted upstream access token only.
+
+    Returned solely to call sites that decrypt at the point of use, keeping
+    secret material out of the `McpCredential` metadata VO.
+    """
+
+    encrypted_access_token: str
 
 
 class _ConnectedPayload(BaseModel):
@@ -76,7 +106,8 @@ class _AllowlistPayload(BaseModel):
     allowed_tools: list[str]
 
 
-async def get(session: AsyncSession, org_id: UUID, provider: str) -> McpCredentialRow | None:
+async def _get_row(session: AsyncSession, org_id: UUID, provider: str) -> McpCredentialRow | None:
+    """Return the raw `McpCredentialRow` for intra-module use (mutations)."""
     return (
         await session.execute(
             select(McpCredentialRow).where(
@@ -85,6 +116,21 @@ async def get(session: AsyncSession, org_id: UUID, provider: str) -> McpCredenti
             )
         )
     ).scalar_one_or_none()
+
+
+async def get(session: AsyncSession, org_id: UUID, provider: str) -> McpCredential | None:
+    row = await _get_row(session, org_id, provider)
+    return McpCredential.from_row(row) if row is not None else None
+
+
+async def get_secret(session: AsyncSession, org_id: UUID, provider: str) -> McpCredentialSecret | None:
+    """Return the encrypted access token for (org, provider), or None.
+
+    Separate from `get` so secret material never rides on the metadata VO.
+    Callers decrypt via `core/secrets.decrypt` at the point of use.
+    """
+    row = await _get_row(session, org_id, provider)
+    return McpCredentialSecret(encrypted_access_token=row.encrypted_access_token) if row is not None else None
 
 
 async def connect_callback(
@@ -96,7 +142,7 @@ async def connect_callback(
     redirect_uri: str,
     actor: Actor,
     upstream_identity: str | None = None,
-) -> McpCredentialRow:
+) -> McpCredential:
     """Exchange the OAuth code, persist encrypted tokens, emit audit."""
     prov = get_provider(provider)
     if prov is None:
@@ -105,13 +151,13 @@ async def connect_callback(
     tokens = await exchange_code(prov.config, code=code, redirect_uri=redirect_uri)
     expires_at = datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
 
-    existing = await get(session, org_id, provider)
+    row = await _get_row(session, org_id, provider)
     encrypted_access = encrypt(tokens.access_token.get_secret_value()).decode()
     encrypted_refresh = (
         encrypt(tokens.refresh_token.get_secret_value()).decode() if tokens.refresh_token else None
     )
-    if existing is None:
-        existing = McpCredentialRow(
+    if row is None:
+        row = McpCredentialRow(
             org_id=org_id,
             provider=provider,
             encrypted_access_token=encrypted_access,
@@ -124,18 +170,18 @@ async def connect_callback(
             last_refresh_status="ok",
             last_validated_at=datetime.now(UTC),
         )
-        session.add(existing)
+        session.add(row)
     else:
-        existing.encrypted_access_token = encrypted_access
-        existing.encrypted_refresh_token = encrypted_refresh
-        existing.expires_at = expires_at
-        existing.scopes = tokens.scope.split() if tokens.scope else []
-        existing.enabled = True
+        row.encrypted_access_token = encrypted_access
+        row.encrypted_refresh_token = encrypted_refresh
+        row.expires_at = expires_at
+        row.scopes = tokens.scope.split() if tokens.scope else []
+        row.enabled = True
         if upstream_identity is not None:
-            existing.upstream_identity = upstream_identity
-        existing.last_refresh_status = "ok"
-        existing.last_refresh_failed_at = None
-        existing.last_validated_at = datetime.now(UTC)
+            row.upstream_identity = upstream_identity
+        row.last_refresh_status = "ok"
+        row.last_refresh_failed_at = None
+        row.last_validated_at = datetime.now(UTC)
     await session.flush()
     await audit(
         "org",
@@ -146,7 +192,7 @@ async def connect_callback(
         org_id=org_id,
         session=session,
     )
-    return existing
+    return McpCredential.from_row(row)
 
 
 async def clear(
@@ -190,7 +236,7 @@ async def validate(
     prov = get_provider(provider)
     if prov is None:
         raise ProviderNotRegisteredError(provider)
-    row = await get(session, org_id, provider)
+    row = await _get_row(session, org_id, provider)
     if row is None:
         raise IntegrationNotConnectedError(provider)
     try:
@@ -227,8 +273,8 @@ async def update_allowlist(
     provider: str,
     allowed_tools: list[str],
     actor: Actor,
-) -> McpCredentialRow:
-    row = await get(session, org_id, provider)
+) -> McpCredential:
+    row = await _get_row(session, org_id, provider)
     if row is None:
         raise IntegrationNotConnectedError(provider)
     row.allowed_tools = list(allowed_tools)
@@ -242,7 +288,7 @@ async def update_allowlist(
         org_id=org_id,
         session=session,
     )
-    return row
+    return McpCredential.from_row(row)
 
 
 async def list_broken_credentials_for_org(
@@ -263,17 +309,7 @@ async def list_broken_credentials_for_org(
         .scalars()
         .all()
     )
-    return [
-        McpCredential(
-            org_id=r.org_id,
-            provider=r.provider,
-            enabled=r.enabled,
-            last_refresh_status=r.last_refresh_status,
-            last_refresh_failed_at=r.last_refresh_failed_at,
-            upstream_identity=r.upstream_identity,
-        )
-        for r in rows
-    ]
+    return [McpCredential.from_row(r) for r in rows]
 
 
 async def create_credential(
@@ -290,8 +326,8 @@ async def create_credential(
     upstream_identity: str | None = None,
     last_refresh_status: str | None = None,
     last_refresh_failed_at: datetime | None = None,
-) -> McpCredentialRow:
-    """Insert a new `mcp_credentials` row and flush. Intended for seed/test helpers."""
+) -> McpCredential:
+    """Insert a new `mcp_credentials` row and flush."""
     row = McpCredentialRow(
         org_id=org_id,
         provider=provider,
@@ -307,4 +343,20 @@ async def create_credential(
     )
     session.add(row)
     await session.flush()
-    return row
+    return McpCredential.from_row(row)
+
+
+async def mark_last_used(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    provider: str,
+) -> None:
+    """Stamp `last_used_at` on the credential row. No-op if the row is gone."""
+    from datetime import UTC as _UTC  # noqa: PLC0415
+    from datetime import datetime as _datetime  # noqa: PLC0415
+
+    row = await _get_row(session, org_id, provider)
+    if row is not None:
+        row.last_used_at = _datetime.now(_UTC)
+        await session.flush()

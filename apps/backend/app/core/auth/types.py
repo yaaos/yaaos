@@ -122,7 +122,6 @@ PUBLIC_EXACT: frozenset[str] = frozenset(
         "/api/auth/logout",
         "/api/auth/logout-all",
         "/api/auth/providers",
-        "/api/auth/sso/discover",
         # TOTP flow is used both during login (no session yet) and after
         # login from the user security page; handlers gate by their own state.
         "/api/auth/totp/enroll",

@@ -31,12 +31,14 @@ from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import PullRequestRow
+from app.domain.pull_requests import upsert as upsert_pr
+from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
 )
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
+from app.domain.vcs import VCSPullRequest
 
 
 def _config() -> ProviderConfig:
@@ -91,54 +93,56 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
     Mints the per-review bearer and returns (review, raw_token)."""
     org = await orgs_repo.insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
     await identity_repo.insert_user(db_session, display_name="U")
-    ticket = TicketRow(
-        id=uuid4(),
-        org_id=org.id,
+    ext_id = f"pr-{uuid4()}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=ext_id,
+        org_id=org.org_id,
+        title="t",
         source="github_pr",
-        source_external_id=f"pr-{uuid4()}",
-        title="t",
+        source_external_id=ext_id,
         plugin_id="github",
         repo_external_id="owner/repo",
+        session=db_session,
     )
-    db_session.add(ticket)
-    await db_session.flush()
-    pr = PullRequestRow(
-        id=uuid4(),
-        org_id=org.id,
-        plugin_id="github",
-        repo_external_id="owner/repo",
-        external_id=ticket.source_external_id,
-        number=1,
-        title="t",
-        body=None,
-        author_login="a",
-        author_type="user",
-        base_branch="main",
-        head_branch="b",
-        base_sha="0",
-        head_sha="1",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://test",
-        ticket_id=ticket.id,
+    pr = await upsert_pr(
+        VCSPullRequest(
+            plugin_id="github",
+            repo_external_id="owner/repo",
+            external_id=ext_id,
+            number=1,
+            title="t",
+            body=None,
+            author_login="a",
+            author_type="user",
+            base_branch="main",
+            head_branch="b",
+            base_sha="0",
+            head_sha="1",
+            is_draft=False,
+            is_fork=False,
+            state="open",
+            html_url="http://test",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org.org_id,
+        session=db_session,
     )
-    db_session.add(pr)
-    await db_session.flush()
-    review = ReviewRow(
-        id=uuid4(),
-        org_id=org.id,
-        pr_id=pr.id,
-        sequence_number=1,
-        status="running",
-        trigger_reason="manual_full",
-        destination="vcs",
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
+    _review = agg.start_review(
+        trigger=ReviewTrigger.MANUAL_FULL,
+        scope=ReviewScope.full(base_sha="0", head_sha="1"),
+        commit_sha="1",
     )
-    db_session.add(review)
-    await db_session.flush()
+    repo = SqlAlchemyAggregateRepository(db_session)
+    await repo.save(agg)
+    review = await db_session.get(ReviewRow, _review.id)
     await create_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="stub_pipeline",
         encrypted_access_token=encrypt("upstream-access").decode(),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -149,7 +153,7 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
         last_refresh_status="failed",
         last_refresh_failed_at=datetime.now(UTC),
     )
-    raw = await mint_token(review.id, session=db_session)
+    raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
     await db_session.commit()
     return review, raw
 

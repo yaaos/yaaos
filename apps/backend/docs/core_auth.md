@@ -1,12 +1,18 @@
 # core/auth
 
-> Default-deny HTTP middleware + identity contextvars + the `Action` enum + the route-security taxonomy. Pure infrastructure — no DB access, no domain knowledge.
+> Default-deny HTTP middleware + identity contextvars + the `Action` enum + the `Role` enum + the role-policy map + the route-security taxonomy. Pure infrastructure — no DB access, no domain knowledge.
 
 ## Scope
 
-- Owns: `AuthMiddleware`, `RouteSecurity` enum, `Action` enum, identity contextvars, `org_context()`, `classify_route()`.
-- Does NOT own: session-cookie resolution or role lookup — those are in [`core/sessions`](core_sessions.md), which also owns `/api/auth/*` routes.
+- Owns: `AuthMiddleware`, `RouteSecurity` enum, `Action` enum, `Role` enum, `_REQUIRED_ROLE` map, `required_role_for(action)`, identity contextvars, `org_context()`, `classify_route()`.
+- Does NOT own: session-cookie resolution or membership lookup — those are in [`core/sessions`](core_sessions.md), which also owns `/api/auth/*` routes.
 - Emits: sets `org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `route_security_resolved`. Consumed by structlog, OTel middleware, and audit-log writes.
+
+## Role
+
+`Role` (StrEnum) is the shared authorization primitive. Three tiers: `OWNER ≥ ADMIN ≥ BUILDER`. `role.covers(required)` is the only comparison — the integer rank table is private. All layers that need the role type import it from `core.auth`, not from `domain.orgs`.
+
+`_REQUIRED_ROLE: dict[Action, Role]` maps every `Action` member to its minimum `Role`. `required_role_for(action)` is the public accessor. `core/sessions.dependencies` builds the `require(action)` dep factory on top of these. A CI test (`test_role_covers.test_every_action_has_a_required_role`) asserts full coverage.
 
 ## Why / invariants
 
@@ -32,7 +38,7 @@
 
 **Pure-ASGI, not `BaseHTTPMiddleware`** — contextvars set inside the route handler propagate back to the middleware on the way out. `BaseHTTPMiddleware` runs downstream in a separate task, making those mutations invisible.
 
-**`Action` enum** — single grep-able catalogue of every distinct privilege check. Adding an `ORG_SCOPED` endpoint requires: (1) add to `Action`, (2) map to its minimum `Role` in `core/sessions/dependencies._REQUIRED_ROLE`, (3) `Depends(require(Action.X))` on the route. A CI test asserts every `Action` member has a `_REQUIRED_ROLE` entry.
+**`Action` enum** — single grep-able catalogue of every distinct privilege check. Adding an `ORG_SCOPED` endpoint requires: (1) add to `Action`, (2) map to its minimum `Role` in `core/auth/role_policy._REQUIRED_ROLE`, (3) `Depends(require(Action.X))` on the route. A CI test asserts every `Action` member has a `_REQUIRED_ROLE` entry.
 
 ## Gotchas
 

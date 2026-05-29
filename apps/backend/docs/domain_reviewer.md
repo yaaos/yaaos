@@ -99,9 +99,15 @@ Low-confidence agent output never causes a state change. Pure transition functio
 - `AdmissionDrop` — audit payload for a rejected raw finding: `(rule_id, reason, severity, confidence)`.
 - `ReviewJob` — read-side projection over `workflow_executions` (not a DB table). Built by `workflow_review_view.py`.
 
+## Findings rollup
+
+After each review run (`PostFindings`) and after every ack/push-back (`reviewer/web.py _record_ack`), reviewer calls `refresh_ticket_findings_summary(ticket_id, pr_id, *, org_id, session)`. This function recomputes `findings_count` + `max_severity` from the `findings` table and writes them to the ticket row via `tickets.update_findings_summary`. Tickets no longer import reviewer — the dependency is one-way: reviewer → tickets.
+
+`aggregate_findings_by_prs` remains in `reviewer/service.py` as a reviewer-internal helper; it is not part of the public module interface.
+
 ## How it's tested
 
 - **Unit** — `state_machine.py`, `fingerprint.py`, `anchor.py`, `trigger.py`, aggregate, service helpers, classifier (canned-output runnable).
 - **In-memory `AggregateRepository`** (`test/in_memory_repository.py`) — admission pipeline, state transitions, round-trip persistence.
-- **Service tests** (`@pytest.mark.service`) — `test_pr_review_v1_e2e_service.py` (full pipeline, stub VCS + coding-agent + workspace), `test_mcp_review_pipeline_service.py`, `test_secrets_scan_service.py`, `test_cancel_dual_write_service.py`, `test_all_workflows_smoke.py` (all 5 workflows), `test_reviewer_activity_publish_service.py`.
+- **Service tests** (`@pytest.mark.service`) — `test_pr_review_v1_e2e_service.py` (full pipeline, stub VCS + coding-agent + workspace), `test_mcp_review_pipeline_service.py`, `test_secrets_scan_service.py`, `test_cancel_dual_write_service.py`, `test_all_workflows_smoke.py` (all 5 workflows), `test_reviewer_activity_publish_service.py`, `test_findings_summary_service.py` (rollup written on review-end + ack).
 - **Evals** — `classify_reply` prompt evals under `domain/reviewer/eval/`; always hit the model fresh (bypass `SQLiteCache`).

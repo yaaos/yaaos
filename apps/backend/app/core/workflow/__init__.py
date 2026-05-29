@@ -3,7 +3,12 @@
 See `apps/backend/docs/core_workflow.md`.
 """
 
-from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
+from app.core.workflow.recovery import (
+    clear_recovery_policies,
+    get_recovery_policy,
+    register_recovery_policy,
+    registered_recovery_labels,
+)
 from app.core.workflow.service import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
@@ -57,7 +62,6 @@ __all__ = [
     "HitlHistoryEntry",
     "Outcome",
     "OutcomeKind",
-    "PendingHumanDecisionRow",
     "RetryPolicy",
     "Step",
     "TerminalAction",
@@ -66,19 +70,22 @@ __all__ = [
     "WorkflowEngine",
     "WorkflowError",
     "WorkflowExecutionNotFoundError",
-    "WorkflowExecutionRow",
     "WorkflowExecutionSummary",
     "WorkflowNotFoundError",
     "WorkflowState",
+    "clear_recovery_policies",
     "get_awaiting_human_execution",
     "get_engine",
     "get_execution_summary",
+    "get_recovery_policy",
     "handle_agent_event",
     "list_active_execution_ids",
     "list_all_execution_states",
     "list_executions_for_ticket",
     "list_hitl_history",
+    "register_recovery_policy",
     "register_workflow",
+    "registered_recovery_labels",
     "request_cancel",
     "resume_hitl",
     "route_workflow",

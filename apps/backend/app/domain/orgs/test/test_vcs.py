@@ -8,14 +8,13 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.audit_log import Actor, list_for_org
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import clear_vcs, get_vcs, set_vcs
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import vcs_web as _vcs_web  # noqa: F401
-from app.domain.orgs.types import Role
 
 
 @pytest.fixture(autouse=True)
@@ -49,13 +48,13 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="vcs-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     owner_sess = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
@@ -76,7 +75,7 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     state = await set_vcs(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         plugin_id="github",
         settings={"installation_id": 999},
         actor=actor,
@@ -84,11 +83,11 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
     assert state.plugin_id == "github"
     assert state.settings == {"installation_id": 999}
 
-    reloaded = await get_vcs(db_session, org.id)
+    reloaded = await get_vcs(db_session, org.org_id)
     assert reloaded.plugin_id == "github"
     assert reloaded.settings == {"installation_id": 999}
 
-    rows = await list_for_org(org_id=org.id, actions=["vcs.installed"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.installed"])
     assert len(rows) == 1
     assert rows[0].payload == {"plugin_id": "github"}
 
@@ -97,14 +96,14 @@ async def test_set_vcs_service_persists_and_audits(seeded, db_session) -> None:
 async def test_clear_vcs_removes_and_audits(seeded, db_session) -> None:
     org = seeded["org"]
     actor = Actor.user(user_id=seeded["owner"].id)
-    await set_vcs(db_session, org_id=org.id, plugin_id="github", settings={}, actor=actor)
-    removed = await clear_vcs(db_session, org_id=org.id, actor=actor)
+    await set_vcs(db_session, org_id=org.org_id, plugin_id="github", settings={}, actor=actor)
+    removed = await clear_vcs(db_session, org_id=org.org_id, actor=actor)
     assert removed is True
-    state = await get_vcs(db_session, org.id)
+    state = await get_vcs(db_session, org.org_id)
     assert state.plugin_id is None
     assert state.settings == {}
 
-    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.cleared"])
     assert len(rows) == 1
 
 
@@ -112,9 +111,9 @@ async def test_clear_vcs_removes_and_audits(seeded, db_session) -> None:
 async def test_clear_vcs_noop_returns_false_and_no_audit(seeded, db_session) -> None:
     org = seeded["org"]
     actor = Actor.user(user_id=seeded["owner"].id)
-    removed = await clear_vcs(db_session, org_id=org.id, actor=actor)
+    removed = await clear_vcs(db_session, org_id=org.org_id, actor=actor)
     assert removed is False
-    rows = await list_for_org(org_id=org.id, actions=["vcs.cleared"])
+    rows = await list_for_org(org_id=org.org_id, actions=["vcs.cleared"])
     assert rows == []
 
 
@@ -184,30 +183,23 @@ async def test_post_endpoint_unknown_plugin_404(seeded) -> None:
 async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
     """Remove fully disconnects: nulls the org's vcs_* columns AND wipes the
     github plugin's credentials + install rows. The next Add starts blank."""
-    from uuid import uuid4 as _uuid4  # noqa: PLC0415
-
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
-    from app.plugins.github import GitHubAppInstallationRow  # noqa: PLC0415
+    from app.plugins.github import record_app_install  # noqa: PLC0415
 
     actor = Actor.user(user_id=seeded["owner"].id)
     await set_vcs(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="github",
         settings={"installation_id": 1},
         actor=actor,
     )
     # Seed the per-org install row Remove should wipe. Platform App
     # credentials live in env vars, so there's no per-org settings row.
-    db_session.add(
-        GitHubAppInstallationRow(
-            id=_uuid4(),
-            org_id=seeded["org"].id,
-            install_external_id="9999",
-            account_login="acme-org",
-            status="active",
-        )
+    await record_app_install(
+        db_session,
+        org_id=seeded["org"].org_id,
+        install_external_id="9999",
+        account_login="acme-org",
     )
     await db_session.commit()
 
@@ -221,19 +213,16 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
     assert r.status_code == 200, r.text
     assert r.json() == {"plugin_id": None, "settings": {}}
 
-    # The install row is gone for this org.
+    # The install row is gone for this org — verify via raw SQL.
+    from sqlalchemy import text as _text  # noqa: PLC0415
+
     from app.core.database import session as _db_session_factory  # noqa: PLC0415
 
     async with _db_session_factory() as s:
-        install_rows = (
-            (
-                await s.execute(
-                    _select(GitHubAppInstallationRow).where(
-                        GitHubAppInstallationRow.org_id == seeded["org"].id
-                    )
-                )
+        count = (
+            await s.execute(
+                _text("SELECT COUNT(*) FROM github_app_installations WHERE org_id = :oid"),
+                {"oid": seeded["org"].org_id},
             )
-            .scalars()
-            .all()
-        )
-    assert install_rows == []
+        ).scalar_one()
+    assert count == 0

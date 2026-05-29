@@ -18,11 +18,10 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
-from app.core.tasks import OutboxEntryRow, drain_once
-from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, scoped_engine
+from app.core.tasks import drain_once
+from app.core.workflow import Outcome, WorkflowState, get_execution_summary, scoped_engine
 from app.core.workspace import (
     WorkspaceTicketContext,
     clear_workflow_context_provider,
@@ -81,28 +80,14 @@ class _StaticContextProvider:
 async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int:
     from app.core.tasks import get_broker  # noqa: PLC0415
 
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
+
     total = 0
     for _ in range(max_iterations):
-        rows = (
-            (
-                await db_session.execute(
-                    select(OutboxEntryRow)
-                    .where(OutboxEntryRow.dispatched_at.is_(None))
-                    .order_by(OutboxEntryRow.created_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
-            return total
-
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            await decorated.original_func(**payload["args"])
-
         delivered = await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()
         total += delivered
@@ -233,7 +218,7 @@ async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value, (
         f"workflow {workflow.name} ended in state={wfx.state!r}, expected done"
     )
@@ -338,7 +323,7 @@ async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped
 
     await _drain_workflow_outbox(db_session)
 
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value
 
     workflow_span_names = {

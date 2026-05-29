@@ -8,7 +8,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.audit_log import Actor, list_for_org
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _auth_web  # noqa: F401
@@ -26,7 +26,6 @@ from app.domain.orgs import (
 from app.domain.orgs import (
     repository as orgs_repo,
 )
-from app.domain.orgs.types import Role
 
 
 @pytest.fixture(autouse=True)
@@ -59,13 +58,13 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="ca-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="own"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
@@ -84,14 +83,14 @@ async def test_install_and_list(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     install = await install_coding_agent(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="claude_code",
         settings={"orchestrator": {}, "agents": []},
         actor=actor,
         created_by=seeded["owner"].id,
     )
     assert install.plugin_id == "claude_code"
-    rows = await list_coding_agents(db_session, seeded["org"].id)
+    rows = await list_coding_agents(db_session, seeded["org"].org_id)
     assert len(rows) == 1
     assert rows[0].plugin_id == "claude_code"
     assert rows[0].created_by == seeded["owner"].id
@@ -102,12 +101,12 @@ async def test_install_emits_audit(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     await install_coding_agent(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="claude_code",
         settings={},
         actor=actor,
     )
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["coding_agent.installed"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["coding_agent.installed"])
     assert len(rows) == 1
     assert rows[0].payload == {"plugin_id": "claude_code"}
 
@@ -116,12 +115,12 @@ async def test_install_emits_audit(seeded, db_session) -> None:
 async def test_install_twice_raises(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     await install_coding_agent(
-        db_session, org_id=seeded["org"].id, plugin_id="claude_code", settings={}, actor=actor
+        db_session, org_id=seeded["org"].org_id, plugin_id="claude_code", settings={}, actor=actor
     )
     with pytest.raises(CodingAgentAlreadyInstalledError):
         await install_coding_agent(
             db_session,
-            org_id=seeded["org"].id,
+            org_id=seeded["org"].org_id,
             plugin_id="claude_code",
             settings={},
             actor=actor,
@@ -133,20 +132,20 @@ async def test_update_settings_and_audit(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     await install_coding_agent(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="claude_code",
         settings={"orchestrator": {"name": "old"}, "agents": []},
         actor=actor,
     )
     updated = await update_coding_agent_settings(
         db_session,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         plugin_id="claude_code",
         settings={"orchestrator": {"name": "new"}, "agents": []},
         actor=actor,
     )
     assert updated.settings == {"orchestrator": {"name": "new"}, "agents": []}
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["coding_agent.settings_updated"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["coding_agent.settings_updated"])
     assert len(rows) == 1
 
 
@@ -156,7 +155,7 @@ async def test_update_missing_install_raises(seeded, db_session) -> None:
     with pytest.raises(CodingAgentNotInstalledError):
         await update_coding_agent_settings(
             db_session,
-            org_id=seeded["org"].id,
+            org_id=seeded["org"].org_id,
             plugin_id="claude_code",
             settings={},
             actor=actor,
@@ -167,13 +166,13 @@ async def test_update_missing_install_raises(seeded, db_session) -> None:
 async def test_uninstall_returns_true_and_audits(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     await install_coding_agent(
-        db_session, org_id=seeded["org"].id, plugin_id="claude_code", settings={}, actor=actor
+        db_session, org_id=seeded["org"].org_id, plugin_id="claude_code", settings={}, actor=actor
     )
     removed = await uninstall_coding_agent(
-        db_session, org_id=seeded["org"].id, plugin_id="claude_code", actor=actor
+        db_session, org_id=seeded["org"].org_id, plugin_id="claude_code", actor=actor
     )
     assert removed is True
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["coding_agent.uninstalled"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["coding_agent.uninstalled"])
     assert len(rows) == 1
 
 
@@ -181,7 +180,7 @@ async def test_uninstall_returns_true_and_audits(seeded, db_session) -> None:
 async def test_uninstall_noop_returns_false_no_audit(seeded, db_session) -> None:
     actor = Actor.user(user_id=seeded["owner"].id)
     removed = await uninstall_coding_agent(
-        db_session, org_id=seeded["org"].id, plugin_id="claude_code", actor=actor
+        db_session, org_id=seeded["org"].org_id, plugin_id="claude_code", actor=actor
     )
     assert removed is False
 

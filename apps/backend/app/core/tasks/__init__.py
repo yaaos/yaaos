@@ -28,10 +28,11 @@ from app.core.shutdown_registry import (
 )
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_once
-from app.core.tasks.models import OutboxEntryRow
 from app.core.tasks.service import (
     TaskRef,
     enqueue,
+    get_pending_outbox_payloads,
+    get_pending_task_names,
     scoped_task_registration,
     shutdown,
     task,
@@ -39,13 +40,14 @@ from app.core.tasks.service import (
 from app.core.tasks.types import TaskMetadata
 
 __all__ = [
-    "OutboxEntryRow",
     "ShutdownHook",
     "TaskMetadata",
     "TaskRef",
     "drain_once",
     "enqueue",
     "get_broker",
+    "get_pending_outbox_payloads",
+    "get_pending_task_names",
     "iter_worker_shutdown_hooks",
     "register_worker_shutdown_hook",
     "scoped_task_registration",

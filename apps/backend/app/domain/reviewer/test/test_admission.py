@@ -61,36 +61,31 @@ async def test_short_scenario_finding_dropped(db_session) -> None:  # type: igno
     Wrapper threads that drop through to `result.drops`. Even drops trigger
     a Review row INSERT (so the run is auditable), so the test needs a
     real PR row to satisfy the FK."""
-    from app.domain.pull_requests import PullRequestRow  # noqa: PLC0415
-    from app.domain.tickets import TicketRow  # noqa: PLC0415
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from app.domain.pull_requests import upsert as upsert_pr  # noqa: PLC0415
+    from app.domain.tickets import create as create_ticket  # noqa: PLC0415
+    from app.domain.vcs import VCSPullRequest  # noqa: PLC0415
 
     org_id = uuid4()
-    ticket_id = uuid4()
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="x",
-            title="t",
-            status="pending",
-            plugin_id="github",
-            repo_external_id="me/repo",
-            type="github_pr",
-            idempotency_key=f"k-{uuid4()}",
-            payload={},
-        )
+    ext_id = f"adm-{uuid4().hex[:6]}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=ext_id,
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id=ext_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        session=db_session,
     )
-    await db_session.flush()
-    pr_id = uuid4()
-    db_session.add(
-        PullRequestRow(
-            id=pr_id,
-            org_id=org_id,
+    pr = await upsert_pr(
+        VCSPullRequest(
             plugin_id="github",
-            external_id=f"pr-{uuid4()}",
             repo_external_id="me/repo",
-            ticket_id=ticket_id,
+            external_id=f"pr-{ext_id}",
             number=1,
             title="t",
             body=None,
@@ -104,8 +99,14 @@ async def test_short_scenario_finding_dropped(db_session) -> None:  # type: igno
             is_fork=False,
             state="open",
             html_url="http://test",
-        )
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org_id,
+        session=db_session,
     )
+    pr_id = pr.id
     await db_session.commit()
     result = await admit_raw_findings(
         pr_id=pr_id,

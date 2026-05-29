@@ -99,6 +99,40 @@ async def enqueue(
     return await outbox_write(session, kind="taskiq_enqueue", payload=payload)
 
 
+async def get_pending_task_names(session: AsyncSession) -> list[str]:
+    """Return the `task_name` strings for all un-dispatched outbox entries.
+
+    Service tests use this to assert a specific task was enqueued without
+    importing `OutboxEntryRow` directly.
+    """
+    entries = await get_pending_outbox_payloads(session)
+    return [e.get("task_name", "") for e in entries]
+
+
+async def get_pending_outbox_payloads(session: AsyncSession) -> list[dict[str, Any]]:
+    """Return the full payload dicts for all un-dispatched outbox entries.
+
+    Service tests use this to assert task arguments without importing
+    `OutboxEntryRow` directly.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.tasks.models import OutboxEntryRow  # noqa: PLC0415
+
+    rows = (
+        (
+            await session.execute(
+                select(OutboxEntryRow)
+                .where(OutboxEntryRow.dispatched_at.is_(None))
+                .order_by(OutboxEntryRow.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [dict(r.payload) for r in rows if r.kind == "taskiq_enqueue"]
+
+
 @contextmanager
 def scoped_task_registration(task_ref: TaskRef) -> Iterator[TaskRef]:
     """Context manager for temporary task registrations in tests.

@@ -1,24 +1,34 @@
-"""Service entry-points for `domain/orgs`."""
+"""Service entry-points for `domain/orgs`.
+
+Org and membership state is owned by `core/tenancy`; `domain/orgs` wraps it
+with domain-level concerns (audit log, invitation lifecycle, SSO feature rows).
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
+from app.core.auth import Role
 from app.core.database import session as db_session
-from app.domain.orgs.models import InvitationRow, MembershipRow, OrgRow, SsoConfigRow
-from app.domain.orgs.repository import get_org as _repo_get_org
+from app.core.tenancy import OrgFullView, OrgMembershipInfo
+from app.core.tenancy import create_membership as _tenancy_create_membership
+from app.core.tenancy import create_org as _tenancy_create_org
+from app.core.tenancy import get_org_full as _tenancy_get_org_full
+from app.core.tenancy import get_org_full_by_iam_arn as _tenancy_get_org_full_by_iam_arn
+from app.core.tenancy import get_org_full_by_slug as _tenancy_get_org_full_by_slug
+from app.domain.orgs.models import InvitationRow, SsoConfigRow
 from app.domain.orgs.types import (
     InsufficientRoleError,
     InvitationError,
     MembershipNotFoundError,
     OrgNotFoundError,
-    Role,
 )
 
 
@@ -29,16 +39,18 @@ class Org(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     workspace_provider: str | None
+    session_timeout_override: int | None = None
 
     @classmethod
-    def from_row(cls, row: OrgRow) -> Org:
+    def from_full_view(cls, view: OrgFullView) -> Org:
         return cls(
-            id=row.id,
-            slug=row.slug,
-            display_name=row.display_name,
-            archived_at=row.archived_at,
-            created_at=row.created_at,
-            workspace_provider=row.workspace_provider,
+            id=view.org_id,
+            slug=view.slug,
+            display_name=view.display_name,
+            archived_at=None,
+            created_at=datetime.now(UTC),
+            workspace_provider=view.workspace_provider,
+            session_timeout_override=view.session_timeout_override,
         )
 
 
@@ -50,13 +62,13 @@ class Membership(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_row(cls, row: MembershipRow) -> Membership:
+    def from_info(cls, info: OrgMembershipInfo) -> Membership:
         return cls(
-            user_id=row.user_id,
-            org_id=row.org_id,
-            role=Role(row.role),
-            handle=row.handle,
-            created_at=row.created_at,
+            user_id=info.user_id,
+            org_id=info.org_id,
+            role=info.role,
+            handle=info.handle,
+            created_at=datetime.now(UTC),
         )
 
 
@@ -89,6 +101,8 @@ class SsoConfig(BaseModel):
     enabled: bool
     jit_enabled: bool
     exempt_owner_user_id: UUID | None
+    idp_metadata_xml: str
+    email_domains: list[str]
     updated_at: datetime
 
     @classmethod
@@ -98,6 +112,8 @@ class SsoConfig(BaseModel):
             enabled=row.enabled,
             jit_enabled=row.jit_enabled,
             exempt_owner_user_id=row.exempt_owner_user_id,
+            idp_metadata_xml=row.idp_metadata_xml,
+            email_domains=list(row.email_domains or []),
             updated_at=row.updated_at,
         )
 
@@ -118,25 +134,24 @@ async def create_org(
     display_name: str,
     actor: Actor = Actor.system(),
 ) -> Org:
-    """Insert a new org row. Emits ``org.created`` audit entry.
+    """Insert a new org row via core/tenancy. Emits ``org.created`` audit entry.
 
     Shape (a) — takes ``session`` first positional; never commits. Caller
     composes with sibling writes inside one ``async with db_session()`` block.
     See `apps/backend/docs/patterns.md` § Service-fn session-handling convention.
     """
-    row = OrgRow(id=uuid4(), slug=slug, display_name=display_name)
-    session.add(row)
-    await session.flush()
+    org_ref = await _tenancy_create_org(session, slug=slug, display_name=display_name)
     await audit(
         "org",
-        row.id,
+        org_ref.org_id,
         "org.created",
         _OrgCreatedPayload(slug=slug, display_name=display_name),
         actor,
-        org_id=row.id,
+        org_id=org_ref.org_id,
         session=session,
     )
-    return Org.from_row(row)
+    full = await _tenancy_get_org_full(session, org_ref.org_id)
+    return Org.from_full_view(full)
 
 
 async def create_membership(
@@ -148,7 +163,7 @@ async def create_membership(
     handle: str,
     actor: Actor = Actor.system(),
 ) -> Membership:
-    """Insert a membership row directly, bypassing the invitation flow.
+    """Insert a membership row via core/tenancy, bypassing the invitation flow.
 
     Intended for bootstrap-style setup where the owner is already known
     (e.g. the admin onboarding path or e2e seeding). Emits
@@ -157,9 +172,7 @@ async def create_membership(
     Shape (a) — takes ``session`` first positional; never commits.
     See `apps/backend/docs/patterns.md` § Service-fn session-handling convention.
     """
-    row = MembershipRow(user_id=user_id, org_id=org_id, role=role.value, handle=handle)
-    session.add(row)
-    await session.flush()
+    await _tenancy_create_membership(session, user_id=user_id, org_id=org_id, role=role, handle=handle)
     await audit(
         "org",
         org_id,
@@ -169,14 +182,57 @@ async def create_membership(
         org_id=org_id,
         session=session,
     )
-    return Membership.from_row(row)
+    return Membership(
+        user_id=user_id,
+        org_id=org_id,
+        role=role,
+        handle=handle,
+        created_at=datetime.now(UTC),
+    )
 
 
 async def get_org(org_id: UUID) -> Org | None:
     """Return the `Org` value object for *org_id*, or ``None`` if not found."""
     async with db_session() as s:
-        row = await _repo_get_org(s, org_id)
-    return Org.from_row(row) if row is not None else None
+        full = await _tenancy_get_org_full(s, org_id)
+    if full is None:
+        return None
+    return Org.from_full_view(full)
+
+
+async def get_org_by_slug(slug: str) -> Org | None:
+    """Return the `Org` value object for *slug*, or ``None`` if not found.
+
+    Callers outside `domain/orgs` should use this rather than the repository
+    directly — the service layer is the public boundary.
+    """
+    async with db_session() as s:
+        full = await _tenancy_get_org_full_by_slug(s, slug)
+    if full is None:
+        return None
+    return Org.from_full_view(full)
+
+
+async def _lookup_org_by_arn(canonical_arn: str) -> object:
+    """Backing function for the `core/agent_gateway` ARN-lookup registry.
+
+    Looks up the org whose `registered_iam_arn` equals *canonical_arn*
+    (case-sensitive; callers must canonicalize to lowercase first) and
+    returns a `core/agent_gateway.OrgArnRef` VO. Returns ``None`` when no
+    match.
+
+    Registered into `core/agent_gateway.register_org_arn_lookup` at module
+    import so the identity-exchange handler never needs a `core → domain`
+    import. Return type is `object` to avoid a forward-reference to the
+    core module at annotation evaluation time.
+    """
+    from app.core.agent_gateway import OrgArnRef  # noqa: PLC0415
+
+    async with db_session() as s:
+        full = await _tenancy_get_org_full_by_iam_arn(s, canonical_arn)
+    if full is None:
+        return None
+    return OrgArnRef(id=full.org_id, aws_region=full.aws_region)
 
 
 async def delete_expired_invitations() -> int:
@@ -203,22 +259,19 @@ async def find_saml_org_slug_for_domain(domain: str) -> str | None:
     *domain* (case-sensitive; callers must normalize before calling). Returns the
     first match — at most one enabled config per domain is expected.
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
     async with db_session() as s:
-        row = (
+        sso_row = (
             await s.execute(
-                select(SsoConfigRow, OrgRow)
-                .join(OrgRow, OrgRow.id == SsoConfigRow.org_id)
+                select(SsoConfigRow)
                 .where(SsoConfigRow.enabled.is_(True))
                 .where(SsoConfigRow.email_domains.op("?")(domain))
                 .limit(1)
             )
-        ).first()
-    if row is None:
-        return None
-    _, org = row
-    return org.slug
+        ).scalar_one_or_none()
+        if sso_row is None:
+            return None
+        full = await _tenancy_get_org_full(s, sso_row.org_id)
+    return full.slug if full else None
 
 
 __all__ = [
@@ -229,11 +282,11 @@ __all__ = [
     "MembershipNotFoundError",
     "Org",
     "OrgNotFoundError",
-    "Role",
     "SsoConfig",
     "create_membership",
     "create_org",
     "delete_expired_invitations",
     "find_saml_org_slug_for_domain",
     "get_org",
+    "get_org_by_slug",
 ]

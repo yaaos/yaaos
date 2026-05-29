@@ -1,16 +1,18 @@
 """core/workspace — provisioning + centralized lifecycle."""
 
+# Register the workspace sink into agent_gateway's single-slot registry so
+# agent_gateway never imports core/workspace directly. The canonical import
+# direction is workspace → agent_gateway (workspace uses the transport and
+# registers its sink here).
+from app.core.agent_gateway import register_report_sink as _register_report_sink
+from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
 from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
 from app.core.workspace.dispatch import (
-    clear_recovery_policies,
-    get_recovery_policy,
-    register_recovery_policy,
-    registered_recovery_labels,
     release_claim,
     try_claim,
 )
-from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import (
+    _seed_workspace_for_tests,
     clear_workspace_providers,
     close_workspace,
     create_workspace,
@@ -61,6 +63,8 @@ from app.core.workspace.workflow_context import (
     register_workflow_context_provider,
 )
 
+_register_report_sink(WorkspaceAgentReportSinkImpl())
+
 __all__ = [
     "ALL_LIFECYCLE_COMMANDS",
     "CodingAgentCliResult",
@@ -71,6 +75,7 @@ __all__ = [
     "ResourceCaps",
     "WorkflowContextProvider",
     "Workspace",
+    "WorkspaceAgentReportSinkImpl",
     "WorkspaceClaimState",
     "WorkspaceCommandState",
     "WorkspaceDestroyError",
@@ -81,18 +86,16 @@ __all__ = [
     "WorkspaceNotFoundError",
     "WorkspaceProvider",
     "WorkspaceProvisionError",
-    "WorkspaceRow",
     "WorkspaceSpec",
     "WorkspaceStatus",
     "WorkspaceTicketContext",
-    "clear_recovery_policies",
+    "_seed_workspace_for_tests",
     "clear_workflow_context_provider",
     "clear_workspace_providers",
     "close_workspace",
     "create_workspace",
     "force_close_all",
     "get_provider",
-    "get_recovery_policy",
     "get_workflow_context_provider",
     "get_workspace",
     "get_workspace_claim_state",
@@ -102,10 +105,8 @@ __all__ = [
     "health_check_all",
     "is_workspace_provider_registered",
     "list_workspace_providers",
-    "register_recovery_policy",
     "register_workflow_context_provider",
     "register_workspace_provider",
-    "registered_recovery_labels",
     "release_claim",
     "scoped_workspace_provider",
     "start_reaper",

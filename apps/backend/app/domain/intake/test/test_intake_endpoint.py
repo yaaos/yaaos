@@ -8,7 +8,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from app.core.tasks import drain_once
 from app.core.workflow import (
@@ -18,8 +17,8 @@ from app.core.workflow import (
     Step,
     TerminalAction,
     Workflow,
-    WorkflowExecutionRow,
     WorkflowState,
+    get_execution_summary,
     scoped_engine,
 )
 from app.domain.intake import (
@@ -29,7 +28,7 @@ from app.domain.intake import (
 )
 from app.domain.intake import web as _intake_web  # noqa: F401 — registers routes
 from app.domain.intake.registry import _reset_registry_for_tests
-from app.domain.tickets import TicketRow
+from app.domain.tickets import get as get_ticket
 
 
 class _StubIntakeType:
@@ -148,8 +147,8 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
     ticket_id = UUID(body["ticket_id"])
     workflow_execution_id = UUID(body["workflow_execution_id"])
 
-    # Ticket row created with the type + idempotency_key + workflow link.
-    ticket = await db_session.get(TicketRow, ticket_id)
+    # Ticket created with correct type + idempotency_key + workflow link.
+    ticket = await get_ticket(ticket_id, org_id=stub_intake["org_id"])
     assert ticket is not None
     assert ticket.type == "stub_pr"
     assert ticket.idempotency_key == "key-1"
@@ -157,8 +156,8 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
     assert ticket.current_workflow_execution_id == workflow_execution_id
     assert ticket.org_id == stub_intake["org_id"]
 
-    # Workflow execution row created.
-    wfx = await db_session.get(WorkflowExecutionRow, workflow_execution_id)
+    # Workflow execution created.
+    wfx = await get_execution_summary(workflow_execution_id, session=db_session)
     assert wfx is not None
     assert wfx.workflow_name == "stub_pr_v1"
     assert str(wfx.ticket_id) == str(ticket_id)
@@ -179,7 +178,8 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
         if n == 0:
             break
 
-    await db_session.refresh(wfx)
+    wfx = await get_execution_summary(workflow_execution_id, session=db_session)
+    assert wfx is not None
     assert wfx.state == WorkflowState.DONE.value
 
 
@@ -197,15 +197,7 @@ async def test_duplicate_idempotency_key_returns_existing_ticket(db_session, stu
     assert first.json()["ticket_id"] == second.json()["ticket_id"]
 
     # Only one workflow execution exists for the (single) ticket.
-    rows = (
-        (
-            await db_session.execute(
-                select(WorkflowExecutionRow).where(
-                    WorkflowExecutionRow.ticket_id == UUID(first.json()["ticket_id"])
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
+    from app.core.workflow import list_executions_for_ticket  # noqa: PLC0415
+
+    executions = await list_executions_for_ticket(UUID(first.json()["ticket_id"]), session=db_session)
+    assert len(executions) == 1

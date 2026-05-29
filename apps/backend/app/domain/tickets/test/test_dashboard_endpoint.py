@@ -15,10 +15,9 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 import app.web  # noqa: F401
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -57,15 +56,15 @@ async def seeded(db_session):
     user = await identity_repo.insert_user(db_session, display_name="B")
     org = await orgs_repo.insert_org(db_session, slug="dash-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
     # Seed: 2 in_review (→ running), 1 complete (→ done), 1 abandoned (→ cancelled).
-    await _seed_ticket(db_session, org.id, "running", "running-1")
-    await _seed_ticket(db_session, org.id, "running", "running-2")
-    await _seed_ticket(db_session, org.id, "done", "done-1")
-    await _seed_ticket(db_session, org.id, "cancelled", "cancelled-1")
+    await _seed_ticket(db_session, org.org_id, "running", "running-1")
+    await _seed_ticket(db_session, org.org_id, "running", "running-2")
+    await _seed_ticket(db_session, org.org_id, "done", "done-1")
+    await _seed_ticket(db_session, org.org_id, "cancelled", "cancelled-1")
     await db_session.commit()
     yield {"org": org, "sess": sess}
 
@@ -117,7 +116,7 @@ async def test_dashboard_returns_shape_and_projects_status(seeded) -> None:
 async def test_dashboard_in_flight_capped_at_10(seeded, db_session) -> None:
     """If the org has many running tickets, the band caps at 10."""
     for i in range(12):
-        await _seed_ticket(db_session, seeded["org"].id, "running", f"extra-{i}")
+        await _seed_ticket(db_session, seeded["org"].org_id, "running", f"extra-{i}")
     await db_session.commit()
 
     async with _client() as c:

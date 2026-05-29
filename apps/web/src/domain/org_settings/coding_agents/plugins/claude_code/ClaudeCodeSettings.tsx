@@ -1,4 +1,4 @@
-import { useCurrentOrgSlug } from "@core/api";
+import { useBrokenSummary, useCurrentOrgSlug } from "@core/api";
 import { useCurrentUser } from "@domain/auth";
 import { ConfirmModal } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
@@ -218,16 +218,18 @@ function BuilderReadOnlyBanner() {
 }
 
 /** Warning block atop the Claude Code page when any enabled MCP provider for
- *  the current org has `last_refresh_status="failed"`. Reads from `/api/auth/me`'s
- *  `broken_integrations` since the page can't directly query integrations without
- *  the appropriate role context anyway. */
+ *  the current org has `last_refresh_status="failed"`. Reads from
+ *  `/api/integrations/broken-summary`, merged by org_id from `/api/auth/me`. */
 function BrokenIntegrationsNotice() {
-  const { data } = useCurrentUser();
+  const { data: user } = useCurrentUser();
+  const { data: summary } = useBrokenSummary();
   const slug = useCurrentOrgSlug();
-  if (!data || !slug) return null;
-  const currentOrg = data.memberships.find((m) => m.slug === slug);
-  if (!currentOrg || currentOrg.broken_integrations.length === 0) return null;
-  const providers = currentOrg.broken_integrations.map((b) => b.provider).join(", ");
+  if (!user || !summary || !slug) return null;
+  const currentMembership = user.memberships.find((m) => m.slug === slug);
+  if (!currentMembership) return null;
+  const orgEntry = summary.orgs.find((o) => o.org_id === currentMembership.org_id);
+  if (!orgEntry || orgEntry.broken_integrations.length === 0) return null;
+  const providers = orgEntry.broken_integrations.map((b) => b.provider).join(", ");
   return (
     <div
       className="rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"

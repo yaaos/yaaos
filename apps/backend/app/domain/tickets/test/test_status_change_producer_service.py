@@ -1,8 +1,8 @@
 """Service tests: ticket status-change producer writes to both outbox and SSE.
 
 Covers:
-- _transition enqueues a `notifications.handle_ticket_status_change` outbox row
-  with the correct member_user_ids list.
+- _transition enqueues a `notifications.fanout` outbox row with the correct
+  NotificationSpec list for terminal status changes.
 - _transition fires a general SSE event after commit with kind
   "ticket_status_changed".
 - _transition rollback does not emit any SSE event.
@@ -14,9 +14,8 @@ import asyncio
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 
-from app.core.tasks import OutboxEntryRow
+from app.core.tasks import get_pending_outbox_payloads
 
 # ---------------------------------------------------------------------------
 # Helpers — create org+users+memberships using public domain APIs
@@ -28,8 +27,9 @@ async def _make_org_with_members(db_session, num_members: int = 2):  # type: ign
 
     Returns (org_id, [user_id, ...]).
     """
+    from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import create_user  # noqa: PLC0415
-    from app.domain.orgs import Role, create_membership, create_org  # noqa: PLC0415
+    from app.domain.orgs import create_membership, create_org  # noqa: PLC0415
 
     slug = f"test-org-{uuid4().hex[:8]}"
     org = await create_org(db_session, slug=slug, display_name="Test Org")
@@ -80,9 +80,9 @@ async def _make_ticket(db_session, org_id):  # type: ignore[no-untyped-def]
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_status_change_enqueues_notification_with_member_list(db_session) -> None:  # type: ignore[no-untyped-def]
-    """complete() must write exactly one outbox row whose args.member_user_ids
-    contains every active org member — no more, no less."""
+async def test_status_change_enqueues_fanout_specs(db_session) -> None:  # type: ignore[no-untyped-def]
+    """complete() must enqueue one `notifications.fanout` outbox row whose
+    specs list contains one entry per active org member."""
     org_id, user_ids = await _make_org_with_members(db_session, num_members=2)
     ticket_id = await _make_ticket(db_session, org_id)
 
@@ -92,27 +92,21 @@ async def test_status_change_enqueues_notification_with_member_list(db_session) 
 
     # The outbox row is committed inside _transition's own session; query the
     # test session (same underlying connection via set_test_session_override).
-    rows = (
-        (
-            await db_session.execute(
-                select(OutboxEntryRow).where(
-                    OutboxEntryRow.payload["task_name"].astext == "notifications.handle_ticket_status_change"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    payloads = await get_pending_outbox_payloads(db_session)
+    fanout_payloads = [p for p in payloads if p.get("task_name") == "notifications.fanout"]
 
-    assert len(rows) == 1, f"expected exactly 1 outbox row, got {len(rows)}"
-    args = rows[0].payload["args"]
-    assert args["ticket_id"] == str(ticket_id)
-    assert args["org_id"] == str(org_id)
-    assert args["new_status"] == "done"
+    assert len(fanout_payloads) == 1, f"expected exactly 1 outbox row, got {len(fanout_payloads)}"
+    specs = fanout_payloads[0]["args"]["specs"]
+    assert len(specs) == len(user_ids), f"expected {len(user_ids)} specs, got {len(specs)}"
 
-    enqueued_ids = set(args["member_user_ids"])
+    enqueued_user_ids = {s["user_id"] for s in specs}
     expected_ids = {str(u) for u in user_ids}
-    assert enqueued_ids == expected_ids, f"member ids mismatch: {enqueued_ids} != {expected_ids}"
+    assert enqueued_user_ids == expected_ids, f"user ids mismatch: {enqueued_user_ids} != {expected_ids}"
+
+    for spec in specs:
+        assert spec["subject_type"] == "ticket"
+        assert spec["subject_id"] == str(ticket_id)
+        assert spec["type"] == "ticket_completed"
 
 
 @pytest.mark.service
@@ -120,7 +114,8 @@ async def test_status_change_enqueues_notification_with_member_list(db_session) 
 async def test_status_change_publishes_general_after_commit(db_session, redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """complete() publishes a general SSE event with kind 'ticket_status_changed'
     after the transaction commits."""
-    from app.core.sse import reset_pubsub, subscribe_general  # noqa: PLC0415
+    from app.core.redis import reset_pubsub  # noqa: PLC0415
+    from app.core.sse import subscribe_general  # noqa: PLC0415
 
     reset_pubsub()
     try:
@@ -158,10 +153,10 @@ async def test_status_change_publishes_general_after_commit(db_session, redis_or
 async def test_status_change_rollback_emits_no_general_event(db_session, redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """When publish_general_after_commit is called then the session is rolled back,
     no SSE event must reach subscribers."""
+    from app.core.redis import reset_pubsub  # noqa: PLC0415
     from app.core.sse import (  # noqa: PLC0415
         GeneralEventKind,
         publish_general_after_commit,
-        reset_pubsub,
         subscribe_general,
     )
 

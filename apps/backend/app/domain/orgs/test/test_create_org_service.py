@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
 
-from app.core.audit_log import Actor, AuditEntryRow
+from app.core.audit_log import Actor, list_for_entity
+from app.core.auth import Role
 from app.core.identity import create_user
-from app.domain.orgs import MembershipRow, OrgRow, create_membership, create_org
-from app.domain.orgs.types import Role
+from app.core.tenancy import get_membership_info, get_org_full
+from app.domain.orgs import create_membership, create_org
 
 # ---------------------------------------------------------------------------
 # create_org
@@ -22,11 +22,11 @@ async def test_create_org_persists_row(db_session) -> None:
     org = await create_org(db_session, slug="test-org-1", display_name="Test Org 1")
     await db_session.commit()
 
-    row = (await db_session.execute(select(OrgRow).where(OrgRow.id == org.id))).scalar_one_or_none()
+    full = await get_org_full(db_session, org.id)
 
-    assert row is not None
-    assert row.slug == "test-org-1"
-    assert row.display_name == "Test Org 1"
+    assert full is not None
+    assert full.slug == "test-org-1"
+    assert full.display_name == "Test Org 1"
 
 
 @pytest.mark.asyncio
@@ -47,19 +47,7 @@ async def test_create_org_emits_audit_row(db_session) -> None:
     org = await create_org(db_session, slug="test-org-audit", display_name="Audit Org")
     await db_session.commit()
 
-    audit_rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.entity_id == org.id,
-                    AuditEntryRow.kind == "org.created",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-
+    audit_rows = await list_for_entity("org", org.id, org_id=org.id, kinds=["org.created"])
     assert len(audit_rows) == 1
     assert audit_rows[0].entity_kind == "org"
     assert audit_rows[0].payload["slug"] == "test-org-audit"
@@ -86,17 +74,10 @@ async def test_create_membership_persists_row(db_session) -> None:
     )
     await db_session.commit()
 
-    row = (
-        await db_session.execute(
-            select(MembershipRow).where(
-                MembershipRow.user_id == user.id,
-                MembershipRow.org_id == org.id,
-            )
-        )
-    ).scalar_one_or_none()
+    info = await get_membership_info(db_session, user_id=user.id, org_id=org.id)
 
-    assert row is not None
-    assert row.role == "owner"
+    assert info is not None
+    assert info.role == Role.OWNER
     assert membership.role == Role.OWNER
 
 
@@ -117,18 +98,6 @@ async def test_create_membership_emits_audit_row(db_session) -> None:
     )
     await db_session.commit()
 
-    audit_rows = (
-        (
-            await db_session.execute(
-                select(AuditEntryRow).where(
-                    AuditEntryRow.entity_id == org.id,
-                    AuditEntryRow.kind == "membership.created",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-
+    audit_rows = await list_for_entity("org", org.id, org_id=org.id, kinds=["membership.created"])
     assert len(audit_rows) == 1
     assert audit_rows[0].payload["role"] == "builder"

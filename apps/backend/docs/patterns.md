@@ -65,6 +65,20 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
 - Absolute imports only.
 - Module-level only (heavy-ML exception requires `# noqa: PLC0415`).
 - Other modules import only `__all__` exports. Internal cross-module imports are Tach-rejected.
+- **No `*Row` types in `__all__`.** SQLAlchemy Row/mapped classes never appear in any module's `__all__` or `tach expose` list. Every public API that surfaces persisted state returns the module's Pydantic value object, not the Row. Foreign table access via an imported Row name fails tach `check --interfaces` — the intended path is the owning module's public service API.
+- **No circular module dependencies.** `forbid_circular_dependencies = true` is emitted by `bin/sync_modules` into `tach.toml`; tach rejects any new cycle under `tach check --interfaces` (the CI command). Canary `test_injected_cycle_is_rejected` in `apps/backend/bin/test_module_boundaries.py` verifies the guard fires.
+- **Layer ordering: `core < domain < plugins < testing`.** Enforced by `check_layering()` in `bin/sync_modules` — tach's `--interfaces` mode silently ignores tach-native `layers` config, so the Python check is the sole enforcer. The allowlist `PERMITTED_CROSS_LAYER_EDGES` is empty (`frozenset()`); no permitted cross-layer edges exist. Canary `test_injected_core_to_domain_is_rejected` in `apps/backend/bin/test_module_boundaries.py` verifies the guard fires.
+- **`bin/sync_modules` enforces two AST-level rules at every CI run:**
+  - **Rule-1** — a name in `__all__` that resolves to a SQLAlchemy mapped/Row class (class inheriting from `*Base*`, or any name imported `from <any>.models`) is rejected with exit 2.
+  - **Rule-5** — a function listed in `__all__` whose return annotation or parameter annotations reference a Row type is rejected with exit 2.
+  - Both rules are AST-based (import-free, env-free, `# noqa`-immune). `apps/backend/bin/test_module_boundaries.py` carries canary tests that inject real violations into the tickets module and assert non-zero exit.
+- **`bin/check_table_access` enforces two additional rules that tach cannot see:**
+  - **Raw-SQL ownership** — AST-parses every `app/**/models.py` to build `table_name → owning_module`, then scans every production `.py` under `app/` (excluding `test/` dirs) for `text(...)` / `sa_text(...)` calls. Any call that references a table owned by a different module fails. Non-literal args (f-strings, variables) also fail — all auditable raw SQL must be a string literal.
+  - **Suppression guard** — fails on any `# tach-ignore` directive in any `.py` under `app/` (prod + tests). One suppression reopens the import hole the tach interface check depends on.
+  - Only `app/core/database/**` is allowlisted (owns `Base`, runs migrations, advisory locks, schema introspection). No other module may use raw SQL against a foreign table.
+  - `apps/backend/bin/test_check_table_access.py` carries four canary tests asserting non-zero exit for each violation kind.
+- **`# tach-ignore` directives are banned everywhere in `app/`.** The suppression guard in `bin/check_table_access` enforces this at every CI run.
+- Tests obey the same import rules. A test needing another module's persisted state drives the same service API real callers use, or constructs a VO directly (in-memory). No `*Row` constructor across module boundaries.
 
 ## Module structure
 
@@ -101,8 +115,8 @@ Runs the full module-sync sequence:
 2. Write `tach.toml` — `[[modules]]` entries + `[[interfaces]]` blocks (expose lists from `__all__`).
 3. Check internal imports (no relative imports across boundaries, no `__init__` self-imports).
 4. Check layering.
-5. Run `tach check --interfaces`.
-6. Run `bin/check_table_access`.
+5. Check `__all__` boundary violations (Rule-1: no Row class in `__all__`; Rule-5: no Row type in a public function's annotations).
+6. Run `tach check --interfaces`.
 
 Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing a module interface.
 
@@ -236,7 +250,7 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Recovery policy registry
 
-AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workspace.register_recovery_policy`. The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original.
+AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workflow.register_recovery_policy` (`app/core/workflow/recovery.py`). The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original. Producers (e.g. `core/workspace`) register their policies at module import time.
 
 ## WorkspaceProvider contract
 
@@ -304,9 +318,13 @@ Every yaaos-issued bearer follows the same shape — adopted in for sessions, in
 - **Own one table per consumer.** `sessions`, `mcp_review_tokens`, and (via sha256-on-write) `invitations.token_hash` are separate; one bearer can't be substituted for another.
 - **Expire by absolute time.** Each consumer owns its TTL — sessions 14d, MCP review tokens 2h, invitations 7d. The periodic cleanup task in `core/identity/scheduler` (or a module-local equivalent) deletes expired rows; production code also checks `expires_at` on every read.
 
+## Intra-core layer order
+
+`core/auth < core/tenancy < core/identity < core/sessions`. Each level may import from levels below it; reverse imports are forbidden. `core/auth` is the leaf — it holds `Role`, `Action`, `_REQUIRED_ROLE`, middleware, and contextvars with no domain knowledge.
+
 ## Route security declarations
 
-Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBLIC` (no auth), `USER_SCOPED` (session, no org), or `ORG_SCOPED` (session + `X-Org-Slug` + role check). The classifier `classify_route(path, method)` and the prefix/exact lists live in `app/core/auth/types.py`; the middleware enforces `X-Org-Slug` and CSRF based on the category. Route dependencies: `Depends(require(Action.X))` for `ORG_SCOPED`, `Depends(require_session)` (or `Depends(public_route)`) for `USER_SCOPED` handlers that read the session cookie, `Depends(public_route)` for `PUBLIC`. The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset. Action → minimum-role map lives in `app/core/sessions/dependencies.py:_REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new URL prefix requires placing it in exactly one of the three category sets in `app/core/auth/types.py`.
+Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBLIC` (no auth), `USER_SCOPED` (session, no org), or `ORG_SCOPED` (session + `X-Org-Slug` + role check). The classifier `classify_route(path, method)` and the prefix/exact lists live in `app/core/auth/types.py`; the middleware enforces `X-Org-Slug` and CSRF based on the category. Route dependencies: `Depends(require(Action.X))` for `ORG_SCOPED`, `Depends(require_session)` (or `Depends(public_route)`) for `USER_SCOPED` handlers that read the session cookie, `Depends(public_route)` for `PUBLIC`. The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset. Action → minimum-role map lives in `app/core/auth/role_policy._REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new URL prefix requires placing it in exactly one of the three category sets in `app/core/auth/types.py`.
 
 ## Testing
 
@@ -353,7 +371,7 @@ Tests obey the **same import rules as production code** — enforced by `tach ch
 - No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` — but `app/testing/` is itself tach-governed; it may only import from `__all__`-gated module paths.
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
 - Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead. Two flavors by reach:
-  - **Cross-module reach** (module A's tests reset module B's state) → public symbol in B's `__all__` and tach interface. Example: `sse.reset_pubsub()` — called from reviewer / orgs / agent_gateway tests.
+  - **Cross-module reach** (module A's tests reset module B's state) → public symbol in B's `__all__` and tach interface. Example: `redis.reset_pubsub()` — called from reviewer / tickets / github / agent_gateway tests that exercise SSE flows.
   - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in B's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Examples: `redis._reset_clients_for_tests`, `agent_gateway.subscribers._reset_subscriber_singleton_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
 
 ### DI over `@patch`

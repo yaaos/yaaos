@@ -12,7 +12,7 @@ from __future__ import annotations
 from taskiq import AsyncBroker
 from taskiq_redis import ListQueueBroker
 
-from app.core import redis as redis_client
+from app.core.config import get_settings
 
 _broker: AsyncBroker | None = None
 
@@ -20,12 +20,15 @@ _broker: AsyncBroker | None = None
 def get_broker() -> AsyncBroker:
     """Return the singleton broker. Construction is lazy and does NOT
     open a connection — `await broker.startup()` does that (called from
-    the worker entrypoint). The broker takes a URL (not a client) so we
-    pass `core/redis.get_url()` rather than threading a client through.
+    the worker entrypoint).
+
+    taskiq-redis builds its own connection pool from a URL, independent of
+    `core/redis`'s client, so the broker reads `settings.redis_url` directly
+    rather than going through `core/redis`.
     """
     global _broker
     if _broker is None:
-        _broker = ListQueueBroker(url=redis_client.get_url())
+        _broker = ListQueueBroker(url=get_settings().redis_url)
     return _broker
 
 

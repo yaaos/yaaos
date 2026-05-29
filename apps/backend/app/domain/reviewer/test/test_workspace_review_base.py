@@ -14,7 +14,6 @@ its own `<Foo>Context` builder.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -22,11 +21,13 @@ import pytest
 from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext, Outcome
 from app.core.workspace import (
-    WorkspaceRow,
-    WorkspaceStatus,
+    RepoRefForSpec,
+    ResourceCaps,
+    WorkspaceSpec,
     WorkspaceTicketContext,
     clear_workflow_context_provider,
     clear_workspace_providers,
+    create_workspace,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -124,19 +125,15 @@ async def test_happy_path_forwards_workspace_to_subclass(db_session, _stub_provi
     """When the workspace resolves, the subclass's `_run_in_workspace`
     receives the live handle. Until each real body lands, the default
     body returns Outcome.success."""
-    ws_id = uuid4()
-    db_session.add(
-        WorkspaceRow(
-            id=ws_id,
-            org_id=uuid4(),
-            provider_id="in_process",
-            spec={"sha": "feed"},
-            status=WorkspaceStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC) + timedelta(minutes=10),
-            plugin_state={"sha": "feed", "working_dir": "/tmp/x"},
-        )
+    _ = db_session
+    org_id = uuid4()
+    spec = WorkspaceSpec(
+        repo=RepoRefForSpec(plugin_id="github", external_id="me/repo"),
+        sha="feed",
+        resource_caps=ResourceCaps(),
     )
-    await db_session.commit()
+    ws = await create_workspace("in_process", spec, org_id=org_id)
+    ws_id = ws.id
 
     captured: dict[str, object] = {}
 
@@ -147,35 +144,30 @@ async def test_happy_path_forwards_workspace_to_subclass(db_session, _stub_provi
             captured["inputs"] = inputs
             return Outcome.success(outputs={"draft_findings": []})
 
-    outcome = await _CodeReviewSpy().execute({"workspace_id": str(ws_id)}, _ctx())
+    outcome = await _CodeReviewSpy().execute({"workspace_id": ws_id}, _ctx())
     assert outcome.label == "success"
-    assert captured["ws"].id == str(ws_id)  # type: ignore[union-attr]
+    assert captured["ws"].id == ws_id  # type: ignore[union-attr]
     assert isinstance(captured["ticket_ctx"], WorkspaceTicketContext)
-    assert captured["inputs"]["workspace_id"] == str(ws_id)  # type: ignore[index]
+    assert captured["inputs"]["workspace_id"] == ws_id  # type: ignore[index]
 
 
 async def test_no_context_provider_returns_failure(db_session) -> None:  # type: ignore[no-untyped-def]
     """Workspace resolves but no WorkflowContextProvider is registered →
     Outcome.failure. Domain bootstrap is expected to install the provider;
     a missing one is a deployment misconfig, not a workflow input error."""
+    _ = db_session
     clear_workspace_providers()
     clear_workflow_context_provider()
     register_workspace_provider(_StubProvider())
-    ws_id = uuid4()
-    db_session.add(
-        WorkspaceRow(
-            id=ws_id,
-            org_id=uuid4(),
-            provider_id="in_process",
-            spec={"sha": "x"},
-            status=WorkspaceStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC) + timedelta(minutes=10),
-            plugin_state={"sha": "x"},
-        )
+    org_id = uuid4()
+    spec = WorkspaceSpec(
+        repo=RepoRefForSpec(plugin_id="github", external_id="me/repo"),
+        sha="x",
+        resource_caps=ResourceCaps(),
     )
-    await db_session.commit()
+    ws = await create_workspace("in_process", spec, org_id=org_id)
     try:
-        outcome = await CodeReview().execute({"workspace_id": str(ws_id)}, _ctx())
+        outcome = await CodeReview().execute({"workspace_id": ws.id}, _ctx())
         assert outcome.label == "failure"
         assert "no workflow_context provider" in (outcome.failure_reason or "")
     finally:
@@ -186,25 +178,20 @@ async def test_ticket_not_found_returns_failure(db_session) -> None:  # type: ig
     """Workspace + provider both resolve but provider returns None for the
     ticket → Outcome.failure. The workflow can't proceed without ticket
     context."""
+    _ = db_session
     clear_workspace_providers()
     clear_workflow_context_provider()
     register_workspace_provider(_StubProvider())
     register_workflow_context_provider(_StaticContextProvider(context=None))
-    ws_id = uuid4()
-    db_session.add(
-        WorkspaceRow(
-            id=ws_id,
-            org_id=uuid4(),
-            provider_id="in_process",
-            spec={"sha": "x"},
-            status=WorkspaceStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC) + timedelta(minutes=10),
-            plugin_state={"sha": "x"},
-        )
+    org_id = uuid4()
+    spec = WorkspaceSpec(
+        repo=RepoRefForSpec(plugin_id="github", external_id="me/repo"),
+        sha="x",
+        resource_caps=ResourceCaps(),
     )
-    await db_session.commit()
+    ws = await create_workspace("in_process", spec, org_id=org_id)
     try:
-        outcome = await CodeReview().execute({"workspace_id": str(ws_id)}, _ctx())
+        outcome = await CodeReview().execute({"workspace_id": ws.id}, _ctx())
         assert outcome.label == "failure"
         assert "not found" in (outcome.failure_reason or "")
     finally:

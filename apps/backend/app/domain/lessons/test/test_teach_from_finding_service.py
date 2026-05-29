@@ -34,7 +34,7 @@ async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_sessi
         body,
         source_pr_url="https://example.test/owner/repo/pull/21",
         actor=Actor.system(),
-        org_id=org.id,
+        org_id=org.org_id,
         plugin_id="github",
     )
 
@@ -53,7 +53,7 @@ async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_sessi
     assert row[2] == "https://example.test/owner/repo/pull/21"
     assert row[3] == "owner/repo"
     assert row[4] == "github"
-    assert row[5] == org.id
+    assert row[5] == org.org_id
 
     # Audit row for the creation.
     audit = (
@@ -65,5 +65,5 @@ async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_sessi
     assert audit == "lesson.created"
 
     # Cross-check: list_for_repo finds it.
-    listed = await lessons.list_for_repo("owner/repo", org_id=org.id, plugin_id="github")
+    listed = await lessons.list_for_repo("owner/repo", org_id=org.org_id, plugin_id="github")
     assert any(l.id == lesson.id for l in listed)

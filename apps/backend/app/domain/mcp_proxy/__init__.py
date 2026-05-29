@@ -10,7 +10,6 @@ from app.domain.mcp_proxy.service import (
     mint_token,
     record_broken_creds,
     revoke_token,
-    sweep_expired,
 )
 
 # NOTE: `mcp_proxy.web` is not imported here to avoid potential circular imports.
@@ -26,6 +25,5 @@ __all__ = [
     "mint_token",
     "record_broken_creds",
     "revoke_token",
-    "sweep_expired",
     "web",
 ]

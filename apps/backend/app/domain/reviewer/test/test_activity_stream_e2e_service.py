@@ -19,17 +19,14 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
 
 from app.core.audit_log import ActorKind
 from app.core.auth import org_context
 from app.core.plugin_kit import PluginMeta
-from app.core.sse import (
-    reset_pubsub,
-    subscribe_workspace_activity,
-)
-from app.core.tasks import OutboxEntryRow, drain_once
-from app.core.workflow import WorkflowExecutionRow, WorkflowState, scoped_engine
+from app.core.redis import reset_pubsub
+from app.core.sse import subscribe_workspace_activity
+from app.core.tasks import drain_once, get_pending_task_names
+from app.core.workflow import WorkflowState, get_execution_summary, scoped_engine
 from app.core.workspace import (
     ALL_LIFECYCLE_COMMANDS,
     WorkspaceTicketContext,
@@ -99,33 +96,22 @@ def _engine_with_in_memory():  # type: ignore[no-untyped-def]
 async def _drain(db_session) -> None:  # type: ignore[no-untyped-def]
     from app.core.tasks import get_broker  # noqa: PLC0415
 
-    for _ in range(50):
-        rows = (
-            (
-                await db_session.execute(
-                    select(OutboxEntryRow)
-                    .where(OutboxEntryRow.dispatched_at.is_(None))
-                    .order_by(OutboxEntryRow.created_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
-            return
-
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            metadata = payload.get("metadata") or {}
-            org_id_str = metadata.get("org_id") if isinstance(metadata, dict) else None
-            if org_id_str:
-                async with org_context(UUID(org_id_str), ActorKind.SYSTEM):
-                    await decorated.original_func(**payload["args"])
-            else:
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        metadata = payload.get("metadata") or {}
+        org_id_str = metadata.get("org_id") if isinstance(metadata, dict) else None
+        if org_id_str:
+            async with org_context(UUID(org_id_str), ActorKind.SYSTEM):
                 await decorated.original_func(**payload["args"])
+        else:
+            await decorated.original_func(**payload["args"])
 
+    for _ in range(50):
+        pending = await get_pending_task_names(db_session)
+        if not pending:
+            return
         await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()
 
@@ -223,7 +209,8 @@ async def test_in_memory_review_publishes_activity_to_sse(  # type: ignore[no-un
         # in-process pubsub).
         await asyncio.wait_for(reader_task, timeout=2.0)
 
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
+    assert wfx is not None
     assert wfx.state == WorkflowState.DONE.value
 
     assert len(received) == 3

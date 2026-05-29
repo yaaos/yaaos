@@ -52,7 +52,6 @@ from app.domain.reviewer.llm import (
 )
 from app.domain.reviewer.lock import acquire_pr_lock
 from app.domain.reviewer.mcp_wiring import prefix_broken_creds_warning
-from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.replies import handle_developer_reply
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
 from app.domain.reviewer.repository_protocol import AggregateRepository
@@ -70,7 +69,6 @@ from app.domain.reviewer.service import (
     ThreadMessageView,
     ThreadView,
     VerifyFixAction,
-    aggregate_findings_by_prs,
     all_conversations_view,
     apply_classified_reply,
     apply_stale_check_result,
@@ -79,7 +77,6 @@ from app.domain.reviewer.service import (
     compute_resolved_without_edit_rate,
     dispatch_events,
     find_pr_id_by_external_comment_id,
-    get_org_id_for_review,
     get_review,
     get_thread,
     is_off_topic_message,
@@ -117,6 +114,7 @@ from app.domain.reviewer.types import (
     ReviewTrigger,
     Severity,
 )
+from app.domain.tickets import get_workspace_ticket_context as _get_workspace_ticket_context
 
 __all__ = [
     "VERIFY_ACT_THRESHOLD",
@@ -158,7 +156,6 @@ __all__ = [
     "ReviewJob",
     "ReviewJobInput",
     "ReviewRequested",
-    "ReviewRow",
     "ReviewScope",
     "ReviewScopeKind",
     "ReviewStarted",
@@ -176,7 +173,6 @@ __all__ = [
     "TriggerInputs",
     "VerifyFixAction",
     "acquire_pr_lock",
-    "aggregate_findings_by_prs",
     "all_conversations_view",
     "apply_classified_reply",
     "apply_stale_check_result",
@@ -188,7 +184,6 @@ __all__ = [
     "decide_trigger",
     "dispatch_events",
     "find_pr_id_by_external_comment_id",
-    "get_org_id_for_review",
     "get_review",
     "get_thread",
     "handle_developer_reply",
@@ -212,9 +207,7 @@ class _TicketWorkflowContextProvider:
     by `_register_workflows()` at module import."""
 
     async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        from app.domain.tickets import get_workspace_ticket_context  # noqa: PLC0415
-
-        return await get_workspace_ticket_context(ticket_id)
+        return await _get_workspace_ticket_context(ticket_id)
 
 
 async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]

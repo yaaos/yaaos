@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.auth import Role
 from app.domain.orgs import delete_expired_invitations, find_saml_org_slug_for_domain, get_org
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.types import Role
 
 # ---------------------------------------------------------------------------
 # get_org
@@ -22,10 +22,10 @@ async def test_get_org_returns_org(db_session) -> None:
     row = await orgs_repo.insert_org(db_session, slug="get-org-happy", display_name="Happy Org")
     await db_session.commit()
 
-    org = await get_org(row.id)
+    org = await get_org(row.org_id)
 
     assert org is not None
-    assert org.id == row.id
+    assert org.id == row.org_id
     assert org.slug == "get-org-happy"
     assert org.display_name == "Happy Org"
 
@@ -80,16 +80,16 @@ async def test_delete_expired_invitations_counts_only_unaccepted_past_due(db_ses
     now = datetime.now(UTC)
 
     # Should be deleted — expired, unaccepted
-    await _make_invitation(db_session, org_id=org.id, expires_at=now - timedelta(hours=1))
-    await _make_invitation(db_session, org_id=org.id, expires_at=now - timedelta(days=7))
+    await _make_invitation(db_session, org_id=org.org_id, expires_at=now - timedelta(hours=1))
+    await _make_invitation(db_session, org_id=org.org_id, expires_at=now - timedelta(days=7))
 
     # Should survive — future expiry, unaccepted
-    await _make_invitation(db_session, org_id=org.id, expires_at=now + timedelta(days=7))
+    await _make_invitation(db_session, org_id=org.org_id, expires_at=now + timedelta(days=7))
 
     # Should survive — expired but already accepted
     await _make_invitation(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         expires_at=now - timedelta(hours=2),
         accepted_at=now - timedelta(hours=3),
     )
@@ -107,7 +107,7 @@ async def test_delete_expired_invitations_zero_when_none_expired(db_session) -> 
     org = await orgs_repo.insert_org(db_session, slug="del-inv-none")
     await _make_invitation(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
     await db_session.commit()
@@ -129,7 +129,7 @@ async def test_find_saml_org_slug_for_domain_returns_slug(db_session) -> None:
     org = await orgs_repo.insert_org(db_session, slug="saml-domain-org")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<md/>",
         enabled=True,
         email_domains=["example.com"],
@@ -148,7 +148,7 @@ async def test_find_saml_org_slug_for_domain_returns_none_when_disabled(db_sessi
     org = await orgs_repo.insert_org(db_session, slug="saml-disabled-org")
     await upsert_config(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         idp_metadata_xml="<md/>",
         enabled=False,
         email_domains=["disabled.example.com"],

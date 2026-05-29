@@ -15,10 +15,9 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 import app.web  # noqa: F401  — registers the reviewer router
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer.aggregate import RawFinding
 from app.domain.reviewer.repository import SqlAlchemyAggregateRepository
@@ -70,7 +69,7 @@ async def seeded(db_session):
     org = await orgs_repo.insert_org(db_session, slug="ack-org")
     user = await identity_repo.insert_user(db_session, display_name="Bob")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="b"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
 
@@ -82,7 +81,7 @@ async def seeded(db_session):
             " VALUES (:id, :org_id, 'github_pr', 'ack/repo#1', 't', 'in_review',"
             " 'github', 'ack/repo')"
         ),
-        {"id": ticket_id, "org_id": org.id},
+        {"id": ticket_id, "org_id": org.org_id},
     )
     await db_session.execute(
         text(
@@ -92,7 +91,7 @@ async def seeded(db_session):
             " VALUES (:id, :org_id, :tid, 'github', 'ack/repo#1', 'ack/repo', 1, 't', '',"
             " 'dev', 'user', 'main', 'feat', 'b', 'h', false, false, 'open', 'https://x')"
         ),
-        {"id": pr_id, "org_id": org.id, "tid": ticket_id},
+        {"id": pr_id, "org_id": org.org_id, "tid": ticket_id},
     )
     await db_session.execute(
         text(
@@ -100,7 +99,7 @@ async def seeded(db_session):
             " scope_kind, destination)"
             " VALUES (:id, :org_id, :pr_id, 1, 'queued', 'pr_ready', 'full', 'vcs')"
         ),
-        {"id": review_id, "org_id": org.id, "pr_id": pr_id},
+        {"id": review_id, "org_id": org.org_id, "pr_id": pr_id},
     )
 
     # Insert a finding row directly — the aggregate dedup / fingerprint logic
@@ -120,7 +119,7 @@ async def seeded(db_session):
         ),
         {
             "id": finding_id,
-            "org_id": org.id,
+            "org_id": org.org_id,
             "pr_id": pr_id,
             "rid": review_id,
             "anchor": anchor_json,
@@ -150,7 +149,7 @@ async def test_ack_transitions_finding_to_acknowledged(seeded, db_session) -> No
     assert r.json()["state"] == "acked"
 
     repo = SqlAlchemyAggregateRepository(db_session)
-    agg = await repo.load(pr_id=seeded["pr_id"], org_id=seeded["org"].id)
+    agg = await repo.load(pr_id=seeded["pr_id"], org_id=seeded["org"].org_id)
     assert agg.findings[0].state == FindingState.ACKNOWLEDGED
 
 
@@ -180,7 +179,7 @@ async def test_push_back_records_wontfix(seeded, db_session) -> None:  # type: i
     assert r.json()["state"] == "pushed_back"
 
     repo = SqlAlchemyAggregateRepository(db_session)
-    agg = await repo.load(pr_id=seeded["pr_id"], org_id=seeded["org"].id)
+    agg = await repo.load(pr_id=seeded["pr_id"], org_id=seeded["org"].org_id)
     assert agg.findings[0].state == FindingState.ACKNOWLEDGED  # internal vocab
     acks = agg._state.acks  # repository persists the AcknowledgmentDecision row(s)
     assert acks[0].kind == "wontfix"

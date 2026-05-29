@@ -12,6 +12,10 @@ export {
   type Ticket,
 } from "./client";
 export {
+  type BrokenIntegrationSummary,
+  type BrokenSummaryOrg,
+  type BrokenSummaryResponse,
+  useBrokenSummary,
   type ConversationRow,
   type FindingRow,
   type FindingThread,

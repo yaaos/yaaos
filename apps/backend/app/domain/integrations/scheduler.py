@@ -4,9 +4,6 @@ Walks every enabled credential, calls the provider's `validate(access_token)`,
 flips `last_refresh_status` to `"ok"` or `"failed"`, and enqueues an email
 notification to the org's Owners on transition-to-failed (deduplicated to
 once per 24h via `last_failure_notified_at`).
-
-Sweep of expired `mcp_review_tokens` runs in the same loop — there's no
-separate scheduler module for the proxy.
 """
 
 from __future__ import annotations
@@ -19,16 +16,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.audit_log import Actor, ActorKind, audit
-from app.core.auth import org_context
+from app.core.auth import Role, org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.types import get_provider
-from app.domain.mcp_proxy import sweep_expired
-from app.domain.orgs import Role, send_plain
 from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import send_plain
 
 log = structlog.get_logger("integrations.scheduler")
 
@@ -63,7 +59,7 @@ async def _notify_owners(row: McpCredentialRow) -> int:
         if org is None:
             return 0
         memberships = await orgs_repo.list_memberships_for_org(s, row.org_id)
-        owner_ids = [m.user_id for m in memberships if Role(m.role) == Role.OWNER]
+        owner_ids = [m.user_id for m in memberships if m.role == Role.OWNER]
         if not owner_ids:
             return 0
         # Collect verified email addresses for each owner.
@@ -169,11 +165,6 @@ async def run_scheduler_loop() -> None:
             counts = await run_health_check_once()
             if any(counts.values()):
                 log.info("integrations.health_check.ran", **counts)
-            async with db_session() as s:
-                n_swept = await sweep_expired(session=s)
-                await s.commit()
-            if n_swept:
-                log.info("integrations.mcp_tokens.swept", removed=n_swept)
         except Exception:
             log.exception("integrations.scheduler.failed")
         await asyncio.sleep(interval)

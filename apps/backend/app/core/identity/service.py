@@ -15,7 +15,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.identity import repository as repo
-from app.core.identity.models import OAuthIdentityRow, SessionRow, UserEmailRow, UserRow
+from app.core.identity.models import UserRow
 from app.core.identity.providers import ProviderProfile
 from app.core.identity.types import (
     EmailAlreadyLinkedError,
@@ -108,9 +108,9 @@ async def login_via_oauth(
     return LoginResult(user=None, newly_created=False)
 
 
-async def create_user(db: AsyncSession, *, display_name: str = "") -> UserRow:
-    """Insert a new user row and return it. The caller owns the transaction."""
-    return await repo.insert_user(db, display_name=display_name)
+async def create_user(db: AsyncSession, *, display_name: str = "") -> User:
+    """Insert a new user row and return it as a value object. The caller owns the transaction."""
+    return User.from_row(await repo.insert_user(db, display_name=display_name))
 
 
 async def create_email(
@@ -120,9 +120,11 @@ async def create_email(
     email: str,
     is_primary: bool = False,
     verified: bool = False,
-) -> UserEmailRow:
-    """Insert an email row for `user_id` and return it. The caller owns the transaction."""
-    return await repo.add_email(db, user_id=user_id, email=email, is_primary=is_primary, verified=verified)
+) -> UserEmail:
+    """Insert an email row for `user_id` and return it as a value object. The caller owns the transaction."""
+    return UserEmail.from_row(
+        await repo.add_email(db, user_id=user_id, email=email, is_primary=is_primary, verified=verified)
+    )
 
 
 async def create_oauth_identity(
@@ -132,10 +134,12 @@ async def create_oauth_identity(
     provider: str,
     external_subject: str,
     verified: bool = True,
-) -> OAuthIdentityRow:
-    """Insert an oauth_identity row for `user_id` and return it. The caller owns the transaction."""
-    return await repo.add_oauth_identity(
-        db, user_id=user_id, provider=provider, external_subject=external_subject, verified=verified
+) -> OAuthIdentity:
+    """Insert an oauth_identity row for `user_id` and return it as a value object. The caller owns the transaction."""
+    return OAuthIdentity.from_row(
+        await repo.add_oauth_identity(
+            db, user_id=user_id, provider=provider, external_subject=external_subject, verified=verified
+        )
     )
 
 
@@ -149,17 +153,19 @@ async def create_session(
     ip: str | None,
     user_agent: str | None,
     expires_at: datetime,
-) -> SessionRow:
-    """Insert a session row and return it. The caller owns the transaction."""
-    return await repo.insert_session(
-        db,
-        token_hash=token_hash,
-        user_id=user_id,
-        workspace_id=workspace_id,
-        csrf_token=csrf_token,
-        ip=ip,
-        user_agent=user_agent,
-        expires_at=expires_at,
+) -> Session:
+    """Insert a session row and return it as a value object. The caller owns the transaction."""
+    return Session.from_row(
+        await repo.insert_session(
+            db,
+            token_hash=token_hash,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            csrf_token=csrf_token,
+            ip=ip,
+            user_agent=user_agent,
+            expires_at=expires_at,
+        )
     )
 
 

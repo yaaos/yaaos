@@ -4,8 +4,9 @@
 
 ## Scope
 
-- Owns: `users`, `user_emails`, `oauth_identities`, `user_totp_secrets`, `sessions` tables + all read/write ops; login orchestrator; Provider registry; periodic cleanup scheduler.
-- Does NOT own: `/api/auth/*` HTTP routes (those are in [`core/sessions`](core_sessions.md)) or `/api/user/*` (those are in `user_web.py`, `USER_SCOPED`).
+- Owns: `users`, `user_emails`, `oauth_identities`, `user_totp_secrets`, `sessions` tables + all read/write ops; login orchestrator; Provider registry; periodic cleanup scheduler; `require_session` FastAPI dependency (`session_dependency.py`).
+- Does NOT own: `/api/auth/*` HTTP routes (those are in [`core/sessions`](core_sessions.md)) or `/api/user/*` (those are in `user_web.py`, `USER_SCOPED`). Org/role-aware dependency factories (`require(action)`) live in [`core/sessions`](core_sessions.md).
+- Does NOT read `domain/orgs` — `/api/user/me` membership list and session-expiry audit both go through [`core/tenancy`](core_tenancy.md) (`list_memberships_for_user`).
 - Emits: `CreatedSession` (raw token + CSRF token) to the callback handler.
 
 ## Why / invariants
@@ -28,7 +29,7 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 **TOTP secret** — at most one per user. Base32 seed encrypted via [`core/secrets`](core_secrets.md); `verified_at` set only after the user proves possession.
 
-**Periodic cleanup** — `scheduler.run_cleanup_loop()` spawned in FastAPI lifespan every `YAAOS_AUTH_CLEANUP_INTERVAL_SECONDS` (default 1h): purges expired sessions, expired uninvited invitations, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION` (15d).
+**Periodic cleanup** — `scheduler.run_cleanup_loop()` spawned in FastAPI lifespan every `YAAOS_AUTH_CLEANUP_INTERVAL_SECONDS` (default 1h): purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION` (15d). Invitation expiry is swept by [`domain/orgs`](domain_orgs.md)'s own startup loop.
 
 **Provider registry** — `register_provider(p)` overwrites on re-register (plugins may import multiple times in tests). Plugins: [`plugins/github`](plugins_github.md), [`plugins/oauth_test`](plugins_oauth_test.md).
 

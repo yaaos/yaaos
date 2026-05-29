@@ -2,11 +2,14 @@
 
 from app.domain.integrations.service import (
     McpCredential,
+    McpCredentialSecret,
     clear,
     connect_callback,
     create_credential,
     get,
+    get_secret,
     list_broken_credentials_for_org,
+    mark_last_used,
     update_allowlist,
     validate,
 )
@@ -30,6 +33,7 @@ __all__ = [
     "IntegrationNotConnectedError",
     "IntegrationProvider",
     "McpCredential",
+    "McpCredentialSecret",
     "ProviderConfig",
     "ProviderNotRegisteredError",
     "clear",
@@ -37,8 +41,10 @@ __all__ = [
     "create_credential",
     "get",
     "get_provider",
+    "get_secret",
     "known_providers",
     "list_broken_credentials_for_org",
+    "mark_last_used",
     "register_provider",
     "update_allowlist",
     "validate",

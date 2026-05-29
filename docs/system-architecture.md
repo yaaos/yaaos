@@ -65,7 +65,7 @@ Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`
 
 **Refresh serialization (deferred).** When implemented, `domain/integrations.refresh()` will use `pg_advisory_xact_lock(hashtext('mcp:' || org_id || ':' || provider))` to prevent double-spend on refresh tokens. Until then, token expiry surfaces `broken_creds` and the hourly health-check + email notifies the operator.
 
-**Broken-creds surfacing (six layers).** Health-check flips `last_refresh_status`; audit row `mcp.<provider>.token_refresh_failed`; email to Owners (24h dedup); `/api/auth/me`'s `broken_integrations`; red banner in the app shell; warning block in Coding Agents settings; review-output prefix when the agent hit `broken_creds`/`not_connected` mid-run.
+**Broken-creds surfacing (six layers).** Health-check flips `last_refresh_status`; audit row `mcp.<provider>.token_refresh_failed`; email to Owners (24h dedup); `GET /api/integrations/broken-summary` (cross-org; Owners + Admins only); red banner in the app shell; warning block in Coding Agents settings; review-output prefix when the agent hit `broken_creds`/`not_connected` mid-run.
 
 **Audit shape.** One row per JSON-RPC method: `{kind: "mcp.<provider>.dispatched", payload: {provider, method, tool, args_hash, result_summary, upstream_account}}`. Never the full upstream response.
 

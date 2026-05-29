@@ -1,56 +1,249 @@
 #!/usr/bin/env python3
-"""SQL table-ownership scanner.
+"""Raw-SQL table-ownership scanner + tach-ignore suppression guard.
 
-Table ownership enforcement: each module may only reference DB tables it owns.
-Ownership is auto-derived from SQLAlchemy model `__module__` (no manual manifest).
+Two checks, both required:
+
+1. **Raw-SQL scan** — AST-parses every `app/**/models.py` to build
+   `table_name → owning_module`, then AST-scans every production `.py`
+   under `app/` (excluding `test/` directories) for `text(...)` /
+   `sa_text(...)` calls with string-literal args. Fails if a referenced
+   table is owned by a module other than the file's module. Non-literal
+   args (f-strings, concatenations, variables) fail by themselves — raw
+   SQL must be a literal so it's auditable.
+
+   Test files are excluded from the raw-SQL scan because test helpers
+   legitimately use raw SQL INSERTs to seed precise DB state without going
+   through the production module API. The tach interface check (run by
+   `bin/sync_modules`) already enforces Row-import discipline for both
+   prod and test code.
+
+2. **Suppression guard** — greps every `.py` under `app/` (prod + tests)
+   and fails on any `# tach-ignore` or interface-ignore directive. One
+   suppression reopens the import hole the whole table-access lock depends
+   on.
+
+Allowlist: `app/core/database/**` owns `Base`, migrations, advisory locks,
+schema introspection — all raw SQL there is expected.
+
+Fail-closed: `tables_discovered == 0` exits non-zero; no top-level swallow.
 """
 
 from __future__ import annotations
 
+import ast
+import re
 import sys
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
-LAYERS = ("core", "domain", "plugins", "testing")
+
+# Only `core/database` may use raw SQL across any table it doesn't "own" —
+# it owns the schema layer itself (Base, migrations, advisory locks).
+ALLOWLIST_PREFIX = APP / "core" / "database"
+
+# Table references to ignore — system functions, no actual table access.
+_NO_TABLE_BUILTINS_RE = re.compile(
+    r"^\s*(SELECT\s+1$|pg_advisory|to_regclass|information_schema\.|pg_|SET\s+LOCAL)",
+    re.IGNORECASE,
+)
+
+# Regex to extract table names from SQL strings after FROM/JOIN/INTO/UPDATE/DELETE FROM.
+_TABLE_REF_RE = re.compile(
+    r"(?:FROM|JOIN|INTO|UPDATE|DELETE\s+FROM)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+    re.IGNORECASE,
+)
+
+# tach-ignore directives that suppress import enforcement.
+_TACH_IGNORE_RE = re.compile(r"#\s*tach-ignore")
+
+
+# ---------------------------------------------------------------------------
+# Ownership map: table_name → module path fragment (e.g. "domain/orgs")
+# ---------------------------------------------------------------------------
+
+
+def _module_key(models_file: Path) -> str:
+    """Derive `<layer>/<module>` from an `app/<layer>/<module>/models.py` path."""
+    rel = models_file.relative_to(APP)
+    parts = rel.parts  # e.g. ("domain", "orgs", "models.py")
+    return f"{parts[0]}/{parts[1]}"
+
+
+def _file_module_key(py_file: Path) -> str:
+    """Derive the module key for any `.py` file under `app/`."""
+    rel = py_file.relative_to(APP)
+    parts = rel.parts  # e.g. ("core", "agent_gateway", "web.py")
+    if len(parts) < 2:
+        return ""
+    return f"{parts[0]}/{parts[1]}"
+
+
+def build_table_ownership_map() -> dict[str, str]:
+    """AST-parse every app/**/models.py and return {table_name: module_key}."""
+    ownership: dict[str, str] = {}
+    for models_file in APP.rglob("models.py"):
+        # Skip test directories.
+        if "test" in models_file.parts:
+            continue
+        module_key = _module_key(models_file)
+        try:
+            tree = ast.parse(models_file.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            print(f"ERROR: cannot parse {models_file}: {exc}", file=sys.stderr)
+            return {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    # `__tablename__ = "<literal>"`
+                    if (
+                        isinstance(item, ast.Assign)
+                        and len(item.targets) == 1
+                        and isinstance(item.targets[0], ast.Name)
+                        and item.targets[0].id == "__tablename__"
+                        and isinstance(item.value, ast.Constant)
+                        and isinstance(item.value.value, str)
+                    ):
+                        ownership[item.value.value] = module_key
+    return ownership
+
+
+# ---------------------------------------------------------------------------
+# Extract string literal value from an AST node (Constant or JoinedStr).
+# ---------------------------------------------------------------------------
+
+
+def _extract_literal(node: ast.expr) -> str | None:
+    """Return the string value if node is a plain string constant, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Raw-SQL scan
+# ---------------------------------------------------------------------------
+
+
+def _is_text_call(node: ast.Call) -> bool:
+    """Return True for `text(...)` or `sa_text(...)` calls."""
+    func = node.func
+    if isinstance(func, ast.Name) and func.id in ("text", "sa_text"):
+        return True
+    if isinstance(func, ast.Attribute) and func.attr in ("text", "sa_text"):
+        return True
+    return False
+
+
+def scan_raw_sql_violations(
+    ownership: dict[str, str],
+) -> list[str]:
+    """AST-scan every .py under app/ and return a list of violation strings."""
+    violations: list[str] = []
+
+    for py_file in APP.rglob("*.py"):
+        # Skip test directories — test helpers use raw SQL for seeding data,
+        # which is a different pattern from production cross-module raw SQL.
+        if "test" in py_file.parts:
+            continue
+
+        # Allowlisted: core/database owns all raw SQL.
+        try:
+            py_file.relative_to(ALLOWLIST_PREFIX)
+            continue
+        except ValueError:
+            pass
+
+        file_module = _file_module_key(py_file)
+
+        try:
+            source = py_file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(py_file))
+        except SyntaxError as exc:
+            violations.append(f"{py_file}: SyntaxError — {exc}")
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not _is_text_call(node):
+                continue
+            if not node.args:
+                continue
+            arg = node.args[0]
+            literal = _extract_literal(arg)
+            if literal is None:
+                # Non-literal arg: f-string, concat, variable — reject.
+                violations.append(
+                    f"{py_file}:{node.lineno}: non-literal text() argument — "
+                    "raw SQL must be a string literal so it is auditable"
+                )
+                continue
+
+            # Extract table references from the SQL string.
+            for match in _TABLE_REF_RE.finditer(literal):
+                table_name = match.group(1).lower()
+                if table_name not in ownership:
+                    # Unknown table — not in any models.py; skip (may be
+                    # a function call, CTE alias, or transient name).
+                    continue
+                owning_module = ownership[table_name]
+                if owning_module != file_module:
+                    violations.append(
+                        f"{py_file}:{node.lineno}: cross-module raw SQL — "
+                        f"table '{table_name}' is owned by '{owning_module}' "
+                        f"but referenced from '{file_module}'"
+                    )
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Suppression guard
+# ---------------------------------------------------------------------------
+
+
+def scan_tach_ignore(app_root: Path) -> list[str]:
+    """Return paths of any .py file containing a # tach-ignore directive."""
+    hits: list[str] = []
+    for py_file in app_root.rglob("*.py"):
+        try:
+            source = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(source.splitlines(), start=1):
+            if _TACH_IGNORE_RE.search(line):
+                hits.append(f"{py_file}:{i}: tach-ignore suppression directive found")
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    # Run inside apps/backend so the venv's site-packages is on the path.
-    sys.path.insert(0, str(BACKEND))
-    # Also add the venv's site-packages if it exists (so this script works when
-    # invoked from outside `uv run`).
-    venv_site = BACKEND.parent.parent / ".venv" / "lib"
-    if venv_site.exists():
-        for py_dir in venv_site.glob("python*"):
-            sp = py_dir / "site-packages"
-            if sp.exists():
-                sys.path.insert(0, str(sp))
+    ownership = build_table_ownership_map()
 
-    try:
-        from app.core.database import Base  # noqa: PLC0415
-    except ImportError:
-        # Backend deps not available, or no models registered — nothing to scan.
-        print("OK: backend deps not available — table-access scan skipped")
-        return 0
+    if not ownership:
+        print(
+            "ERROR: table ownership map is empty — no __tablename__ found in any models.py. "
+            "This is a fail-closed sentinel: check_table_access requires at least one table.",
+            file=sys.stderr,
+        )
+        return 1
 
-    table_to_module: dict[str, str] = {}
-    for table_name, table in Base.metadata.tables.items():
-        # SQLAlchemy 2.0 stores the declaring class's __module__ on the mapper, but
-        # the cheapest reliable signal is the file path of any class that maps it.
-        # Walk the declarative registry to resolve each table's owning module.
-        owning_module = getattr(table, "_yaaos_owning_module", None)
-        if owning_module:
-            table_to_module[table_name] = owning_module
+    violations = scan_raw_sql_violations(ownership)
+    tach_hits = scan_tach_ignore(APP)
 
-    if not table_to_module:
-        # No tables registered yet — nothing to check.
-        return 0
+    all_errors = violations + tach_hits
 
-    # Cross-module enforcement: AST-scan every .py file under apps/backend/app/,
-    # identify the file's owning module from its path, look for SQLAlchemy
-    # `select(Model)` / raw text() references, and flag cross-module table use.
-    print(f"OK: {len(table_to_module)} tables, ownership clean")
+    if all_errors:
+        for msg in all_errors:
+            print(f"FAIL: {msg}", file=sys.stderr)
+        return 1
+
+    print(f"OK: {len(ownership)} tables scanned, raw-SQL ownership clean, no suppression directives")
     return 0
 
 

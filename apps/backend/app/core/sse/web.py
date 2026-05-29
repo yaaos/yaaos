@@ -3,14 +3,12 @@
 | Method | Path                                              | Auth                |
 |--------|---------------------------------------------------|---------------------|
 | GET    | `/api/sse/general`                                | `ORG_READ` — org-scoped general event stream for the caller's resolved org. |
-| GET    | `/api/sse/workspace_activity/{workflow_execution_id}` | `ORG_READ` + workflow-in-org ownership check (404 on cross-org). |
+| GET    | `/api/sse/workspace_activity/{workflow_execution_id}` | `ORG_READ`. Cross-org isolation is the channel key: subscribers attach to `{caller_org}:workspace_activity:{wfx_id}`; publishers publish to `{owner_org}:…`, so a cross-org request silently yields an empty stream rather than 404. |
 
 The `/api/sse` prefix is classified as `ORG_SCOPED` in `core/auth/types.py`,
 so `AuthMiddleware` enforces the `X-Org-Slug` header before the handler runs.
 `require(Action.ORG_READ)` resolves the session → membership → sets
-`org_id_var` and marks the route security resolved. The workspace_activity
-route adds a second dep that delegates to a boot-time-registered ownership
-check (kept out of `core/sse` to avoid importing `domain/*`).
+`org_id_var` and marks the route security resolved.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import Action, org_id_var
@@ -27,21 +25,10 @@ from app.core.sse.service import (
     serialize_for_sse,
     subscribe_general,
     subscribe_workspace_activity,
-    verify_workspace_activity_ownership,
 )
 from app.core.webserver import RouteSpec, register_routes
 
 router = APIRouter()
-
-
-async def _verify_workspace_activity_ownership(
-    workflow_execution_id: UUID = Path(...),
-) -> None:
-    """FastAPI `Depends` thunk that delegates to the registered check.
-
-    Kept in `web.py` so `core/sse/service.py` stays framework-agnostic.
-    """
-    await verify_workspace_activity_ownership(workflow_execution_id)
 
 
 async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
@@ -71,18 +58,15 @@ async def stream_general() -> StreamingResponse:
 
 @router.get(
     "/workspace_activity/{workflow_execution_id}",
-    dependencies=[
-        Depends(require(Action.ORG_READ)),
-        Depends(_verify_workspace_activity_ownership),
-    ],
+    dependencies=[Depends(require(Action.ORG_READ))],
 )
 async def stream_workspace_activity(workflow_execution_id: UUID) -> StreamingResponse:
     """Subscribe an SSE client to the per-workflow activity event stream.
 
-    The ownership check (`_verify_workspace_activity_ownership`) 404s if the
-    workflow belongs to a different org — this is enforced via the registrar
-    that the control-plane bootstrap wires at startup, so `core/sse` itself
-    never imports `domain/*`.
+    Cross-org isolation is the channel key: subscribers attach to
+    `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+    different org subscribes to a channel nobody publishes to and yields an
+    empty stream.
     """
     org_id = org_id_var.get()
     return StreamingResponse(

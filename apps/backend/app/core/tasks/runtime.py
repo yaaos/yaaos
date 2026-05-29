@@ -63,11 +63,8 @@ async def run() -> None:
     await database.migrate()
 
     broker = get_broker()
-    # Import each module whose `@task` decorators register task bodies
-    # with the broker. The decorator runs at import time and calls
-    # `broker.task(...)` — no separate bind step needed.
-    import app.core.workflow  # noqa: F401, PLC0415
-
+    # Task-defining modules are loaded by the composition root (`app/worker.py`)
+    # before `run()` is called — `@task` decorators are already registered here.
     broker.add_middlewares(org_context_middleware)
     log.info("tasks.worker.booting", broker=type(broker).__name__)
 

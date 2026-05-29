@@ -101,19 +101,19 @@ async def test_install_callback_happy_path_writes_app_install_row(seed_org, db_s
 async def seeded_owner(db_session):
     """Owner + Admin sessions on a fresh org. Builds the auth surface the
     `/install/start` route needs to exercise role gating (Owner-only)."""
+    from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-    from app.domain.orgs import Role  # noqa: PLC0415
     from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     owner = await identity_repo.insert_user(db_session, display_name="O")
     admin = await identity_repo.insert_user(db_session, display_name="A")
     org = await orgs_repo.insert_org(db_session, slug="gh-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="ownr"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ownr"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="admin"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="admin"
     )
     owner_sess = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
@@ -142,7 +142,7 @@ async def test_install_start_returns_signed_redirect_url(seeded_owner, monkeypat
     assert "/apps/yaaos-test/installations/new?state=" in body["redirect_url"]
     state = body["redirect_url"].split("?state=", 1)[1]
     payload = _install_state_serializer().loads(state, max_age=900)
-    assert payload == {"org_id": str(seeded_owner["org"].id)}
+    assert payload == {"org_id": str(seeded_owner["org"].org_id)}
     get_settings.cache_clear()
 
 

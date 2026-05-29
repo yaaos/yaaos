@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,8 +20,8 @@ from starlette.testclient import TestClient
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.subscribers import _reset_subscriber_singleton_for_tests
-from app.core.sse import reset_pubsub, subscribe_workspace_activity
-from app.core.workspace import WorkspaceRow
+from app.core.redis import reset_pubsub
+from app.core.sse import subscribe_workspace_activity
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -55,7 +54,7 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(
         id=uuid4(),
-        org_id=org.id,
+        org_id=org.org_id,
         agent_pod_id=uuid4(),
         iam_arn=org.registered_iam_arn,
         version="0.0.1",
@@ -65,36 +64,11 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     await db_session.commit()
 
     plaintext, _ = await bearers.issue(
-        agent_id=agent.id, org_id=org.id, session=db_session, source_ip="127.0.0.1"
+        agent_id=agent.id, org_id=org.org_id, session=db_session, source_ip="127.0.0.1"
     )
     await db_session.commit()
 
-    return org.id, agent.id, plaintext
-
-
-async def _seed_workspace_for_org(db_session, org_id: UUID) -> WorkspaceRow:
-    """Seed a claimed workspace row for `org_id`. Returns the row + test-seeded ids."""
-    cmd_id = uuid4()
-    wfx_id = uuid4()
-    row = WorkspaceRow(
-        id=uuid4(),
-        org_id=org_id,
-        provider_id="in_memory",
-        provider="remote_agent",
-        spec={"sha": "deadbeef"},
-        plugin_state={},
-        status="active",
-        activated_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(seconds=600),
-        max_idle_seconds=600,
-        current_command_id=cmd_id,
-        current_holder_workflow_id=wfx_id,
-    )
-    db_session.add(row)
-    await db_session.commit()
-    row.__dict__["_test_seeded_command_id"] = cmd_id
-    row.__dict__["_test_seeded_workflow_id"] = wfx_id
-    return row
+    return org.org_id, agent.id, plaintext
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────

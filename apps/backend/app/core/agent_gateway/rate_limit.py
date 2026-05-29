@@ -13,10 +13,9 @@ endpoint maps it to HTTP 429 with `identity_exchange.rate_limited` audit.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
-from app.core.redis import get_client
+from app.core.redis import sliding_window_hit
 
 PER_IP_LIMIT = 10
 PER_IP_WINDOW_SECONDS = 60
@@ -37,30 +36,12 @@ class RateLimitedError(Exception):
 
 
 async def _hit(key: str, limit: int, window_seconds: int) -> None:
-    """Sliding-window approximation via Redis ZSET.
-
-    Each call:
-    1. Trim entries older than the window.
-    2. Count current entries.
-    3. If >= limit, raise.
-    4. Otherwise add the current timestamp (score=now, member=now).
-    5. Set key TTL = window_seconds (refresh).
-
-    Approximate (sub-second resolution; multiple processes can race past
-    the boundary by one each) — exact accuracy isn't worth a Lua script
-    at POC scale.
-    """
-    redis = get_client()
-    now = time.time()
-    cutoff = now - window_seconds
-    await redis.zremrangebyscore(key, "-inf", cutoff)
-    count = await redis.zcard(key)
-    if count >= limit:
-        # Determine axis from key prefix for the error message.
+    """Record a rate-limit hit via `core/redis.sliding_window_hit`; raise
+    `RateLimitedError` (with the axis derived from the key prefix) when the
+    window is already at its limit."""
+    if not await sliding_window_hit(key, limit=limit, window_seconds=window_seconds):
         axis = "ip" if ":ip:" in key else "pod"
         raise RateLimitedError(axis=axis, limit=limit, window_seconds=window_seconds)
-    await redis.zadd(key, {f"{now:.6f}:{count}": now})
-    await redis.expire(key, window_seconds)
 
 
 async def check_identity_exchange(*, source_ip: str | None, agent_pod_id: str | None) -> None:

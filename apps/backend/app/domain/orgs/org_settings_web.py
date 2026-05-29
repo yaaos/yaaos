@@ -33,17 +33,26 @@ import structlog
 from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 
-from app.core.auth import Action, org_id_var, public_route
+from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
 from app.core.sessions import require
+from app.core.tenancy import (
+    get_org_full as _get_org_full,
+)
+from app.core.tenancy import (
+    list_memberships_for_org as _list_memberships_for_org,
+)
+from app.core.tenancy import (
+    list_memberships_for_user as _list_memberships_for_user,
+)
+from app.core.tenancy import (
+    update_org_fields as _update_org_fields,
+)
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs.models import MembershipRow, OrgRow
 from app.domain.orgs.onboarding import get_onboarding_status
-from app.domain.orgs.types import Role
 
 log = structlog.get_logger("orgs.settings.web")
 
@@ -131,16 +140,15 @@ async def create_org(
         await orgs_repo.insert_membership(
             s,
             user_id=sess_row.user_id,
-            org_id=org.id,
+            org_id=org.org_id,
             role=Role.ADMIN,
             handle=body.name.strip()[:64] or slug,
         )
         await s.commit()
-        await s.refresh(org)
     return JSONResponse(
-        content=_CreateOrgResponse(id=org.id, slug=org.slug, name=org.display_name, role="admin").model_dump(
-            mode="json"
-        )
+        content=_CreateOrgResponse(
+            id=org.org_id, slug=org.slug, name=org.display_name, role="admin"
+        ).model_dump(mode="json")
     )
 
 
@@ -152,13 +160,15 @@ async def get_org_settings() -> _OrgSettingsResponse:
     if org_id is None:
         raise _err(400, "no_org_context")
     async with db_session() as s:
-        row = (await s.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
+        full = await _get_org_full(s, org_id)
+    if full is None:
+        raise _err(404, "org_not_found")
     return _OrgSettingsResponse(
-        slug=row.slug,
-        session_timeout_override=row.session_timeout_override,
-        workspace_provider=row.workspace_provider,
-        registered_iam_arn=row.registered_iam_arn,
-        aws_region=row.aws_region,
+        slug=full.slug,
+        session_timeout_override=full.session_timeout_override,
+        workspace_provider=full.workspace_provider,
+        registered_iam_arn=full.registered_iam_arn,
+        aws_region=full.aws_region,
     )
 
 
@@ -172,18 +182,29 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
         raise _err(400, "no_org_context")
 
     async with db_session() as s:
-        row = (await s.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
+        full = await _get_org_full(s, org_id)
+        if full is None:
+            raise _err(404, "org_not_found")
+
+        # Resolve each settable field to its effective post-update value:
+        # present in the body → the (validated) value; absent → the org's
+        # current value, left unchanged.
+        eff_timeout = full.session_timeout_override
         if "session_timeout_override" in body:
             value = body["session_timeout_override"]
             if value is not None:
                 if not isinstance(value, int) or value <= 0:
                     raise _err(422, "invalid_session_timeout_override")
-            row.session_timeout_override = value
+            eff_timeout = value
+
+        eff_provider = full.workspace_provider
         if "workspace_provider" in body:
             value = body["workspace_provider"]
             if value is not None and value not in _ALLOWED_WORKSPACE_PROVIDERS:
                 raise _err(422, "invalid_workspace_provider")
-            row.workspace_provider = value
+            eff_provider = value
+
+        eff_arn = full.registered_iam_arn
         if "registered_iam_arn" in body:
             value = body["registered_iam_arn"]
             if value is not None:
@@ -196,28 +217,39 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
                 value = value.strip().lower()
                 if not _IAM_ROLE_ARN_RE.fullmatch(value):
                     raise _err(422, "invalid_registered_iam_arn")
-            row.registered_iam_arn = value
+            eff_arn = value
+
+        eff_region = full.aws_region
         if "aws_region" in body:
             value = body["aws_region"]
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise _err(422, "invalid_aws_region")
-            row.aws_region = value
+            eff_region = value
+
         # Cross-field: `registered_iam_arn` and `aws_region` are both-or-neither
         # (matches the DB check constraint `ck_orgs_arn_region_paired`). Fail at
         # the application layer so the API returns a 422, not a 500 from the DB.
-        if (row.registered_iam_arn is None) != (row.aws_region is None):
+        if (eff_arn is None) != (eff_region is None):
             raise _err(422, "arn_and_region_must_be_paired")
         # Cross-field: remote_agent provider requires an ARN.
-        if row.workspace_provider == "remote_agent" and not row.registered_iam_arn:
+        if eff_provider == "remote_agent" and not eff_arn:
             raise _err(422, "remote_agent_requires_iam_arn")
+
+        updated = await _update_org_fields(
+            s,
+            org_id,
+            session_timeout_override=eff_timeout,
+            workspace_provider=eff_provider,
+            registered_iam_arn=eff_arn,
+            aws_region=eff_region,
+        )
         await s.commit()
-        await s.refresh(row)
     return _OrgSettingsResponse(
-        slug=row.slug,
-        session_timeout_override=row.session_timeout_override,
-        workspace_provider=row.workspace_provider,
-        registered_iam_arn=row.registered_iam_arn,
-        aws_region=row.aws_region,
+        slug=updated.slug,
+        session_timeout_override=updated.session_timeout_override,
+        workspace_provider=updated.workspace_provider,
+        registered_iam_arn=updated.registered_iam_arn,
+        aws_region=updated.aws_region,
     )
 
 
@@ -257,18 +289,15 @@ async def list_mine(
 
         if row.expires_at < datetime.now(UTC):
             return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-        memberships = await orgs_repo.list_memberships_for_user(s, row.user_id)
+        memberships = await _list_memberships_for_user(s, row.user_id)
         out: list[MineOrgView] = []
         for m in memberships:
-            org = await orgs_repo.get_org(s, m.org_id)
-            if org is None:
-                continue
             out.append(
                 MineOrgView(
-                    id=org.id,
-                    slug=org.slug,
-                    name=org.display_name,
-                    role=m.role,
+                    id=m.org_id,
+                    slug=m.slug,
+                    name=m.org_name,
+                    role=m.role.value,
                     last_used_at=None,
                 )
             )
@@ -296,24 +325,17 @@ async def config_status() -> ConfigStatusResponse:
     # ship (Codex, Aider), this collapses into a separate contributor.
 
     async with db_session() as s:
-        org_row = (await s.execute(select(OrgRow).where(OrgRow.id == org_id))).scalar_one()
-        if not org_row.workspace_provider:
+        org_full = await _get_org_full(s, org_id)
+        if org_full is None:
+            raise _err(404, "org_not_found")
+        if not org_full.workspace_provider:
             missing.append("workspace_provider")
 
-        admin_rows = (
-            (
-                await s.execute(
-                    select(MembershipRow).where(
-                        MembershipRow.org_id == org_id,
-                        MembershipRow.role.in_(("owner", "admin")),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
+        admin_memberships = await _list_memberships_for_org(s, org_id)
         admins: list[ConfigStatusAdmin] = []
-        for m in admin_rows:
+        for m in admin_memberships:
+            if m.role.value not in ("owner", "admin"):
+                continue
             user = await identity_repo.get_user(s, m.user_id)
             if user is None:
                 continue

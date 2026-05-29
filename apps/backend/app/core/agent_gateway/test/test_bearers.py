@@ -19,7 +19,7 @@ async def _fixture_org_and_agent(db_session) -> tuple:
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(
         id=uuid4(),
-        org_id=org.id,
+        org_id=org.org_id,
         agent_pod_id=uuid4(),
         iam_arn=org.registered_iam_arn,
         version="0.0.1",
@@ -27,7 +27,7 @@ async def _fixture_org_and_agent(db_session) -> tuple:
     )
     db_session.add(agent)
     await db_session.commit()
-    return org.id, agent.id
+    return org.org_id, agent.id
 
 
 async def test_issue_returns_plaintext_and_persists_hash(db_session) -> None:

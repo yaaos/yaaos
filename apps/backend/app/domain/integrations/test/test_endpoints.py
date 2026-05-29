@@ -18,7 +18,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.audit_log import list_for_org
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.config import get_settings
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
@@ -26,7 +26,6 @@ from app.core.oauth import ProviderConfig, Tokens
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.integrations import web as _integ_web  # noqa: F401
 from app.domain.integrations.types import _REGISTRY
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -91,7 +90,7 @@ def _app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
-    mount_specs(app, only={"integrations"})
+    mount_specs(app, only={"integrations", "integrations_summary"})
     return app
 
 
@@ -105,10 +104,10 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="integ-ep")
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
@@ -191,7 +190,7 @@ async def test_callback_round_trip_persists_credential(
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -209,7 +208,7 @@ async def test_callback_round_trip_persists_credential(
     rows = (
         (
             await db_session.execute(
-                select(McpCredentialRow).where(McpCredentialRow.org_id == seeded["org"].id)
+                select(McpCredentialRow).where(McpCredentialRow.org_id == seeded["org"].org_id)
             )
         )
         .scalars()
@@ -238,7 +237,7 @@ async def test_callback_rejects_wrong_provider_in_state(seeded, stub_provider) -
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -261,7 +260,7 @@ async def test_delete_endpoint_clears_row(seeded, stub_provider, stub_exchange, 
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -291,7 +290,7 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -314,7 +313,7 @@ async def test_patch_endpoint_updates_allowlist_and_enabled(
     assert body["allowed_tools"] == ["update_thing"]
     assert body["enabled"] is False
     # Audit row was written.
-    rows = await list_for_org(org_id=seeded["org"].id, actions=["mcp.stub.allowlist_updated"])
+    rows = await list_for_org(org_id=seeded["org"].org_id, actions=["mcp.stub.allowlist_updated"])
     assert len(rows) == 1
 
 
@@ -325,7 +324,7 @@ async def test_validate_endpoint_returns_provider_result(seeded, stub_provider, 
         get_settings().yaaos_invitation_token_secret.get_secret_value(), salt="yaaos-integration-connect"
     ).dumps(
         {
-            "org_id": str(seeded["org"].id),
+            "org_id": str(seeded["org"].org_id),
             "user_initiating": str(seeded["admin"].id),
             "provider": "stub",
         }
@@ -365,3 +364,134 @@ async def test_validate_endpoint_404_when_not_connected(seeded, stub_provider) -
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
+
+
+# ── broken-summary endpoint ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_unauthenticated_401(seeded) -> None:
+    """No cookie → 401."""
+    async with _client() as c:
+        r = await c.get("/api/integrations/broken-summary")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_empty_when_no_broken_creds(seeded) -> None:
+    """Admin with no broken credentials gets an empty orgs list."""
+    sess = seeded["admin_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "orgs" in body
+    # May have orgs entries but each must have empty broken_integrations.
+    for org_entry in body["orgs"]:
+        assert org_entry["broken_integrations"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_returns_broken_creds_for_admin(
+    seeded, stub_provider, stub_exchange, db_session
+) -> None:
+    """Admin whose org has a broken credential sees it in broken-summary."""
+    del stub_provider, stub_exchange
+    from itsdangerous import URLSafeTimedSerializer  # noqa: PLC0415
+    from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+
+    # Connect the stub provider for the org.
+    state = URLSafeTimedSerializer(
+        get_settings().yaaos_invitation_token_secret.get_secret_value(),
+        salt="yaaos-integration-connect",
+    ).dumps(
+        {
+            "org_id": str(seeded["org"].org_id),
+            "user_initiating": str(seeded["admin"].id),
+            "provider": "stub",
+        }
+    )
+    async with _client() as c:
+        await c.get(
+            "/api/mcp-proxy/stub/callback",
+            params={"code": "abc", "state": state},
+            follow_redirects=False,
+        )
+
+    # Flip the credential to "failed" directly in the DB.
+    await db_session.execute(
+        sa_update(McpCredentialRow)
+        .where(McpCredentialRow.org_id == seeded["org"].org_id)
+        .values(last_refresh_status="failed")
+    )
+    await db_session.commit()
+
+    sess = seeded["admin_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "orgs" in body
+    matching = [e for e in body["orgs"] if e["org_id"] == str(seeded["org"].org_id)]
+    assert len(matching) == 1
+    assert any(b["provider"] == "stub" for b in matching[0]["broken_integrations"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_broken_summary_endpoint_builder_sees_empty(
+    seeded, stub_provider, stub_exchange, db_session
+) -> None:
+    """Builder-role users get empty broken_integrations for all orgs."""
+    del stub_provider, stub_exchange
+    from itsdangerous import URLSafeTimedSerializer  # noqa: PLC0415
+    from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.domain.integrations.models import McpCredentialRow  # noqa: PLC0415
+
+    state = URLSafeTimedSerializer(
+        get_settings().yaaos_invitation_token_secret.get_secret_value(),
+        salt="yaaos-integration-connect",
+    ).dumps(
+        {
+            "org_id": str(seeded["org"].org_id),
+            "user_initiating": str(seeded["admin"].id),
+            "provider": "stub",
+        }
+    )
+    async with _client() as c:
+        await c.get(
+            "/api/mcp-proxy/stub/callback",
+            params={"code": "abc", "state": state},
+            follow_redirects=False,
+        )
+    await db_session.execute(
+        sa_update(McpCredentialRow)
+        .where(McpCredentialRow.org_id == seeded["org"].org_id)
+        .values(last_refresh_status="failed")
+    )
+    await db_session.commit()
+
+    sess = seeded["member_sess"]
+    async with _client() as c:
+        r = await c.get(
+            "/api/integrations/broken-summary",
+            cookies={"yaaos_session": sess.raw_token},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for org_entry in body["orgs"]:
+        assert org_entry["broken_integrations"] == []

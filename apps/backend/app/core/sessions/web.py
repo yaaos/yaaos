@@ -19,7 +19,7 @@ Errors:
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any
+from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
@@ -97,7 +97,7 @@ async def _safe_next_for_user(s, value: str | None, *, user_id) -> str:
     user no longer belongs to (or never did). Same allowlist semantics as
     `_safe_next` otherwise.
     """
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import resolve_auth_org  # noqa: PLC0415
 
     path = _safe_next(value)
     m = _ORG_SLUG_RE.match(path)
@@ -106,11 +106,8 @@ async def _safe_next_for_user(s, value: str | None, *, user_id) -> str:
     slug = m.group(1)
     if not slug or slug in {"undefined", "null"}:
         return "/"
-    org = await orgs_repo.get_org_by_slug(s, slug)
-    if org is None:
-        return "/"
-    membership = await orgs_repo.get_membership(s, user_id=user_id, org_id=org.id)
-    if membership is None:
+    auth_org = await resolve_auth_org(s, user_id=user_id, slug=slug)
+    if auth_org is None:
         return "/"
     return path
 
@@ -285,18 +282,17 @@ async def me(
 ) -> Response:
     """Return `{user, memberships}` for the cookie-bearer.
 
-    `memberships` is the authenticated user's current memberships (revoked
-    ones disappear next call). The server has no opinion about which org is
-    "current" — that's view state and lives in the URL.
+    `memberships` lists the caller's current org memberships (slug, role,
+    handle, display_name). Revoked memberships disappear on the next call.
+    No `broken_integrations` — that field is served by
+    `GET /api/integrations/broken-summary` so integrations data stays in
+    the integrations module.
 
     Lives on the public allowlist because the SPA hits it before any org
-    URL is selected; on routes that need it, the SPA adds `X-Org-Slug` from
-    the URL path. 401 when there's no session.
+    URL is selected. 401 when there's no session.
     """
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
-    from app.domain.integrations import list_broken_credentials_for_org  # noqa: PLC0415
-    from app.domain.orgs import Role as _Role  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
@@ -306,34 +302,17 @@ async def me(
             return auth_failure_response("unauthenticated")
         user_row = await identity_repo.get_user(s, session.user_id)
         emails = await identity_repo.list_emails_for_user(s, session.user_id)
-        membership_rows = await orgs_repo.list_memberships_for_user(s, session.user_id)
-        memberships_view = []
-        for m in membership_rows:
-            org = await orgs_repo.get_org(s, m.org_id)
-            if org is None:
-                continue
-            broken: list[dict[str, str | None]] = []
-            # Owners + Admins see broken integrations; Members get an empty list.
-            if _Role(m.role).covers(_Role.ADMIN):
-                broken_creds = await list_broken_credentials_for_org(s, org.id)
-                broken = [
-                    {
-                        "provider": c.provider,
-                        "last_refresh_failed_at": (
-                            c.last_refresh_failed_at.isoformat() if c.last_refresh_failed_at else None
-                        ),
-                    }
-                    for c in broken_creds
-                ]
-            memberships_view.append(
-                {
-                    "slug": org.slug,
-                    "display_name": org.display_name,
-                    "role": m.role,
-                    "handle": m.handle,
-                    "broken_integrations": broken,
-                }
-            )
+        membership_views = await _list_memberships(s, session.user_id)
+        memberships_view = [
+            {
+                "org_id": str(m.org_id),
+                "slug": m.slug,
+                "display_name": m.org_name,
+                "role": m.role.value,
+                "handle": m.handle,
+            }
+            for m in membership_views
+        ]
     primary_email = next((e.email for e in emails if e.is_primary), emails[0].email if emails else None)
     return JSONResponse(
         content={
@@ -356,38 +335,6 @@ async def providers() -> dict[str, list[str]]:
     """List registered provider ids. The SPA renders one button per id on
     the login page; the test stub appears only when YAAOS_ENV=test."""
     return {"providers": list_providers()}
-
-
-@router.get("/sso/discover", dependencies=[Depends(public_route)])
-@limiter.limit(AUTH_LIMIT)
-async def sso_discover(request: Request, email: str) -> dict[str, Any]:
-    """find the SSO IdP (if any) matching the email's domain.
-
-    Drives the Login page's provider-button rendering per E2a.18:
-    `{provider: "github" | "saml", saml_org_slug?: str}`.
-
-    Looks up `sso_configs.email_domains` (JSONB array) for a row whose
-    `enabled = true` claims the address's domain. First match wins
-    (domain claims must be unique in practice; Owner-level admin UI is
-    the gate). No SAML match → `{provider: "github"}` so existing
-    GitHub-only orgs keep working.
-
-    `email` is required but only the format is validated — we never
-    confirm or deny that a given address belongs to a user.
-    """
-    del request  # rate-limit-only; FastAPI requires the kwarg
-    if not email or "@" not in email:
-        raise HTTPException(status_code=422, detail={"error": "invalid_email"})
-    domain = email.split("@", 1)[1].strip().lower()
-    if not domain:
-        raise HTTPException(status_code=422, detail={"error": "invalid_email"})
-
-    from app.domain.orgs import find_saml_org_slug_for_domain  # noqa: PLC0415
-
-    slug = await find_saml_org_slug_for_domain(domain)
-    if slug is None:
-        return {"provider": "github"}
-    return {"provider": "saml", "saml_org_slug": slug}
 
 
 # ── # TOTP enroll + verify ──────────────────────────────────
@@ -519,9 +466,9 @@ class _LogoutAuditPayload(BaseModel):
 
 
 async def _emit_login_audit(s, *, user_id, provider: str, newly_created: bool) -> None:
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
-    memberships = await orgs_repo.list_memberships_for_user(s, user_id)
+    memberships = await _list_memberships(s, user_id)
     actor = Actor.user(user_id=user_id)
     for m in memberships:
         await audit_write(
@@ -536,9 +483,9 @@ async def _emit_login_audit(s, *, user_id, provider: str, newly_created: bool) -
 
 
 async def _emit_logout_audit(s, *, user_id, kind: str = "logout") -> None:
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
-    memberships = await orgs_repo.list_memberships_for_user(s, user_id)
+    memberships = await _list_memberships(s, user_id)
     actor = Actor.user(user_id=user_id)
     for m in memberships:
         await audit_write(

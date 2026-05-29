@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import ProviderProfile
 from app.core.identity import repository as repo
 from app.core.sessions import web as auth_web  # noqa: F401 — ensures /api/auth routes register
-from app.domain.orgs import InvitationRow, Role
+from app.domain.orgs import invite
 from app.domain.orgs import repository as orgs_repo
 from app.plugins.oauth_test import set_next_profile
 
@@ -181,19 +179,17 @@ async def test_callback_invitation_alone_does_not_provision(db_session) -> None:
     them in — OAuth never creates users. The invitation must be explicitly
     accepted via `/api/memberships/accept` (which creates the user if needed).
     Here we assert the legacy "invitation-on-first-login" pathway is gone."""
+    from app.core.audit_log import Actor  # noqa: PLC0415
+
     org = await orgs_repo.insert_org(db_session, slug="inviteorg")
-    db_session.add(
-        InvitationRow(
-            id=uuid4(),
-            org_id=org.id,
-            email="newbie@example.com",
-            role=Role.BUILDER.value,
-            token_hash="z" * 64,
-            expires_at=datetime.now(UTC) + timedelta(days=1),
-            invited_by_user_id=None,
-        )
+    await invite(
+        db_session,
+        org_id=org.org_id,
+        email="newbie@example.com",
+        role=Role.BUILDER,
+        invited_by_user_id=None,
+        actor=Actor.system(),
     )
-    await db_session.flush()
     await db_session.commit()
 
     state = await _begin_login_and_get_state()

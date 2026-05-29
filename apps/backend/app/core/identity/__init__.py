@@ -25,6 +25,7 @@ from app.core.identity.service import (
     create_user,
     login_via_oauth,
 )
+from app.core.identity.session_dependency import require_session
 from app.core.identity.totp import can_be_sso_exempt_owner, has_verified_totp
 
 # NOTE: `identity.user_web` is not imported here to avoid circular imports at
@@ -55,6 +56,7 @@ __all__ = [
     "login_via_oauth",
     "register_provider",
     "repository",
+    "require_session",
     "sessions",
     "totp",
     "user_web",

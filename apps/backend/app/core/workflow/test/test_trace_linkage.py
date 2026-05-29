@@ -23,19 +23,18 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from sqlalchemy import select
 
-from app.core.tasks import OutboxEntryRow, drain_once
+from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
     Outcome,
     Step,
     TerminalAction,
     Workflow,
-    WorkflowExecutionRow,
     WorkflowState,
     get_engine,
 )
+from app.core.workflow.models import WorkflowExecutionRow
 
 
 @pytest.fixture(autouse=True)
@@ -80,27 +79,16 @@ async def _drain(db_session):  # type: ignore[no-untyped-def]
     """Run the outbox dispatcher until empty so chained task enqueues fire."""
     from app.core.tasks import get_broker  # noqa: PLC0415
 
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
+
     for _ in range(50):
-        rows = (
-            (
-                await db_session.execute(
-                    select(OutboxEntryRow)
-                    .where(OutboxEntryRow.dispatched_at.is_(None))
-                    .order_by(OutboxEntryRow.created_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
+        pending = await get_pending_task_names(db_session)
+        if not pending:
             return
-
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            await decorated.original_func(**payload["args"])
-
         await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()
 

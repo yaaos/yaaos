@@ -1,6 +1,6 @@
 """Per-review MCP bearer lifecycle.
 
-`mint_token(review_id) -> raw_token` issues a fresh bearer for a review:
+`mint_token(review_id, *, org_id) -> raw_token` issues a fresh bearer for a review:
 32 URL-safe random bytes returned to the caller once, sha256-hashed and
 persisted with `expires_at = created_at + 2h`. `lookup_token(raw)` reverses
 the dance — returns the row if not expired, None otherwise. `revoke_token`
@@ -17,6 +17,7 @@ Session management + atomicity.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,8 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.database import session as db_session
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 
 log = structlog.get_logger("domain.mcp_proxy")
@@ -39,6 +42,7 @@ class McpToken(BaseModel):
     """Value object returned by `lookup_token`. Represents a valid, non-expired bearer."""
 
     review_id: UUID
+    org_id: UUID
     expires_at: datetime
 
 
@@ -50,14 +54,17 @@ def hash_token(raw: str) -> str:
 async def mint_token(
     review_id: UUID,
     *,
+    org_id: UUID,
     session: AsyncSession,
 ) -> str:
     """Issue a fresh bearer for a review. Returns the raw token exactly once;
-    the DB sees only the sha256 hash."""
+    the DB sees only the sha256 hash. `org_id` is stored on the row so the
+    proxy reads tenancy directly without a back-lookup into reviewer."""
     raw = secrets.token_urlsafe(32)
     row = McpReviewTokenRow(
         token_hash=hash_token(raw),
         review_id=review_id,
+        org_id=org_id,
         expires_at=datetime.now(UTC) + REVIEW_TOKEN_TTL,
     )
     session.add(row)
@@ -80,20 +87,23 @@ async def lookup_token(
         return None
     if row.expires_at < datetime.now(UTC):
         return None
-    return McpToken(review_id=row.review_id, expires_at=row.expires_at)
+    return McpToken(review_id=row.review_id, org_id=row.org_id, expires_at=row.expires_at)
 
 
 async def get_token_by_hash(
     token_hash: str,
     *,
     session: AsyncSession,
-) -> McpReviewTokenRow | None:
-    """Return the `McpReviewTokenRow` for `token_hash`, or None if absent.
+) -> McpToken | None:
+    """Return a `McpToken` value object for `token_hash`, or None if absent.
     Targeted read for tests that need to assert on the persisted token row
     after minting without importing the Row type directly."""
-    return (
+    row = (
         await session.execute(select(McpReviewTokenRow).where(McpReviewTokenRow.token_hash == token_hash))
     ).scalar_one_or_none()
+    if row is None:
+        return None
+    return McpToken(review_id=row.review_id, org_id=row.org_id, expires_at=row.expires_at)
 
 
 async def revoke_token(
@@ -129,3 +139,21 @@ async def sweep_expired(*, session: AsyncSession) -> int:
         delete(McpReviewTokenRow).where(McpReviewTokenRow.expires_at < datetime.now(UTC))
     )
     return int(result.rowcount or 0)
+
+
+async def run_sweep_loop() -> None:
+    """Forever-loop: sweep expired `mcp_review_tokens` every
+    `yaaos_mcp_token_sweep_interval_seconds` (default 3600 = hourly).
+    `sweep_expired` is a backstop GC — expiry is already enforced at
+    `lookup_token`, so a slow sweep only delays deletion of dead rows."""
+    interval = get_settings().yaaos_mcp_token_sweep_interval_seconds
+    while True:
+        try:
+            async with db_session() as s:
+                n_swept = await sweep_expired(session=s)
+                await s.commit()
+            if n_swept:
+                log.info("mcp_proxy.tokens.swept", removed=n_swept)
+        except Exception:
+            log.exception("mcp_proxy.sweep_loop.failed")
+        await asyncio.sleep(interval)

@@ -6,7 +6,7 @@
  *      provider is configured. No email gate.
  *   2. **Email-first SSO discovery** below it — for enterprise customers
  *      whose org claims their domain to a SAML IdP. Hitting "Continue" calls
- *      `/api/auth/sso/discover`; on a SAML hit, render the SAML button.
+ *      `/api/sso/discover`; on a SAML hit, render the SAML button.
  *
  * The test stub provider (`oauth_test`) surfaces in the same picker as
  * additional providers in dev/test only.

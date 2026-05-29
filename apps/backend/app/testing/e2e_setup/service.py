@@ -17,19 +17,13 @@ from uuid import UUID
 
 from cryptography.fernet import Fernet
 
-# Importing every Row class ensures `Base.metadata` is fully populated so
-# `truncate_all_tables` sees the complete schema regardless of mount order.
-from app.core.audit_log import AuditEntryRow as _AuditEntryRow  # noqa: F401
+# Trigger-imports: importing each module's __init__ ensures `Base.metadata` is
+# fully populated so `truncate_all_tables` sees the complete schema regardless
+# of which HTTP routes have been mounted in the calling process. We import any
+# public symbol (not a Row) — the side effect of the import is what matters.
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.database import truncate_all_tables
-from app.core.workspace import WorkspaceRow as _WorkspaceRow  # noqa: F401
-from app.domain.lessons import LessonRow as _LessonRow  # noqa: F401
-from app.domain.pull_requests import PullRequestRow as _PullRequestRow  # noqa: F401
-from app.domain.reviewer import ReviewRow as _ReviewRow  # noqa: F401
-from app.domain.tickets import TicketRow as _TicketRow  # noqa: F401
-from app.plugins.claude_code import ClaudeCodeSettingsRow as _ClaudeCodeSettingsRow  # noqa: F401
-from app.plugins.github import GitHubAppInstallationRow as _GitHubAppInstallationRow  # noqa: F401
 
 # The whole codebase pins org_id to this constant in . Same value the
 # domain modules use as the system-actor org.
@@ -71,21 +65,19 @@ async def seed_github_install(
     ``orgs.install_coding_agent``) so it emits the same audit rows and events
     that production writes would produce.
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.domain.orgs import OrgRow, install_coding_agent  # noqa: PLC0415
+    from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
     from app.plugins.claude_code import set_api_key  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415
 
     fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
+    if target_org_slug is not None:
+        org = await get_org_by_slug(target_org_slug)
+        if org is None:
+            raise ValueError(f"org {target_org_slug!r} not found — seed it first via bootstrap_owner")
+        target_org_id = org.id
+    else:
+        target_org_id = DEFAULT_ORG_ID
     async with db_session() as s:
-        if target_org_slug is not None:
-            org = (await s.execute(select(OrgRow).where(OrgRow.slug == target_org_slug))).scalar_one_or_none()
-            if org is None:
-                raise ValueError(f"org {target_org_slug!r} not found — seed it first via bootstrap_owner")
-            target_org_id = org.id
-        else:
-            target_org_id = DEFAULT_ORG_ID
         await record_app_install(
             s,
             org_id=target_org_id,
@@ -142,16 +134,14 @@ async def seed_broken_integration(*, org_slug: str, provider: str = "linear") ->
     against a known org. Encrypts placeholder tokens via ``core/secrets``."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
-    from sqlalchemy import select  # noqa: PLC0415
-
     from app.core.secrets import encrypt  # noqa: PLC0415
     from app.domain.integrations import create_credential  # noqa: PLC0415
-    from app.domain.orgs import OrgRow  # noqa: PLC0415
+    from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
 
+    org = await get_org_by_slug(org_slug)
+    if org is None:
+        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
     async with db_session() as s:
-        org = (await s.execute(select(OrgRow).where(OrgRow.slug == org_slug))).scalar_one_or_none()
-        if org is None:
-            raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
         await create_credential(
             s,
             org_id=org.id,
@@ -200,13 +190,13 @@ async def seed_bootstrap_owner(
     admin-onboarding path would produce.
     """
     from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import (  # noqa: PLC0415
         create_email,
         create_oauth_identity,
         create_user,
     )
     from app.domain.orgs import (  # noqa: PLC0415
-        Role,
         create_membership,
         create_org,
     )

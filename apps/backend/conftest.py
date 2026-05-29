@@ -27,6 +27,7 @@ os.environ.setdefault("YAAOS_CODING_AGENT_STUB", "1")
 os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")
 os.environ.setdefault("YAAOS_HEARTBEAT_INTERVAL_SECONDS", "1")
+os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 
 
 @pytest.fixture(scope="session", autouse=True)

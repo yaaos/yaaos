@@ -19,16 +19,16 @@ two real lifecycle bodies actually fit together.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
-from app.core.tasks import OutboxEntryRow, drain_once
-from app.core.workflow import Outcome, WorkflowExecutionRow, WorkflowState, scoped_engine
+from app.core.tasks import drain_once, get_pending_task_names
+from app.core.workflow import Outcome, WorkflowState, get_execution_summary, scoped_engine
 from app.core.workspace import (
-    WorkspaceRow,
     WorkspaceStatus,
     WorkspaceTicketContext,
     clear_workflow_context_provider,
@@ -105,28 +105,17 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
     the matching task body via the broker's task registry."""
     from app.core.tasks import get_broker  # noqa: PLC0415
 
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
+
     total = 0
     for _ in range(max_iterations):
-        rows = (
-            (
-                await db_session.execute(
-                    select(OutboxEntryRow)
-                    .where(OutboxEntryRow.dispatched_at.is_(None))
-                    .order_by(OutboxEntryRow.created_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
+        pending = await get_pending_task_names(db_session)
+        if not pending:
             return total
-
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            await decorated.original_func(**payload["args"])
-
         delivered = await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()
         total += delivered
@@ -151,7 +140,7 @@ async def _advance_pending_agent_event(  # type: ignore[no-untyped-def]
     from app.core.tasks import enqueue  # noqa: PLC0415
     from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx is not None
     assert wfx.state == WorkflowState.AWAITING_AGENT.value, (
         f"expected AWAITING_AGENT before agent event, got {wfx.state!r}"
@@ -224,17 +213,19 @@ async def test_pr_review_v1_runs_end_to_end_in_memory(db_session, _registered_en
         await _drain_workflow_outbox(db_session)
 
     # 5. Workflow terminal — done.
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value
     assert wfx.pending_agent_command_id is None
 
     # 6. The workspace ProvisionWorkspace created should be flipped to expired
     #    by CleanupWorkspace.
-    rows = (
-        (await db_session.execute(select(WorkspaceRow).where(WorkspaceRow.org_id == org_id))).scalars().all()
-    )
-    assert len(rows) == 1, "expected exactly one workspace row for this org"
-    assert rows[0].status == WorkspaceStatus.EXPIRED.value
+    from sqlalchemy import text  # noqa: PLC0415
+
+    ws_statuses = (
+        await db_session.execute(text("SELECT status FROM workspaces WHERE org_id = :oid"), {"oid": org_id})
+    ).all()
+    assert len(ws_statuses) == 1, "expected exactly one workspace row for this org"
+    assert ws_statuses[0][0] == WorkspaceStatus.EXPIRED.value
 
 
 async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  # type: ignore[no-untyped-def]
@@ -244,10 +235,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
     PostFindings (real body) → admission → CleanupWorkspace. After the
     workflow ends DONE, FindingRow rows exist for the PR.
     """
-    from app.domain.pull_requests import PullRequestRow  # noqa: PLC0415
+    from app.domain.pull_requests import upsert as upsert_pr  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
-    from app.domain.tickets import TicketRow  # noqa: PLC0415
+    from app.domain.tickets import create as create_ticket2  # noqa: PLC0415
+    from app.domain.vcs import VCSPullRequest as _VCSPullRequest  # noqa: PLC0415
 
     clear_workspace_providers()
     clear_workflow_context_provider()
@@ -283,41 +275,33 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
     register_workspace_provider(_StubProviderWithFiles())
 
     org_id = uuid4()
-    ticket_id = uuid4()
-    pr_id = uuid4()
 
     # 2. Real ticket + PR rows so admission's findings FK lands cleanly.
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="42",
-            title="t",
-            status="pending",
-            plugin_id="github",
-            repo_external_id="me/repo",
-            type="github_pr",
-            idempotency_key=f"e2e-findings-{uuid4()}",
-            payload={
-                "is_draft": False,
-                "is_fork": False,
-                "labels": [],
-                "author_login": "alice",
-                "head_sha": "deadbeef",
-                "base_sha": "babecafe",
-            },
-        )
+    ext_id = f"e2e-{uuid4().hex[:6]}"
+    ticket_id, _ = await create_ticket2(
+        type="pr_review",
+        payload={
+            "is_draft": False,
+            "is_fork": False,
+            "labels": [],
+            "author_login": "alice",
+            "head_sha": "deadbeef",
+            "base_sha": "babecafe",
+        },
+        idempotency_key=ext_id,
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id=ext_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        session=db_session,
     )
-    await db_session.flush()
-    db_session.add(
-        PullRequestRow(
-            id=pr_id,
-            org_id=org_id,
+    pr = await upsert_pr(
+        _VCSPullRequest(
             plugin_id="github",
-            external_id=f"pr-{uuid4()}",
             repo_external_id="me/repo",
-            ticket_id=ticket_id,
+            external_id=f"pr-{ext_id}",
             number=42,
             title="t",
             body=None,
@@ -331,8 +315,14 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
             is_fork=False,
             state="open",
             html_url="http://test",
-        )
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org_id,
+        session=db_session,
     )
+    pr_id = pr.id
     await db_session.commit()
 
     # 3. Context provider returns the real ticket_id-linked PR.
@@ -399,7 +389,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session) -> None:  #
             await db_session.commit()
             await _drain_workflow_outbox(db_session)
 
-        wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
         assert wfx.state == WorkflowState.DONE.value
 
         # 7. FindingRow lands.
@@ -497,6 +487,6 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     await _advance_pending_agent_event(db_session, wfx_id, outputs={})
 
     # Workflow terminal — done.
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value
     assert wfx.pending_agent_command_id is None

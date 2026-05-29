@@ -49,9 +49,7 @@ function userResp(role: "owner" | "admin" | "builder") {
         primary_email: "j@x.test",
         emails: [],
       },
-      memberships: [
-        { slug: "acme", display_name: "Acme", role, handle: "jane", broken_integrations: [] },
-      ],
+      memberships: [{ org_id: "o1", slug: "acme", display_name: "Acme", role, handle: "jane" }],
     },
   };
 }

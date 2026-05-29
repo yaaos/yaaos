@@ -14,9 +14,9 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
-from app.domain.notifications import web as _notifications_web  # noqa: F401
-from app.domain.notifications.models import NotificationRow
-from app.domain.notifications.service import record
+from app.core.notifications import web as _notifications_web  # noqa: F401
+from app.core.notifications.models import NotificationRow
+from app.core.notifications.service import create
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -39,22 +39,20 @@ async def seeded(db_session):
     bob = await identity_repo.insert_user(db_session, display_name="Bob")
     org = await orgs_repo.insert_org(db_session, slug="notif-org", display_name="NotifOrg")
     # One notification for Alice, one for Bob — proves per-user scoping.
-    n_alice = await record(
+    n_alice = await create(
         user_id=alice.id,
-        org_id=org.id,
+        org_id=org.org_id,
         type="hitl_waiting",
         title="HITL prompt on PR #42",
         body="Reviewer needs a Builder decision before continuing.",
-        ticket_id=None,
         session=db_session,
     )
-    await record(
+    await create(
         user_id=bob.id,
-        org_id=org.id,
+        org_id=org.org_id,
         type="ticket_completed",
         title="Review done on PR #99",
         body="No high-severity findings.",
-        ticket_id=None,
         session=db_session,
     )
     sess_alice = await session_lifecycle.create(db_session, user_id=alice.id, workspace_id=None)
@@ -145,27 +143,29 @@ async def test_mark_all_read_marks_only_callers_rows(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_is_idempotent_by_user_type_ticket(seeded, db_session) -> None:
-    """Re-emitting the same (user, type, ticket) triplet doesn't duplicate."""
+async def test_create_is_idempotent_by_user_type_subject(seeded, db_session) -> None:
+    """Re-emitting the same (user, type, subject_type, subject_id) is a no-op."""
     from uuid import uuid4 as _uuid4  # noqa: PLC0415
 
-    ticket_id = _uuid4()
-    first = await record(
+    subject_id = _uuid4()
+    first = await create(
         user_id=seeded["alice"].id,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         type="ticket_completed",
         title="X",
         body="Y",
-        ticket_id=ticket_id,
+        subject_type="ticket",
+        subject_id=subject_id,
         session=db_session,
     )
-    second = await record(
+    second = await create(
         user_id=seeded["alice"].id,
-        org_id=seeded["org"].id,
+        org_id=seeded["org"].org_id,
         type="ticket_completed",
         title="X (re-emit)",
         body="Y (re-emit)",
-        ticket_id=ticket_id,
+        subject_type="ticket",
+        subject_id=subject_id,
         session=db_session,
     )
     await db_session.commit()

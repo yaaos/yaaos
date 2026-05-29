@@ -10,13 +10,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 
 from app.core.audit_log import list_for_entity
 from app.core.identity import repository as identity_repo
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer.orphan_sweep import ORPHAN_REASON, _sweep_once
-from app.domain.tickets import TicketRow
+from app.domain.tickets import get as get_ticket
 
 
 async def _seed_running_ticket(db_session, org_id, *, ext: str, age_seconds: int) -> uuid.UUID:  # type: ignore[no-untyped-def]
@@ -49,25 +49,21 @@ async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  
     org = await orgs_repo.insert_org(db_session, slug="orphan-org")
     del user
     # Older than the 300 s default grace.
-    stale = await _seed_running_ticket(db_session, org.id, ext="x/y#1", age_seconds=600)
+    stale = await _seed_running_ticket(db_session, org.org_id, ext="x/y#1", age_seconds=600)
     # Fresh row that must NOT be touched.
-    fresh = await _seed_running_ticket(db_session, org.id, ext="x/y#2", age_seconds=10)
+    fresh = await _seed_running_ticket(db_session, org.org_id, ext="x/y#2", age_seconds=10)
     await db_session.commit()
 
     failed = await _sweep_once()
     assert failed == 1
 
-    rows = {
-        r.id: r.status
-        for r in (await db_session.execute(select(TicketRow).where(TicketRow.id.in_([stale, fresh]))))
-        .scalars()
-        .all()
-    }
-    assert rows[stale] == "failed"
-    assert rows[fresh] == "running"
+    stale_ticket = await get_ticket(stale, org_id=org.org_id)
+    fresh_ticket = await get_ticket(fresh, org_id=org.org_id)
+    assert stale_ticket.status == "failed"
+    assert fresh_ticket.status == "running"
 
     # Audit row with the orphan reason in payload.
-    audits = await list_for_entity("ticket", stale, org_id=org.id, kinds=["ticket.status_changed"])
+    audits = await list_for_entity("ticket", stale, org_id=org.org_id, kinds=["ticket.status_changed"])
     assert len(audits) == 1
     assert audits[0].payload.get("reason") == ORPHAN_REASON
     assert audits[0].payload.get("to_status") == "failed"
@@ -80,7 +76,7 @@ async def test_sweep_skips_ticket_with_existing_review(db_session) -> None:  # t
     user = await identity_repo.insert_user(db_session, display_name="J")
     org = await orgs_repo.insert_org(db_session, slug="reviewed-org")
     del user
-    ticket_id = await _seed_running_ticket(db_session, org.id, ext="x/y#9", age_seconds=600)
+    ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#9", age_seconds=600)
     pr_id = uuid.uuid4()
     await db_session.execute(
         text(
@@ -91,7 +87,7 @@ async def test_sweep_skips_ticket_with_existing_review(db_session) -> None:  # t
             " VALUES (:pr_id, :org_id, 'github', 'x/y#9', 'x/y', :tid, 9, 't', '', 'j', 'user',"
             " 'main', 'feat', 'a', 'b', false, false, 'open', 'https://example/x/y/9')"
         ),
-        {"pr_id": pr_id, "org_id": org.id, "tid": ticket_id},
+        {"pr_id": pr_id, "org_id": org.org_id, "tid": ticket_id},
     )
     await db_session.execute(
         text("UPDATE tickets SET pr_id = :pr_id WHERE id = :tid"),
@@ -103,18 +99,12 @@ async def test_sweep_skips_ticket_with_existing_review(db_session) -> None:  # t
             "INSERT INTO reviews (id, org_id, pr_id, sequence_number, status)"
             " VALUES (:id, :org_id, :pr_id, 1, 'queued')"
         ),
-        {"id": review_id, "org_id": org.id, "pr_id": pr_id},
+        {"id": review_id, "org_id": org.org_id, "pr_id": pr_id},
     )
     await db_session.commit()
 
     failed = await _sweep_once()
     assert failed == 0
 
-    n_running = (
-        await db_session.execute(
-            select(func.count())
-            .select_from(TicketRow)
-            .where(TicketRow.id == ticket_id, TicketRow.status == "running")
-        )
-    ).scalar_one()
-    assert n_running == 1
+    ticket = await get_ticket(ticket_id, org_id=org.org_id)
+    assert ticket.status == "running"

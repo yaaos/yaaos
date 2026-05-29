@@ -7,13 +7,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.audit_log import Actor
+from app.core.auth import Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.domain.orgs import (
     InvitationExpiredError,
     InvitationInvalidError,
     InvitationUsedError,
-    Role,
     accept_invitation,
     change_role,
     invite,
@@ -34,7 +34,9 @@ def _clear_inbox():
 async def _bootstrap_org_and_owner(db):
     org = await orgs_repo.insert_org(db, slug="acme-inv")
     owner = await identity_repo.insert_user(db, display_name="Owner")
-    await orgs_repo.insert_membership(db, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="owner")
+    await orgs_repo.insert_membership(
+        db, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
+    )
     return org, owner
 
 
@@ -43,7 +45,7 @@ async def test_invite_happy_path(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     invitation, raw = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="Newbie@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner.id,
@@ -63,7 +65,7 @@ async def test_accept_invitation_creates_membership(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     _, raw = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="bob@example.com",
         role=Role.ADMIN,
         invited_by_user_id=owner.id,
@@ -86,7 +88,7 @@ async def test_accept_used_invitation_raises_used(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     _, raw = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="c@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner.id,
@@ -104,7 +106,7 @@ async def test_accept_expired_invitation_raises_expired(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     _, raw = await invite(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         email="d@example.com",
         role=Role.BUILDER,
         invited_by_user_id=owner.id,
@@ -142,14 +144,14 @@ async def test_remove_member_revokes_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await identity_repo.insert_user(db_session)
     await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.id, role=Role.BUILDER, handle="t"
+        db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t"
     )
     s1 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
     s2 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
 
-    await remove_member(db_session, org_id=org.id, user_id=target.id, actor=Actor.user(user_id=owner.id))
+    await remove_member(db_session, org_id=org.org_id, user_id=target.id, actor=Actor.user(user_id=owner.id))
 
-    assert await orgs_repo.get_membership(db_session, user_id=target.id, org_id=org.id) is None
+    assert await orgs_repo.get_membership(db_session, user_id=target.id, org_id=org.org_id) is None
     assert await session_lifecycle.lookup(db_session, s1.raw_token) is None
     assert await session_lifecycle.lookup(db_session, s2.raw_token) is None
 
@@ -159,13 +161,13 @@ async def test_change_role_rotates_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await identity_repo.insert_user(db_session)
     await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.id, role=Role.BUILDER, handle="t2"
+        db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t2"
     )
     s1 = await session_lifecycle.create(db_session, user_id=target.id, workspace_id=None)
 
     membership = await change_role(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         user_id=target.id,
         new_role=Role.ADMIN,
         actor=Actor.user(user_id=owner.id),

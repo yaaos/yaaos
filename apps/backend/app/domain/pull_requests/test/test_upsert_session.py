@@ -18,8 +18,8 @@ import pytest
 from sqlalchemy import select
 
 from app.domain import pull_requests
-from app.domain.pull_requests import PullRequestRow
-from app.domain.tickets import TicketRow
+from app.domain.pull_requests.models import PullRequestRow
+from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
 
 
@@ -52,22 +52,19 @@ async def test_upsert_insert_uses_caller_session_and_satisfies_fk(db_session) ->
     same transaction. The FK on `pull_requests.ticket_id` resolves against
     the same-session pending ticket — no cross-session leak."""
     org_id = uuid4()
-    ticket_id = uuid4()
 
-    # Stage an unflushed ticket on the caller's session.
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="acme/repo#42",
-            title="t",
-            description=None,
-            status="running",
-            plugin_id="github",
-            repo_external_id="acme/repo",
-            type="github_pr",
-        )
+    # Create a ticket on the caller's session (flushed within the session, not committed).
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key="acme/repo#42",
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id="acme/repo#42",
+        plugin_id="github",
+        repo_external_id="acme/repo",
+        session=db_session,
     )
 
     # Upsert the PR on the same session. If the service opened its own
@@ -88,20 +85,17 @@ async def test_upsert_update_path_writes_changed_fields_and_audit(db_session) ->
     """Update path: existing PR row, mutable fields refresh, immutable
     fields preserved. Caller session still owns the commit."""
     org_id = uuid4()
-    ticket_id = uuid4()
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="acme/repo#99",
-            title="t",
-            description=None,
-            status="running",
-            plugin_id="github",
-            repo_external_id="acme/repo",
-            type="github_pr",
-        )
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key="acme/repo#99",
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id="acme/repo#99",
+        plugin_id="github",
+        repo_external_id="acme/repo",
+        session=db_session,
     )
     initial = await pull_requests.upsert(
         _vcs_pr(external_id="acme/repo#99"),

@@ -6,21 +6,24 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket
 from app.core.database import session as db_session
+from app.core.notifications import fanout
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
+from app.core.tenancy import list_active_member_ids
 from app.domain.tickets.models import TicketRow
+from app.domain.tickets.notifications import build_status_change_specs
 
-# Single 5-state ticket vocabulary. `hitl` and `failed` are populated by
-# the workflow-state projection (reviewer/workflow_review_view.py); the
-# transition helpers below only emit `running`, `done`, `cancelled`.
-TicketStatus = Literal["running", "hitl", "done", "failed", "cancelled"]
+# Six-state ticket vocabulary. `pending` is the initial state set by `create()`;
+# `running` is set when the first workflow step dispatches; `hitl` and `failed`
+# are populated by the workflow-state projection; `done`/`cancelled` are terminal.
+TicketStatus = Literal["pending", "running", "hitl", "done", "failed", "cancelled"]
 
 
 class Ticket(BaseModel):
@@ -34,6 +37,10 @@ class Ticket(BaseModel):
     plugin_id: str
     repo_external_id: str
     pr_id: UUID | None
+    type: str = "pr_review"
+    idempotency_key: str | None = None
+    payload: dict = Field(default_factory=dict)
+    current_workflow_execution_id: UUID | None = None
     # Enriched fields (denormalized at read-time from the linked PR; nullable
     # because a ticket can briefly exist without its PR row in the create flow).
     pr_number: int | None = None
@@ -62,8 +69,14 @@ class Ticket(BaseModel):
             plugin_id=row.plugin_id,
             repo_external_id=row.repo_external_id,
             pr_id=row.pr_id,
+            type=row.type,
+            idempotency_key=row.idempotency_key,
+            payload=dict(row.payload or {}),
+            current_workflow_execution_id=row.current_workflow_execution_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            findings_count=row.findings_count,
+            max_severity=row.max_severity,  # type: ignore[arg-type]
         )
 
 
@@ -166,10 +179,7 @@ async def create(
         org_id=org_id,
         session=session,
     )
-    from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
-    from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-    members = await list_active_member_ids(org_id, session=session)
+    members = await list_active_member_ids(session, org_id)
     publish_general_after_commit(
         session,
         org_id=org_id,
@@ -180,16 +190,19 @@ async def create(
             "previous_status": None,
         },
     )
-    await enqueue(
-        handle_ticket_status_change,
-        args={
-            "ticket_id": str(row.id),
-            "member_user_ids": [str(u) for u in members],
-            "org_id": str(org_id),
-            "new_status": "pending",
-        },
-        session=session,
+    specs = build_status_change_specs(
+        ticket_id=row.id,
+        org_id=org_id,
+        ticket_title=row.title,
+        member_user_ids=members,
+        new_status="pending",
     )
+    if specs:
+        await enqueue(
+            fanout,
+            args={"specs": [s.to_dict() for s in specs]},
+            session=session,
+        )
     return row.id, True
 
 
@@ -256,10 +269,7 @@ async def create_for_pr(
             org_id=org_id,
             session=s,
         )
-        from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
-        from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-        members = await list_active_member_ids(org_id, session=s)
+        members = await list_active_member_ids(s, org_id)
         publish_general_after_commit(
             s,
             org_id=org_id,
@@ -270,16 +280,19 @@ async def create_for_pr(
                 "previous_status": None,
             },
         )
-        await enqueue(
-            handle_ticket_status_change,
-            args={
-                "ticket_id": str(row_id),
-                "member_user_ids": [str(u) for u in members],
-                "org_id": str(org_id),
-                "new_status": "running",
-            },
-            session=s,
+        specs = build_status_change_specs(
+            ticket_id=row_id,
+            org_id=org_id,
+            ticket_title=title,
+            member_user_ids=members,
+            new_status="running",
         )
+        if specs:
+            await enqueue(
+                fanout,
+                args={"specs": [s.to_dict() for s in specs]},
+                session=s,
+            )
         await s.commit()
     return await get(row_id, org_id=org_id)
 
@@ -351,16 +364,23 @@ async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
     return Ticket.from_row(row) if row is not None else None
 
 
-async def get_by_id(ticket_id: UUID) -> Ticket | None:
-    """Return the `Ticket` for *ticket_id* without an org_id filter, or ``None``.
+async def update_findings_summary(
+    ticket_id: UUID,
+    *,
+    findings_count: int,
+    max_severity: str | None,
+    session: AsyncSession,
+) -> None:
+    """Write the denormalized findings rollup onto the ticket row.
 
-    Use when the caller does not yet know the org (e.g. resolving org context
-    from a ticket reference). Callers that DO know the org should use `get`
-    which applies the org scope.
+    Called by reviewer after each review run and on ack/push-back.
+    Caller commits. No-op when the ticket is missing (defensive).
     """
-    async with db_session() as s:
-        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
-    return Ticket.from_row(row) if row is not None else None
+    await session.execute(
+        update(TicketRow)
+        .where(TicketRow.id == ticket_id)
+        .values(findings_count=findings_count, max_severity=max_severity)
+    )
 
 
 async def list_running_older_than(cutoff: datetime) -> list[tuple[UUID, UUID, UUID | None]]:
@@ -391,13 +411,11 @@ async def list_tickets(
 ) -> list[Ticket]:
     """List tickets for the org, applying the requested filters + sort.
 
-    `findings_count` + `max_severity` are computed by a grouped query over
-    `findings` rather than denormalized on the ticket row — POC simpler than
-    maintaining a trigger-fed column, and the result set is small.
+    `findings_count` + `max_severity` are read directly from the ticket row
+    — reviewer writes the rollup after each review run and on ack/push-back.
     """
     from app.domain.pull_requests import PullRequest  # noqa: PLC0415
     from app.domain.pull_requests import list_by_ids as list_prs_by_ids  # noqa: PLC0415
-    from app.domain.reviewer import aggregate_findings_by_prs  # noqa: PLC0415
 
     async with db_session() as s:
         stmt = select(TicketRow).where(TicketRow.org_id == org_id)
@@ -417,20 +435,14 @@ async def list_tickets(
             "updated_asc": TicketRow.updated_at.asc(),
             "created_desc": TicketRow.created_at.desc(),
             "status": TicketRow.status.asc(),
+            "findings_count": TicketRow.findings_count.desc(),
         }.get(filter.sort, TicketRow.updated_at.desc())
-        # `findings_count` sort is handled post-fetch — keyset-paginating on a
-        # computed aggregate isn't worth the SQL gymnastics in POC.
         stmt = stmt.order_by(sort_clause).limit(limit)
 
         rows = (await s.execute(stmt)).scalars().all()
 
-    # Batch-aggregate findings per pr_id via the reviewer public op.
-    pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
-    findings_by_pr: dict[UUID, tuple[int, str | None]] = {}
-    if pr_ids:
-        findings_by_pr = await aggregate_findings_by_prs(pr_ids, org_id=org_id)
-
     # Batch-enrich PR data via the public pull_requests op (one query, not N+1).
+    pr_ids = [r.pr_id for r in rows if r.pr_id is not None]
     prs_by_id: dict[UUID, PullRequest] = {}
     if pr_ids:
         prs_by_id = {p.id: p for p in await list_prs_by_ids(pr_ids)}
@@ -445,14 +457,7 @@ async def list_tickets(
             t.author_login = pr.author_login
             t.is_draft = pr.is_draft
             t.builder_display_name = pr.author_login
-        if r.pr_id and r.pr_id in findings_by_pr:
-            count, severity = findings_by_pr[r.pr_id]
-            t.findings_count = count
-            t.max_severity = severity  # type: ignore[assignment]
         out.append(t)
-
-    if filter.sort == "findings_count":
-        out.sort(key=lambda t: t.findings_count, reverse=True)
     return out
 
 
@@ -576,10 +581,7 @@ async def _transition(
             org_id=org_id,
             session=s,
         )
-        from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
-        from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
-
-        members = await list_active_member_ids(org_id, session=s)
+        members = await list_active_member_ids(s, org_id)
         publish_general_after_commit(
             s,
             org_id=org_id,
@@ -590,14 +592,17 @@ async def _transition(
                 "previous_status": prev,
             },
         )
-        await enqueue(
-            handle_ticket_status_change,
-            args={
-                "ticket_id": str(ticket_id),
-                "member_user_ids": [str(u) for u in members],
-                "org_id": str(org_id),
-                "new_status": new_status,
-            },
-            session=s,
+        specs = build_status_change_specs(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            ticket_title=row.title,
+            member_user_ids=members,
+            new_status=new_status,
         )
+        if specs:
+            await enqueue(
+                fanout,
+                args={"specs": [s.to_dict() for s in specs]},
+                session=s,
+            )
         await s.commit()

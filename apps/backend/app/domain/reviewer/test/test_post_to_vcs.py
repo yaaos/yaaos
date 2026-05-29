@@ -9,11 +9,12 @@ Uses `StubVCSPlugin` for the GitHub side. Asserts:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
 
-from app.domain.pull_requests import PullRequestRow
+from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer.admission import (
     admit_raw_findings,
     post_admitted_findings_to_vcs,
@@ -21,7 +22,8 @@ from app.domain.reviewer.admission import (
 from app.domain.reviewer.aggregate import RawFinding
 from app.domain.reviewer.models import CommentMessageRow, FindingRow
 from app.domain.reviewer.types import CodeAnchor, FindingFingerprint
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
+from app.domain.vcs import VCSPullRequest
 from app.testing.stub_vcs import register_stub_vcs
 
 
@@ -62,32 +64,24 @@ async def test_post_admitted_findings_to_vcs_happy_path(db_session) -> None:  # 
     org_id = uuid4()
 
     # 1. Ticket + PR rows so the aggregate FK lands.
-    ticket_id = uuid4()
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="42",
-            title="t",
-            status="pending",
-            plugin_id="github",
-            repo_external_id="me/repo",
-            type="github_pr",
-            idempotency_key=f"k-{uuid4()}",
-            payload={},
-        )
+    ext_id = f"42-{uuid4().hex[:6]}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=ext_id,
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id=ext_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        session=db_session,
     )
-    await db_session.flush()
-    pr_id = uuid4()
-    db_session.add(
-        PullRequestRow(
-            id=pr_id,
-            org_id=org_id,
+    pr = await upsert_pr(
+        VCSPullRequest(
             plugin_id="github",
-            external_id="gh-pr-42",
             repo_external_id="me/repo",
-            ticket_id=ticket_id,
+            external_id=f"gh-pr-{ext_id}",
             number=42,
             title="t",
             body=None,
@@ -101,8 +95,14 @@ async def test_post_admitted_findings_to_vcs_happy_path(db_session) -> None:  # 
             is_fork=False,
             state="open",
             html_url="http://test",
-        )
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org_id,
+        session=db_session,
     )
+    pr_id = pr.id
     await db_session.commit()
 
     # 2. Admit one realistic raw finding.

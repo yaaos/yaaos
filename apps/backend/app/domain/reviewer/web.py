@@ -179,6 +179,20 @@ async def _record_ack(finding_id: UUID, *, kind: str, rationale: str) -> dict[st
         except KeyError:
             raise HTTPException(status_code=404, detail="finding not in aggregate")
         await repo.save(aggregate)
+
+        # Refresh the ticket's findings rollup after the state change.
+        from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
+        from app.domain.tickets import get_by_pr as _get_ticket_by_pr  # noqa: PLC0415
+
+        ticket = await _get_ticket_by_pr(finding.pr_id, org_id=org_id)
+        if ticket is not None:
+            await refresh_ticket_findings_summary(
+                ticket.id,
+                finding.pr_id,
+                org_id=org_id,
+                session=s,
+            )
+
         await s.commit()
     return {"finding_id": str(finding_id), "state": "acked" if kind == "intentional" else "pushed_back"}
 

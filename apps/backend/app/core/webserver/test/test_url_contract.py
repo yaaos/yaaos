@@ -38,6 +38,8 @@ LOAD_BEARING_URLS: set[tuple[str, str]] = {
     ("POST", "/api/intake/{type}"),
     # Org membership surface (SPA invite + role flows).
     ("POST", "/api/memberships/invite"),
+    # Integrations broken-creds summary (banner + Coding Agents notice).
+    ("GET", "/api/integrations/broken-summary"),
     # Org settings (WorkspaceSettingsCard depends on this).
     ("GET", "/api/orgs"),
     ("PATCH", "/api/orgs"),

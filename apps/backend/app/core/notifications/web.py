@@ -1,4 +1,4 @@
-"""HTTP wiring for `domain/notifications`.
+"""HTTP wiring for `core/notifications`.
 
 | Method | Path                                | Auth                    |
 |--------|-------------------------------------|-------------------------|
@@ -26,8 +26,8 @@ from pydantic import BaseModel
 from app.core.auth import public_route
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
+from app.core.notifications import service as notif_service
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.notifications import service as notif_service
 
 router = APIRouter(dependencies=[Depends(public_route)])
 

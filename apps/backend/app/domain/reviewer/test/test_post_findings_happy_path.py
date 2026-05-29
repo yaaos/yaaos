@@ -7,7 +7,7 @@ end-to-end with realistic inputs.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -16,18 +16,18 @@ from sqlalchemy import select
 from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext
 from app.core.workspace import (
-    WorkspaceRow,
-    WorkspaceStatus,
     WorkspaceTicketContext,
+    _seed_workspace_for_tests,
     clear_workflow_context_provider,
     clear_workspace_providers,
     register_workflow_context_provider,
     register_workspace_provider,
 )
-from app.domain.pull_requests import PullRequestRow
+from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
+from app.domain.vcs import VCSPullRequest
 
 
 class _StubWorkspaceProvider:
@@ -82,32 +82,24 @@ async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> N
     org_id = uuid4()
 
     # 1. Ticket + PR rows so the findings FK has somewhere to land.
-    ticket_id = uuid4()
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id="42",
-            title="t",
-            status="pending",
-            plugin_id="github",
-            repo_external_id="me/repo",
-            type="github_pr",
-            idempotency_key=f"key-{uuid4()}",
-            payload={"head_sha": "deadbeef"},
-        )
+    ext_id = f"42-{uuid4().hex[:6]}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={"head_sha": "deadbeef"},
+        idempotency_key=ext_id,
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id=ext_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        session=db_session,
     )
-    await db_session.flush()
-    pr_id = uuid4()
-    db_session.add(
-        PullRequestRow(
-            id=pr_id,
-            org_id=org_id,
+    pr = await upsert_pr(
+        VCSPullRequest(
             plugin_id="github",
-            external_id="pr-external",
             repo_external_id="me/repo",
-            ticket_id=ticket_id,
+            external_id=f"pr-{ext_id}",
             number=42,
             title="t",
             body=None,
@@ -121,27 +113,25 @@ async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> N
             is_fork=False,
             state="open",
             html_url="http://test",
-        )
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org_id,
+        session=db_session,
     )
+    pr_id = pr.id
 
     # 2. Workspace row with plugin_state carrying file contents the anchor
     #    references. The stub provider's read_text looks up here.
-    ws_id = uuid4()
-    db_session.add(
-        WorkspaceRow(
-            id=ws_id,
-            org_id=org_id,
-            provider_id="in_process",
-            spec={"sha": "deadbeef"},
-            status=WorkspaceStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC) + timedelta(minutes=10),
-            plugin_state={
-                "sha": "deadbeef",
-                "files": {
-                    "src/foo.py": "def foo(x):\n    return x.value\n",
-                },
-            },
-        )
+    ws_id = await _seed_workspace_for_tests(
+        org_id=org_id,
+        provider_id="in_process",
+        plugin_state={
+            "sha": "deadbeef",
+            "files": {"src/foo.py": "def foo(x):\n    return x.value\n"},
+        },
+        sha="deadbeef",
     )
     await db_session.commit()
 
@@ -198,7 +188,7 @@ async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> N
     assert outcome.outputs.get("posted") is True
     assert len(stub.posted_reviews) == 1
     external_id, posted_review = stub.posted_reviews[0]
-    assert external_id == "pr-external"
+    assert external_id == f"pr-{ext_id}"
     assert len(posted_review.findings) == 1
 
     # 4. FindingRow landed in the DB scoped to (pr_id, org_id).

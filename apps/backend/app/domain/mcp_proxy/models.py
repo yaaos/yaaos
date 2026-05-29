@@ -2,7 +2,7 @@
 
 One row per active review's MCP bearer. PK is `sha256(raw_token)`; the raw
 token never persists. Lifetime is `created_at + 2h`; the periodic sweep
-deletes expired rows. Reviewer code calls `mint_token(review_id)` at
+deletes expired rows. Reviewer code calls `mint_token(review_id, org_id=...)` at
 review start and `revoke_token(review_id)` at end.
 """
 
@@ -26,6 +26,9 @@ class McpReviewTokenRow(Base):
     review_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("reviews.id", ondelete="CASCADE"), nullable=False
     )
+    # org_id carried on the token row so the proxy reads tenancy without a
+    # reviewer back-lookup. Avoids the mcp_proxy → reviewer import cycle.
+    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

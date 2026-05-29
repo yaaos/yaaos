@@ -15,11 +15,11 @@ import uuid
 
 import pytest
 
+from app.core.redis import reset_pubsub
 from app.core.sse import (
     GeneralEventKind,
     publish_general,
     publish_general_after_commit,
-    reset_pubsub,
     subscribe_general,
 )
 

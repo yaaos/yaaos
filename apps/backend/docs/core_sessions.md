@@ -1,16 +1,18 @@
 # core/sessions
 
-> FastAPI dependency factories that wire the [`core/auth`](core_auth.md) middleware into identity + orgs lookups.
+> FastAPI dependency factories that wire [`core/auth`](core_auth.md) middleware into identity + org lookups — no `domain/*` imports.
 
 ## Scope
 
-- Owns: `require(action)`, `require_session`, `public_route` dependency factories; `/api/auth/*` HTTP routes; `_REQUIRED_ROLE` registry.
-- Does NOT own: session rows (those are in [`core/identity`](core_identity.md)) or the middleware/`Action` enum (those are in [`core/auth`](core_auth.md)).
-- Why separate from `core/auth`: the dep factories need both `core/identity` and `domain/orgs`; `core/auth` stays free of domain reads.
+- Owns: `require(action)`, `public_route` dependency factories; `/api/auth/*` HTTP routes.
+- Does NOT own: session rows (those are in [`core/identity`](core_identity.md)), the middleware/`Action` enum + per-action role map (those are in [`core/auth`](core_auth.md)), org/membership tables (those are in [`core/tenancy`](core_tenancy.md)), the SSO discover route (moved to [`domain/orgs`](domain_orgs.md) at `/api/sso/discover`), or broken-credential data (that's [`domain/integrations`](domain_integrations.md) at `GET /api/integrations/broken-summary`).
+- Pure core — no `domain/*` import at any layer. All org/membership resolution goes through [`core/tenancy`](core_tenancy.md).
 
 ## Why / invariants
 
-**`_REQUIRED_ROLE` registry** — single source of truth mapping `Action → Role`. A CI test asserts every `Action` member has an entry. See `app/core/sessions/dependencies.py`. Current mappings: Builder for read/self-update actions; Admin for invite/remove/role-change; Owner for SSO + GitHub App link.
+**`require(action)` resolves via `core/tenancy`** — calls `resolve_auth_org(session, user_id, slug)` which returns `AuthOrg` (role, SSO flags, session timeout override) in a single lookup. No `domain/*` import; no `sso_configs` join at request time — SSO gate reads the denormalized `orgs.sso_enabled` column via `AuthOrg`. The dep returns that same `AuthOrg` — it carries only what `require()` actually resolved (org_id, slug, role, SSO flags), so a handler that captures the return value never gets half-populated fields.
+
+**Per-action role map** — the `Action → Role` source of truth is `core/auth/role_policy._REQUIRED_ROLE`, read here via `required_role_for(action)`. See [`core_auth.md`](core_auth.md). Current mappings: Builder for read/self-update actions; Admin for invite/remove/role-change; Owner for SSO + GitHub App link.
 
 **Error shapes (security-relevant):**
 - No session → 401 `unauthenticated`.
@@ -29,4 +31,6 @@
 6. Open-redirect defeated by `_safe_next`: only same-origin absolute paths honored.
 
 **State vs TOTP-challenge cookie** use different `itsdangerous` salts (`yaaos-oauth-state` vs `yaaos-totp-challenge`) so a login state can't be replayed at the step-up endpoint.
+
+**`GET /api/auth/me` response shape** — `{ user, memberships }`. Each membership entry carries `org_id`, `slug`, `role`, `handle`, `display_name`. No `broken_integrations` field — that data is served by `GET /api/integrations/broken-summary` (see [`domain_integrations.md`](domain_integrations.md)), keeping integrations concerns out of the core auth surface.
 

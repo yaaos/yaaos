@@ -408,26 +408,6 @@ async def get_review(review_id: uuid.UUID, *, org_id: uuid.UUID) -> Review:
     return _review_from_row(row)
 
 
-async def get_org_id_for_review(review_id: uuid.UUID) -> uuid.UUID | None:
-    """Return the org_id for *review_id*, or ``None`` when the review is absent.
-
-    Use when the caller does not yet know the org — e.g. the MCP proxy
-    resolving tenancy from a review bearer token. Callers that already know the
-    org should use `get_review(review_id, org_id=...)` which applies the org
-    scope.
-    """
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.core.database import session as db_session  # noqa: PLC0415
-    from app.domain.reviewer.models import ReviewRow  # noqa: PLC0415
-
-    async with db_session() as s:
-        row = (
-            await s.execute(select(ReviewRow.org_id).where(ReviewRow.id == review_id))
-        ).scalar_one_or_none()
-    return row
-
-
 async def list_findings_for_pr(
     pr_id: uuid.UUID, *, org_id: uuid.UUID, include_terminal: bool = False
 ) -> list[FindingView]:
@@ -772,6 +752,30 @@ async def aggregate_findings_by_prs(
         severity = {3: "high", 2: "medium", 1: "low"}.get(int(max_rank or 0))
         out[pr_id] = (int(count), severity)
     return out
+
+
+async def refresh_ticket_findings_summary(
+    ticket_id: uuid.UUID,
+    pr_id: uuid.UUID,
+    *,
+    org_id: uuid.UUID,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Recompute findings rollup for *pr_id* and write it to the ticket row.
+
+    Runs inside the caller's session; caller commits. Invoked after findings
+    are posted (review end) and after an ack/push-back in reviewer/web.py.
+    """
+    from app.domain.tickets import update_findings_summary  # noqa: PLC0415
+
+    rollup = await aggregate_findings_by_prs([pr_id], org_id=org_id)
+    count, severity = rollup.get(pr_id, (0, None))
+    await update_findings_summary(
+        ticket_id,
+        findings_count=count,
+        max_severity=severity,
+        session=session,
+    )
 
 
 def review_summary(aggregate: PRReviewAggregate, review: Review) -> dict[str, int]:

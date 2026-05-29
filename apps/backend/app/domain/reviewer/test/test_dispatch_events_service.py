@@ -17,7 +17,8 @@ import pytest
 
 from app.core.audit_log import ActorKind
 from app.core.auth import org_context
-from app.core.sse import GeneralEventKind, reset_pubsub, subscribe_general
+from app.core.redis import reset_pubsub
+from app.core.sse import GeneralEventKind, subscribe_general
 from app.domain.reviewer.aggregate import PRReviewAggregate, RawFinding
 from app.domain.reviewer.service import dispatch_events
 from app.domain.reviewer.types import (
@@ -103,8 +104,10 @@ async def test_dispatch_events_emits_after_commit(db_session) -> None:  # type: 
 
     assert len(received) >= 1
     kinds = {e["kind"] for e in received}
-    # complete_review emits ReviewCompleted + FindingRaised; either is fine.
+    # _seed_finding calls start_review + complete_review; dispatch_events emits
+    # ReviewRequested, FindingRaised, and ReviewCompleted — any one is sufficient.
     assert kinds & {
+        GeneralEventKind.REVIEW_REQUESTED.value,
         GeneralEventKind.REVIEW_COMPLETED.value,
         GeneralEventKind.FINDING_RAISED.value,
     }, f"Expected at least one reviewer event kind, got: {kinds}"

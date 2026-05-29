@@ -8,11 +8,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 from app.plugins.claude_code import web as _cc_web  # noqa: F401
 
@@ -37,10 +36,10 @@ async def seeded(db_session):
     member = await identity_repo.insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="cc-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
+        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
     admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)

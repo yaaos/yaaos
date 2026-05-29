@@ -42,7 +42,7 @@ async def seeded(db_session):
             ),
             {
                 "id": uuid4(),
-                "org_id": org.id,
+                "org_id": org.org_id,
                 "repo": repo,
                 "title": title,
                 "body": body,
@@ -57,28 +57,28 @@ async def seeded(db_session):
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_q_matches_title_or_body(seeded) -> None:
-    rows = await list_lessons(LessonFilter(q="retry"), org_id=seeded["org"].id)
+    rows = await list_lessons(LessonFilter(q="retry"), org_id=seeded["org"].org_id)
     assert {r.title for r in rows} == {"retries"}  # body match
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_repo_multi_filter(seeded) -> None:
-    rows = await list_lessons(LessonFilter(repo_external_ids=["x/api"]), org_id=seeded["org"].id)
+    rows = await list_lessons(LessonFilter(repo_external_ids=["x/api"]), org_id=seeded["org"].org_id)
     assert {r.title for r in rows} == {"retries", "timeouts"}
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_created_by_filter(seeded) -> None:
-    rows = await list_lessons(LessonFilter(created_by=seeded["alice"].id), org_id=seeded["org"].id)
+    rows = await list_lessons(LessonFilter(created_by=seeded["alice"].id), org_id=seeded["org"].org_id)
     assert {r.title for r in rows} == {"retries", "noise"}
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_sort_created_asc(seeded) -> None:
-    rows = await list_lessons(LessonFilter(sort="created_asc"), org_id=seeded["org"].id)
+    rows = await list_lessons(LessonFilter(sort="created_asc"), org_id=seeded["org"].org_id)
     assert [r.title for r in rows] == ["frontend", "noise", "timeouts", "retries"]
 
 
@@ -87,5 +87,5 @@ async def test_sort_created_asc(seeded) -> None:
 async def test_date_range(seeded) -> None:
     # Last 7 days: today + yesterday + 5 days ago.
     seven_days_ago = seeded["now"] - timedelta(days=7)
-    rows = await list_lessons(LessonFilter(created_after=seven_days_ago), org_id=seeded["org"].id)
+    rows = await list_lessons(LessonFilter(created_after=seven_days_ago), org_id=seeded["org"].org_id)
     assert {r.title for r in rows} == {"retries", "timeouts", "noise"}

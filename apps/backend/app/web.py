@@ -64,18 +64,10 @@ from app.domain.integrations import web as _domain_integrations_web  # noqa: F40
 from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402
 from app.domain.orgs import coding_agents_web as _orgs_coding_agents_web  # noqa: F401, E402
 from app.domain.orgs import org_settings_web as _orgs_org_settings_web  # noqa: F401, E402
-from app.domain.orgs import workspace_status_web as _orgs_workspace_status_web  # noqa: F401, E402
+from app.core.workspace import web as _core_workspace_web  # noqa: F401, E402
 from app.domain.orgs import vcs_web as _orgs_vcs_web  # noqa: F401, E402
-from app.domain.notifications import web as _notifications_web  # noqa: F401, E402
+from app.core.notifications import web as _notifications_web  # noqa: F401, E402
 from app.core.sse import web as _core_sse_web  # noqa: F401, E402
-
-# Wire the workspace_activity ownership check into core/sse without core/sse
-# importing domain/* — the check belongs to domain/orgs (it knows tickets +
-# workflow rows), and the registrar pattern keeps the dependency inverted.
-from app.core import sse as _core_sse  # noqa: E402
-from app.domain.orgs.workflow_ownership import assert_workflow_in_org as _assert_workflow_in_org  # noqa: E402
-
-_core_sse.register_workspace_activity_ownership_check(_assert_workflow_in_org)
 
 # 5b. domain/integrations — must load before its provider plugins so the
 # registry exists at the time plugins/linear etc. call register_provider.

@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **Owns:** `Workflow`, `Step`, `WorkflowCommand` types, engine state machine, three taskiq task bodies (`start_step`, `handle_agent_event`, `route_workflow`), `workflow_executions` + `pending_human_decisions` tables.
+- **Owns:** `Workflow`, `Step`, `WorkflowCommand` types, engine state machine, three taskiq task bodies (`start_step`, `handle_agent_event`, `route_workflow`), `workflow_executions` + `pending_human_decisions` tables, recovery-policy registry (`app/core/workflow/recovery.py`).
 - **Does not own:** business logic (callers register typed `Workflow` + `WorkflowCommand` impls); workspace provisioning ([`core/workspace`](core_workspace.md)); task durability ([`core/tasks`](core_tasks.md)).
 - **Boundary:** callers enqueue work by calling `engine.start()`; the engine routes via taskiq; terminal AgentEvents arrive from [`core/agent_gateway`](core_agent_gateway.md) via `handle_agent_event`.
 
@@ -27,7 +27,7 @@
 - **WorkflowCommand** — Protocol; one registered impl per `kind`. Carries `restart_safe`, `category` (`Workspace | Local | Hitl`).
 - **CommandContext** — payload a command sees: execution id, ticket id, step id, attempt counter, optional traceparent.
 - **Outcome** — tagged by `OutcomeKind` (`success | failure | hitl_pending`). Carries `outputs`, optional failure/hitl fields, and `append_steps` escape hatch.
-- **Recovery-policy insertion (Tier-1)** — engine checks `core/workspace.get_recovery_policy(label)` before Tier-2 retry; appends a synthetic recovery step and resets the failed step's attempt counter.
+- **Recovery-policy insertion (Tier-1)** — engine checks `core/workflow.get_recovery_policy(label)` (via `app/core/workflow/recovery.py`) before Tier-2 retry; appends a synthetic recovery step and resets the failed step's attempt counter. Producers (e.g. `core/workspace`) register their policies into this registry at import.
 
 ## Data owned
 
@@ -38,3 +38,4 @@
 
 `test/test_types.py` — typed data validation (workflows, steps, retry policy, outcomes, terminal transitions).
 `test/test_engine.py` — register validation (unknown entry step, dangling transitions, double-register), version-selection, `start()` writes `pending` row + enqueues `route_workflow`, `start()` fails loud on unregistered command.
+`test/test_recovery_registry.py` — register/get/conflict/idempotent/sorted-labels; verifies workspace's boot policy resolves correctly.

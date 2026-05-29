@@ -23,7 +23,7 @@ vi.mock("@domain/auth", () => ({
   useCurrentUser: () => ({
     data: {
       memberships: [
-        { slug: "acme", role: "owner", handle: "j", display_name: "Acme", broken_integrations: [] },
+        { org_id: "o1", slug: "acme", role: "owner", handle: "j", display_name: "Acme" },
       ],
       user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },
     },

@@ -24,27 +24,24 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.tasks import OutboxEntryRow, drain_once
+from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
     CommandCategory,
     CommandContext,
     Outcome,
-    PendingHumanDecisionRow,
     Step,
     TerminalAction,
     Workflow,
     WorkflowEngine,
-    WorkflowExecutionRow,
     WorkflowState,
+    clear_recovery_policies,
+    register_recovery_policy,
     request_cancel,
     resume_hitl,
 )
-from app.core.workspace import (
-    clear_recovery_policies,
-    register_recovery_policy,
-)
+from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 
 # ── Test commands ───────────────────────────────────────────────────────
 
@@ -145,28 +142,18 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
     the outbox is empty or `max_iterations` hit (a runaway loop is a bug)."""
     from app.core.tasks import get_broker  # noqa: PLC0415
 
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        if decorated is None:
+            raise RuntimeError(f"no registered task body for {payload['task_name']}")
+        await decorated.original_func(**payload["args"])
+
     total = 0
     for _ in range(max_iterations):
-        rows = (
-            (
-                await db_session.execute(
-                    select(OutboxEntryRow)
-                    .where(OutboxEntryRow.dispatched_at.is_(None))
-                    .order_by(OutboxEntryRow.created_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
+        pending = await get_pending_task_names(db_session)
+        if not pending:
             return total
-
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            if decorated is None:
-                raise RuntimeError(f"no registered task body for {payload['task_name']}")
-            await decorated.original_func(**payload["args"])
 
         delivered = await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()

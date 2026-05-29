@@ -12,8 +12,7 @@ from app.core.sessions.dependencies import (
     current_actor,
     public_route,
     require,
-    require_session,
     required_role_for,
 )
 
-__all__ = ["current_actor", "public_route", "require", "require_session", "required_role_for", "web"]
+__all__ = ["current_actor", "public_route", "require", "required_role_for", "web"]

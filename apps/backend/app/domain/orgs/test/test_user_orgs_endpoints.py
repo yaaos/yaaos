@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _sessions_web  # noqa: F401
@@ -22,7 +22,6 @@ from app.domain.orgs.onboarding import (
     _reset_contributors_for_tests,
     register_onboarding_contributor,
 )
-from app.domain.orgs.types import Role
 
 
 def _app() -> FastAPI:
@@ -44,10 +43,10 @@ async def seeded(db_session):
     org_a = await orgs_repo.insert_org(db_session, slug="alpha", display_name="Alpha")
     org_b = await orgs_repo.insert_org(db_session, slug="beta", display_name="Beta")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="u-a"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="u-a"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.BUILDER, handle="u-b"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="u-b"
     )
     sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -109,9 +108,9 @@ async def test_config_status_fully_configured(seeded, db_session) -> None:
 
     register_onboarding_contributor("github_app_installed", yes)
     register_onboarding_contributor("anthropic_key_set", yes)
-    org = await orgs_repo.get_org(db_session, seeded["org_a"].id)
-    assert org is not None
-    org.workspace_provider = "in_memory"
+    from app.core.tenancy import update_org_fields  # noqa: PLC0415
+
+    await update_org_fields(db_session, seeded["org_a"].org_id, workspace_provider="in_memory")
     await db_session.commit()
 
     sess = seeded["sess"]

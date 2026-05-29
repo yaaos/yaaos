@@ -2,6 +2,7 @@
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET    | `/api/sso/discover`         | public; returns `{provider, saml_org_slug?}` for an email.  |
 | GET    | `/api/sso/{slug}/metadata`  | public; returns SP metadata XML for the org. |
 | GET    | `/api/sso/{slug}/login`     | public; starts an SP-initiated SAML AuthnRequest. |
 | POST   | `/api/sso/{slug}/acs`       | public; ACS — verifies assertion, marks session SSO-satisfied. |
@@ -12,11 +13,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
@@ -38,7 +39,7 @@ class _SsoConfigBody(BaseModel):
     enabled: bool = False
     exempt_owner_user_id: UUID | None = None
     # Owner-maintained list of email domain claims (e.g. ["acme.com"]).
-    # Drives /api/auth/sso/discover. Empty list = no SSO routing.
+    # Drives /api/sso/discover. Empty list = no SSO routing.
     email_domains: list[str] = []
 
 
@@ -55,14 +56,44 @@ def _err(status: int, code: str) -> HTTPException:
     return HTTPException(status_code=status, detail={"error": code})
 
 
+@router.get("/discover")
+@limiter.limit(AUTH_LIMIT)
+async def sso_discover(request: Request, email: Annotated[str, Query()]) -> dict[str, Any]:
+    """Find the SSO IdP (if any) matching the email's domain.
+
+    Drives the Login page's provider-button rendering:
+    `{provider: "github" | "saml", saml_org_slug?: str}`.
+
+    Looks up `sso_configs.email_domains` (JSONB array) for a row whose
+    `enabled = true` claims the address's domain. First match wins.
+    No SAML match → `{provider: "github"}` so GitHub-only orgs keep working.
+
+    `email` is required but only the format is validated — we never
+    confirm or deny that a given address belongs to a user.
+    """
+    del request  # rate-limit-only; FastAPI requires the kwarg
+    if not email or "@" not in email:
+        raise HTTPException(status_code=422, detail={"error": "invalid_email"})
+    domain = email.split("@", 1)[1].strip().lower()
+    if not domain:
+        raise HTTPException(status_code=422, detail={"error": "invalid_email"})
+
+    from app.domain.orgs import find_saml_org_slug_for_domain  # noqa: PLC0415
+
+    slug = await find_saml_org_slug_for_domain(domain)
+    if slug is None:
+        return {"provider": "github"}
+    return {"provider": "saml", "saml_org_slug": slug}
+
+
 @router.get("/{slug}/metadata")
 async def sp_metadata(slug: str) -> Response:
     """Public endpoint — operators hand this URL to the IdP."""
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import sp_metadata_xml  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
     if org is None:
         raise _err(404, "org_not_found")
     base_url = get_settings().yaaos_app_base_url
@@ -75,14 +106,14 @@ async def sso_login_start(slug: str) -> Response:
     """SP-initiated login. In POC test env we redirect to the test stub IdP
     page (which the test then POSTs back via `/acs`). Production builds the
     AuthnRequest XML via `plugins/saml`."""
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import get_config  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
         if org is None:
             raise _err(404, "org_not_found")
-        cfg = await get_config(s, org_id=org.id)
+        cfg = await get_config(s, org_id=org.org_id)
     if cfg is None or not cfg.enabled:
         raise _err(404, "sso_not_configured")
     # POC redirect target: the SPA's hand-off page. Tests POST directly to /acs.
@@ -100,17 +131,19 @@ async def sso_acs(
     """Assertion Consumer Service. Verifies the SAML response (real or stub),
     matches the user by verified email, optionally JIT-creates a membership,
     marks the session SSO-satisfied for this org."""
+    from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
+    from app.core.tenancy import create_membership as _create_membership  # noqa: PLC0415
+    from app.core.tenancy import get_membership_info  # noqa: PLC0415
+    from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
     from app.domain.orgs.sso import get_config  # noqa: PLC0415
-    from app.domain.orgs.types import Role  # noqa: PLC0415
 
     async with db_session() as s:
-        org = await orgs_repo.get_org_by_slug(s, slug)
+        org = await _get_org_by_slug(s, slug)
         if org is None:
             raise _err(404, "org_not_found")
-        cfg = await get_config(s, org_id=org.id)
+        cfg = await get_config(s, org_id=org.org_id)
         if cfg is None or not cfg.enabled:
             raise _err(404, "sso_not_configured")
 
@@ -127,16 +160,16 @@ async def sso_acs(
                 raise _err(403, "user_not_provisioned")
             user_row = await identity_repo.insert_user(s, display_name=email.split("@")[0])
             await identity_repo.add_email(s, user_id=user_row.id, email=email, is_primary=True, verified=True)
-            await orgs_repo.insert_membership(
+            await _create_membership(
                 s,
                 user_id=user_row.id,
-                org_id=org.id,
+                org_id=org.org_id,
                 role=Role.BUILDER,
                 handle=email.split("@")[0][:64].lower(),
             )
             jit_created = True
 
-        membership = await orgs_repo.get_membership(s, user_id=user_row.id, org_id=org.id)
+        membership = await get_membership_info(s, user_id=user_row.id, org_id=org.org_id)
         if membership is None:
             raise _err(403, "no_membership")
 
@@ -144,15 +177,15 @@ async def sso_acs(
         # mint a fresh session.
         if yaaos_session:
             try:
-                updated = await session_lifecycle.mark_sso_satisfied(s, yaaos_session, org_id=org.id)
+                updated = await session_lifecycle.mark_sso_satisfied(s, yaaos_session, org_id=org.org_id)
                 created = None
             except Exception:
                 updated = None
                 created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-                await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.id)
+                await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
         else:
             created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-            await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.id)
+            await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
             updated = None
 
         await audit_write(
@@ -161,7 +194,7 @@ async def sso_acs(
             "sso_satisfied",
             _SsoSatisfiedAuditPayload(email=email, jit_created=jit_created),
             Actor(kind="sso", login=email),
-            org_id=org.id,
+            org_id=org.org_id,
             session=s,
         )
 
@@ -239,7 +272,6 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
     from app.core.identity import can_be_sso_exempt_owner  # noqa: PLC0415
     from app.core.sessions import current_actor  # noqa: PLC0415
     from app.domain.orgs import SsoConfigError, get_config, upsert_config  # noqa: PLC0415
-    from app.domain.orgs import repository as orgs_repo  # noqa: PLC0415
 
     org_id = org_id_var.get()
     assert org_id is not None
@@ -248,8 +280,10 @@ async def upsert_org_sso_config(request: Request, body: _SsoConfigBody) -> dict:
 
     async with db_session() as s:
         if body.exempt_owner_user_id is not None:
-            membership = await orgs_repo.get_membership(s, user_id=body.exempt_owner_user_id, org_id=org_id)
-            if membership is None or membership.role != "owner":
+            from app.core.tenancy import get_membership_info  # noqa: PLC0415
+
+            membership = await get_membership_info(s, user_id=body.exempt_owner_user_id, org_id=org_id)
+            if membership is None or membership.role.value != "owner":
                 raise _err(400, "exempt_must_be_owner")
             if not await can_be_sso_exempt_owner(s, body.exempt_owner_user_id):
                 raise _err(400, "exempt_owner_no_totp")

@@ -9,6 +9,38 @@ import {
   apiFetch,
 } from "./client";
 
+// ── Broken-creds summary ─────────────────────────────────────────────────────
+
+export interface BrokenIntegrationSummary {
+  provider: string;
+}
+
+export interface BrokenSummaryOrg {
+  org_id: string;
+  broken_integrations: BrokenIntegrationSummary[];
+}
+
+export interface BrokenSummaryResponse {
+  orgs: BrokenSummaryOrg[];
+}
+
+/** Cross-org broken-credentials summary for the cookie-bearer.
+ *  Owners + Admins get non-empty lists; Builders always see empty. */
+export function useBrokenSummary() {
+  return useQuery<BrokenSummaryResponse | null>({
+    queryKey: ["integrations", "broken-summary"],
+    queryFn: async () => {
+      try {
+        return await apiFetch<BrokenSummaryResponse>("/api/integrations/broken-summary");
+      } catch (err) {
+        if ((err as Error)?.message?.startsWith("401")) return null;
+        throw err;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useHealth() {
   return useQuery<HealthResponse>({
     queryKey: ["health"],
@@ -66,7 +98,7 @@ export interface SsoDiscoverResult {
 export function useSsoDiscover() {
   return useMutation({
     mutationFn: (email: string) =>
-      apiFetch<SsoDiscoverResult>(`/api/auth/sso/discover?email=${encodeURIComponent(email)}`),
+      apiFetch<SsoDiscoverResult>(`/api/sso/discover?email=${encodeURIComponent(email)}`),
   });
 }
 

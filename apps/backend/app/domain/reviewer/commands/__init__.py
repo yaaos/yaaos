@@ -1067,6 +1067,14 @@ class PostFindings(_LocalReviewCommand):
                 commit_sha=commit_sha,
                 session=s,
             )
+            from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
+
+            await refresh_ticket_findings_summary(
+                UUID(ctx.ticket_id),
+                ticket_ctx.pr_id,
+                org_id=ticket_ctx.org_id,
+                session=s,
+            )
             await s.commit()
 
         # 4. Post admitted findings to the VCS plugin (GitHub). Only fires

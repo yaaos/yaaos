@@ -23,11 +23,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware, register_handler
+from app.core.auth import AuthMiddleware, Role, register_handler
 from app.core.identity import repository as identity_repo
-from app.core.sse import GeneralEventKind, publish_general, reset_pubsub
+from app.core.redis import reset_pubsub
+from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -62,7 +62,7 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
 
     org_a = await orgs_repo.insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="owner-a"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 
     org_b = await orgs_repo.insert_org(db_session, slug=f"org-b-{uuid.uuid4().hex[:8]}")
@@ -145,8 +145,8 @@ async def test_general_endpoint_streams_org_scoped_events(seeded, redis_or_skip)
     gate is already covered by the three tests above; this test owns the
     cross-org isolation invariant on the generator that the route wraps.
     """
-    org_a_id: uuid.UUID = seeded["org_a"].id
-    org_b_id: uuid.UUID = seeded["org_b"].id
+    org_a_id: uuid.UUID = seeded["org_a"].org_id
+    org_b_id: uuid.UUID = seeded["org_b"].org_id
 
     gen = _general_stream(org_a_id)
     collector = asyncio.create_task(gen.__anext__())

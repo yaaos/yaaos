@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org
 from app.core.audit_log import Actor, ActorKind, audit_for_workspace
 from app.core.database import session as get_session
 from app.core.observability import spawn
@@ -362,6 +363,58 @@ async def get_workspace(workspace_id: UUID) -> Workspace | None:
     return _WorkspaceImpl(id=str(row.id), provider=provider, plugin_state=row.plugin_state)
 
 
+async def _seed_workspace_for_tests(
+    *,
+    org_id: UUID,
+    provider_id: str,
+    plugin_state: dict,
+    sha: str,
+    current_command_id: UUID | None = None,
+    current_holder_workflow_id: UUID | None = None,
+    status: str | None = None,
+    caller_session: AsyncSession | None = None,
+) -> str:
+    """Insert a workspace row in `active` state with caller-supplied plugin_state.
+
+    For cross-module tests that need a workspace in the DB without going through
+    the full provision flow. Returns the workspace id string.
+
+    When `caller_session` is supplied the row is added to the caller's transaction
+    (no commit — the caller commits). When omitted a new session is opened and
+    committed immediately.
+
+    `current_command_id` and `current_holder_workflow_id` are optional — set
+    them when the test needs to simulate a claimed workspace (agent_gateway tests).
+    """
+    from datetime import timedelta  # noqa: PLC0415
+
+    ws_id = uuid4()
+
+    def _build_row() -> WorkspaceRow:
+        return WorkspaceRow(
+            id=ws_id,
+            org_id=org_id,
+            provider_id=provider_id,
+            spec={"sha": sha},
+            status=status or WorkspaceStatus.ACTIVE.value,
+            expires_at=_utcnow() + timedelta(hours=1),
+            plugin_state=plugin_state,
+            current_command_id=current_command_id,
+            current_holder_workflow_id=current_holder_workflow_id,
+        )
+
+    if caller_session is not None:
+        row = _build_row()
+        caller_session.add(row)
+        await caller_session.flush()
+    else:
+        async with get_session() as s:
+            row = _build_row()
+            s.add(row)
+            await s.commit()
+    return str(ws_id)
+
+
 async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> int:
     """Flip every active/creating workspace for the org to expired. Returns count.
 
@@ -511,49 +564,42 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     have all gone stale beyond the heartbeat threshold (failsafe 6).
 
     POC scope: per-org check rather than per-pod (workspaces don't carry
-    `agent_id` directly). An org with remote_agent provider whose every
+    `agent_id` directly). An org with remote_agent workspaces whose every
     `workspace_agents` row has a stale `last_heartbeat_at` (or none ever)
     is considered to have lost its agent fleet. Workspaces in non-terminal
     states transition to EXPIRED with reason `agent_loss`.
-
-    Bearer revocation goes through `core.agent_gateway.bearers` (lazy
-    import to keep the workspace module from importing the gateway at
-    init time).
     """
-    from sqlalchemy import text as sa_text  # noqa: PLC0415
+    from app.core.agent_gateway import has_stale_agents_for_org  # noqa: PLC0415
 
     cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Find orgs in remote-agent mode where every workspace_agents row is
-    # stale (or there are none at all but a workspace exists in flight).
-    stale_orgs = (
-        await s.execute(
-            sa_text(
-                """
-                SELECT o.id
-                  FROM orgs o
-                 WHERE o.workspace_provider = 'remote_agent'
-                   AND EXISTS (
-                         SELECT 1 FROM workspaces w
-                          WHERE w.org_id = o.id
-                            AND w.status IN ('creating', 'active')
-                   )
-                   AND NOT EXISTS (
-                         SELECT 1 FROM workspace_agents a
-                          WHERE a.org_id = o.id
-                            AND a.last_heartbeat_at IS NOT NULL
-                            AND a.last_heartbeat_at >= :cutoff
-                   )
-                """
-            ),
-            {"cutoff": cutoff},
+    # Find distinct org IDs that have at least one active remote-agent workspace.
+    # `workspaces.provider` records whether a workspace was dispatched via the
+    # remote agent — workspace's own column, no cross-module query needed.
+    candidate_org_ids = (
+        (
+            await s.execute(
+                select(WorkspaceRow.org_id)
+                .distinct()
+                .where(
+                    WorkspaceRow.provider == "remote_agent",
+                    WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+                )
+            )
         )
-    ).fetchall()
-    if not stale_orgs:
+        .scalars()
+        .all()
+    )
+
+    stale_org_ids = [
+        org_id
+        for org_id in candidate_org_ids
+        if await has_stale_agents_for_org(org_id, cutoff=cutoff, session=s)
+    ]
+
+    if not stale_org_ids:
         return
 
-    from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org  # noqa: PLC0415
-
-    for (org_id,) in stale_orgs:
+    for org_id in stale_org_ids:
         rows = (
             (
                 await s.execute(

@@ -29,7 +29,9 @@ class NotificationRow(Base):
     # `hitl_waiting` | `ticket_completed` | `ticket_failed` today; freeform
     # to keep future kinds zero-migration.
     type: Mapped[str] = mapped_column(String(64), nullable=False)
-    ticket_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # Generic subject reference — both null or both set.
+    subject_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -47,5 +49,17 @@ class NotificationRow(Base):
             "org_id",
             "type",
             "created_at",
+        ),
+        # Dedup index: skip duplicate (user, type, subject) tuples.
+        # NULLs are distinct in Postgres partial indexes — subject-less
+        # notifications (subject_type IS NULL) bypass this index, i.e. they
+        # are never deduplicated (checked in service.create instead).
+        Index(
+            "notifications_dedup_subject_idx",
+            "user_id",
+            "type",
+            "subject_type",
+            "subject_id",
+            postgresql_where="subject_type IS NOT NULL",
         ),
     )

@@ -22,7 +22,7 @@
 
 ### Authorization
 
-- Per-action `Role` mapping in [`core/sessions/dependencies._REQUIRED_ROLE`](../apps/backend/app/core/sessions/dependencies.py): `BUILDER < ADMIN < OWNER`. `Action` enum in [`core/auth/types.py`](../apps/backend/app/core/auth/types.py).
+- Per-action `Role` mapping in [`core/auth/role_policy._REQUIRED_ROLE`](../apps/backend/app/core/auth/role_policy.py): `BUILDER < ADMIN < OWNER`. `Role` and `Action` enums in [`core/auth`](../apps/backend/docs/core_auth.md).
 - Owner/Admin-gated endpoints: `PATCH /api/orgs` (workspace_provider + registered_iam_arn), `GET /api/workspaces/connection_status`.
 
 ### Secrets at rest

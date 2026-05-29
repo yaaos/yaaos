@@ -1,12 +1,12 @@
 """HTTP wiring for `domain/mcp_proxy` — Streamable HTTP MCP proxy.
 
-The reviewer mints a per-review bearer via `mint_token(review_id)` and
+The reviewer mints a per-review bearer via `mint_token(review_id, org_id=...)` and
 writes it into the workspace's `.mcp.json`. The coding-agent CLI POSTs
 JSON-RPC envelopes to `POST /api/mcp/{review_id}/{server}`; the proxy:
 
 1. Authenticates the bearer via sha256-hash lookup (constant-time-safe).
 2. Confirms `review_id` in the URL matches the token's review.
-3. Resolves the review's `org_id` so it can look up the right provider
+3. Reads `org_id` from the token row to look up the right provider
    credential via `domain/integrations.get(...)`.
 4. Returns structured JSON-RPC errors for the three soft-failure cases —
    `not_connected` (no credential row), `broken_creds` (credential row
@@ -40,11 +40,11 @@ from pydantic import BaseModel
 from app.core.audit_log import Actor, audit
 from app.core.auth import public_route
 from app.core.database import session as db_session
+from app.core.observability import spawn
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.integrations import get, get_provider
-from app.domain.mcp_proxy.service import lookup_token, record_broken_creds
-from app.domain.reviewer import get_org_id_for_review
+from app.domain.integrations import get, get_provider, get_secret, mark_last_used
+from app.domain.mcp_proxy.service import lookup_token, record_broken_creds, run_sweep_loop
 
 log = structlog.get_logger("mcp_proxy.web")
 
@@ -124,13 +124,8 @@ async def dispatch(
                 status_code=401,
             )
 
-        # Resolve org_id from the review row.
-        org_id = await get_org_id_for_review(review_id)
-        if org_id is None:
-            return JSONResponse(
-                _rpc_error(rpc_id, *_RPC_ERR_UNAUTHENTICATED, "review not found"),
-                status_code=404,
-            )
+        # org_id is stored on the token row — no back-lookup into reviewer needed.
+        org_id = token_row.org_id
 
         credential = await get(s, org_id, server)
         if credential is None or not credential.enabled:
@@ -175,9 +170,16 @@ async def dispatch(
                     )
                 )
 
-        # Decrypt the upstream access token only at the call site.
+        # Fetch the secret separately (it never rides on the metadata VO) and
+        # decrypt the upstream access token only at the call site.
+        secret = await get_secret(s, org_id, server)
+        if secret is None:
+            record_broken_creds(review_id, server)
+            return JSONResponse(
+                _rpc_error(rpc_id, *_RPC_ERR_NOT_CONNECTED, f"{server} not connected for org")
+            )
         try:
-            upstream_token = decrypt(credential.encrypted_access_token.encode()).decode()
+            upstream_token = decrypt(secret.encrypted_access_token.encode()).decode()
         except SecretsDecryptError:
             log.error("mcp_proxy.decrypt_failed", provider=server)
             return JSONResponse(
@@ -208,7 +210,7 @@ async def dispatch(
             )
 
         # Stamp last_used_at; the UI surfaces "last used X minutes ago".
-        credential.last_used_at = datetime.now(UTC)
+        await mark_last_used(s, org_id=org_id, provider=server)
 
         # One audit row per dispatched method.
         try:
@@ -237,4 +239,8 @@ async def dispatch(
     return JSONResponse(result_payload)
 
 
-register_routes(RouteSpec(module_name="mcp", router=router, url_prefix="/api/mcp"))
+async def _start_sweep() -> None:
+    spawn("mcp_proxy.sweep", run_sweep_loop())
+
+
+register_routes(RouteSpec(module_name="mcp", router=router, url_prefix="/api/mcp", on_startup=[_start_sweep]))

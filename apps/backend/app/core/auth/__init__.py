@@ -1,10 +1,13 @@
-"""core/auth — security middleware, contextvars, action enum, route taxonomy.
+"""core/auth — security middleware, contextvars, action enum, route taxonomy,
+role enum, and role-policy map.
 
 Pure infrastructure. The role-resolving dependency factories
 (`require(action)`, `public_route`) live in `core/sessions` because they
 depend on `core/identity` + `domain/orgs`. The middleware here enforces
 the X-Org-Slug requirement for ORG_SCOPED routes and the default-deny
 post-response guard.
+
+Intra-core layer order: core/auth < core/tenancy < core/identity < core/sessions.
 """
 
 from app.core.auth.auth_failure import (
@@ -36,6 +39,7 @@ from app.core.auth.cookies import (
 )
 from app.core.auth.middleware import AuthMiddleware
 from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
+from app.core.auth.role_policy import _REQUIRED_ROLE, Role, required_role_for
 from app.core.auth.types import (
     ORG_SCOPED_PREFIXES,
     PUBLIC_EXACT,
@@ -63,9 +67,11 @@ __all__ = [
     "USER_SCOPED_EXACT",
     "USER_SCOPED_METHOD_EXACT",
     "USER_SCOPED_PREFIXES",
+    "_REQUIRED_ROLE",
     "Action",
     "AuthFailure",
     "AuthMiddleware",
+    "Role",
     "RouteSecurity",
     "actor_id_var",
     "actor_kind_var",
@@ -84,6 +90,7 @@ __all__ = [
     "public_route",
     "register_handler",
     "require_org_context",
+    "required_role_for",
     "route_security_resolved",
     "session_cookie_attrs",
     "user_id_var",

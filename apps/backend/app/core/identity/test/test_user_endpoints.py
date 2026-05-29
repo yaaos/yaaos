@@ -7,12 +7,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.identity import user_web as _user_web  # noqa: F401
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -41,7 +40,7 @@ async def seeded(db_session):
     )
     org = await orgs_repo.insert_org(db_session, slug="acc-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="acc"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="acc"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -84,7 +83,7 @@ async def test_delete_last_verified_email_blocked(db_session) -> None:
     )
     org = await orgs_repo.insert_org(db_session, slug="one-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.id, role=Role.BUILDER, handle="one"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="one"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

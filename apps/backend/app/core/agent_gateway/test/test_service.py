@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -38,11 +38,11 @@ from app.core.workflow import (
     Step,
     TerminalAction,
     Workflow,
-    WorkflowExecutionRow,
     WorkflowState,
+    get_execution_summary,
     scoped_engine,
 )
-from app.core.workspace import WorkspaceRow
+from app.core.workspace import _seed_workspace_for_tests
 
 
 @pytest.fixture(autouse=True)
@@ -70,28 +70,20 @@ def _make_create_command() -> CreateWorkspaceCommand:
     )
 
 
-async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> WorkspaceRow:
+async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dict:
     cmd_id = uuid4()
     wfx_id = uuid4()
-    row = WorkspaceRow(
-        id=uuid4(),
-        org_id=uuid4(),
+    org_id = uuid4()
+    ws_id = await _seed_workspace_for_tests(
+        org_id=org_id,
         provider_id="in_memory",
-        provider="remote_agent",
-        spec={"sha": "deadbeef"},
         plugin_state={},
-        status="active",
-        activated_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(seconds=600),
-        max_idle_seconds=600,
+        sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
         current_holder_workflow_id=wfx_id if claimed_by_command else None,
+        caller_session=db_session,
     )
-    db_session.add(row)
-    await db_session.flush()
-    row.__dict__["_test_seeded_command_id"] = cmd_id
-    row.__dict__["_test_seeded_workflow_id"] = wfx_id
-    return row
+    return {"id": ws_id, "org_id": org_id, "command_id": cmd_id, "workflow_id": wfx_id}
 
 
 # ── In-memory FIFO ─────────────────────────────────────────────────────
@@ -161,7 +153,7 @@ async def test_heartbeat_forgets_unknown_workspaces(db_session) -> None:
     request = HeartbeatRequest(
         reported_at=datetime.now(UTC),
         workspaces=(
-            HeartbeatWorkspaceEntry(workspace_id=known.id, status="running"),
+            HeartbeatWorkspaceEntry(workspace_id=UUID(known["id"]), status="running"),
             HeartbeatWorkspaceEntry(workspace_id=unknown_id, status="running"),
         ),
     )
@@ -234,35 +226,29 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             if n == 0:
                 break
 
-        wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
+        assert wfx is not None
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
         # Seed the workspace row pointing at this execution so record_agent_event
         # can look up the workspace by command_id.
-        ws = WorkspaceRow(
-            id=uuid4(),
+        seeded_ws_id = await _seed_workspace_for_tests(
             org_id=uuid4(),
             provider_id="in_memory",
-            provider="remote_agent",
-            spec={"sha": "deadbeef"},
             plugin_state={},
-            status="active",
-            activated_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC) + timedelta(seconds=600),
-            max_idle_seconds=600,
+            sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=exec_id,
+            current_holder_workflow_id=UUID(exec_id),
+            caller_session=db_session,
         )
-        db_session.add(ws)
-        await db_session.flush()
 
         event = AgentEvent(
             command_id=cmd_id,
             kind=AgentEventKind.COMPLETED_SUCCESS,
             outcome_label="success",
-            outputs={"workspace_id": str(ws.id)},
+            outputs={"workspace_id": seeded_ws_id},
             reported_at=datetime.now(UTC),
             traceparent="00-aabbccdd-1122-01",
         )
@@ -276,7 +262,8 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             if n == 0:
                 break
 
-        wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
+        assert wfx is not None
         assert wfx.state == WorkflowState.DONE.value
         assert wfx.pending_agent_command_id is None
 
@@ -333,28 +320,22 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             if n == 0:
                 break
 
-        wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
+        assert wfx is not None
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
         ws_org_id = uuid4()
-        ws = WorkspaceRow(
-            id=uuid4(),
+        await _seed_workspace_for_tests(
             org_id=ws_org_id,
             provider_id="in_memory",
-            provider="remote_agent",
-            spec={"sha": "deadbeef"},
             plugin_state={},
-            status="active",
-            activated_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC) + timedelta(seconds=600),
-            max_idle_seconds=600,
+            sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=exec_id,
+            current_holder_workflow_id=UUID(exec_id),
+            caller_session=db_session,
         )
-        db_session.add(ws)
-        await db_session.flush()
 
         # Post a PROGRESS event — workflow must stay in AWAITING_AGENT.
         # Progress events call require_org_context(), so wrap in org_context.
@@ -378,7 +359,8 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             if n == 0:
                 break
 
-        wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
+        assert wfx is not None
         assert wfx.state == WorkflowState.AWAITING_AGENT.value, "progress event must not advance the workflow"
 
 
@@ -388,15 +370,15 @@ async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> Non
     workspace-activity channel so the SPA's live-tail picks them up."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.sse import shutdown as sse_shutdown  # noqa: PLC0415
+    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import subscribe_workspace_activity  # noqa: PLC0415
 
-    await sse_shutdown()
+    await redis_shutdown()
 
     ws = await _seed_workspace(db_session)
-    cmd_id = ws.__dict__["_test_seeded_command_id"]
-    wfx_id = ws.__dict__["_test_seeded_workflow_id"]
-    org_id = ws.org_id
+    cmd_id = ws["command_id"]
+    wfx_id = ws["workflow_id"]
+    org_id = ws["org_id"]
 
     # Open an SSE subscriber on the org-scoped channel BEFORE posting the event.
     sub = subscribe_workspace_activity(org_id, wfx_id)
@@ -451,30 +433,33 @@ async def test_stale_command_id_raises(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_workspace_event_ready_transitions_to_active(db_session) -> None:
+    from app.core.workspace import get_workspace_info, update_workspace_status  # noqa: PLC0415
+
     ws = await _seed_workspace(db_session)
-    cmd_id = ws.__dict__["_test_seeded_command_id"]
+    cmd_id = ws["command_id"]
+    ws_id = UUID(ws["id"])
 
     # Demote status to creating so we can observe the transition.
-    ws.status = "creating"
+    await update_workspace_status(ws_id, "creating", db_session)
     await db_session.flush()
 
     event = WorkspaceEvent(
-        workspace_id=ws.id,
+        workspace_id=ws_id,
         command_id=cmd_id,
         kind=WorkspaceEventKind.READY,
         reported_at=datetime.now(UTC),
     )
     await record_workspace_event(event, session=db_session)
     await db_session.flush()
-    await db_session.refresh(ws)
-    assert ws.status == "active"
+    info = await get_workspace_info(ws_id)
+    assert info.status.value == "active"
 
 
 @pytest.mark.asyncio
 async def test_workspace_event_with_stale_command_raises(db_session) -> None:
     ws = await _seed_workspace(db_session)
     event = WorkspaceEvent(
-        workspace_id=ws.id,
+        workspace_id=UUID(ws["id"]),
         command_id=uuid4(),  # mismatched
         kind=WorkspaceEventKind.READY,
         reported_at=datetime.now(UTC),

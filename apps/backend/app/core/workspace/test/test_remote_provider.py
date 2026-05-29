@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -11,10 +11,11 @@ from app.core.agent_gateway import (
     AuthBlock,
     HeartbeatRequest,
     RepoRef,
-    WorkspaceAgentRow,
+    _seed_agent_for_tests,
     clear_queues,
     connection_status_for_org,
     ensure_agent_row,
+    get_agent_info,
     pick_agent_for_org,
     queue_depth,
     record_heartbeat,
@@ -37,19 +38,13 @@ async def _seed_reachable_agent(
     *,
     org_id=None,
     heartbeat_age_seconds: int = 0,
-) -> WorkspaceAgentRow:
+) -> dict:
     org_id = org_id or uuid4()
-    row = WorkspaceAgentRow(
+    return await _seed_agent_for_tests(
         org_id=org_id,
-        agent_pod_id=uuid4(),
-        iam_arn="arn:aws:iam::123456789012:role/yaaos-agent",
-        version="0.0.1",
-        last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds),
-        state="reachable",
+        session=db_session,
+        heartbeat_age_seconds=heartbeat_age_seconds,
     )
-    db_session.add(row)
-    await db_session.flush()
-    return row
 
 
 # ── ensure_agent_row ───────────────────────────────────────────────────
@@ -66,12 +61,12 @@ async def test_ensure_agent_row_inserts_on_first_exchange(db_session) -> None:
         version="0.0.1",
         session=db_session,
     )
-    row = await db_session.get(WorkspaceAgentRow, agent_id)
-    assert row is not None
-    assert row.org_id == org_id
-    assert row.agent_pod_id == pod_id
-    assert row.state == "reachable"
-    assert row.last_heartbeat_at is not None
+    info = await get_agent_info(agent_id, session=db_session)
+    assert info is not None
+    assert info["org_id"] == org_id
+    assert info["agent_pod_id"] == pod_id
+    assert info["state"] == "reachable"
+    assert info["last_heartbeat_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -93,9 +88,10 @@ async def test_ensure_agent_row_updates_existing(db_session) -> None:
         session=db_session,
     )
     assert first_id == second_id  # same row updated
-    row = await db_session.get(WorkspaceAgentRow, first_id)
-    assert row.iam_arn == "arn-2"
-    assert row.version == "0.0.2"
+    info = await get_agent_info(first_id, session=db_session)
+    assert info is not None
+    assert info["iam_arn"] == "arn-2"
+    assert info["version"] == "0.0.2"
 
 
 # ── record_heartbeat persistence ──────────────────────────────────────
@@ -103,16 +99,20 @@ async def test_ensure_agent_row_updates_existing(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_record_heartbeat_bumps_last_heartbeat_at(db_session) -> None:
-    row = await _seed_reachable_agent(db_session, heartbeat_age_seconds=60)
-    before = row.last_heartbeat_at
+    seeded = await _seed_reachable_agent(db_session, heartbeat_age_seconds=60)
+    agent_id = seeded["id"]
+    info_before = await get_agent_info(agent_id, session=db_session)
+    assert info_before is not None
+    before = info_before["last_heartbeat_at"]
 
     response = await record_heartbeat(
-        row.id, HeartbeatRequest(reported_at=datetime.now(UTC), workspaces=()), session=db_session
+        agent_id, HeartbeatRequest(reported_at=datetime.now(UTC), workspaces=()), session=db_session
     )
     await db_session.flush()
-    await db_session.refresh(row)
-    assert row.last_heartbeat_at > before
-    assert row.state == "reachable"
+    info_after = await get_agent_info(agent_id, session=db_session)
+    assert info_after is not None
+    assert info_after["last_heartbeat_at"] > before
+    assert info_after["state"] == "reachable"
     assert response.forgotten_workspaces == ()
 
 
@@ -163,7 +163,7 @@ async def test_pick_agent_returns_recent_pod(db_session) -> None:
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.agent_id == seeded.id
+    assert picked.agent_id == seeded["id"]
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_pick_agent_prefers_least_loaded_pod(db_session) -> None:
     # Load up `busy` with two queued cleanup commands. `idle` stays at 0.
     for _ in range(2):
         await enqueue_command(
-            busy.id,
+            busy["id"],
             CleanupWorkspaceCommand(
                 command_id=uuid4(),
                 workspace_id=uuid4(),
@@ -188,12 +188,12 @@ async def test_pick_agent_prefers_least_loaded_pod(db_session) -> None:
                 auth=AuthBlock(kind="github_installation", token="x"),
             ),
         )
-    assert queue_depth(busy.id) == 2
-    assert queue_depth(idle.id) == 0
+    assert queue_depth(busy["id"]) == 2
+    assert queue_depth(idle["id"]) == 0
 
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.agent_id == idle.id, "least-loaded pod should win despite older heartbeat"
+    assert picked.agent_id == idle["id"], "least-loaded pod should win despite older heartbeat"
 
 
 @pytest.mark.asyncio
@@ -205,12 +205,12 @@ async def test_pick_agent_tie_breaks_on_recent_heartbeat(db_session) -> None:
     stale = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=60)
     fresh = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=2)
 
-    assert queue_depth(stale.id) == 0
-    assert queue_depth(fresh.id) == 0
+    assert queue_depth(stale["id"]) == 0
+    assert queue_depth(fresh["id"]) == 0
 
     picked = await pick_agent_for_org(org_id, session=db_session)
     assert picked is not None
-    assert picked.agent_id == fresh.id
+    assert picked.agent_id == fresh["id"]
 
 
 @pytest.mark.asyncio
@@ -233,8 +233,8 @@ async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -
         session=db_session,
     )
     assert command_id is not None
-    # The command landed on the picked pod's queue.
-    assert queue_depth(seeded.agent_pod_id) == 1
+    # The command landed on the picked pod's queue (keyed by agent_pod_id).
+    assert queue_depth(seeded["agent_pod_id"]) == 1
 
 
 @pytest.mark.asyncio

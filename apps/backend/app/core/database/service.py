@@ -164,6 +164,10 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("028_orgs_aws_region_and_arn_uniqueness", "orgs_aws_region_and_arn_uniqueness"),
     ("029_drop_github_installations", "drop_github_installations"),
     ("030_drop_github_settings", "drop_github_settings"),
+    ("031_notifications_generalize_subject", "notifications_generalize_subject"),
+    ("032_tickets_findings_rollup", "tickets_findings_rollup"),
+    ("033_mcp_review_tokens_org_id", "mcp_review_tokens_org_id"),
+    ("034_orgs_sso_authz_columns", "orgs_sso_authz_columns"),
 )
 
 
@@ -443,6 +447,7 @@ async def _apply_create_all_identity(conn) -> None:  # type: ignore[no-untyped-d
     import importlib  # noqa: PLC0415
 
     importlib.import_module("app.core.identity.models")
+    importlib.import_module("app.core.tenancy.models")
     importlib.import_module("app.domain.orgs.models")
     new_tables = [
         Base.metadata.tables[name]
@@ -561,12 +566,12 @@ async def _apply_create_notifications(conn) -> None:  # type: ignore[no-untyped-
 
     Idempotent: imports the model and runs `Base.metadata.create_all`
     which is `CREATE TABLE IF NOT EXISTS` underneath. The
-    `app.domain.notifications.models` import registers the table on
+    `app.core.notifications.models` import registers the table on
     `Base.metadata`.
     """
     import importlib  # noqa: PLC0415
 
-    importlib.import_module("app.domain.notifications.models")
+    importlib.import_module("app.core.notifications.models")
     await conn.run_sync(Base.metadata.create_all)
 
 
@@ -753,7 +758,7 @@ async def _apply_tickets_dedupe_external_id(conn) -> None:  # type: ignore[no-un
 async def _apply_sso_email_domains(conn) -> None:  # type: ignore[no-untyped-def]
     """add `sso_configs.email_domains` JSONB column.
 
-    Drives the real `/api/auth/sso/discover` lookup: when a user types
+    Drives the `/api/sso/discover` lookup: when a user types
     `*@acme.com` on the Login page, we look up the matching SSO config
     and return its provider. Existing rows backfill to `[]` (no claims).
     Idempotent.
@@ -871,6 +876,132 @@ async def _apply_drop_claude_code_default_timeout_seconds(conn) -> None:  # type
     await conn.execute(text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS default_timeout_seconds"))
 
 
+async def _apply_notifications_generalize_subject(conn) -> None:  # type: ignore[no-untyped-def]
+    """Generalize `notifications.ticket_id` to a generic subject reference.
+
+    - Rename `ticket_id → subject_id` (UUID, nullable).
+    - Add `subject_type` (VARCHAR(64), nullable).
+    - Backfill `subject_type = 'ticket'` for rows that had a non-null ticket_id.
+    - Drop the old per-ticket-id index; add the new dedup index on
+      `(user_id, type, subject_type, subject_id)` (partial: subject_type IS NOT NULL).
+    Idempotent.
+    """
+    statements: list[str] = [
+        # Rename column only if it still exists under the old name.
+        "DO $$ BEGIN "
+        "  IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'notifications' AND column_name = 'ticket_id') THEN "
+        "    ALTER TABLE notifications RENAME COLUMN ticket_id TO subject_id; "
+        "  END IF; "
+        "END $$",
+        # Add subject_type if absent.
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS subject_type VARCHAR(64)",
+        # Backfill: rows that had a ticket reference keep subject_type='ticket'.
+        "UPDATE notifications SET subject_type = 'ticket' WHERE subject_id IS NOT NULL AND subject_type IS NULL",
+        # Drop old single-column index (may not exist on fresh DBs).
+        "DROP INDEX IF EXISTS notifications_ticket_id_idx",
+        # Add dedup partial index.
+        "CREATE UNIQUE INDEX IF NOT EXISTS notifications_dedup_subject_idx "
+        "ON notifications (user_id, type, subject_type, subject_id) "
+        "WHERE subject_type IS NOT NULL",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_tickets_findings_rollup(conn) -> None:  # type: ignore[no-untyped-def]
+    """Denormalize findings rollup onto tickets.
+
+    - Add `findings_count INT NOT NULL DEFAULT 0`.
+    - Add `max_severity VARCHAR NULL`.
+    - Backfill from existing findings via a grouped aggregate.
+    Idempotent.
+    """
+    statements: list[str] = [
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS findings_count INT NOT NULL DEFAULT 0",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS max_severity VARCHAR",
+        # Backfill: for each ticket with a linked PR, compute rollup from findings.
+        # severity_rank: high=3, medium=2, low=1, else=0.
+        """
+        UPDATE tickets t
+        SET
+            findings_count = COALESCE(agg.cnt, 0),
+            max_severity = CASE agg.max_rank
+                WHEN 3 THEN 'high'
+                WHEN 2 THEN 'medium'
+                WHEN 1 THEN 'low'
+                ELSE NULL
+            END
+        FROM (
+            SELECT
+                f.pr_id,
+                COUNT(f.id) AS cnt,
+                MAX(
+                    CASE f.severity
+                        WHEN 'high'   THEN 3
+                        WHEN 'medium' THEN 2
+                        WHEN 'low'    THEN 1
+                        ELSE 0
+                    END
+                ) AS max_rank
+            FROM findings f
+            GROUP BY f.pr_id
+        ) agg
+        WHERE t.pr_id = agg.pr_id
+          AND t.findings_count = 0
+        """,
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_mcp_review_tokens_org_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `org_id` to `mcp_review_tokens`.
+
+    The proxy reads tenancy from the token row directly; no back-lookup into
+    the reviewer module is required. Tokens are short-lived (2h TTL) — any
+    tokens that existed before this migration are likely already expired, so
+    the NULL default is acceptable for the column add. The column is made
+    NOT NULL via `SET NOT NULL` after backfilling from the joined reviews row
+    for any still-live tokens.
+    Idempotent.
+    """
+    statements: list[str] = [
+        # Add nullable first so the ALTER succeeds on non-empty tables.
+        "ALTER TABLE mcp_review_tokens ADD COLUMN IF NOT EXISTS org_id UUID",
+        # Backfill from the reviews FK for any rows that predate this migration.
+        "UPDATE mcp_review_tokens t SET org_id = r.org_id "
+        "FROM reviews r WHERE r.id = t.review_id AND t.org_id IS NULL",
+        # Now enforce NOT NULL.
+        "ALTER TABLE mcp_review_tokens ALTER COLUMN org_id SET NOT NULL",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
+async def _apply_orgs_sso_authz_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add denormalized SSO authz columns to `orgs`.
+
+    Adds `sso_enabled BOOL NOT NULL DEFAULT false` and
+    `sso_exempt_owner_user_id UUID NULL` to the `orgs` table, then backfills
+    from `sso_configs.enabled` / `sso_configs.exempt_owner_user_id` for orgs
+    that already have an SSO config row. The source columns lack the `sso_`
+    prefix — rename-on-copy, not a straight move.
+
+    Idempotent: `ADD COLUMN IF NOT EXISTS` on repeated runs.
+    """
+    statements: list[str] = [
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN NOT NULL DEFAULT false",
+        "ALTER TABLE orgs ADD COLUMN IF NOT EXISTS sso_exempt_owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL",
+        # Backfill from sso_configs for orgs that already have a config row.
+        "UPDATE orgs o SET sso_enabled = s.enabled, "
+        "sso_exempt_owner_user_id = s.exempt_owner_user_id "
+        "FROM sso_configs s WHERE s.org_id = o.id",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
+
+
 # Postgres advisory lock key for `migrate()`. Arbitrary stable bigint — pick
 # any value that doesn't collide with another advisory lock; this codebase
 # has no other advisory-lock users.
@@ -974,6 +1105,14 @@ async def _apply_pending() -> None:
                 await _apply_drop_github_installations(conn)
             elif kind == "drop_github_settings":
                 await _apply_drop_github_settings(conn)
+            elif kind == "notifications_generalize_subject":
+                await _apply_notifications_generalize_subject(conn)
+            elif kind == "tickets_findings_rollup":
+                await _apply_tickets_findings_rollup(conn)
+            elif kind == "mcp_review_tokens_org_id":
+                await _apply_mcp_review_tokens_org_id(conn)
+            elif kind == "orgs_sso_authz_columns":
+                await _apply_orgs_sso_authz_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

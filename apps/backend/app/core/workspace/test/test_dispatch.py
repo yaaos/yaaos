@@ -1,4 +1,4 @@
-"""Single-flight claim CAS + recovery-policy registry — ."""
+"""Single-flight claim CAS — workspace dispatch tests."""
 
 from __future__ import annotations
 
@@ -8,10 +8,6 @@ from uuid import uuid4
 import pytest
 
 from app.core.workspace import (
-    clear_recovery_policies,
-    get_recovery_policy,
-    register_recovery_policy,
-    registered_recovery_labels,
     release_claim,
     try_claim,
 )
@@ -113,34 +109,3 @@ async def test_release_claim_with_wrong_command_id_is_noop(db_session) -> None:
     assert bogus is False
     await db_session.refresh(ws)
     assert ws.current_command_id == owner_cmd
-
-
-# ── Recovery policy registry ────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolate_recovery() -> None:
-    clear_recovery_policies()
-    # Re-register the boot policy so other tests see it.
-    register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")
-    yield
-    clear_recovery_policies()
-    register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")
-
-
-def test_boot_policy_maps_auth_expired() -> None:
-    assert get_recovery_policy("auth_expired") == "RefreshWorkspaceAuth"
-
-
-def test_unknown_label_returns_none() -> None:
-    assert get_recovery_policy("ghost_failure") is None
-
-
-def test_register_idempotent_same_target() -> None:
-    register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")
-    assert "auth_expired" in registered_recovery_labels()
-
-
-def test_register_conflicting_target_raises() -> None:
-    with pytest.raises(ValueError):
-        register_recovery_policy(failure_label="auth_expired", command_kind="DifferentCommand")

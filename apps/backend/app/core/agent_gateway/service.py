@@ -3,11 +3,12 @@
 The control plane keeps one FIFO per `agent_id`. Workflows write commands
 into the queue via `enqueue_command(agent_id, command)`; the agent's
 long-poll consumes them with `claim_next(agent_id, *, wait_seconds)`.
-The queue is process-local — single-instance backends only at the POC
-scale. Persisting across restarts is .Event ingestion (`record_agent_event`) consults the workspace claim
-columns set by `core/workspace.dispatch.try_claim` to apply the
-stale-claim guard, then enqueues `core/workflow.handle_agent_event` via
-the outbox in the same transaction.
+The queue is process-local — single-instance backends only at the POC scale.
+
+Event ingestion (`record_agent_event`) delegates the stale-claim guard lookup
+to the registered `WorkspaceAgentReportSink` (owned by `core/workspace`), then
+enqueues `core/workflow.handle_agent_event` via the outbox in the same
+transaction when the event is terminal.
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway.report_sink import (
+    WorkspaceEventReport,
+    get_report_sink,
+)
 from app.core.agent_gateway.types import (
     AgentCommand,
     AgentEvent,
@@ -31,12 +36,6 @@ from app.core.agent_gateway.types import (
     WorkspaceEvent,
 )
 from app.core.tasks import enqueue
-from app.core.workspace import (
-    get_workspace_claim_state,
-    get_workspace_command_state,
-    get_workspace_statuses,
-    update_workspace_status,
-)
 
 log = structlog.get_logger("core.agent_gateway")
 
@@ -151,21 +150,18 @@ async def record_heartbeat(
 
     # Reconciliation: any workspace the agent reports that the control plane
     # has dropped (row deleted or marked `destroyed`) → tell the agent to
-    # forget. The check looks up rows by id and identifies the deltas.
+    # forget. Delegates to the registered sink to keep workspace-state access
+    # inside core/workspace.
     reported_ids = {w.workspace_id for w in request.workspaces}
     if not reported_ids:
         return HeartbeatResponse(reconciled_at=datetime.now(UTC), forgotten_workspaces=())
 
-    alive_or_known = await get_workspace_statuses(reported_ids, session)
-    forgotten: list[UUID] = []
-    for entry in request.workspaces:
-        status = alive_or_known.get(entry.workspace_id)
-        if status is None or status == "destroyed":
-            forgotten.append(entry.workspace_id)
+    sink = get_report_sink()
+    forgotten_ids = await sink.reconcile_heartbeat(reported_ids, session)
 
     return HeartbeatResponse(
         reconciled_at=datetime.now(UTC),
-        forgotten_workspaces=tuple(forgotten),
+        forgotten_workspaces=tuple(forgotten_ids),
     )
 
 
@@ -188,15 +184,12 @@ async def record_agent_event(
     """
     # Look up the workspace holding this command. The single-flight claim
     # writes `current_command_id` + `current_holder_workflow_id` on the
-    # workspace; the lookup chain is `event.command_id → workspaces →
-    # current_holder_workflow_id → workflow_executions`.
-    claim = await get_workspace_claim_state(event.command_id, session)
-    if claim is None:
+    # workspace; delegates to the registered sink so workspace-state access
+    # stays inside core/workspace.
+    sink = get_report_sink()
+    holder_workflow_id = await sink.resolve_claim(event.command_id, session)
+    if holder_workflow_id is None:
         raise StaleClaimError(f"no workspace holds command {event.command_id}")
-    if claim.current_holder_workflow_id is None:
-        # Defensive: a claim without a workflow holder shouldn't exist —
-        # treat as stale so the agent abandons silently.
-        raise StaleClaimError(f"workspace {claim.workspace_id} has no current_holder_workflow_id")
 
     if not event.is_terminal():
         # Non-terminal events (progress) skip workflow-engine resumption —
@@ -207,7 +200,6 @@ async def record_agent_event(
         # so the SPA subscriber sees events regardless of the transport.
         log.info(
             "agent.event.progress",
-            workspace_id=str(claim.workspace_id),
             command_id=str(event.command_id),
         )
         from app.core.auth import require_org_context  # noqa: PLC0415
@@ -215,7 +207,7 @@ async def record_agent_event(
 
         await publish_workspace_activity(
             org_id=require_org_context(),
-            workflow_execution_id=claim.current_holder_workflow_id,
+            workflow_execution_id=holder_workflow_id,
             payload=event.model_dump(mode="json"),
         )
         return
@@ -228,7 +220,7 @@ async def record_agent_event(
     await enqueue(
         HANDLE_AGENT_EVENT,
         args={
-            "workflow_execution_id": str(claim.current_holder_workflow_id),
+            "workflow_execution_id": str(holder_workflow_id),
             "agent_command_id": str(event.command_id),
             "outcome_label": event.outcome_label or "success",
             "outputs": dict(event.outputs),
@@ -244,32 +236,28 @@ async def record_workspace_event(
     session: AsyncSession,
 ) -> None:
     """Update the workspace mirror from an agent-reported state change.
-    Applies the same stale-claim guard as `record_agent_event`."""
-    ws_cmd = await get_workspace_command_state(event.workspace_id, session)
-    if ws_cmd is None:
-        raise StaleClaimError(f"unknown workspace {event.workspace_id}")
-    if ws_cmd.current_command_id != event.command_id and ws_cmd.current_command_id is not None:
+
+    Delegates all workspace-state access to the registered sink. The sink
+    applies the stale-claim guard and the kind→status map, returning an
+    outcome VO. agent_gateway maps `accepted=False` to `StaleClaimError`
+    so the endpoint can return `410 Gone`.
+    """
+    sink = get_report_sink()
+    report = WorkspaceEventReport(
+        workspace_id=event.workspace_id,
+        command_id=event.command_id,
+        kind=event.kind,
+    )
+    outcome = await sink.apply_workspace_event(report, session)
+    if not outcome.accepted:
         raise StaleClaimError(
-            f"workspace {ws_cmd.workspace_id} command {ws_cmd.current_command_id} != event command {event.command_id}"
+            f"workspace {event.workspace_id} rejected event {event.kind!r} (command {event.command_id})"
         )
-
-    # Map agent-side workspace kind to control-plane status.
-    new_status: str | None = None
-    if event.kind == "ready":
-        new_status = "active"
-    elif event.kind == "destroyed":
-        new_status = "destroyed"
-    elif event.kind == "failed":
-        new_status = "destroy_failed"
-
-    if new_status is not None:
-        await update_workspace_status(event.workspace_id, new_status, session)
-
     log.info(
         "agent.workspace_event",
-        workspace_id=str(ws_cmd.workspace_id),
+        workspace_id=str(event.workspace_id),
         kind=event.kind,
-        new_status=new_status,
+        new_status=outcome.resolved_status,
     )
 
 
@@ -316,6 +304,66 @@ async def ensure_agent_row(
         row.last_heartbeat_at = now
         row.state = "reachable"
     return row.id
+
+
+async def get_agent_info(
+    agent_id: UUID,
+    *,
+    session: AsyncSession,
+) -> dict | None:
+    """Return a plain dict snapshot of the agent row, or None if absent.
+
+    Keys: `id`, `org_id`, `agent_pod_id`, `iam_arn`, `version`, `state`,
+    `last_heartbeat_at`. Exists so cross-module tests can verify agent state
+    without importing the Row class.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    row = await session.get(WorkspaceAgentRow, agent_id)
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "org_id": row.org_id,
+        "agent_pod_id": row.agent_pod_id,
+        "iam_arn": row.iam_arn,
+        "version": row.version,
+        "state": row.state,
+        "last_heartbeat_at": row.last_heartbeat_at,
+    }
+
+
+async def _seed_agent_for_tests(
+    *,
+    org_id: UUID,
+    session: AsyncSession,
+    iam_arn: str = "arn:aws:iam::123456789012:role/yaaos-agent",
+    version: str = "0.0.1",
+    heartbeat_age_seconds: int = 0,
+) -> dict:
+    """Insert a reachable workspace-agent row for testing.
+
+    Returns a dict with `id` (row PK), `agent_pod_id` (pod UUID), and
+    `org_id`. Backdates `last_heartbeat_at` when `heartbeat_age_seconds > 0`.
+    """
+    from uuid import uuid4 as _uuid4  # noqa: PLC0415
+
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    pod_id = _uuid4()
+    agent_id = await ensure_agent_row(
+        org_id=org_id,
+        agent_pod_id=pod_id,
+        iam_arn=iam_arn,
+        version=version,
+        session=session,
+    )
+    if heartbeat_age_seconds > 0:
+        row = await session.get(WorkspaceAgentRow, agent_id)
+        if row is not None:
+            row.last_heartbeat_at = datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds)
+            await session.flush()
+    return {"id": agent_id, "agent_pod_id": pod_id, "org_id": org_id}
 
 
 async def pick_agent_for_org(
@@ -417,3 +465,37 @@ async def connection_status_for_org(
         "pod_count": len(rows),
         "latest_heartbeat_at": latest.isoformat() if latest is not None else None,
     }
+
+
+async def has_stale_agents_for_org(
+    org_id: UUID,
+    *,
+    cutoff: datetime,
+    session: AsyncSession,
+) -> bool:
+    """Return ``True`` when the org has no `workspace_agents` row whose
+    `last_heartbeat_at` is at or after *cutoff*.
+
+    A ``True`` result means every agent pod for the org is stale (or no
+    pods have ever registered). Used by `core/workspace` to identify orgs
+    that have lost their agent fleet without importing `workspace_agents`
+    directly.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow.id)
+                .where(
+                    WorkspaceAgentRow.org_id == org_id,
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .limit(1)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return not bool(rows)

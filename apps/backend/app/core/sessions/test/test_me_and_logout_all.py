@@ -6,11 +6,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import Role
 from app.domain.orgs import repository as orgs_repo
 
 
@@ -43,10 +42,10 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
     org_a = await orgs_repo.insert_org(db_session, slug="me-org-a", display_name="A")
     org_b = await orgs_repo.insert_org(db_session, slug="me-org-b", display_name="B")
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.id, role=Role.OWNER, handle="jack"
+        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="jack"
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.id, role=Role.ADMIN, handle="jk"
+        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.ADMIN, handle="jk"
     )
     s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
@@ -64,15 +63,16 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
     assert "current_org_slug" not in body
 
     # Cleanup so other tests start clean.
-    from sqlalchemy import delete  # noqa: PLC0415
+    from sqlalchemy import text  # noqa: PLC0415
 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
     from app.core.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
-    from app.domain.orgs import MembershipRow, OrgRow  # noqa: PLC0415
 
     async with get_sessionmaker()() as cleanup:
-        await cleanup.execute(delete(MembershipRow).where(MembershipRow.user_id == user.id))
-        await cleanup.execute(delete(OrgRow).where(OrgRow.id.in_([org_a.id, org_b.id])))
+        await cleanup.execute(text("DELETE FROM memberships WHERE user_id = :uid"), {"uid": user.id})
+        await cleanup.execute(
+            text("DELETE FROM orgs WHERE id = ANY(:ids)"), {"ids": [org_a.org_id, org_b.org_id]}
+        )
         await _delete_user_artifacts_for_tests(cleanup, user_id=user.id)
         await cleanup.commit()
 
@@ -101,43 +101,21 @@ async def test_logout_all_revokes_every_session(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_me_exposes_broken_integrations_for_admins(db_session) -> None:
-    """Admins (and Owners) see the org's broken MCP integrations; Members don't."""
-    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
-
-    from app.domain.integrations import create_credential  # noqa: PLC0415
-
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="brokens-org")
+async def test_me_memberships_have_no_broken_integrations_field(db_session) -> None:
+    """/api/auth/me memberships do not expose broken_integrations — that lives
+    in GET /api/integrations/broken-summary (domain/integrations)."""
+    user = await identity_repo.insert_user(db_session, display_name="A")
+    org = await orgs_repo.insert_org(db_session, slug="me-no-broken-org")
     await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.id, role=Role.ADMIN, handle="adm"
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
     )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.id, role=Role.BUILDER, handle="mem"
-    )
-    await create_credential(
-        db_session,
-        org_id=org.id,
-        provider="linear",
-        encrypted_access_token="enc",
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        scopes=["read"],
-        allowed_tools=[],
-        enabled=True,
-        upstream_identity="bot",
-        last_refresh_status="failed",
-        last_refresh_failed_at=datetime.now(UTC),
-    )
-    a_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    m_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
-        a_resp = await c.get("/api/auth/me", cookies={"yaaos_session": a_sess.raw_token})
-        m_resp = await c.get("/api/auth/me", cookies={"yaaos_session": m_sess.raw_token})
+        resp = await c.get("/api/auth/me", cookies={"yaaos_session": sess.raw_token})
 
-    a_membership = next(m for m in a_resp.json()["memberships"] if m["slug"] == "brokens-org")
-    m_membership = next(m for m in m_resp.json()["memberships"] if m["slug"] == "brokens-org")
-    assert [b["provider"] for b in a_membership["broken_integrations"]] == ["linear"]
-    assert m_membership["broken_integrations"] == []
+    assert resp.status_code == 200
+    body = resp.json()
+    membership = next(m for m in body["memberships"] if m["slug"] == "me-no-broken-org")
+    assert "broken_integrations" not in membership

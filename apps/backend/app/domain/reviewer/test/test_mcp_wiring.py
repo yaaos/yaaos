@@ -18,10 +18,17 @@ from app.core.oauth import ProviderConfig
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import get_token_by_hash, hash_token
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import PullRequestRow
+from app.domain.pull_requests import upsert as upsert_pr
+from app.domain.reviewer import (
+    PRReviewAggregate,
+    ReviewScope,
+    ReviewTrigger,
+    SqlAlchemyAggregateRepository,
+)
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
+from app.domain.vcs import VCSPullRequest
 
 
 def _stub_config() -> ProviderConfig:
@@ -69,52 +76,54 @@ async def _seed_org(db_session, slug: str):
 async def _seed_review_row(db_session, *, org_id):
     """Insert the minimal ticket → PR → review chain so `mcp_review_tokens`
     FKs resolve. Returns the review row."""
-    ticket = TicketRow(
-        id=uuid4(),
+    ext_id = f"pr-{uuid4()}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=ext_id,
         org_id=org_id,
+        title="t",
         source="github_pr",
-        source_external_id=f"pr-{uuid4()}",
-        title="t",
+        source_external_id=ext_id,
         plugin_id="github",
         repo_external_id="owner/repo",
+        session=db_session,
     )
-    db_session.add(ticket)
-    await db_session.flush()
-    pr = PullRequestRow(
-        id=uuid4(),
+    pr = await upsert_pr(
+        VCSPullRequest(
+            plugin_id="github",
+            repo_external_id="owner/repo",
+            external_id=ext_id,
+            number=1,
+            title="t",
+            body=None,
+            author_login="a",
+            author_type="user",
+            base_branch="main",
+            head_branch="b",
+            base_sha="0",
+            head_sha="1",
+            is_draft=False,
+            is_fork=False,
+            state="open",
+            html_url="http://test",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
         org_id=org_id,
-        plugin_id="github",
-        repo_external_id="owner/repo",
-        external_id=ticket.source_external_id,
-        number=1,
-        title="t",
-        body=None,
-        author_login="a",
-        author_type="user",
-        base_branch="main",
-        head_branch="b",
-        base_sha="0",
-        head_sha="1",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://test",
-        ticket_id=ticket.id,
+        session=db_session,
     )
-    db_session.add(pr)
-    await db_session.flush()
-    review = ReviewRow(
-        id=uuid4(),
-        org_id=org_id,
-        pr_id=pr.id,
-        sequence_number=1,
-        status="queued",
-        trigger_reason="manual_full",
-        destination="vcs",
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org_id)
+    review = agg.start_review(
+        trigger=ReviewTrigger.MANUAL_FULL,
+        scope=ReviewScope.full(base_sha="0", head_sha="1"),
+        commit_sha="1",
     )
-    db_session.add(review)
-    await db_session.flush()
-    return review
+    repo = SqlAlchemyAggregateRepository(db_session)
+    await repo.save(agg)
+    # Return the raw ReviewRow for the FKs
+    return await db_session.get(ReviewRow, review.id)
 
 
 async def _seed_credential(
@@ -145,7 +154,7 @@ async def test_no_connected_providers_returns_none(db_session, stub_providers) -
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-none")
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -153,9 +162,9 @@ async def test_no_connected_providers_returns_none(db_session, stub_providers) -
 async def test_disabled_provider_excluded(db_session, stub_providers) -> None:
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-disabled")
-    await _seed_credential(db_session, org_id=org.id, provider="linear_stub", enabled=False)
+    await _seed_credential(db_session, org_id=org.org_id, provider="linear_stub", enabled=False)
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -165,12 +174,12 @@ async def test_broken_creds_provider_excluded(db_session, stub_providers) -> Non
     org = await _seed_org(db_session, slug="mcp-broken")
     await _seed_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="linear_stub",
         last_refresh_status="failed",
     )
     await db_session.commit()
-    payload = await _build_mcp_payload(uuid4(), org_id=org.id)
+    payload = await _build_mcp_payload(uuid4(), org_id=org.org_id)
     assert payload is None
 
 
@@ -178,17 +187,17 @@ async def test_broken_creds_provider_excluded(db_session, stub_providers) -> Non
 async def test_connected_provider_mints_token_and_surfaces_servers(db_session, stub_providers) -> None:
     del stub_providers
     org = await _seed_org(db_session, slug="mcp-connected")
-    review = await _seed_review_row(db_session, org_id=org.id)
+    review = await _seed_review_row(db_session, org_id=org.org_id)
     await _seed_credential(
         db_session,
-        org_id=org.id,
+        org_id=org.org_id,
         provider="linear_stub",
         allowed_tools=["update_issue"],
     )
-    await _seed_credential(db_session, org_id=org.id, provider="notion_stub", allowed_tools=[])
+    await _seed_credential(db_session, org_id=org.org_id, provider="notion_stub", allowed_tools=[])
     await db_session.commit()
 
-    payload = await _build_mcp_payload(review.id, org_id=org.id)
+    payload = await _build_mcp_payload(review.id, org_id=org.org_id)
     assert payload is not None
     assert payload["base_url"].endswith(f"/api/mcp/{review.id}")
 

@@ -1,9 +1,9 @@
-"""Service layer for `domain/notifications`.
+"""Service layer for `core/notifications`.
 
 Write path:
-    `record(*, user_id, org_id, type, title, body, ticket_id, session)`
-    — idempotent by `(user_id, type, ticket_id)` so re-emitting the same
-    workflow transition doesn't double-write.
+    `create(*, user_id, org_id, type, title, body, subject_type, subject_id, session)`
+    — idempotent by `(user_id, type, subject_type, subject_id)` when a subject
+    is provided; subject-less notifications are always written.
 
 Read paths:
     `list_for_user(...)` — full list (filterable by read_state, org, types).
@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.notifications.models import NotificationRow
+from app.core.notifications.models import NotificationRow
 
 ReadState = Literal["all", "unread", "read"]
 
@@ -31,7 +31,8 @@ class Notification(BaseModel):
     user_id: UUID
     org_id: UUID
     type: str
-    ticket_id: UUID | None
+    subject_type: str | None
+    subject_id: UUID | None
     title: str
     body: str
     read_at: datetime | None
@@ -44,7 +45,8 @@ class Notification(BaseModel):
             user_id=row.user_id,
             org_id=row.org_id,
             type=row.type,
-            ticket_id=row.ticket_id,
+            subject_type=row.subject_type,
+            subject_id=row.subject_id,
             title=row.title,
             body=row.body,
             read_at=row.read_at,
@@ -52,32 +54,50 @@ class Notification(BaseModel):
         )
 
 
-async def record(
+async def create(
     *,
     user_id: UUID,
     org_id: UUID,
     type: str,
     title: str,
     body: str,
-    ticket_id: UUID | None = None,
+    subject_type: str | None = None,
+    subject_id: UUID | None = None,
     session: AsyncSession,
 ) -> Notification | None:
-    """Idempotent write keyed on `(user_id, type, ticket_id)`. Returns the
-    new notification, or `None` if a matching row already exists."""
-    if ticket_id is not None:
+    """Idempotent write.
+
+    When a subject is provided, keyed on `(user_id, type, subject_type, subject_id)` —
+    re-emitting the same event for the same subject is a no-op, returning `None`.
+    Subject-less notifications (both null) are always written.
+
+    Invariant: `subject_type` and `subject_id` must be both null or both set.
+    """
+    if (subject_type is None) != (subject_id is None):
+        raise ValueError("subject_type and subject_id must both be null or both be set")
+
+    if subject_type is not None:
         existing = (
             await session.execute(
                 select(NotificationRow).where(
                     NotificationRow.user_id == user_id,
                     NotificationRow.type == type,
-                    NotificationRow.ticket_id == ticket_id,
+                    NotificationRow.subject_type == subject_type,
+                    NotificationRow.subject_id == subject_id,
                 )
             )
         ).scalar_one_or_none()
         if existing is not None:
             return None
+
     row = NotificationRow(
-        user_id=user_id, org_id=org_id, type=type, title=title, body=body, ticket_id=ticket_id
+        user_id=user_id,
+        org_id=org_id,
+        type=type,
+        title=title,
+        body=body,
+        subject_type=subject_type,
+        subject_id=subject_id,
     )
     session.add(row)
     await session.flush()

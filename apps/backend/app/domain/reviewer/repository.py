@@ -293,7 +293,13 @@ class SqlAlchemyAggregateRepository:
                         pr_id=r.pr_id,
                         sequence_number=r.sequence_number,
                         trigger_reason=r.trigger_reason,
-                        scope_kind=r.scope,
+                        scope_kind=(r.scope.kind.value if isinstance(r.scope, ReviewScope) else str(r.scope)),
+                        scope_prev_sha=(
+                            r.scope.base_sha
+                            if isinstance(r.scope, ReviewScope)
+                            and r.scope.kind == ReviewScopeKind.INCREMENTAL
+                            else None
+                        ),
                         commit_sha_at_start=r.commit_sha_at_start,
                         status=r.status,
                         superseded_by_review_id=r.superseded_by_review_id,

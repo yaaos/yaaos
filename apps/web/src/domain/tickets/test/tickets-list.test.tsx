@@ -24,11 +24,11 @@ vi.mock("@domain/auth", () => ({
       user: { id: "u1", display_name: "Jane", primary_email: "j@x.test", emails: [] },
       memberships: [
         {
+          org_id: "o1",
           slug: "acme",
           display_name: "Acme",
           role: "admin",
           handle: "jane",
-          broken_integrations: [],
         },
       ],
     },

@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.domain import pull_requests
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
 
 
@@ -47,20 +47,17 @@ async def _insert_pr(
     number: int = 1,
 ) -> pull_requests.PullRequest:
     """Helper: insert a ticket + PR row and return the PullRequest."""
-    ticket_id = uuid4()
-    db_session.add(
-        TicketRow(
-            id=ticket_id,
-            org_id=org_id,
-            source="github_pr",
-            source_external_id=external_id,
-            title="t",
-            description=None,
-            status="running",
-            plugin_id="github",
-            repo_external_id="org/repo",
-            type="github_pr",
-        )
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=external_id,
+        org_id=org_id,
+        title="t",
+        source="github_pr",
+        source_external_id=external_id,
+        plugin_id="github",
+        repo_external_id="org/repo",
+        session=db_session,
     )
     pr = await pull_requests.upsert(
         _vcs_pr(external_id=external_id, number=number),

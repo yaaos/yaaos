@@ -14,9 +14,9 @@ import uuid
 
 import pytest
 
+from app.core.redis import reset_pubsub
 from app.core.sse import (
     publish_workspace_activity,
-    reset_pubsub,
     subscribe_workspace_activity,
 )
 

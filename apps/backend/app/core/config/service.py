@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
     yaaos_auth_cleanup_interval_seconds: int = 60 * 60  # 1 hour
     yaaos_integrations_health_check_interval_seconds: int = 60 * 60  # 1 hour
+    yaaos_mcp_token_sweep_interval_seconds: int = 60 * 60  # 1 hour
 
     # Orphan-ticket sweep. A `running` ticket without any reviews row is the
     # tail of a webhook that didn't reach the reviewer (missing BYOK key,

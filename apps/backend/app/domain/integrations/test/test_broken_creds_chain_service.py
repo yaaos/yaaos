@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 
 from app.core.audit_log import list_for_org
-from app.core.auth import AuthMiddleware
+from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
@@ -31,12 +31,18 @@ from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import Role, get_test_inbox
+from app.domain.orgs import get_test_inbox
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import PullRequestRow
-from app.domain.reviewer import ReviewRow
+from app.domain.pull_requests import upsert as upsert_pr
+from app.domain.reviewer import (
+    PRReviewAggregate,
+    ReviewScope,
+    ReviewTrigger,
+    SqlAlchemyAggregateRepository,
+)
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
-from app.domain.tickets import TicketRow
+from app.domain.tickets import create as create_ticket
+from app.domain.vcs import VCSPullRequest
 
 
 def _config() -> ProviderConfig:
@@ -114,11 +120,11 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
         db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True
     )
     await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.id, role=Role.OWNER, handle="owner"
+        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
     )
     db_session.add(
         McpCredentialRow(
-            org_id=org.id,
+            org_id=org.org_id,
             provider="stub_chain",
             encrypted_access_token=encrypt("upstream-access").decode(),
             encrypted_refresh_token=None,
@@ -139,56 +145,57 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     assert counts["notified"] == 1
     assert any(m.to == "owner@example.com" for m in inbox)
 
-    failure_audits = await list_for_org(org_id=org.id, actions=["mcp.stub_chain.token_refresh_failed"])
+    failure_audits = await list_for_org(org_id=org.org_id, actions=["mcp.stub_chain.token_refresh_failed"])
     assert len(failure_audits) == 1
 
     # 4. Seed a review + mint its bearer.
-    ticket = TicketRow(
-        id=uuid4(),
-        org_id=org.id,
+    ext_id = f"pr-{uuid4()}"
+    ticket_id, _ = await create_ticket(
+        type="pr_review",
+        payload={},
+        idempotency_key=ext_id,
+        org_id=org.org_id,
+        title="t",
         source="github_pr",
-        source_external_id=f"pr-{uuid4()}",
-        title="t",
+        source_external_id=ext_id,
         plugin_id="github",
         repo_external_id="owner/repo",
+        session=db_session,
     )
-    db_session.add(ticket)
-    await db_session.flush()
-    pr = PullRequestRow(
-        id=uuid4(),
-        org_id=org.id,
-        plugin_id="github",
-        repo_external_id="owner/repo",
-        external_id=ticket.source_external_id,
-        number=1,
-        title="t",
-        body=None,
-        author_login="a",
-        author_type="user",
-        base_branch="main",
-        head_branch="b",
-        base_sha="0",
-        head_sha="1",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://test",
-        ticket_id=ticket.id,
+    pr = await upsert_pr(
+        VCSPullRequest(
+            plugin_id="github",
+            repo_external_id="owner/repo",
+            external_id=ext_id,
+            number=1,
+            title="t",
+            body=None,
+            author_login="a",
+            author_type="user",
+            base_branch="main",
+            head_branch="b",
+            base_sha="0",
+            head_sha="1",
+            is_draft=False,
+            is_fork=False,
+            state="open",
+            html_url="http://test",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        ticket_id=ticket_id,
+        org_id=org.org_id,
+        session=db_session,
     )
-    db_session.add(pr)
-    await db_session.flush()
-    review = ReviewRow(
-        id=uuid4(),
-        org_id=org.id,
-        pr_id=pr.id,
-        sequence_number=1,
-        status="running",
-        trigger_reason="manual_full",
-        destination="vcs",
+    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
+    review = agg.start_review(
+        trigger=ReviewTrigger.MANUAL_FULL,
+        scope=ReviewScope.full(base_sha="0", head_sha="1"),
+        commit_sha="1",
     )
-    db_session.add(review)
-    await db_session.flush()
-    raw_token = await mint_token(review.id, session=db_session)
+    repo = SqlAlchemyAggregateRepository(db_session)
+    await repo.save(agg)
+    raw_token = await mint_token(review.id, org_id=org.org_id, session=db_session)
     await db_session.commit()
 
     # 5. Agent calls a tool through the proxy. Proxy sees broken creds.

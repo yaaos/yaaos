@@ -137,20 +137,30 @@ async def upsert(
         await session.refresh(row)
         return PullRequest.from_row(row)
 
+    # Explicit per-field sync — compare incoming VO to the row, apply only
+    # what changed, and record the field name for the audit payload.
     changed: list[str] = []
-    for field in (
-        "title",
-        "body",
-        "base_sha",
-        "head_sha",
-        "is_draft",
-        "state",
-        "html_url",
-    ):
-        new = getattr(pr, field)
-        if getattr(existing, field) != new:
-            setattr(existing, field, new)
-            changed.append(field)
+    if existing.title != pr.title:
+        existing.title = pr.title
+        changed.append("title")
+    if existing.body != pr.body:
+        existing.body = pr.body
+        changed.append("body")
+    if existing.base_sha != pr.base_sha:
+        existing.base_sha = pr.base_sha
+        changed.append("base_sha")
+    if existing.head_sha != pr.head_sha:
+        existing.head_sha = pr.head_sha
+        changed.append("head_sha")
+    if existing.is_draft != pr.is_draft:
+        existing.is_draft = pr.is_draft
+        changed.append("is_draft")
+    if existing.state != pr.state:
+        existing.state = pr.state
+        changed.append("state")
+    if existing.html_url != pr.html_url:
+        existing.html_url = pr.html_url
+        changed.append("html_url")
     existing.last_synced_at = datetime.now(UTC)
     if changed:
         await audit_for_pr(

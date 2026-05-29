@@ -16,10 +16,8 @@ import pytest
 
 from app.core.audit_log import ActorKind
 from app.core.auth import org_context
-from app.core.sse import (
-    reset_pubsub,
-    subscribe_workspace_activity,
-)
+from app.core.redis import reset_pubsub
+from app.core.sse import subscribe_workspace_activity
 from app.core.workflow import CommandContext
 from app.domain.coding_agent import ActivityEvent
 from app.domain.reviewer.commands import _activity_publisher_for
