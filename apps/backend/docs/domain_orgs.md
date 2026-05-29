@@ -39,6 +39,7 @@ Both audit with `from_role` + `to_role` payload.
 ## VCS + coding agents
 
 - One VCS plugin per org. State on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). GitHub install handshake is via `POST /api/github/install/start` (separate endpoint so `X-Org-Slug` + CSRF are available); `set_vcs` records the choice on first-bind. Switching is two-step: clear then set.
+- `clear_vcs` calls every hook registered via `register_vcs_clear_hook` (see `vcs.py`) before clearing the org row. VCS plugins (e.g. `plugins/github`) register a hook at boot to delete their per-org install rows — no direct model import needed in `domain/orgs`.
 - Many coding-agent plugins per org via `org_coding_agents(org_id, plugin_id)` with `settings jsonb`. All mutations audit.
 
 ## BYOK routes

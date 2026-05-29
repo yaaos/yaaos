@@ -110,7 +110,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sessions", "app.core.webserver", "app.domain.coding_agent", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sessions", "app.core.webserver", "app.domain.coding_agent", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.plugins"
@@ -202,6 +202,7 @@ expose = [
   "IdentityExchangeResponse",
   "InvokeClaudeCodeCommand",
   "InvokeClaudeCodeLimits",
+  "OrgArnRef",
   "RefreshWorkspaceAuthCommand",
   "RepoRef",
   "StaleClaimError",
@@ -226,11 +227,14 @@ expose = [
   "get_report_sink",
   "get_subscriber_registry",
   "has_any_reachable_agent",
+  "has_stale_agents_for_org",
+  "lookup_org_by_arn",
   "pick_agent_for_org",
   "queue_depth",
   "record_agent_event",
   "record_heartbeat",
   "record_workspace_event",
+  "register_org_arn_lookup",
   "register_report_sink",
   "revoke_all_for_org",
   "shutdown",
@@ -758,6 +762,7 @@ expose = [
   "SentEmail",
   "SsoConfig",
   "SsoConfigError",
+  "VcsClearHook",
   "VcsState",
   "accept_invitation",
   "audit_web",
@@ -779,6 +784,7 @@ expose = [
   "list_coding_agents",
   "register_assertion_verifier",
   "register_onboarding_contributor",
+  "register_vcs_clear_hook",
   "remove_member",
   "repository",
   "run_assertion_verifier",

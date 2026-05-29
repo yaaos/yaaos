@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, We
 from fastapi.responses import JSONResponse, Response
 
 from app.core.agent_gateway import bearers
+from app.core.agent_gateway.org_arn_lookup import lookup_org_by_arn
 from app.core.agent_gateway.rate_limit import RateLimitedError, check_identity_exchange
 from app.core.agent_gateway.service import (
     claim_next,
@@ -145,42 +146,36 @@ async def exchange_identity(
             detail={"error": "unauthorized", "detail": "sts_verification_failed"},
         )
 
-    from sqlalchemy import text as sa_text  # noqa: PLC0415
+    org_ref = await lookup_org_by_arn(verified.canonical_arn)
+    if org_ref is None:
+        log.warning(
+            "identity_exchange.arn_not_registered",
+            canonical_arn=verified.canonical_arn,
+            source_ip=source_ip,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "detail": "forbidden_unregistered_arn"},
+        )
+    org_id = org_ref.id
+    org_region = org_ref.aws_region
+
+    # Region pinning: the signed request must target the same AWS
+    # region the org has on file. Defeats cross-region replay of a
+    # signature stolen from a different STS endpoint.
+    if org_region and verified.region != org_region:
+        log.warning(
+            "identity_exchange.region_mismatch",
+            org_region=org_region,
+            attempted_region=verified.region,
+            source_ip=source_ip,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "detail": "sts_verification_failed"},
+        )
 
     async with db_session() as s:
-        org_row = (
-            await s.execute(
-                sa_text("SELECT id, aws_region FROM orgs WHERE registered_iam_arn = :arn LIMIT 1"),
-                {"arn": verified.canonical_arn},
-            )
-        ).first()
-        if org_row is None:
-            log.warning(
-                "identity_exchange.arn_not_registered",
-                canonical_arn=verified.canonical_arn,
-                source_ip=source_ip,
-            )
-            raise HTTPException(
-                status_code=403,
-                detail={"error": "forbidden", "detail": "forbidden_unregistered_arn"},
-            )
-        org_id, org_region = org_row[0], org_row[1]
-
-        # Region pinning: the signed request must target the same AWS
-        # region the org has on file. Defeats cross-region replay of a
-        # signature stolen from a different STS endpoint.
-        if org_region and verified.region != org_region:
-            log.warning(
-                "identity_exchange.region_mismatch",
-                org_region=org_region,
-                attempted_region=verified.region,
-                source_ip=source_ip,
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={"error": "unauthorized", "detail": "sts_verification_failed"},
-            )
-
         agent_id = await ensure_agent_row(
             org_id=org_id,
             agent_pod_id=request.agent_pod_id,

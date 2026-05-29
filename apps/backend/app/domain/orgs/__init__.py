@@ -1,5 +1,6 @@
 """domain/orgs — orgs, memberships, invitations, SSO config, VCS + coding-agents."""
 
+from app.core.agent_gateway import register_org_arn_lookup as _register_arn_lookup
 from app.domain.orgs import (
     repository,
     sso,
@@ -46,6 +47,7 @@ from app.domain.orgs.service import (
     get_org,
     get_org_by_slug,
 )
+from app.domain.orgs.service import _lookup_org_by_arn as _arn_lookup_impl
 from app.domain.orgs.sso import (
     SsoConfigError,
     get_config,
@@ -55,11 +57,15 @@ from app.domain.orgs.sso import (
     upsert_config,
 )
 from app.domain.orgs.vcs import (
+    VcsClearHook,
     VcsState,
     clear_vcs,
     get_vcs,
+    register_vcs_clear_hook,
     set_vcs,
 )
+
+_register_arn_lookup(_arn_lookup_impl)
 
 # NOTE: `orgs.web`, `orgs.audit_web`, and `orgs.sso_web` are registered from
 # `main.py` (after `core.sessions` loads), not imported here — they cycle
@@ -85,6 +91,7 @@ __all__ = [
     "SentEmail",
     "SsoConfig",
     "SsoConfigError",
+    "VcsClearHook",
     "VcsState",
     "accept_invitation",
     "audit_web",
@@ -106,6 +113,7 @@ __all__ = [
     "list_coding_agents",
     "register_assertion_verifier",
     "register_onboarding_contributor",
+    "register_vcs_clear_hook",
     "remove_member",
     "repository",
     "run_assertion_verifier",

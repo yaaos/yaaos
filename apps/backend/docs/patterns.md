@@ -70,6 +70,12 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
   - **Rule-1** — a name in `__all__` that resolves to a SQLAlchemy mapped/Row class (class inheriting from `*Base*`, or any name imported `from <any>.models`) is rejected with exit 2.
   - **Rule-5** — a function listed in `__all__` whose return annotation or parameter annotations reference a Row type is rejected with exit 2.
   - Both rules are AST-based (import-free, env-free, `# noqa`-immune). `apps/backend/bin/test_module_boundaries.py` carries three canary tests that inject real violations into the tickets module and assert non-zero exit.
+- **`bin/check_table_access` enforces two additional rules that tach cannot see:**
+  - **Raw-SQL ownership** — AST-parses every `app/**/models.py` to build `table_name → owning_module`, then scans every production `.py` under `app/` (excluding `test/` dirs) for `text(...)` / `sa_text(...)` calls. Any call that references a table owned by a different module fails. Non-literal args (f-strings, variables) also fail — all auditable raw SQL must be a string literal.
+  - **Suppression guard** — fails on any `# tach-ignore` directive in any `.py` under `app/` (prod + tests). One suppression reopens the import hole the tach interface check depends on.
+  - Only `app/core/database/**` is allowlisted (owns `Base`, runs migrations, advisory locks, schema introspection). No other module may use raw SQL against a foreign table.
+  - `apps/backend/bin/test_check_table_access.py` carries four canary tests asserting non-zero exit for each violation kind.
+- **`# tach-ignore` directives are banned everywhere in `app/`.** The suppression guard in `bin/check_table_access` enforces this at every CI run.
 - Tests obey the same import rules. A test needing another module's persisted state drives the same service API real callers use, or constructs a VO directly (in-memory). No `*Row` constructor across module boundaries.
 
 ## Module structure

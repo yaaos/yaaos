@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
@@ -194,6 +195,35 @@ async def get_org_by_slug(slug: str) -> Org | None:
 
     async with db_session() as s:
         return await _repo_get_by_slug(s, slug)
+
+
+async def _lookup_org_by_arn(canonical_arn: str) -> object:
+    """Backing function for the `core/agent_gateway` ARN-lookup registry.
+
+    Looks up the org whose `registered_iam_arn` equals *canonical_arn*
+    (case-sensitive; callers must canonicalize to lowercase first) and
+    returns a `core/agent_gateway.OrgArnRef` VO. Returns ``None`` when no
+    match.
+
+    Registered into `core/agent_gateway.register_org_arn_lookup` at module
+    import so the identity-exchange handler never needs a `core → domain`
+    import. Return type is `object` to avoid a forward-reference to the
+    core module at annotation evaluation time.
+    """
+    from app.core.agent_gateway import OrgArnRef  # noqa: PLC0415
+
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(OrgRow).where(
+                    OrgRow.registered_iam_arn == canonical_arn,
+                    OrgRow.archived_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        return None
+    return OrgArnRef(id=row.id, aws_region=row.aws_region)
 
 
 async def delete_expired_invitations() -> int:

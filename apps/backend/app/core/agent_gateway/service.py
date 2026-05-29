@@ -465,3 +465,37 @@ async def connection_status_for_org(
         "pod_count": len(rows),
         "latest_heartbeat_at": latest.isoformat() if latest is not None else None,
     }
+
+
+async def has_stale_agents_for_org(
+    org_id: UUID,
+    *,
+    cutoff: datetime,
+    session: AsyncSession,
+) -> bool:
+    """Return ``True`` when the org has no `workspace_agents` row whose
+    `last_heartbeat_at` is at or after *cutoff*.
+
+    A ``True`` result means every agent pod for the org is stale (or no
+    pods have ever registered). Used by `core/workspace` to identify orgs
+    that have lost their agent fleet without importing `workspace_agents`
+    directly.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    rows = (
+        (
+            await session.execute(
+                select(WorkspaceAgentRow.id)
+                .where(
+                    WorkspaceAgentRow.org_id == org_id,
+                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
+                )
+                .limit(1)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return not bool(rows)

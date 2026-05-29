@@ -605,11 +605,27 @@ async def _onboarding_github_app_installed(org_id: UUID) -> bool:
     return row is not None
 
 
+async def _on_vcs_cleared(org_id: UUID, plugin_id: str, session: Any) -> None:
+    """VCS-clear hook: remove the org's github install row when the org
+    unlinks its GitHub VCS plugin. Called by `domain/orgs.clear_vcs` via
+    the registered hook so `domain/orgs` never imports plugin models.
+    """
+    from sqlalchemy import delete as _sql_delete  # noqa: PLC0415
+
+    if plugin_id != "github":
+        return
+    await session.execute(
+        _sql_delete(GitHubAppInstallationRow).where(GitHubAppInstallationRow.org_id == org_id)
+    )
+    await session.flush()
+
+
 def bootstrap() -> None:
-    from app.domain.orgs import register_onboarding_contributor  # noqa: PLC0415
+    from app.domain.orgs import register_onboarding_contributor, register_vcs_clear_hook  # noqa: PLC0415
 
     register_vcs_plugin(_plugin)
     register_onboarding_contributor("github_app_installed", _onboarding_github_app_installed)
+    register_vcs_clear_hook(_on_vcs_cleared)
 
 
 def get_plugin() -> GitHubPlugin:

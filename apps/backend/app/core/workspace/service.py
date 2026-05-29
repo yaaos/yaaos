@@ -564,47 +564,42 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     have all gone stale beyond the heartbeat threshold (failsafe 6).
 
     POC scope: per-org check rather than per-pod (workspaces don't carry
-    `agent_id` directly). An org with remote_agent provider whose every
+    `agent_id` directly). An org with remote_agent workspaces whose every
     `workspace_agents` row has a stale `last_heartbeat_at` (or none ever)
     is considered to have lost its agent fleet. Workspaces in non-terminal
     states transition to EXPIRED with reason `agent_loss`.
-
-    Bearer revocation goes through `core.agent_gateway.bearers` (lazy
-    import to keep the workspace module from importing the gateway at
-    init time).
     """
-    from sqlalchemy import text as sa_text  # noqa: PLC0415
+    from app.core.agent_gateway import has_stale_agents_for_org  # noqa: PLC0415
 
     cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Find orgs in remote-agent mode where every workspace_agents row is
-    # stale (or there are none at all but a workspace exists in flight).
-    stale_orgs = (
-        await s.execute(
-            sa_text(
-                """
-                SELECT o.id
-                  FROM orgs o
-                 WHERE o.workspace_provider = 'remote_agent'
-                   AND EXISTS (
-                         SELECT 1 FROM workspaces w
-                          WHERE w.org_id = o.id
-                            AND w.status IN ('creating', 'active')
-                   )
-                   AND NOT EXISTS (
-                         SELECT 1 FROM workspace_agents a
-                          WHERE a.org_id = o.id
-                            AND a.last_heartbeat_at IS NOT NULL
-                            AND a.last_heartbeat_at >= :cutoff
-                   )
-                """
-            ),
-            {"cutoff": cutoff},
+    # Find distinct org IDs that have at least one active remote-agent workspace.
+    # `workspaces.provider` records whether a workspace was dispatched via the
+    # remote agent — workspace's own column, no cross-module query needed.
+    candidate_org_ids = (
+        (
+            await s.execute(
+                select(WorkspaceRow.org_id)
+                .distinct()
+                .where(
+                    WorkspaceRow.provider == "remote_agent",
+                    WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+                )
+            )
         )
-    ).fetchall()
-    if not stale_orgs:
+        .scalars()
+        .all()
+    )
+
+    stale_org_ids = [
+        org_id
+        for org_id in candidate_org_ids
+        if await has_stale_agents_for_org(org_id, cutoff=cutoff, session=s)
+    ]
+
+    if not stale_org_ids:
         return
 
-    for (org_id,) in stale_orgs:
+    for org_id in stale_org_ids:
         rows = (
             (
                 await s.execute(

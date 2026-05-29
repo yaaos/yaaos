@@ -3,21 +3,45 @@
 One VCS per org. State lives on the `orgs` table (`vcs_plugin_id`,
 `vcs_settings`). Switching is explicit: clear, then set. Every mutation emits
 an audit-log entry.
+
+VCS plugins that own per-org install rows register a cleanup callback via
+`register_vcs_clear_hook`. `clear_vcs` calls every registered hook so
+plugin-owned data is wiped without `domain/orgs` importing plugin models.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
 from app.domain.orgs.models import OrgRow
 
 log = structlog.get_logger("orgs.vcs")
+
+# VcsClearHook: called by `clear_vcs` when an org's VCS choice is removed.
+# Args: (org_id, plugin_id, session). Must flush inside the same transaction.
+VcsClearHook = Callable[[UUID, str, AsyncSession], Awaitable[None]]
+
+_VCS_CLEAR_HOOKS: list[VcsClearHook] = []
+
+
+def register_vcs_clear_hook(hook: VcsClearHook) -> None:
+    """Register a cleanup callback invoked by `clear_vcs`.
+
+    Called by VCS plugins at boot so they can delete their per-org install
+    rows without this module importing plugin models.
+    """
+    _VCS_CLEAR_HOOKS.append(hook)
+
+
+def _reset_vcs_clear_hooks_for_tests() -> None:
+    _VCS_CLEAR_HOOKS.clear()
 
 
 class VcsState(BaseModel):
@@ -86,15 +110,11 @@ async def clear_vcs(
     prior = row.vcs_plugin_id
     row.vcs_plugin_id = None
     row.vcs_settings = None
-    # Wipe the github plugin's per-org install row here (instead of importing
-    # its model, which would invert the domain→plugins layering). Raw SQL
-    # keeps the table name visible without dragging a plugin import into
-    # domain/.
-    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text — literal SQL with parameterized org_id
-    await session.execute(
-        text("DELETE FROM github_app_installations WHERE org_id = :org_id"),
-        {"org_id": org_id},
-    )
+    # Call registered VCS plugin cleanup hooks (e.g. deleting github install
+    # rows). Plugins register via `register_vcs_clear_hook` at boot; no
+    # direct plugin-model import needed here.
+    for hook in _VCS_CLEAR_HOOKS:
+        await hook(org_id, prior, session)
     await session.flush()
     await audit(
         "org",
