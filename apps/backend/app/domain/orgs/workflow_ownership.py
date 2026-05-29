@@ -14,7 +14,6 @@ from sqlalchemy import select
 from app.core.auth import require_org_context
 from app.core.database import session as db_session
 from app.core.workflow import WorkflowExecutionRow
-from app.domain.tickets import TicketRow
 
 
 async def assert_workflow_in_org(
@@ -26,6 +25,8 @@ async def assert_workflow_in_org(
     404 on cross-org access matches yaaos's existence-non-disclosure default:
     a caller in org A learns nothing about whether a wfx id exists in org B.
     """
+    from app.domain.tickets import TicketRow  # noqa: PLC0415
+
     caller_org_id = require_org_context()
     async with db_session() as s:
         wfx = await s.get(WorkflowExecutionRow, workflow_execution_id)

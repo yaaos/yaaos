@@ -1,8 +1,8 @@
 """Service tests: ticket status-change producer writes to both outbox and SSE.
 
 Covers:
-- _transition enqueues a `notifications.handle_ticket_status_change` outbox row
-  with the correct member_user_ids list.
+- _transition enqueues a `notifications.fanout` outbox row with the correct
+  NotificationSpec list for terminal status changes.
 - _transition fires a general SSE event after commit with kind
   "ticket_status_changed".
 - _transition rollback does not emit any SSE event.
@@ -80,9 +80,9 @@ async def _make_ticket(db_session, org_id):  # type: ignore[no-untyped-def]
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_status_change_enqueues_notification_with_member_list(db_session) -> None:  # type: ignore[no-untyped-def]
-    """complete() must write exactly one outbox row whose args.member_user_ids
-    contains every active org member — no more, no less."""
+async def test_status_change_enqueues_fanout_specs(db_session) -> None:  # type: ignore[no-untyped-def]
+    """complete() must enqueue one `notifications.fanout` outbox row whose
+    specs list contains one entry per active org member."""
     org_id, user_ids = await _make_org_with_members(db_session, num_members=2)
     ticket_id = await _make_ticket(db_session, org_id)
 
@@ -96,7 +96,7 @@ async def test_status_change_enqueues_notification_with_member_list(db_session) 
         (
             await db_session.execute(
                 select(OutboxEntryRow).where(
-                    OutboxEntryRow.payload["task_name"].astext == "notifications.handle_ticket_status_change"
+                    OutboxEntryRow.payload["task_name"].astext == "notifications.fanout"
                 )
             )
         )
@@ -105,14 +105,17 @@ async def test_status_change_enqueues_notification_with_member_list(db_session) 
     )
 
     assert len(rows) == 1, f"expected exactly 1 outbox row, got {len(rows)}"
-    args = rows[0].payload["args"]
-    assert args["ticket_id"] == str(ticket_id)
-    assert args["org_id"] == str(org_id)
-    assert args["new_status"] == "done"
+    specs = rows[0].payload["args"]["specs"]
+    assert len(specs) == len(user_ids), f"expected {len(user_ids)} specs, got {len(specs)}"
 
-    enqueued_ids = set(args["member_user_ids"])
+    enqueued_user_ids = {s["user_id"] for s in specs}
     expected_ids = {str(u) for u in user_ids}
-    assert enqueued_ids == expected_ids, f"member ids mismatch: {enqueued_ids} != {expected_ids}"
+    assert enqueued_user_ids == expected_ids, f"user ids mismatch: {enqueued_user_ids} != {expected_ids}"
+
+    for spec in specs:
+        assert spec["subject_type"] == "ticket"
+        assert spec["subject_id"] == str(ticket_id)
+        assert spec["type"] == "ticket_completed"
 
 
 @pytest.mark.service

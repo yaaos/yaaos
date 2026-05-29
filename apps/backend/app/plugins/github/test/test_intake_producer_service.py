@@ -1,11 +1,11 @@
 """Service test: GitHub PR-opened intake path writes to both outbox and SSE.
 
 Covers `_prepare_pr_review` producing:
-- one `notifications.handle_ticket_status_change` outbox row with org members, and
+- one `notifications.fanout` outbox row with NotificationSpecs for org members, and
 - one general SSE event with kind "ticket_status_changed".
 
-The existing `test_intake_type.py` covers the old in-process SSE bus; this file
-covers the new durable outbox + Redis-based SSE path.
+The existing `test_intake_type.py` covers the in-process SSE bus; this file
+covers the durable outbox + Redis-based SSE path.
 """
 
 from __future__ import annotations
@@ -121,18 +121,19 @@ async def _seed_org_with_members(db_session, num_members: int = 2):  # type: ign
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_intake_pr_opened_enqueues_notification_and_publishes_general(
+async def test_intake_enqueues_fanout_via_ticket_policy(
     db_session, redis_or_skip, _stub_pr_review_engine
 ) -> None:
     """A PR-opened webhook must:
-    - enqueue one outbox row for handle_ticket_status_change with member ids, and
+    - enqueue one `notifications.fanout` outbox row with NotificationSpecs for each
+      org member (sourced from tickets.build_status_change_specs), and
     - publish a general SSE event after commit with kind 'ticket_status_changed'.
     """
     from app.core.sse import reset_pubsub, subscribe_general  # noqa: PLC0415
 
     reset_pubsub()
     try:
-        org_id, user_ids = await _seed_org_with_members(db_session, num_members=2)
+        org_id, _user_ids = await _seed_org_with_members(db_session, num_members=2)
         received: list[dict] = []
 
         async def _consume() -> None:
@@ -161,25 +162,20 @@ async def test_intake_pr_opened_enqueues_notification_and_publishes_general(
         assert evt["new_status"] == "running"
         assert "ts" in evt
 
-        # Outbox row
+        # `running` status does not warrant user notifications, so no fanout row.
         rows = (
             (
                 await db_session.execute(
                     select(OutboxEntryRow).where(
-                        OutboxEntryRow.payload["task_name"].astext
-                        == "notifications.handle_ticket_status_change"
+                        OutboxEntryRow.payload["task_name"].astext == "notifications.fanout"
                     )
                 )
             )
             .scalars()
             .all()
         )
-
-        assert len(rows) == 1, f"expected 1 outbox row, got {len(rows)}"
-        args = rows[0].payload["args"]
-        assert args["new_status"] == "running"
-        enqueued_ids = set(args["member_user_ids"])
-        expected_ids = {str(u) for u in user_ids}
-        assert enqueued_ids == expected_ids
+        assert len(rows) == 0, (
+            f"expected 0 fanout rows for 'running' status (no notification warranted), got {len(rows)}"
+        )
     finally:
         reset_pubsub()

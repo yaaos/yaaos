@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit_for_ticket
 from app.core.database import session as db_session
+from app.core.notifications import fanout
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
 from app.domain.tickets.models import TicketRow
+from app.domain.tickets.notifications import build_status_change_specs
 
 # Single 5-state ticket vocabulary. `hitl` and `failed` are populated by
 # the workflow-state projection (reviewer/workflow_review_view.py); the
@@ -166,7 +168,6 @@ async def create(
         org_id=org_id,
         session=session,
     )
-    from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
     from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
 
     members = await list_active_member_ids(org_id, session=session)
@@ -180,16 +181,19 @@ async def create(
             "previous_status": None,
         },
     )
-    await enqueue(
-        handle_ticket_status_change,
-        args={
-            "ticket_id": str(row.id),
-            "member_user_ids": [str(u) for u in members],
-            "org_id": str(org_id),
-            "new_status": "pending",
-        },
-        session=session,
+    specs = build_status_change_specs(
+        ticket_id=row.id,
+        org_id=org_id,
+        ticket_title=row.title,
+        member_user_ids=members,
+        new_status="pending",
     )
+    if specs:
+        await enqueue(
+            fanout,
+            args={"specs": [s.to_dict() for s in specs]},
+            session=session,
+        )
     return row.id, True
 
 
@@ -256,7 +260,6 @@ async def create_for_pr(
             org_id=org_id,
             session=s,
         )
-        from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
         from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
 
         members = await list_active_member_ids(org_id, session=s)
@@ -270,16 +273,19 @@ async def create_for_pr(
                 "previous_status": None,
             },
         )
-        await enqueue(
-            handle_ticket_status_change,
-            args={
-                "ticket_id": str(row_id),
-                "member_user_ids": [str(u) for u in members],
-                "org_id": str(org_id),
-                "new_status": "running",
-            },
-            session=s,
+        specs = build_status_change_specs(
+            ticket_id=row_id,
+            org_id=org_id,
+            ticket_title=title,
+            member_user_ids=members,
+            new_status="running",
         )
+        if specs:
+            await enqueue(
+                fanout,
+                args={"specs": [s.to_dict() for s in specs]},
+                session=s,
+            )
         await s.commit()
     return await get(row_id, org_id=org_id)
 
@@ -576,7 +582,6 @@ async def _transition(
             org_id=org_id,
             session=s,
         )
-        from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
         from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
 
         members = await list_active_member_ids(org_id, session=s)
@@ -590,14 +595,17 @@ async def _transition(
                 "previous_status": prev,
             },
         )
-        await enqueue(
-            handle_ticket_status_change,
-            args={
-                "ticket_id": str(ticket_id),
-                "member_user_ids": [str(u) for u in members],
-                "org_id": str(org_id),
-                "new_status": new_status,
-            },
-            session=s,
+        specs = build_status_change_specs(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            ticket_title=row.title,
+            member_user_ids=members,
+            new_status=new_status,
         )
+        if specs:
+            await enqueue(
+                fanout,
+                args={"specs": [s.to_dict() for s in specs]},
+                session=s,
+            )
         await s.commit()

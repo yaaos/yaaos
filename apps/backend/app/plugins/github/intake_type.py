@@ -333,10 +333,11 @@ class GithubIntakeType:
 
         # Broadcast the ticket-creation status change via the durable outbox +
         # after-commit Redis publish so the SPA's general SSE channel is notified.
+        from app.core.notifications import fanout  # noqa: PLC0415
         from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
         from app.core.tasks import enqueue  # noqa: PLC0415
-        from app.domain.notifications import handle_ticket_status_change  # noqa: PLC0415
         from app.domain.orgs import list_active_member_ids  # noqa: PLC0415
+        from app.domain.tickets import build_status_change_specs  # noqa: PLC0415
 
         members = await list_active_member_ids(org_id, session=session)
         publish_general_after_commit(
@@ -349,16 +350,19 @@ class GithubIntakeType:
                 "previous_status": None,
             },
         )
-        await enqueue(
-            handle_ticket_status_change,
-            args={
-                "ticket_id": str(ticket_id),
-                "member_user_ids": [str(u) for u in members],
-                "org_id": str(org_id),
-                "new_status": "running",
-            },
-            session=session,
+        specs = build_status_change_specs(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            ticket_title=vcs_pr.title,
+            member_user_ids=members,
+            new_status="running",
         )
+        if specs:
+            await enqueue(
+                fanout,
+                args={"specs": [s.to_dict() for s in specs]},
+                session=session,
+            )
 
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.

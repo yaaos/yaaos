@@ -103,8 +103,10 @@ async def test_dispatch_events_emits_after_commit(db_session) -> None:  # type: 
 
     assert len(received) >= 1
     kinds = {e["kind"] for e in received}
-    # complete_review emits ReviewCompleted + FindingRaised; either is fine.
+    # _seed_finding calls start_review + complete_review; dispatch_events emits
+    # ReviewRequested, FindingRaised, and ReviewCompleted — any one is sufficient.
     assert kinds & {
+        GeneralEventKind.REVIEW_REQUESTED.value,
         GeneralEventKind.REVIEW_COMPLETED.value,
         GeneralEventKind.FINDING_RAISED.value,
     }, f"Expected at least one reviewer event kind, got: {kinds}"

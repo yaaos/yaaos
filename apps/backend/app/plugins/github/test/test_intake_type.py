@@ -7,6 +7,9 @@ so the assertion stays focused on the status-change side effects.
 The durable outbox + Redis-based SSE path is covered by
 `test_intake_producer_service.py` (requires Redis). This file asserts on the
 outbox row only (no Redis dependency).
+
+`running` status does not produce a notification (see tickets/notifications.py),
+so no `notifications.fanout` row is expected for PR-opened.
 """
 
 from __future__ import annotations
@@ -96,8 +99,9 @@ def _pr_opened_payload() -> dict:
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_prepare_pr_review_enqueues_ticket_status_change(db_session, _stub_pr_review_engine) -> None:
-    """A GitHub PR-opened webhook must enqueue a durable notification task
-    so the status change reaches org members via `domain/notifications`."""
+    """A GitHub PR-opened webhook must publish a SSE ticket_status_changed event;
+    no fanout notification row is expected because 'running' does not warrant
+    user notifications per tickets.build_status_change_specs."""
     org_id = uuid4()
     outcome = await GithubIntakeType()._prepare_pr_review(
         payload=_pr_opened_payload(),
@@ -109,18 +113,16 @@ async def test_prepare_pr_review_enqueues_ticket_status_change(db_session, _stub
 
     assert outcome.detail == "pr_review_started"
 
+    # `running` is not in the notification-worthy set; no fanout row expected.
     rows = (
         (
             await db_session.execute(
                 select(OutboxEntryRow).where(
-                    OutboxEntryRow.payload["task_name"].astext == "notifications.handle_ticket_status_change"
+                    OutboxEntryRow.payload["task_name"].astext == "notifications.fanout"
                 )
             )
         )
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    args = rows[0].payload["args"]
-    assert args["new_status"] == "running"
-    assert args["org_id"] == str(org_id)
+    assert len(rows) == 0, f"'running' status should not enqueue a fanout row, got {len(rows)}"

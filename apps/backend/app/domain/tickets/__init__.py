@@ -2,6 +2,7 @@
 
 from app.domain.tickets import web  # noqa: F401
 from app.domain.tickets.models import TicketRow
+from app.domain.tickets.notifications import build_status_change_specs
 from app.domain.tickets.service import (
     InvalidTicketTransition,
     Ticket,
@@ -36,6 +37,7 @@ __all__ = [
     "abandon",
     "attach_pr_to_ticket",
     "attach_workflow_execution",
+    "build_status_change_specs",
     "complete",
     "create",
     "create_for_pr",
