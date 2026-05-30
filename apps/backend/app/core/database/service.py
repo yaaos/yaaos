@@ -169,6 +169,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("033_mcp_review_tokens_org_id", "mcp_review_tokens_org_id"),
     ("034_orgs_sso_authz_columns", "orgs_sso_authz_columns"),
     ("035_uuid_pk_uuidv7_defaults", "uuid_pk_uuidv7_defaults"),
+    ("036_workspaces_agent_id", "workspaces_agent_id"),
 )
 
 
@@ -584,6 +585,17 @@ async def _apply_lessons_created_by(conn) -> None:  # type: ignore[no-untyped-de
     system-created lessons (workspace agent, reviewer) stay anonymous.
     """
     await conn.execute(text("ALTER TABLE lessons ADD COLUMN IF NOT EXISTS created_by UUID"))
+
+
+async def _apply_workspaces_agent_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """add `workspaces.agent_id` (nullable UUID).
+
+    Records the owning agent (`workspace_agents.id`) chosen at create-dispatch.
+    Soft FK; no backfill — existing rows stay NULL (in-memory / legacy
+    workspaces that never went through a remote agent). Post-create commands
+    route to this agent so a workspace lives and dies with its owning pod.
+    """
+    await conn.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_id UUID"))
 
 
 async def _apply_collapse_ticket_status(conn) -> None:  # type: ignore[no-untyped-def]
@@ -1182,6 +1194,8 @@ async def _apply_pending() -> None:
                 await _apply_orgs_sso_authz_columns(conn)
             elif kind == "uuid_pk_uuidv7_defaults":
                 await _apply_uuid_pk_uuidv7_defaults(conn)
+            elif kind == "workspaces_agent_id":
+                await _apply_workspaces_agent_id(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

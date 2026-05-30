@@ -97,6 +97,7 @@ async def seed_workspace(
     sha: str,
     current_command_id: UUID | None = None,
     current_holder_workflow_id: UUID | None = None,
+    agent_id: UUID | None = None,
     status: str | None = None,
     caller_session: AsyncSession | None = None,
 ) -> str:
@@ -111,6 +112,8 @@ async def seed_workspace(
 
     `current_command_id` and `current_holder_workflow_id` are optional — set
     them when the test needs to simulate a claimed workspace (agent_gateway tests).
+    `agent_id` sets the owning agent (`WorkspaceRow.agent_id`) — set it when the
+    test exercises per-agent ownership authz.
     """
     from app.core.database import session as get_session  # noqa: PLC0415
     from app.core.workspace.models import WorkspaceRow  # noqa: PLC0415
@@ -129,6 +132,7 @@ async def seed_workspace(
             plugin_state=plugin_state,
             current_command_id=current_command_id,
             current_holder_workflow_id=current_holder_workflow_id,
+            agent_id=agent_id,
         )
 
     if caller_session is not None:

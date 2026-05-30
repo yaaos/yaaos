@@ -21,6 +21,11 @@ class WorkspaceRow(Base):
         PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
     )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
+    # owning agent (`workspace_agents.id`); soft FK. Set at create-dispatch to
+    # the agent that ran `CreateWorkspace` — that pod owns this workspace for
+    # its whole life, so every post-create command routes back to it. NULL for
+    # in-memory/legacy rows that never went through a remote agent.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     provider_id: Mapped[str] = mapped_column(String, nullable=False)
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     plugin_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

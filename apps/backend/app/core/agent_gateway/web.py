@@ -12,6 +12,23 @@ canonicalized (assumed-role → role) and matched against
 bearer is issued via `core.agent_gateway.bearers`. Every other gateway
 endpoint and the WebSocket upgrade authenticate by looking that bearer
 up in the ledger.
+
+Per-endpoint authorization beyond bearer validity:
+- `heartbeat` / `claim_command` / the activity WebSocket bind on a path
+  `agent_id`. They additionally require `bearer.agent_id == path agent_id`
+  (see `_require_self`) so a bearer issued to one pod cannot address
+  another pod's heartbeat row, dispatch queue, or activity channel — a
+  within-org IDOR the `org_context` wrap alone does not close.
+- `post_workspace_event` / `post_command_event` bind on `workspace_id` /
+  `command_id`, which resolve to a workspace carrying an owning `agent_id`
+  (`WorkspaceRow.agent_id`, set at create-dispatch). When the resolved
+  workspace has an owner that isn't the bearer's agent → 403 `forbidden`
+  (same envelope as `_require_self`). This closes the within-org IDOR where
+  one pod's bearer reports state for another pod's workspace. A command that
+  resolves to no workspace (e.g. an agent-scoped `ConfigUpdate`, which has
+  no `workspace_id`) or a workspace with a NULL `agent_id` (in-memory/legacy)
+  carries no ownership edge to check: authorization falls back to the org
+  scope (`org_context`) plus the stale-claim guard in the sink.
 """
 
 from __future__ import annotations
@@ -26,6 +43,7 @@ from fastapi.responses import JSONResponse, Response
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.org_arn_lookup import lookup_org_by_arn
 from app.core.agent_gateway.rate_limit import RateLimitedError, check_identity_exchange
+from app.core.agent_gateway.report_sink import get_report_sink
 from app.core.agent_gateway.service import (
     claim_next,
     record_agent_event,
@@ -79,6 +97,47 @@ async def _bearer_dep(authorization: str | None = Header(default=None)) -> beare
         return await _verify_bearer(authorization)
     except UnauthorizedError as exc:
         raise HTTPException(status_code=401, detail={"error": "unauthorized", "detail": str(exc)}) from exc
+
+
+def _require_self(agent: bearers.BearerContext, agent_id: UUID) -> None:
+    """Reject when the bearer's resolved agent doesn't match the path `agent_id`.
+
+    Mirrors the WebSocket handler's `ctx.agent_id != agent_id → 4403` guard:
+    a stolen bearer for one pod must not address another pod's row or queue,
+    even within the same org. The `org_context` wrap blocks cross-org access;
+    this closes the within-org IDOR.
+    """
+    if agent.agent_id != agent_id:
+        log.warning(
+            "agent_gateway.agent_mismatch",
+            bearer_agent_id=str(agent.agent_id),
+            path_agent_id=str(agent_id),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "detail": "bearer agent does not match path agent_id"},
+        )
+
+
+def _require_workspace_owner(agent: bearers.BearerContext, owning_agent_id: UUID | None) -> None:
+    """Reject when a workspace has an owning agent that isn't the bearer's.
+
+    `owning_agent_id` is `WorkspaceRow.agent_id` resolved via the report sink.
+    None means no ownership edge to enforce — the workspace has no owner
+    (in-memory/legacy) or the command resolves to no workspace (e.g. an
+    agent-scoped ConfigUpdate); authorization then falls back to org scope +
+    the stale-claim guard. Same 403 envelope as `_require_self`.
+    """
+    if owning_agent_id is not None and owning_agent_id != agent.agent_id:
+        log.warning(
+            "agent_gateway.workspace_owner_mismatch",
+            bearer_agent_id=str(agent.agent_id),
+            owning_agent_id=str(owning_agent_id),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "detail": "bearer agent does not own this workspace"},
+        )
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────
@@ -198,6 +257,7 @@ async def exchange_identity(
         bearer=plaintext,
         expires_at=record.expires_at,
         agent_id=agent_id,
+        org_id=org_id,
     )
 
 
@@ -207,6 +267,7 @@ async def heartbeat(
     agent_id: UUID = Path(...),
     agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> HeartbeatResponse:
+    _require_self(agent, agent_id)
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         async with db_session() as s:
             response = await record_heartbeat(agent_id, request, session=s)
@@ -220,8 +281,14 @@ async def claim_command(
     agent_id: UUID = Path(...),
     agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
+    _require_self(agent, agent_id)
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
-        cmd = await claim_next(agent_id, wait_seconds=request.wait_seconds)
+        cmd = await claim_next(
+            agent_id,
+            wait_seconds=request.wait_seconds,
+            lifecycle=request.lifecycle,
+            active_workspace_ids=list(request.active_workspace_ids),
+        )
         if cmd is None:
             return Response(status_code=204)
         return JSONResponse(status_code=200, content=cmd.model_dump(mode="json"))
@@ -241,6 +308,8 @@ async def post_workspace_event(
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         try:
             async with db_session() as s:
+                owning_agent_id = await get_report_sink().owning_agent_for_workspace(workspace_id, s)
+                _require_workspace_owner(agent, owning_agent_id)
                 await record_workspace_event(event, session=s)
                 await s.commit()
         except StaleClaimError as exc:
@@ -263,6 +332,8 @@ async def post_command_event(
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         try:
             async with db_session() as s:
+                owning_agent_id = await get_report_sink().owning_agent_for_command(command_id, s)
+                _require_workspace_owner(agent, owning_agent_id)
                 await record_agent_event(event, session=s)
                 await s.commit()
         except StaleClaimError as exc:

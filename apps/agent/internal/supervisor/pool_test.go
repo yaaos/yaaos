@@ -5,18 +5,19 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
 	"github.com/yaaos/agent/internal/workspace"
 )
 
-func newCreateCmd(workspaceID, commandID string) *protocol.AgentCommand {
-	return &protocol.AgentCommand{
-		Kind: protocol.KindCreateWorkspace,
-		CreateWorkspace: &protocol.CreateWorkspaceCommand{
+func newCreateCmd(workspaceID, commandID string) command.WorkspaceCommand {
+	return &command.CreateWorkspaceCommand{
+		Proto: protocol.CreateWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
 				CommandID:   commandID,
 				WorkspaceID: workspaceID,
@@ -27,25 +28,27 @@ func newCreateCmd(workspaceID, commandID string) *protocol.AgentCommand {
 	}
 }
 
-func newWriteCmd(workspaceID, commandID string) *protocol.AgentCommand {
-	return &protocol.AgentCommand{
-		Kind: protocol.KindWriteFiles,
-		WriteFiles: &protocol.WriteFilesCommand{
+func newWriteCmd(workspaceID, commandID string) command.WorkspaceCommand {
+	return &command.WriteFilesCommand{
+		Proto: protocol.WriteFilesCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: commandID, WorkspaceID: workspaceID, Traceparent: "tp-" + commandID,
-				Kind: protocol.KindWriteFiles,
+				CommandID:   commandID,
+				WorkspaceID: workspaceID,
+				Traceparent: "tp-" + commandID,
+				Kind:        protocol.KindWriteFiles,
 			},
 		},
 	}
 }
 
-func newCleanupCmd(workspaceID, commandID string) *protocol.AgentCommand {
-	return &protocol.AgentCommand{
-		Kind: protocol.KindCleanupWorkspace,
-		CleanupWorkspace: &protocol.CleanupWorkspaceCommand{
+func newCleanupCmd(workspaceID, commandID string) command.WorkspaceCommand {
+	return &command.CleanupWorkspaceCommand{
+		Proto: protocol.CleanupWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: commandID, WorkspaceID: workspaceID, Traceparent: "tp-" + commandID,
-				Kind: protocol.KindCleanupWorkspace,
+				CommandID:   commandID,
+				WorkspaceID: workspaceID,
+				Traceparent: "tp-" + commandID,
+				Kind:        protocol.KindCleanupWorkspace,
 			},
 		},
 	}
@@ -55,7 +58,7 @@ func TestPool_FirstCommandSpawnsRunner_SuccessEvent(t *testing.T) {
 	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil)
+	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
 	if ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("kind: want completed_success got %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -71,7 +74,7 @@ func TestPool_NonCreateForUnknownWorkspace_Failure(t *testing.T) {
 	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	ev := pool.Dispatch(context.Background(), newWriteCmd("ws-unknown", "c-1"), nil)
+	ev := pool.Dispatch(context.Background(), newWriteCmd("ws-unknown", "c-1"), nil, 0)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("kind: want completed_failure got %q", ev.Kind)
 	}
@@ -94,17 +97,53 @@ func TestPool_MultipleCommandsReuseSameRunner(t *testing.T) {
 	pool := NewPool(counter, nil)
 	defer pool.CloseAll(context.Background())
 
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
-	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-2"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-2"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("write: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
-	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-3"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-3"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("write2: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
 	if spawnCount != 1 {
 		t.Errorf("spawn count: want 1, got %d", spawnCount)
+	}
+}
+
+// TestPool_ConcurrentSameIDCreate_SpawnsExactlyOneRunner proves the
+// check-and-set in reserveActiveSlot: N concurrent CreateWorkspace dispatches
+// for the SAME workspace_id spawn exactly one runner (no orphaned runner from
+// a lost reservation race) and leave exactly one Active registry record. Run
+// with -race to exercise the atomic reservation guard.
+func TestPool_ConcurrentSameIDCreate_SpawnsExactlyOneRunner(t *testing.T) {
+	var spawnCount atomic.Int64
+	inner := InProcessSpawn(workspace.StubHandler{})
+	counter := func(ctx context.Context, id string) (WorkspaceRunner, error) {
+		spawnCount.Add(1)
+		return inner(ctx, id)
+	}
+	pool := NewPool(counter, nil)
+	defer pool.CloseAll(context.Background())
+
+	const total = 16
+	var wg sync.WaitGroup
+	for i := 0; i < total; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			pool.Dispatch(context.Background(), newCreateCmd("ws-shared", fmtWS(i)), nil, 0)
+		}(i)
+	}
+	wg.Wait()
+
+	if got := spawnCount.Load(); got != 1 {
+		t.Errorf("spawn count for concurrent same-id create: want 1, got %d", got)
+	}
+	// Exactly one Active record survives — the at-most-one-runner invariant.
+	ids := pool.ActiveIDs()
+	if len(ids) != 1 || ids[0] != "ws-shared" {
+		t.Errorf("ActiveIDs: want [ws-shared], got %v", ids)
 	}
 }
 
@@ -121,14 +160,14 @@ func TestPool_CleanupReapsRunner_RespawnOnNextCreate(t *testing.T) {
 	pool := NewPool(counter, nil)
 	defer pool.CloseAll(context.Background())
 
-	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil)
-	pool.Dispatch(context.Background(), newCleanupCmd("ws-1", "c-2"), nil)
+	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
+	pool.Dispatch(context.Background(), newCleanupCmd("ws-1", "c-2"), nil, 0)
 	// After cleanup, another Write for ws-1 finds no runner.
-	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-3"), nil); ev.Kind != protocol.EventCompletedFailure {
+	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-3"), nil, 0); ev.Kind != protocol.EventCompletedFailure {
 		t.Errorf("post-cleanup write should fail-no-runner, got %q", ev.Kind)
 	}
 	// But a new CreateWorkspace respawns.
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-4"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-4"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("respawn create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
 	if spawnCount != 2 {
@@ -148,13 +187,13 @@ func TestPool_ParallelDispatchAcrossWorkspaces(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			wsID := fmtWS(i)
-			if ev := pool.Dispatch(context.Background(), newCreateCmd(wsID, "c-create-"+wsID), nil); ev.Kind != protocol.EventCompletedSuccess {
+			if ev := pool.Dispatch(context.Background(), newCreateCmd(wsID, "c-create-"+wsID), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 				mu.Lock()
 				failures++
 				mu.Unlock()
 				return
 			}
-			if ev := pool.Dispatch(context.Background(), newWriteCmd(wsID, "c-write-"+wsID), nil); ev.Kind != protocol.EventCompletedSuccess {
+			if ev := pool.Dispatch(context.Background(), newWriteCmd(wsID, "c-write-"+wsID), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 				mu.Lock()
 				failures++
 				mu.Unlock()
@@ -175,7 +214,7 @@ func TestPool_SpawnFailure_EmitsFailure(t *testing.T) {
 	}
 	pool := NewPool(failingSpawn, nil)
 
-	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil)
+	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("want completed_failure, got %q", ev.Kind)
 	}
@@ -184,46 +223,65 @@ func TestPool_SpawnFailure_EmitsFailure(t *testing.T) {
 	}
 }
 
-// hangingHandler blocks the workspace's response forever — used to test
-// ctx cancellation while a Send is in-flight.
-type hangingHandler struct{ workspace.StubHandler }
+// hangingOps blocks InvokeClaudeCode forever — used to test ctx cancellation
+// while a Send is in-flight.
+type hangingOps struct{ workspace.StubHandler }
 
-func (hangingHandler) InvokeClaudeCode(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (hangingOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.InvokeResult{}, ctx.Err()
 }
 
 func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
-	pool := NewPool(InProcessSpawn(hangingHandler{}), nil)
+	pool := NewPool(InProcessSpawn(hangingOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	// First spawn the workspace via a successful CreateWorkspace.
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
 
-	invokeCmd := &protocol.AgentCommand{
-		Kind: protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+	invokeCmd := &command.InvokeClaudeCodeCommand{
+		Proto: protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: "c-invoke", WorkspaceID: "ws-1", Traceparent: "tp-invoke",
-				Kind: protocol.KindInvokeClaudeCode,
+				CommandID:   "c-invoke",
+				WorkspaceID: "ws-1",
+				Traceparent: "tp-invoke",
+				Kind:        protocol.KindInvokeClaudeCode,
 			},
 			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 1},
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	ev := pool.Dispatch(ctx, invokeCmd, nil)
+	ev := pool.Dispatch(ctx, invokeCmd, nil, 0)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("want completed_failure on ctx cancel, got %q", ev.Kind)
 	}
 	if !strings.Contains(ev.FailureReason, "runner:") {
 		t.Errorf("failure_reason: want 'runner:' prefix, got %q", ev.FailureReason)
 	}
-	// The cancelled runner should be dropped — a CreateWorkspace
-	// respawns rather than reusing the broken one.
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-respawn"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	// The runner should be marked defunct — verify via KnownIDs (record
+	// stays) and Snapshot (status=exited).
+	known := pool.KnownIDs()
+	if _, ok := known["ws-1"]; !ok {
+		t.Errorf("defunct workspace should still be in KnownIDs after cancel")
+	}
+	snap := pool.Snapshot()
+	found := false
+	for _, e := range snap {
+		if e.WorkspaceID == "ws-1" {
+			found = true
+			if e.Status != "exited" {
+				t.Errorf("status after cancel: want exited got %q", e.Status)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ws-1 should still be in Snapshot after runner failure")
+	}
+	// A new CreateWorkspace respawns into a fresh Active record.
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-respawn"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Errorf("respawn after cancel: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
 }
@@ -231,11 +289,15 @@ func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
 func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
 
-	cmd := &protocol.AgentCommand{
-		Kind:            protocol.KindCreateWorkspace,
-		CreateWorkspace: &protocol.CreateWorkspaceCommand{},
+	// A CreateWorkspaceCommand with no workspace_id.
+	cmd := &command.CreateWorkspaceCommand{
+		Proto: protocol.CreateWorkspaceCommand{
+			CommandHeader: protocol.CommandHeader{
+				Kind: protocol.KindCreateWorkspace,
+			},
+		},
 	}
-	ev := pool.Dispatch(context.Background(), cmd, nil)
+	ev := pool.Dispatch(context.Background(), cmd, nil, 0)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("want completed_failure, got %q", ev.Kind)
 	}
@@ -244,33 +306,34 @@ func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 	}
 }
 
-// emittingInvokeHandler emits 3 progress events from InvokeClaudeCode then
-// succeeds. Used to test the supervisor.Pool → workspace.Run progress-
-// forwarding path end-to-end.
-type emittingInvokeHandler struct{ workspace.StubHandler }
+// emittingInvokeOps emits 3 progress events from RunClaude then succeeds.
+// Used to test the supervisor.Pool → workspace.Run progress-forwarding
+// path end-to-end.
+type emittingInvokeOps struct{ workspace.StubHandler }
 
-func (emittingInvokeHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (emittingInvokeOps) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	e := workspace.EmitterFromContext(ctx)
 	for i := 0; i < 3; i++ {
 		e.Progress(map[string]any{"i": i, "workspace_id": cmd.WorkspaceID})
 	}
-	return map[string]any{"workspace_id": cmd.WorkspaceID, "done": true}, nil
+	return command.InvokeResult{WorkspaceID: cmd.WorkspaceID}, nil
 }
 
 func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
-	pool := NewPool(InProcessSpawn(emittingInvokeHandler{}), nil)
+	pool := NewPool(InProcessSpawn(emittingInvokeOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	// First spawn via CreateWorkspace.
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
 
-	invokeCmd := &protocol.AgentCommand{
-		Kind: protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+	invokeCmd := &command.InvokeClaudeCodeCommand{
+		Proto: protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: "c-invoke", WorkspaceID: "ws-1", Kind: protocol.KindInvokeClaudeCode,
+				CommandID:   "c-invoke",
+				WorkspaceID: "ws-1",
+				Kind:        protocol.KindInvokeClaudeCode,
 			},
 			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 60},
 		},
@@ -281,7 +344,7 @@ func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
 		pmu.Lock()
 		progress = append(progress, p)
 		pmu.Unlock()
-	})
+	}, 0)
 	if terminal.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("terminal: want completed_success got %q (reason=%q)", terminal.Kind, terminal.FailureReason)
 	}
@@ -302,22 +365,23 @@ func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
 }
 
 func TestPool_ProgressForwarderNilDoesntPanic(t *testing.T) {
-	pool := NewPool(InProcessSpawn(emittingInvokeHandler{}), nil)
+	pool := NewPool(InProcessSpawn(emittingInvokeOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil)
-	invokeCmd := &protocol.AgentCommand{
-		Kind: protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0)
+	invokeCmd := &command.InvokeClaudeCodeCommand{
+		Proto: protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: "c-invoke", WorkspaceID: "ws-1", Kind: protocol.KindInvokeClaudeCode,
+				CommandID:   "c-invoke",
+				WorkspaceID: "ws-1",
+				Kind:        protocol.KindInvokeClaudeCode,
 			},
 			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 60},
 		},
 	}
 	// nil onProgress: progress events are silently dropped — no panic,
 	// terminal event still arrives.
-	ev := pool.Dispatch(context.Background(), invokeCmd, nil)
+	ev := pool.Dispatch(context.Background(), invokeCmd, nil, 0)
 	if ev.Kind != protocol.EventCompletedSuccess {
 		t.Errorf("terminal with nil onProgress: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -325,7 +389,7 @@ func TestPool_ProgressForwarderNilDoesntPanic(t *testing.T) {
 
 // TestPool_TraceContinuity_BackendParentToWorkspaceChild proves the
 // supervisor → workspace dispatch path links spans through one trace_id.
-// The backend's traceparent enters via the AgentCommand header; the
+// The backend's traceparent enters via the command header; the
 // workspace's handle.<kind> span on the way out should share that
 // trace_id and have a parent_span_id linking back through the chain.
 func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
@@ -346,14 +410,15 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.CreateWorkspace")
 
 	// Now rewrite the cmd's traceparent to the supervisor's span (the
-	// same rewrite supervisor.routeCommand does before pool.Dispatch).
-	cmd := newCreateCmd("ws-1", "c-1")
-	cmd.CreateWorkspace.Traceparent = tracing.InjectTraceparent(ctx)
-	if cmd.CreateWorkspace.Traceparent == "" {
+	// same rewrite routeCommand does via cmd.SetTraceparent before
+	// pool.Dispatch).
+	cmd := newCreateCmd("ws-1", "c-1").(*command.CreateWorkspaceCommand)
+	cmd.Proto.Traceparent = tracing.InjectTraceparent(ctx)
+	if cmd.Proto.Traceparent == "" {
 		t.Fatal("supervisor span should produce non-empty traceparent")
 	}
 
-	ev := pool.Dispatch(ctx, cmd, nil)
+	ev := pool.Dispatch(ctx, cmd, nil, 0)
 	end(nil)
 	if ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("dispatch: %q (reason=%q)", ev.Kind, ev.FailureReason)
@@ -404,87 +469,52 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 	}
 }
 
-// hangingForever blocks every command body until ctx cancels. Used to
+// hangingForeverOps blocks every command body until ctx cancels. Used to
 // drive the per-command timeout path in the pool.
-type hangingForever struct{}
+type hangingForeverOps struct{}
 
-func (hangingForever) CreateWorkspace(ctx context.Context, _ *protocol.CreateWorkspaceCommand) (map[string]any, error) {
+func (hangingForeverOps) CloneWorkspace(ctx context.Context, _ *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.CreateResult{}, ctx.Err()
 }
-func (hangingForever) WriteFiles(ctx context.Context, _ *protocol.WriteFilesCommand) (map[string]any, error) {
+func (hangingForeverOps) WriteFiles(ctx context.Context, _ *protocol.WriteFilesCommand) (command.WriteFilesResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.WriteFilesResult{}, ctx.Err()
 }
-func (hangingForever) RefreshWorkspaceAuth(ctx context.Context, _ *protocol.RefreshWorkspaceAuthCommand) (map[string]any, error) {
+func (hangingForeverOps) RefreshAuth(ctx context.Context, _ *protocol.RefreshWorkspaceAuthCommand) (command.RefreshResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.RefreshResult{}, ctx.Err()
 }
-func (hangingForever) InvokeClaudeCode(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (hangingForeverOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.InvokeResult{}, ctx.Err()
 }
-func (hangingForever) CleanupWorkspace(ctx context.Context, _ *protocol.CleanupWorkspaceCommand) (map[string]any, error) {
+func (hangingForeverOps) Cleanup(ctx context.Context, _ *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func TestPoolTimeouts_DefaultsApply(t *testing.T) {
-	got := PoolTimeouts{}.withDefaults()
-	if got.CreateWorkspace != 5*time.Minute {
-		t.Errorf("CreateWorkspace default: want 5m got %s", got.CreateWorkspace)
-	}
-	if got.WriteFiles != 30*time.Second {
-		t.Errorf("WriteFiles default: want 30s got %s", got.WriteFiles)
-	}
-	if got.InvokeClaudeCodeFallback != 15*time.Minute {
-		t.Errorf("InvokeClaudeCodeFallback default: want 15m got %s", got.InvokeClaudeCodeFallback)
-	}
-	// Explicit overrides win.
-	got = PoolTimeouts{CreateWorkspace: 1 * time.Second}.withDefaults()
-	if got.CreateWorkspace != 1*time.Second {
-		t.Errorf("explicit override lost: %s", got.CreateWorkspace)
-	}
-}
-
-func TestPoolTimeouts_InvokeClaudeCodeUsesWireLimits(t *testing.T) {
-	t.Parallel()
-	to := PoolTimeouts{InvokeClaudeCodeFallback: time.Hour}.withDefaults()
-	cmd := &protocol.AgentCommand{
-		Kind: protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
-			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 7},
-		},
-	}
-	if got := to.timeoutForCommand(cmd); got != 7*time.Second {
-		t.Errorf("want 7s from wire limits, got %s", got)
-	}
-}
-
-func TestPoolTimeouts_InvokeClaudeCodeFallbackWhenLimitsZero(t *testing.T) {
-	t.Parallel()
-	to := PoolTimeouts{InvokeClaudeCodeFallback: 42 * time.Second}.withDefaults()
-	cmd := &protocol.AgentCommand{
-		Kind:             protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{},
-	}
-	if got := to.timeoutForCommand(cmd); got != 42*time.Second {
-		t.Errorf("want 42s fallback, got %s", got)
-	}
+	return command.CleanupResult{}, ctx.Err()
 }
 
 func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
-	// Spawn handler that hangs forever; set CreateWorkspace timeout to
-	// 30ms so Dispatch returns quickly with a timeout-flavoured failure
-	// event. The slot should be dropped + the runner closed.
-	pool := NewPoolWithTimeouts(
-		InProcessSpawn(hangingForever{}),
-		nil,
-		PoolTimeouts{CreateWorkspace: 30 * time.Millisecond},
-	)
+	// Spawn handler that hangs forever; the command carries a 30ms timeout
+	// so Dispatch returns quickly with a timeout-flavoured failure event.
+	// The slot should be dropped + the runner closed. Per-command Timeout()
+	// is the sole deadline source — the pool holds no timeout config.
+	pool := NewPool(InProcessSpawn(hangingForeverOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil)
+	cmd := &shortTimeoutCreateCmd{
+		CreateWorkspaceCommand: command.CreateWorkspaceCommand{
+			Proto: protocol.CreateWorkspaceCommand{
+				CommandHeader: protocol.CommandHeader{
+					CommandID:   "c-1",
+					WorkspaceID: "ws-1",
+					Traceparent: "tp-c-1",
+					Kind:        protocol.KindCreateWorkspace,
+				},
+			},
+		},
+	}
+	ev := pool.Dispatch(context.Background(), cmd, nil, 0)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("kind: want completed_failure on timeout, got %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -494,42 +524,57 @@ func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	if !strings.Contains(ev.FailureReason, "CreateWorkspace") {
 		t.Errorf("failure_reason should name the kind, got %q", ev.FailureReason)
 	}
-	// Slot should be dropped — next Create respawns rather than reusing
-	// the timed-out runner.
-	pool.mu.Lock()
-	_, stillPresent := pool.runners["ws-1"]
-	pool.mu.Unlock()
-	if stillPresent {
-		t.Errorf("slot should be dropped after timeout")
+	// Runner is marked defunct after timeout — KnownIDs still includes
+	// it (directory protection), but a new Create respawns.
+	known := pool.KnownIDs()
+	if _, ok := known["ws-1"]; !ok {
+		t.Errorf("defunct workspace should be in KnownIDs after timeout (directory protection)")
+	}
+	snap := pool.Snapshot()
+	found := false
+	for _, e := range snap {
+		if e.WorkspaceID == "ws-1" {
+			found = true
+			if e.Status != "exited" {
+				t.Errorf("status after timeout: want exited got %q", e.Status)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ws-1 should still be in Snapshot after timeout (Defunct)")
 	}
 }
 
+// shortTimeoutCreateCmd wraps CreateWorkspaceCommand with a 30ms timeout for
+// testing the pool's per-command deadline path.
+type shortTimeoutCreateCmd struct {
+	command.CreateWorkspaceCommand
+}
+
+func (s *shortTimeoutCreateCmd) Timeout() time.Duration { return 30 * time.Millisecond }
+
 func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 	// Create succeeds via StubHandler; then Invoke hangs and times out
-	// per Limits.WallclockSeconds=1 (we force a small unit conversion by
-	// using fractional seconds via the fallback path is moot — this
-	// goes via the wire-limits branch which uses whole seconds).
-	pool := NewPoolWithTimeouts(
-		InProcessSpawn(stubThenHang{}),
-		nil,
-		PoolTimeouts{}, // wire wins over fallbacks; defaults still fine elsewhere
-	)
+	// per Limits.WallclockSeconds=1 on the command (the wire limit sets
+	// InvokeClaudeCodeCommand.Timeout() to 1s).
+	pool := NewPool(InProcessSpawn(stubThenHangOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil); ev.Kind != protocol.EventCompletedSuccess {
+	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
-	invokeCmd := &protocol.AgentCommand{
-		Kind: protocol.KindInvokeClaudeCode,
-		InvokeClaudeCode: &protocol.InvokeClaudeCodeCommand{
+	invokeCmd := &command.InvokeClaudeCodeCommand{
+		Proto: protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{
-				CommandID: "c-invoke", WorkspaceID: "ws-1", Kind: protocol.KindInvokeClaudeCode,
+				CommandID:   "c-invoke",
+				WorkspaceID: "ws-1",
+				Kind:        protocol.KindInvokeClaudeCode,
 			},
 			Limits: protocol.InvokeClaudeCodeLimits{WallclockSeconds: 1}, // 1s wire cap
 		},
 	}
 	start := time.Now()
-	ev := pool.Dispatch(context.Background(), invokeCmd, nil)
+	ev := pool.Dispatch(context.Background(), invokeCmd, nil, 0)
 	elapsed := time.Since(start)
 	if ev.Kind != protocol.EventCompletedFailure {
 		t.Fatalf("invoke: want completed_failure on timeout, got %q (reason=%q)", ev.Kind, ev.FailureReason)
@@ -542,39 +587,32 @@ func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 	}
 }
 
-// stubThenHang accepts CreateWorkspace via StubHandler's default; hangs
-// on every other command kind until ctx cancels.
-type stubThenHang struct{ workspace.StubHandler }
+// stubThenHangOps accepts CreateWorkspace via StubHandler's default;
+// hangs on every InvokeClaudeCode until ctx cancels.
+type stubThenHangOps struct{ workspace.StubHandler }
 
-func (stubThenHang) InvokeClaudeCode(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (stubThenHangOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return command.InvokeResult{}, ctx.Err()
 }
 
 func TestPool_TimeoutDoesNotBlockOtherWorkspaces(t *testing.T) {
-	// Two workspaces. ws-1's Create hangs and times out at 30ms; ws-2's
-	// Create succeeds immediately. The two dispatches should NOT
-	// serialize — ws-2 must return before ws-1's timeout fires.
-	pool := NewPoolWithTimeouts(
-		InProcessSpawn(workspace.StubHandler{}),
-		nil,
-		PoolTimeouts{CreateWorkspace: 30 * time.Millisecond},
-	)
+	// Two workspaces dispatched concurrently. Both use StubHandler (fast),
+	// so both should return well under 200ms. The per-workspace slot mutex
+	// only serializes Sends to the SAME workspace; different workspaces
+	// run in parallel.
+	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	// Switch ws-1 to a hanging spawn after the fact: easier to spin up
-	// a separate pool. Direct test: just verify ws-2 succeeds fast even
-	// while ws-1 is in flight (the outer pool mu only locks for slot
-	// lookup, not Send).
 	done := make(chan time.Duration, 2)
 	go func() {
 		start := time.Now()
-		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-1", "c-1"), nil)
+		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-1", "c-1"), nil, 0)
 		done <- time.Since(start)
 	}()
 	go func() {
 		start := time.Now()
-		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-2", "c-2"), nil)
+		pool.Dispatch(context.Background(), newCreateCmd("ws-fast-2", "c-2"), nil, 0)
 		done <- time.Since(start)
 	}()
 	for i := 0; i < 2; i++ {
@@ -591,13 +629,46 @@ func TestPool_TimeoutDoesNotBlockOtherWorkspaces(t *testing.T) {
 
 func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
 	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
-	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil)
-	pool.Dispatch(context.Background(), newCreateCmd("ws-2", "c-2"), nil)
+	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
+	pool.Dispatch(context.Background(), newCreateCmd("ws-2", "c-2"), nil, 0)
 
 	pool.CloseAll(context.Background())
 	// After CloseAll, subsequent non-Create commands for those workspaces
 	// fail since the runners are gone.
-	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-after"), nil); ev.Kind != protocol.EventCompletedFailure {
+	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-after"), nil, 0); ev.Kind != protocol.EventCompletedFailure {
 		t.Errorf("post-CloseAll write should fail, got %q", ev.Kind)
+	}
+}
+
+// TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure proves
+// that any non-create WorkspaceCommand for an unseen workspace_id yields a
+// completed_failure with reason containing "no workspace runner".
+func TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure(t *testing.T) {
+	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	defer pool.CloseAll(context.Background())
+
+	kinds := []command.WorkspaceCommand{
+		newWriteCmd("ws-never-created", "c-write"),
+		&command.RefreshWorkspaceAuthCommand{
+			Proto: protocol.RefreshWorkspaceAuthCommand{
+				CommandHeader: protocol.CommandHeader{
+					CommandID:   "c-refresh",
+					WorkspaceID: "ws-never-created",
+					Kind:        protocol.KindRefreshWorkspaceAuth,
+				},
+			},
+		},
+		newCleanupCmd("ws-never-created", "c-cleanup"),
+	}
+	for _, cmd := range kinds {
+		ev := pool.Dispatch(context.Background(), cmd, nil, 0)
+		if ev.Kind != protocol.EventCompletedFailure {
+			t.Errorf("kind=%s: want completed_failure, got %q (reason=%q)",
+				cmd.Header().Kind, ev.Kind, ev.FailureReason)
+		}
+		if !strings.Contains(ev.FailureReason, "no workspace runner") {
+			t.Errorf("kind=%s: failure_reason %q missing 'no workspace runner'",
+				cmd.Header().Kind, ev.FailureReason)
+		}
 	}
 }

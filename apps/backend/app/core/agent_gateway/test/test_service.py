@@ -84,7 +84,7 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
 @pytest.mark.asyncio
 async def test_claim_returns_none_immediately_when_empty() -> None:
     agent = uuid4()
-    assert await claim_next(agent, wait_seconds=0) is None
+    assert await claim_next(agent, wait_seconds=0, lifecycle="configured") is None
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,8 @@ async def test_enqueue_then_claim() -> None:
     cmd = _make_create_command()
     await enqueue_command(agent, cmd)
     assert queue_depth(agent) == 1
-    claimed = await claim_next(agent, wait_seconds=0)
+    # CreateWorkspaceCommand is always eligible — active_workspace_ids=[] is fine.
+    claimed = await claim_next(agent, wait_seconds=0, lifecycle="configured")
     assert claimed is cmd
     assert queue_depth(agent) == 0
 
@@ -105,8 +106,8 @@ async def test_per_agent_queues_are_independent() -> None:
     cmd_b = _make_create_command()
     await enqueue_command(a, cmd_a)
     await enqueue_command(b, cmd_b)
-    assert (await claim_next(a, wait_seconds=0)) is cmd_a
-    assert (await claim_next(b, wait_seconds=0)) is cmd_b
+    assert (await claim_next(a, wait_seconds=0, lifecycle="configured")) is cmd_a
+    assert (await claim_next(b, wait_seconds=0, lifecycle="configured")) is cmd_b
 
 
 @pytest.mark.asyncio
@@ -122,7 +123,7 @@ async def test_long_poll_wakes_on_enqueue() -> None:
         await enqueue_command(agent, cmd)
 
     enqueue_task = asyncio.create_task(_enqueue_after_delay())
-    claimed = await claim_next(agent, wait_seconds=2)
+    claimed = await claim_next(agent, wait_seconds=2, lifecycle="configured")
     await enqueue_task
     assert claimed is cmd
 
@@ -130,7 +131,7 @@ async def test_long_poll_wakes_on_enqueue() -> None:
 @pytest.mark.asyncio
 async def test_long_poll_times_out_returning_none() -> None:
     agent = uuid4()
-    claimed = await claim_next(agent, wait_seconds=1)
+    claimed = await claim_next(agent, wait_seconds=1, lifecycle="configured")
     assert claimed is None
 
 

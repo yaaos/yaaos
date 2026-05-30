@@ -257,3 +257,4 @@ apps/e2e/tmp/
 # Ticket planning workspace — local only; never committed.
 # Used by dev-intent / dev-plan / dev-implement / dev-debug skills.
 plan/ticket/
+plan/notes/

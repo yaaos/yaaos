@@ -36,8 +36,11 @@ from app.core.agent_gateway.report_sink import (
 )
 from app.core.agent_gateway.types import (
     AgentCommand,
+    AgentConfig,
     AgentEvent,
     AgentRef,
+    ConfigUpdateCommand,
+    CreateWorkspaceCommand,
     HeartbeatRequest,
     HeartbeatResponse,
     StaleClaimError,
@@ -46,6 +49,11 @@ from app.core.agent_gateway.types import (
 from app.core.tasks import enqueue
 
 log = structlog.get_logger("core.agent_gateway")
+
+# Default cap on concurrent Active workspaces per agent when no per-org
+# override exists. The control plane will add per-org configuration later;
+# until then all agents share this global default.
+DEFAULT_MAX_WORKSPACES: int = 4
 
 
 # ── In-memory dispatch queues ───────────────────────────────────────────
@@ -118,34 +126,94 @@ async def enqueue_command(agent_id: UUID, command: AgentCommand) -> None:
         cond.notify()
 
 
+def _build_config_update() -> ConfigUpdateCommand:
+    """Build a ConfigUpdateCommand from the global defaults.
+
+    max_workspaces uses DEFAULT_MAX_WORKSPACES — there is no per-agent
+    column or per-org override at this time.
+    """
+    from uuid import uuid4  # noqa: PLC0415
+
+    return ConfigUpdateCommand(
+        command_id=uuid4(),
+        traceparent="",
+        config=AgentConfig(
+            max_workspaces=DEFAULT_MAX_WORKSPACES,
+        ),
+    )
+
+
+def _is_eligible(cmd: AgentCommand, active_workspace_ids: frozenset[UUID]) -> bool:
+    """Return True if `cmd` should be returned on a configured claim.
+
+    Eligibility rules:
+    - ConfigUpdateCommand: always eligible (AgentCommand family).
+    - CreateWorkspaceCommand: always eligible (creates a new workspace).
+    - Other workspace commands: eligible only when their workspace_id is
+      in active_workspace_ids (the agent has that workspace running).
+    """
+    if isinstance(cmd, ConfigUpdateCommand):
+        return True
+    if isinstance(cmd, CreateWorkspaceCommand):
+        return True
+    # Workspace command for a specific workspace.
+    ws_id: UUID | None = getattr(cmd, "workspace_id", None)
+    if ws_id is None:
+        return True  # Unknown shape — pass through.
+    return ws_id in active_workspace_ids
+
+
 async def claim_next(
     agent_id: UUID,
     *,
     wait_seconds: int,
+    lifecycle: str = "unconfigured",
+    active_workspace_ids: list[UUID] | tuple[UUID, ...] | None = None,
 ) -> AgentCommand | None:
-    """Pop the head of the queue, or wait up to `wait_seconds` for one to
-    arrive. Returns None on timeout (the agent then re-arms the poll).
+    """Pop the next eligible command for the agent, or wait up to `wait_seconds`.
 
-    `wait_seconds=0` is a non-blocking peek — useful in tests."""
+    Lifecycle gate:
+    - unconfigured → return ConfigUpdateCommand immediately (no queue pop).
+      The workspace command queue is left untouched so commands accumulate
+      while the agent bootstraps.
+    - configured → return the first eligible command from the queue.
+      Eligible: ConfigUpdateCommand, CreateWorkspaceCommand (always), or
+      any workspace command whose workspace_id ∈ active_workspace_ids.
+      Ineligible commands remain at their queue position.
+
+    `wait_seconds=0` is a non-blocking peek — useful in tests.
+    """
+    if lifecycle == "unconfigured":
+        # Always deliver a config update — the agent is not ready for work.
+        return _build_config_update()
+
+    active_set: frozenset[UUID] = frozenset(active_workspace_ids or [])
     queue = get_agent_queues().queues[agent_id]
-    if queue:
-        return queue.popleft()
+
+    def _pop_eligible() -> AgentCommand | None:
+        """Scan the queue for the first eligible command. Ineligible commands
+        stay in the queue at their original positions."""
+        for i, cmd in enumerate(queue):
+            if _is_eligible(cmd, active_set):
+                del queue[i]
+                return cmd
+        return None
+
+    result = _pop_eligible()
+    if result is not None:
+        return result
     if wait_seconds <= 0:
         return None
     cond = await _get_condition(agent_id)
     async with cond:
         try:
             await asyncio.wait_for(
-                cond.wait_for(lambda: bool(queue)),
+                cond.wait_for(lambda: any(_is_eligible(c, active_set) for c in queue)),
                 timeout=wait_seconds,
             )
         except TimeoutError:
             return None
-    # Re-check under the lock-free dequeue — another waiter may have
-    # popped it. If so, fall through to None.
-    if queue:
-        return queue.popleft()
-    return None
+    return _pop_eligible()
 
 
 # ── Heartbeat / reconciliation ─────────────────────────────────────────
@@ -469,35 +537,34 @@ async def connection_status_for_org(
     }
 
 
-async def has_stale_agents_for_org(
-    org_id: UUID,
+async def stale_agent_ids(
+    agent_ids: set[UUID],
     *,
     cutoff: datetime,
     session: AsyncSession,
-) -> bool:
-    """Return ``True`` when the org has no `workspace_agents` row whose
-    `last_heartbeat_at` is at or after *cutoff*.
+) -> set[UUID]:
+    """Return the subset of `agent_ids` that are individually stale — no
+    `last_heartbeat_at` at or after *cutoff* (or never heartbeated, or no row).
 
-    A ``True`` result means every agent pod for the org is stale (or no
-    pods have ever registered). Used by `core/workspace` to identify orgs
-    that have lost their agent fleet without importing `workspace_agents`
-    directly.
+    Used by `core/workspace` failsafe-6 to expire only the workspaces whose
+    owning pod is lost, leaving healthy sibling pods' workspaces untouched —
+    without importing `workspace_agents` directly.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
-    rows = (
+    if not agent_ids:
+        return set()
+    fresh = (
         (
             await session.execute(
-                select(WorkspaceAgentRow.id)
-                .where(
-                    WorkspaceAgentRow.org_id == org_id,
+                select(WorkspaceAgentRow.id).where(
+                    WorkspaceAgentRow.id.in_(agent_ids),
                     WorkspaceAgentRow.last_heartbeat_at.is_not(None),
                     WorkspaceAgentRow.last_heartbeat_at >= cutoff,
                 )
-                .limit(1)
             )
         )
-        .tuples()
+        .scalars()
         .all()
     )
-    return not bool(rows)
+    return agent_ids - set(fresh)

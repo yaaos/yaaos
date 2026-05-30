@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
 )
@@ -63,15 +64,16 @@ func TestEncoderEmitter_WritesProgressFrames(t *testing.T) {
 }
 
 // emittingHandler emits 3 progress events then succeeds. Drives the
-// multi-event dispatch path end-to-end.
+// multi-event dispatch path end-to-end. Implements command.WorkspaceOps
+// by embedding StubHandler for all ops except RunClaude.
 type emittingHandler struct{ StubHandler }
 
-func (emittingHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (emittingHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	e := EmitterFromContext(ctx)
 	for i := 0; i < 3; i++ {
 		e.Progress(map[string]any{"i": i, "workspace_id": cmd.WorkspaceID})
 	}
-	return map[string]any{"workspace_id": cmd.WorkspaceID, "done": true}, nil
+	return command.InvokeResult{WorkspaceID: cmd.WorkspaceID}, nil
 }
 
 func TestRun_MultiEventEmission_ProgressThenTerminal(t *testing.T) {
@@ -125,8 +127,10 @@ func TestRun_MultiEventEmission_ProgressThenTerminal(t *testing.T) {
 	if events[3].Kind != protocol.EventCompletedSuccess {
 		t.Errorf("terminal: want completed_success got %q", events[3].Kind)
 	}
-	if events[3].Outputs["done"] != true {
-		t.Errorf("terminal outputs: want done=true got %v", events[3].Outputs)
+	// Terminal outputs come from InvokeResult.ToWire() — assert the
+	// workspace_id field which is always present.
+	if events[3].Outputs["workspace_id"] != "ws-1" {
+		t.Errorf("terminal outputs: want workspace_id=ws-1 got %v", events[3].Outputs)
 	}
 }
 

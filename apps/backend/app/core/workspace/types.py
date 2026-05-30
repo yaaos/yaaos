@@ -183,6 +183,10 @@ class WorkspaceClaimState(BaseModel):
     workspace_id: UUID
     current_holder_workflow_id: UUID | None
     status: str
+    # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
+    # agent_gateway compares this against the bearer's agent_id to authorize
+    # command-event posts.
+    agent_id: UUID | None
 
 
 class WorkspaceCommandState(BaseModel):
@@ -195,6 +199,10 @@ class WorkspaceCommandState(BaseModel):
     workspace_id: UUID
     current_command_id: UUID | None
     status: str
+    # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
+    # agent_gateway compares this against the bearer's agent_id to authorize
+    # workspace-event posts.
+    agent_id: UUID | None
 
 
 class WorkspaceError(Exception):

@@ -36,10 +36,12 @@ class WorkspaceEventOutcome(BaseModel):
 class WorkspaceAgentReportSink(Protocol):
     """Contract that `core/workspace` implements and registers.
 
-    Three operations cover all workspace-state access agent_gateway needs:
+    Operations cover all workspace-state access agent_gateway needs:
     - `reconcile_heartbeat` — pure read; returns ids the agent should forget.
     - `apply_workspace_event` — applies kind→status map; returns outcome VO.
     - `resolve_claim` — pure read; returns the workflow holding a command.
+    - `owning_agent_for_workspace` / `owning_agent_for_command` — pure reads;
+      return the workspace's owning `agent_id` for the per-agent authz check.
     """
 
     async def reconcile_heartbeat(
@@ -72,6 +74,28 @@ class WorkspaceAgentReportSink(Protocol):
     ) -> UUID | None:
         """Return the `current_holder_workflow_id` for the workspace holding
         `command_id`, or None if no workspace is claimed by that command.
+        """
+        ...
+
+    async def owning_agent_for_workspace(
+        self,
+        workspace_id: UUID,
+        session: object,
+    ) -> UUID | None:
+        """Return the owning `agent_id` (`WorkspaceAgentRow.id`) for
+        `workspace_id`, or None when the row is missing or its `agent_id` is
+        NULL (in-memory/legacy). Pure read. `session` is an `AsyncSession`.
+        """
+        ...
+
+    async def owning_agent_for_command(
+        self,
+        command_id: UUID,
+        session: object,
+    ) -> UUID | None:
+        """Return the owning `agent_id` for the workspace currently holding
+        `command_id`, or None when no workspace holds it (e.g. an agent-scoped
+        ConfigUpdate) or that workspace's `agent_id` is NULL. Pure read.
         """
         ...
 

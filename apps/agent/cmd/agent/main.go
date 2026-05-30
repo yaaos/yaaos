@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/logging"
 	"github.com/yaaos/agent/internal/observability"
 	"github.com/yaaos/agent/internal/protocol"
@@ -75,10 +76,11 @@ func run() int {
 	}
 	defer func() { _ = otelRes.Shutdown(context.Background()) }()
 
+	// Wire the live log bridge into the fan-out once. It stays dormant until
+	// OTel is configured (env endpoint here, or a later ConfigUpdate), then
+	// exports logs without the fan-out needing to be rebuilt.
 	logCfg := logging.Config{StdoutWriter: consoleWriter}
-	if otelRes.SlogHandler != nil {
-		logCfg.ExtraHandlers = append(logCfg.ExtraHandlers, otelRes.SlogHandler)
-	}
+	logCfg.ExtraHandlers = append(logCfg.ExtraHandlers, otelRes.SlogHandler)
 	shutdownLogs, err := logging.Init(logCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "logging.init failed: %v\n", err)
@@ -106,12 +108,15 @@ func run() int {
 
 func runSupervisor() error {
 	cfg := supervisor.Config{
-		BaseURL:          envOr("YAAOS_BACKEND_URL", defaultBackendURL),
-		AgentPodID:       envOr("YAAOS_AGENT_POD_ID", randomPodID()),
-		Version:          envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
-		SignedSTSRequest: envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-unsigned-sts"),
-		WorkspaceRoot:    envOr("YAAOS_WORKSPACE_ROOT", ""),
+		BaseURL:       envOr("YAAOS_BACKEND_URL", defaultBackendURL),
+		AgentPodID:    envOr("YAAOS_AGENT_POD_ID", randomPodID()),
+		Version:       envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
+		WorkspaceRoot: envOr("YAAOS_WORKSPACE_ROOT", ""),
 	}
+	// placeholderProvider carries the SigV4-signed STS request; a real
+	// SigV4 implementation drops in here with zero supervisor change.
+	prov := identity.NewPlaceholderProvider(envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-unsigned-sts"))
+
 	// No global timeout — long-poll needs to wait. Per-call timeouts come
 	// from the request context. otelhttp.NewTransport adds a span per
 	// outbound HTTP call when OTel is configured; it's transparent when
@@ -127,7 +132,7 @@ func runSupervisor() error {
 
 	// *slog.Logger satisfies supervisor.Logger directly — Info/Warn/Error
 	// signatures match. No adapter needed.
-	sup := supervisor.New(cfg, cli, slog.Default())
+	sup := supervisor.New(cfg, cli, slog.Default(), prov)
 	slog.Info("supervisor.starting", "backend", cfg.BaseURL, "pod", cfg.AgentPodID)
 	if err := sup.Run(ctx); err != nil {
 		return err

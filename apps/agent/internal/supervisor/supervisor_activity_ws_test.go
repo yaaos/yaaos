@@ -11,8 +11,18 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/protocol"
 )
+
+// noopProvider is a test-only Provider that returns empty credentials.
+// Used by tests that exercise non-identity code paths (e.g., WS wiring)
+// and never call Run.
+type noopProvider struct{}
+
+func (noopProvider) Exchange(_ context.Context) (identity.Credentials, error) {
+	return identity.Credentials{}, nil
+}
 
 // fakeActivityServer accepts one WS upgrade, captures the bearer header,
 // and records inbound activity_batch frames. Mirrors the test fixture
@@ -99,7 +109,7 @@ func TestSupervisor_ActivityWS_ProgressEventsRouteThroughConductor(t *testing.T)
 		Version:               "test",
 		ActivityWSURL:         fs.URL,
 		ActivityBatchInterval: 20 * time.Millisecond,
-	}, protocol.NewClient("http://unused", nil), nil)
+	}, protocol.NewClient("http://unused", nil), nil, noopProvider{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.setupActivityWS(ctx, "test-bearer")
@@ -164,7 +174,7 @@ func TestSupervisor_ActivityWS_DialFailureDoesNotPopulateConductor(t *testing.T)
 		AgentPodID:    "pod-1",
 		Version:       "test",
 		ActivityWSURL: "ws://127.0.0.1:1/never-listens",
-	}, protocol.NewClient("http://unused", nil), nil)
+	}, protocol.NewClient("http://unused", nil), nil, noopProvider{})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	s.setupActivityWS(ctx, "test-bearer")

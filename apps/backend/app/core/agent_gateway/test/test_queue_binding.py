@@ -96,7 +96,8 @@ async def test_claim_returns_command_from_bound_registry() -> None:
     agent = uuid4()
     cmd = _make_create_command()
     await enqueue_command(agent, cmd)
-    claimed = await claim_next(agent, wait_seconds=0)
+    # CreateWorkspaceCommand is always eligible; pass configured lifecycle.
+    claimed = await claim_next(agent, wait_seconds=0, lifecycle="configured")
     assert claimed is cmd
     assert queue_depth(agent) == 0
 

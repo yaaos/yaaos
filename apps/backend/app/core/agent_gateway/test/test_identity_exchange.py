@@ -210,3 +210,39 @@ async def test_identity_exchange_empty_signed_request_returns_401() -> None:
         )
     assert resp.status_code == 401
     assert "empty" in resp.json()["detail"]["detail"]
+
+
+@pytest.mark.service
+async def test_identity_exchange_response_includes_org_id(db_session) -> None:
+    """Successful exchange response carries org_id matching the org whose
+    registered_iam_arn matched the verified canonical ARN."""
+    canonical_arn = "arn:aws:iam::555555555555:role/yaaos-org-id-test"
+    org = await orgs_repo.insert_org(db_session, slug=f"sts-orgid-{uuid4().hex[:6]}")
+    await update_org_fields(
+        db_session,
+        org.org_id,
+        registered_iam_arn=canonical_arn,
+        aws_region="us-east-1",
+    )
+    await db_session.commit()
+
+    async def _stub(_payload: str) -> VerifiedIdentity:
+        return _verified(canonical_arn)
+
+    set_verify_identity_override(_stub)
+
+    async with _client() as c:
+        resp = await c.post(
+            "/api/v1/identity/exchange",
+            json={
+                "agent_pod_id": str(uuid4()),
+                "version": "1.0.0",
+                "signed_request": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "org_id" in body, "response must include org_id"
+    assert body["org_id"] == str(org.org_id), (
+        f"org_id in response ({body['org_id']}) must match the org whose ARN matched ({org.org_id})"
+    )

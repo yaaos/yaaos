@@ -6,7 +6,7 @@
 //     so the operator can pull logs out-of-band when the backend is
 //     unreachable. Lumberjack handles rotation + 3-day age-based prune
 //   - any caller-supplied extra handlers (the OTel slog bridge plugs
-//     in here in commit C)
+//     in here via Config.ExtraHandlers)
 //
 // Init never fatally errors: if the log directory is unwritable, it
 // emits a warning to stderr and continues with stdout-only. Crashing
@@ -49,7 +49,7 @@ type Config struct {
 	StdoutWriter io.Writer
 
 	// ExtraHandlers are appended to the fan-out after stdout + file.
-	// Commit C passes the OTel slog bridge here.
+	// The OTel slog bridge passes here when OTel is configured.
 	ExtraHandlers []slog.Handler
 
 	// MaxSizeMB / MaxBackups / MaxAgeDays override lumberjack defaults.

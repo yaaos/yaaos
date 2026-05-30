@@ -63,9 +63,10 @@ func (c *Client) Heartbeat(ctx context.Context, agentID string, req HeartbeatReq
 	return &resp, nil
 }
 
-// ClaimCommand long-polls for the next AgentCommand. Returns
-// ErrNoCommand when the backend responds 204.
-func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequest) (*AgentCommand, error) {
+// ClaimCommand long-polls for the next command. Returns the raw JSON bytes
+// on success; the caller passes these to command.Decode for typed dispatch.
+// Returns ErrNoCommand when the backend responds 204.
+func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequest) ([]byte, error) {
 	path := fmt.Sprintf("/api/v1/agents/%s/commands/claim", agentID)
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -85,11 +86,11 @@ func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequ
 
 	switch httpResp.StatusCode {
 	case http.StatusOK:
-		var cmd AgentCommand
-		if err := json.NewDecoder(httpResp.Body).Decode(&cmd); err != nil {
-			return nil, fmt.Errorf("decode command: %w", err)
+		raw, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read command body: %w", err)
 		}
-		return &cmd, nil
+		return raw, nil
 	case http.StatusNoContent:
 		return nil, ErrNoCommand
 	case http.StatusUnauthorized:
@@ -103,15 +104,6 @@ func (c *Client) ClaimCommand(ctx context.Context, agentID string, req ClaimRequ
 // AgentCommand. ErrStaleClaim → agent silently drops the command.
 func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event AgentEvent) error {
 	path := fmt.Sprintf("/api/v1/commands/%s/events", commandID)
-	if event.ReportedAt.IsZero() {
-		event.ReportedAt = time.Now().UTC()
-	}
-	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
-}
-
-// PostWorkspaceEvent reports a workspace-state transition.
-func (c *Client) PostWorkspaceEvent(ctx context.Context, workspaceID string, event WorkspaceEvent) error {
-	path := fmt.Sprintf("/api/v1/workspaces/%s/events", workspaceID)
 	if event.ReportedAt.IsZero() {
 		event.ReportedAt = time.Now().UTC()
 	}

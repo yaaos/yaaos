@@ -243,7 +243,7 @@ components:
 
     IdentityExchangeResponse:
       type: object
-      required: [bearer, expires_at, agent_id]
+      required: [bearer, expires_at, agent_id, org_id]
       properties:
         bearer:
           type: string
@@ -258,6 +258,13 @@ components:
             Per-pod row id in `workspace_agents`. Stable for the lifetime
             of the pod; recycled when the pod restarts and a new bearer
             is exchanged.
+        org_id:
+          type: string
+          format: uuid
+          description: |
+            Organisation this agent pod belongs to. Pinned by the supervisor
+            on first exchange; a mismatch on renewal is an identity-integrity
+            violation and triggers a fatal exit.
 
     HeartbeatRequest:
       type: object
@@ -309,6 +316,24 @@ components:
           minimum: 0
           maximum: 55
           description: Long-poll horizon. 0 returns immediately if no work.
+        lifecycle:
+          type: string
+          enum: [unconfigured, configured]
+          description: |
+            Agent lifecycle state. `unconfigured` means the agent has not yet
+            received a ConfigUpdate; the backend returns ConfigUpdateCommand.
+            `configured` means the agent is ready for workspace commands; the
+            backend returns the first eligible queued command.
+          default: unconfigured
+        active_workspace_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            IDs of the agent's Active-state workspaces (registry records the
+            agent has running). Used to filter eligibility: non-create workspace
+            commands are only returned when their workspace_id appears here.
 
     AgentCommand:
       oneOf:
@@ -317,6 +342,7 @@ components:
         - $ref: '#/components/schemas/RefreshWorkspaceAuthCommand'
         - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
         - $ref: '#/components/schemas/CleanupWorkspaceCommand'
+        - $ref: '#/components/schemas/ConfigUpdateCommand'
       discriminator:
         propertyName: kind
         mapping:
@@ -325,6 +351,7 @@ components:
           RefreshWorkspaceAuth: '#/components/schemas/RefreshWorkspaceAuthCommand'
           InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
           CleanupWorkspace: '#/components/schemas/CleanupWorkspaceCommand'
+          ConfigUpdate: '#/components/schemas/ConfigUpdateCommand'
 
     CommandBase:
       type: object
@@ -506,6 +533,45 @@ components:
             kind:
               type: string
               enum: [CleanupWorkspace]
+
+    AgentConfig:
+      type: object
+      required: [max_workspaces]
+      properties:
+        max_workspaces:
+          type: integer
+          minimum: 1
+          description: |
+            Cap on concurrent Active workspaces for this agent. Sourced from
+            the org/global default; no per-agent column exists.
+        otlp_endpoint:
+          type: string
+          description: OTLP/HTTP exporter endpoint. Empty string disables telemetry.
+        otlp_token:
+          type: string
+          description: Authentication token for the OTLP endpoint. Treated as a secret; never log.
+        otlp_dataset:
+          type: string
+          description: Dataset/service-name identifier for the OTLP exporter.
+
+    ConfigUpdateCommand:
+      type: object
+      required: [command_id, traceparent, kind, config]
+      description: |
+        Agent-scoped command delivering runtime configuration. Carries no
+        workspace_id — applies globally to the agent process. Workspace
+        commands are gated until the agent receives at least one ConfigUpdate.
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        traceparent:
+          type: string
+        kind:
+          type: string
+          enum: [ConfigUpdate]
+        config:
+          $ref: '#/components/schemas/AgentConfig'
 
     AgentEvent:
       type: object

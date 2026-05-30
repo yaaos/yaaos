@@ -75,7 +75,7 @@ Three concepts span all apps:
 
 - **Workflow engine** (`core/workflow`) — typed `Workflow` definitions driven by three taskiq task bodies over `core/tasks` + `core/outbox`. Workspace commands park in `awaiting_agent` and resume on terminal AgentEvent. Five workflows: `pr_review_v1`, `incremental_review_v1`, `verify_fix_v1`, `stale_check_v1`, `answer_question_v1`. See [`core_workflow.md`](../apps/backend/docs/core_workflow.md).
 - **Workspace provider abstraction** (`core/workspace`) — `InMemoryWorkspaceProvider` (in-process) and `RemoteAgentWorkspaceProvider` (dispatches via wire protocol to customer-deployed Go agent). Single-flight claim via `try_claim`/`release_claim`. See [`core_workspace.md`](../apps/backend/docs/core_workspace.md).
-- **WorkspaceAgent** (`apps/agent/`) — customer-deployed Go binary; holds source code locally. Five HTTPS endpoints + one bidirectional WebSocket under `/api/v1/`:
+- **WorkspaceAgent** (`apps/agent/`) — customer-deployed Go binary; holds source code locally. Five HTTPS endpoints + one bidirectional WebSocket under `/api/v1/`. Full protocol contract: [`docs/workspace-agent-protocol.md`](../docs/workspace-agent-protocol.md).
   - `POST /api/v1/identity/exchange` — SigV4-signed STS → 24h bearer. Replays the customer's `GetCallerIdentity` against AWS STS; canonicalizes ARN; matches against `orgs.registered_iam_arn`; issues bearer via `bearer_tokens` ledger (sha256 stored, plaintext returned once).
   - `POST /api/v1/agents/{id}/heartbeat` — liveness + workspace inventory reconciliation.
   - `POST /api/v1/agents/{id}/commands/claim` — long-poll for next AgentCommand.

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/protocol"
 )
 
@@ -18,8 +19,8 @@ func fixedNow() time.Time {
 	return time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
 }
 
-// frameCmd marshals a wire-shaped AgentCommand as a newline-terminated
-// frame. Tests build their input pipe by concatenating these.
+// frameCmd marshals a wire-shaped command as a newline-terminated frame.
+// Tests build their input pipe by concatenating these.
 func frameCmd(t *testing.T, kind protocol.CommandKind, body map[string]any) []byte {
 	t.Helper()
 	body["kind"] = string(kind)
@@ -102,11 +103,11 @@ func TestRun_HappyPath_EachKindEmitsSuccess(t *testing.T) {
 	}
 }
 
-// failingHandler returns an error for InvokeClaudeCode, success for the rest.
-type failingHandler struct{ StubHandler }
+// failingOps returns an error for RunClaude, success for the rest.
+type failingOps struct{ StubHandler }
 
-func (failingHandler) InvokeClaudeCode(_ context.Context, _ *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
-	return nil, errors.New("agent OOM at 5 minutes")
+func (failingOps) RunClaude(_ context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
+	return command.InvokeResult{}, errors.New("agent OOM at 5 minutes")
 }
 
 func TestRun_HandlerError_EmitsCompletedFailure(t *testing.T) {
@@ -120,7 +121,7 @@ func TestRun_HandlerError_EmitsCompletedFailure(t *testing.T) {
 	}))
 
 	var out bytes.Buffer
-	if err := Run(context.Background(), &in, &out, failingHandler{}, Options{Now: fixedNow}); err != nil {
+	if err := Run(context.Background(), &in, &out, failingOps{}, Options{Now: fixedNow}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	events := readEvents(t, &out)
@@ -135,32 +136,18 @@ func TestRun_HandlerError_EmitsCompletedFailure(t *testing.T) {
 	}
 }
 
-func TestRun_UnknownKind_DispatchEmitsFailure(t *testing.T) {
-	// AgentCommand.UnmarshalJSON refuses unknown kinds upstream of dispatch,
-	// so to exercise the dispatch-level fallback we call dispatch() directly
-	// with a hand-built unknown kind.
-	cmd := &protocol.AgentCommand{Kind: protocol.CommandKind("Phantom")}
-	ev := dispatch(context.Background(), cmd, StubHandler{}, fixedNow(), nil)
-	if ev.Kind != protocol.EventCompletedFailure {
-		t.Fatalf("want completed_failure, got %q", ev.Kind)
-	}
-	if !strings.Contains(ev.FailureReason, "unknown command kind") {
-		t.Errorf("failure_reason: want substring 'unknown command kind' got %q", ev.FailureReason)
-	}
-}
-
 func TestRun_UnknownKindOnPipe_ReturnsDecodeError(t *testing.T) {
-	// The wire-level decoder rejects unknown kinds — Run surfaces that
-	// rather than emitting a failure event. The supervisor treats this as
-	// a protocol fault and tears the workspace down.
+	// command.Decode rejects unknown kinds — Run surfaces that as an
+	// error rather than emitting a failure event. The supervisor treats
+	// this as a protocol fault and tears the workspace down.
 	in := strings.NewReader(`{"kind":"Phantom","command_id":"c-bad"}` + "\n")
 	var out bytes.Buffer
 	err := Run(context.Background(), in, &out, StubHandler{}, Options{Now: fixedNow})
 	if err == nil {
 		t.Fatalf("want decode error, got nil")
 	}
-	if !strings.Contains(err.Error(), "unknown command kind") {
-		t.Errorf("error: want substring 'unknown command kind' got %q", err.Error())
+	if !strings.Contains(err.Error(), "unknown kind") {
+		t.Errorf("error: want substring 'unknown kind' got %q", err.Error())
 	}
 	if out.Len() != 0 {
 		t.Errorf("want no events emitted on decode failure, got %q", out.String())
@@ -173,9 +160,9 @@ func TestRun_EOFReturnsNil(t *testing.T) {
 	}
 }
 
-func TestRun_NilHandler(t *testing.T) {
+func TestRun_NilOps(t *testing.T) {
 	if err := Run(context.Background(), strings.NewReader(""), io.Discard, nil, Options{}); err == nil {
-		t.Fatalf("want error on nil handler, got nil")
+		t.Fatalf("want error on nil ops, got nil")
 	}
 }
 
@@ -193,14 +180,35 @@ func TestStubHandler_OutputsCarryWorkspaceID(t *testing.T) {
 	cmd := &protocol.CreateWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{WorkspaceID: "ws-x"},
 	}
-	out, err := StubHandler{}.CreateWorkspace(context.Background(), cmd)
+	res, err := StubHandler{}.CloneWorkspace(context.Background(), cmd)
 	if err != nil {
-		t.Fatalf("CreateWorkspace: %v", err)
+		t.Fatalf("CloneWorkspace: %v", err)
 	}
-	if out["workspace_id"] != "ws-x" {
-		t.Errorf("workspace_id: want ws-x got %v", out["workspace_id"])
+	// The stub sets path and reports not-reused.
+	if res.Reused {
+		t.Errorf("Reused: want false got true")
 	}
-	if out["status"] != "created" {
-		t.Errorf("status: want created got %v", out["status"])
+	wire := res.ToWire()
+	if wire["reused"] != false {
+		t.Errorf("wire[reused]: want false got %v", wire["reused"])
+	}
+}
+
+// TestRun_NonWorkspaceKind_AgentCommand verifies that a ConfigUpdate
+// (an AgentCommand kind, not a WorkspaceCommand) on the workspace pipe
+// causes Run to return an error — workspace processes don't handle
+// AgentCommands.
+func TestRun_NonWorkspaceKind_AgentCommandReturnsError(t *testing.T) {
+	// A valid (decodable) ConfigUpdate — nested config with a >=1 cap so it
+	// passes Decode — must still be rejected as a non-workspace command when
+	// it lands on a workspace child's pipe.
+	in := strings.NewReader(`{"kind":"ConfigUpdate","command_id":"c-cfg","config":{"max_workspaces":1}}` + "\n")
+	var out bytes.Buffer
+	err := Run(context.Background(), in, &out, StubHandler{}, Options{Now: fixedNow})
+	if err == nil {
+		t.Fatalf("want error on AgentCommand on workspace pipe, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-workspace command") {
+		t.Errorf("error: want 'non-workspace command' got %q", err.Error())
 	}
 }

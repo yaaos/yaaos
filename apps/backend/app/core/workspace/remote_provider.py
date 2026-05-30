@@ -31,6 +31,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import (
@@ -148,6 +149,20 @@ class RemoteAgentWorkspaceProvider:
 # ── Dispatch entry points ──────────────────────────────────────────────
 
 
+class CreateWorkspaceDispatch(BaseModel):
+    """Result of `dispatch_create_workspace`.
+
+    Carries both the new `command_id` (for `current_command_id`) and the
+    `agent_id` of the pod chosen to own the workspace (for `WorkspaceRow.agent_id`).
+    The caller persists both atomically with the single-flight claim so the
+    workspace is hard-tied to its owning pod from the moment it's created.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    command_id: UUID
+    agent_id: UUID
+
+
 async def dispatch_create_workspace(
     org_id: UUID,
     workspace_id: UUID,
@@ -159,10 +174,16 @@ async def dispatch_create_workspace(
     ttl_seconds: int = 600,
     max_idle_seconds: int = 600,
     session: AsyncSession,
-) -> UUID | None:
+) -> CreateWorkspaceDispatch | None:
     """Pick an agent for `org_id` and enqueue a `CreateWorkspace` command.
-    Returns the new `command_id` so the caller can store it on the workspace
-    row (`current_command_id`), or None when no agent is reachable.
+
+    Returns a `CreateWorkspaceDispatch` (the new `command_id` plus the chosen
+    owning `agent_id`) so the caller can persist `current_command_id` +
+    `WorkspaceRow.agent_id` together, or None when no agent is reachable.
+
+    The command is enqueued under the agent's `agent_id` (= `WorkspaceAgentRow.id`)
+    — the same key `claim_next` reads — so a dispatched command is claimable
+    by the agent it was dispatched to.
 
     Caller is responsible for calling `core/workspace.try_claim` to gate
     the dispatch through the single-flight machinery; this helper does NOT
@@ -182,26 +203,27 @@ async def dispatch_create_workspace(
         ttl_seconds=ttl_seconds,
         max_idle_seconds=max_idle_seconds,
     )
-    await enqueue_command(agent.agent_pod_id, cmd)
-    return command_id
+    await enqueue_command(agent.agent_id, cmd)
+    return CreateWorkspaceDispatch(command_id=command_id, agent_id=agent.agent_id)
 
 
 async def dispatch_cleanup_workspace(
-    org_id: UUID,
     workspace_id: UUID,
     *,
+    agent_id: UUID,
     traceparent: str,
-    session: AsyncSession,
 ) -> UUID | None:
-    """Enqueue a `CleanupWorkspace` against the agent that owns the workspace."""
-    agent = await pick_agent_for_org(org_id, session=session)
-    if agent is None:
-        return None
+    """Enqueue a `CleanupWorkspace` against the agent that owns the workspace.
+
+    `agent_id` is the workspace's stored owning agent (`WorkspaceRow.agent_id`)
+    — the pod that ran `CreateWorkspace`. Post-create commands MUST go to that
+    same agent; re-picking would route to a pod that has no such workspace.
+    Returns the new `command_id`."""
     command_id = uuid4()
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
         traceparent=traceparent,
     )
-    await enqueue_command(agent.agent_pod_id, cmd)
+    await enqueue_command(agent_id, cmd)
     return command_id

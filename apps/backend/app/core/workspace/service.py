@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.agent_gateway import revoke_all_for_org as _revoke_all_for_org
 from app.core.audit_log import Actor, ActorKind, audit_for_workspace
 from app.core.database import session as get_session
 from app.core.observability import spawn
@@ -511,10 +510,9 @@ async def _reaper_sweep_once() -> None:
                 reason="idle_timeout",
             )
 
-        # 1c. Agent-loss (failsafe 6) — orgs running remote agents where
-        # NO pod has heartbeated within the threshold have all their
-        # workspaces expired and bearers revoked. POC approximation: we
-        # match per-org (not per-pod) since WorkspaceRow has no agent_id.
+        # 1c. Agent-loss (failsafe 6) — per-pod. A workspace whose owning
+        # agent is individually stale is expired and that pod's bearers
+        # revoked, even when sibling pods in the same org are healthy.
         await _failsafe_agent_loss(s, now)
 
         # 2. Find rows to destroy.
@@ -541,78 +539,66 @@ async def _reaper_sweep_once() -> None:
 
 
 async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
-    """Mark workspaces EXPIRED + revoke bearers when their org's remote agents
-    have all gone stale beyond the heartbeat threshold (failsafe 6).
+    """Mark workspaces EXPIRED + revoke their owning pod's bearers when that
+    pod has gone stale beyond the heartbeat threshold (failsafe 6).
 
-    POC scope: per-org check rather than per-pod (workspaces don't carry
-    `agent_id` directly). An org with remote_agent workspaces whose every
-    `workspace_agents` row has a stale `last_heartbeat_at` (or none ever)
-    is considered to have lost its agent fleet. Workspaces in non-terminal
-    states transition to EXPIRED with reason `agent_loss`.
+    Per-pod: a workspace whose owning `agent_id` is individually stale (no
+    heartbeat within the threshold) is expired even when sibling pods in the
+    same org are healthy. Only the dead pod's bearers are revoked, not the
+    whole org's — healthy pods keep their bearers and their workspaces.
+
+    Workspaces with a NULL `agent_id` (in-memory/legacy) are skipped — they
+    carry no owning pod to declare lost.
     """
-    from app.core.agent_gateway import has_stale_agents_for_org  # noqa: PLC0415
+    from app.core.agent_gateway import revoke_all_for_agent, stale_agent_ids  # noqa: PLC0415
 
     cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Find distinct org IDs that have at least one active remote-agent workspace.
-    # `workspaces.provider` records whether a workspace was dispatched via the
-    # remote agent — workspace's own column, no cross-module query needed.
-    candidate_org_ids = (
-        (
-            await s.execute(
-                select(WorkspaceRow.org_id)
-                .distinct()
-                .where(
-                    WorkspaceRow.provider == "remote_agent",
-                    WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
-                )
+    # Active remote-agent workspaces with a known owning pod. `workspaces.provider`
+    # and `workspaces.agent_id` are this module's own columns — no cross-module
+    # query needed to find candidates.
+    candidate_rows = (
+        await s.execute(
+            select(WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.status, WorkspaceRow.agent_id).where(
+                WorkspaceRow.provider == "remote_agent",
+                WorkspaceRow.agent_id.is_not(None),
+                WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
             )
         )
-        .scalars()
-        .all()
-    )
-
-    stale_org_ids = [
-        org_id
-        for org_id in candidate_org_ids
-        if await has_stale_agents_for_org(org_id, cutoff=cutoff, session=s)
-    ]
-
-    if not stale_org_ids:
+    ).all()
+    if not candidate_rows:
         return
 
-    for org_id in stale_org_ids:
-        rows = (
-            (
-                await s.execute(
-                    select(WorkspaceRow).where(
-                        WorkspaceRow.org_id == org_id,
-                        WorkspaceRow.status.in_(
-                            [WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]
-                        ),
-                    )
-                )
-            )
-            .scalars()
-            .all()
+    owning_agent_ids = {row[3] for row in candidate_rows}
+    stale_ids = await stale_agent_ids(owning_agent_ids, cutoff=cutoff, session=s)
+    if not stale_ids:
+        return
+
+    expired_count = 0
+    for ws_id, org_id, status, agent_id in candidate_rows:
+        if agent_id not in stale_ids:
+            continue
+        await s.execute(
+            update(WorkspaceRow).where(WorkspaceRow.id == ws_id).values(status=WorkspaceStatus.EXPIRED.value)
         )
-        for row in rows:
-            await s.execute(
-                update(WorkspaceRow)
-                .where(WorkspaceRow.id == row.id)
-                .values(status=WorkspaceStatus.EXPIRED.value)
-            )
-            await _audit_transition(
-                s,
-                workspace_id=row.id,
-                org_id=org_id,
-                from_state=row.status,
-                to_state=WorkspaceStatus.EXPIRED.value,
-                reason="agent_loss",
-            )
-        # Revoke every active bearer for the org — agents will re-exchange
-        # when they come back online.
-        await _revoke_all_for_org(org_id, "agent_loss", session=s)
-        log.warning("workspace.failsafe_agent_loss", org_id=str(org_id), expired_count=len(rows))
+        await _audit_transition(
+            s,
+            workspace_id=ws_id,
+            org_id=org_id,
+            from_state=status,
+            to_state=WorkspaceStatus.EXPIRED.value,
+            reason="agent_loss",
+        )
+        expired_count += 1
+
+    # Revoke each lost pod's bearers — that pod re-exchanges when it returns.
+    for agent_id in stale_ids:
+        await revoke_all_for_agent(agent_id, "agent_loss", session=s)
+
+    log.warning(
+        "workspace.failsafe_agent_loss",
+        stale_agent_count=len(stale_ids),
+        expired_count=expired_count,
+    )
 
 
 async def _attempt_destroy(row: WorkspaceRow) -> None:
@@ -764,9 +750,12 @@ async def get_workspace_claim_state(
     """
     row = (
         await session.execute(
-            select(WorkspaceRow.id, WorkspaceRow.current_holder_workflow_id, WorkspaceRow.status).where(
-                WorkspaceRow.current_command_id == command_id
-            )
+            select(
+                WorkspaceRow.id,
+                WorkspaceRow.current_holder_workflow_id,
+                WorkspaceRow.status,
+                WorkspaceRow.agent_id,
+            ).where(WorkspaceRow.current_command_id == command_id)
         )
     ).one_or_none()
     if row is None:
@@ -775,6 +764,7 @@ async def get_workspace_claim_state(
         workspace_id=row[0],
         current_holder_workflow_id=row[1],
         status=row[2],
+        agent_id=row[3],
     )
 
 
@@ -790,9 +780,12 @@ async def get_workspace_command_state(
     """
     row = (
         await session.execute(
-            select(WorkspaceRow.id, WorkspaceRow.current_command_id, WorkspaceRow.status).where(
-                WorkspaceRow.id == workspace_id
-            )
+            select(
+                WorkspaceRow.id,
+                WorkspaceRow.current_command_id,
+                WorkspaceRow.status,
+                WorkspaceRow.agent_id,
+            ).where(WorkspaceRow.id == workspace_id)
         )
     ).one_or_none()
     if row is None:
@@ -801,6 +794,7 @@ async def get_workspace_command_state(
         workspace_id=row[0],
         current_command_id=row[1],
         status=row[2],
+        agent_id=row[3],
     )
 
 

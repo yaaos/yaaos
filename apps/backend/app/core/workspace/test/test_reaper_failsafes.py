@@ -29,11 +29,14 @@ from app.core.workspace import (
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import (
     _attempt_destroy,
+    _failsafe_agent_loss,
     _reaper_sweep_once,
+    _utcnow,
     close_workspace,
     startup_recovery,
 )
 from app.core.workspace.types import WorkspaceStatus
+from app.testing.seed import seed_agent
 
 
 class _RaisingProvider:
@@ -289,6 +292,50 @@ async def test_close_workspace_no_row_is_silent(db_session) -> None:  # type: ig
     existed) doesn't raise — close_workspace is fully idempotent."""
     _ = db_session
     await close_workspace(uuid4())  # must not raise
+
+
+# ── failsafe-6 per-pod agent loss ──────────────────────────────────────
+
+
+async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Org with 2 agents: one stale, one live. Only the stale agent's
+    workspaces are expired (reason `agent_loss`); the live agent's workspace
+    stays ACTIVE. Per-pod, not per-org."""
+    org_id = uuid4()
+    stale = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=600)
+    live = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=2)
+
+    stale_ws = WorkspaceRow(
+        id=uuid4(),
+        org_id=org_id,
+        provider_id="remote_agent",
+        provider="remote_agent",
+        spec={"sha": "a"},
+        plugin_state={},
+        status=WorkspaceStatus.ACTIVE.value,
+        expires_at=_utcnow() + timedelta(hours=1),
+        agent_id=stale["id"],
+    )
+    live_ws = WorkspaceRow(
+        id=uuid4(),
+        org_id=org_id,
+        provider_id="remote_agent",
+        provider="remote_agent",
+        spec={"sha": "b"},
+        plugin_state={},
+        status=WorkspaceStatus.ACTIVE.value,
+        expires_at=_utcnow() + timedelta(hours=1),
+        agent_id=live["id"],
+    )
+    db_session.add_all([stale_ws, live_ws])
+    await db_session.commit()
+
+    await _failsafe_agent_loss(db_session, _utcnow())
+    await db_session.commit()
+
+    refreshed = {r.id: r for r in (await db_session.execute(select(WorkspaceRow))).scalars().all()}
+    assert refreshed[stale_ws.id].status == WorkspaceStatus.EXPIRED.value
+    assert refreshed[live_ws.id].status == WorkspaceStatus.ACTIVE.value
 
 
 # ── startup_recovery (orphan-row recovery from prior process crash) ─────

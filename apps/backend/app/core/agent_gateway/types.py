@@ -26,6 +26,7 @@ class AgentCommandKind(StrEnum):
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
+    CONFIG_UPDATE = "ConfigUpdate"
 
 
 class _CommandBase(BaseModel):
@@ -99,12 +100,40 @@ class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
 
 
+class AgentConfig(BaseModel):
+    """Runtime configuration delivered to the agent via ConfigUpdateCommand.
+
+    max_workspaces is the org/global default cap on concurrent Active workspaces.
+    The OTLP fields carry the agent's telemetry export destination;
+    otlp_token is treated as a secret and must not be logged.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    max_workspaces: int = Field(ge=1)
+    otlp_endpoint: str = ""
+    otlp_token: str = ""  # Secret on the wire — never log this field.
+    otlp_dataset: str = ""
+
+
+class ConfigUpdateCommand(BaseModel):
+    """Agent-scoped command that delivers runtime config. Carries no workspace_id
+    — the agent applies it globally. Workspace commands are gated until the
+    agent receives at least one ConfigUpdate."""
+
+    model_config = ConfigDict(frozen=True)
+    command_id: UUID
+    traceparent: str
+    kind: Literal[AgentCommandKind.CONFIG_UPDATE] = AgentCommandKind.CONFIG_UPDATE
+    config: AgentConfig
+
+
 AgentCommand = Annotated[
     CreateWorkspaceCommand
     | WriteFilesCommand
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
-    | CleanupWorkspaceCommand,
+    | CleanupWorkspaceCommand
+    | ConfigUpdateCommand,
     Field(discriminator="kind"),
 ]
 
@@ -175,6 +204,7 @@ class IdentityExchangeResponse(BaseModel):
     bearer: str
     expires_at: datetime
     agent_id: UUID
+    org_id: UUID
 
 
 class HeartbeatWorkspaceEntry(BaseModel):
@@ -199,6 +229,8 @@ class HeartbeatResponse(BaseModel):
 class ClaimRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
     wait_seconds: int = Field(ge=0, le=55)
+    lifecycle: Literal["unconfigured", "configured"] = "unconfigured"
+    active_workspace_ids: tuple[UUID, ...] = ()
 
 
 # ── Agent reference ───────────────────────────────────────────────────

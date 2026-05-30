@@ -53,30 +53,35 @@ func TestClaimCommand204ReturnsErrNoCommand(t *testing.T) {
 	}
 }
 
-func TestClaimCommand200ReturnsTypedCommand(t *testing.T) {
+func TestClaimCommand200ReturnsRawBytes(t *testing.T) {
+	const payload = `{"kind":"CleanupWorkspace","command_id":"cmd-1","workspace_id":"ws-1","traceparent":"00-..."}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
-			"kind": "CleanupWorkspace",
-			"command_id": "cmd-1",
-			"workspace_id": "ws-1",
-			"traceparent": "00-..."
-		}`))
+		_, _ = w.Write([]byte(payload))
 	}))
 	defer server.Close()
 
 	cli := NewClient(server.URL, nil)
 	cli.SetBearer("x")
-	cmd, err := cli.ClaimCommand(context.Background(), "agent-1", ClaimRequest{WaitSeconds: 0})
+	raw, err := cli.ClaimCommand(context.Background(), "agent-1", ClaimRequest{WaitSeconds: 0})
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if cmd.Kind != KindCleanupWorkspace || cmd.CleanupWorkspace == nil {
-		t.Fatalf("decode: %+v", cmd)
+	// The caller (supervisor) passes raw to command.Decode; here we just
+	// verify the JSON is returned verbatim and parseable.
+	var probe struct {
+		Kind      string `json:"kind"`
+		CommandID string `json:"command_id"`
 	}
-	if cmd.Header().CommandID != "cmd-1" {
-		t.Fatalf("header: %+v", cmd.Header())
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("parse raw bytes: %v", err)
+	}
+	if probe.Kind != "CleanupWorkspace" {
+		t.Errorf("kind: want CleanupWorkspace got %q", probe.Kind)
+	}
+	if probe.CommandID != "cmd-1" {
+		t.Errorf("command_id: want cmd-1 got %q", probe.CommandID)
 	}
 }
 

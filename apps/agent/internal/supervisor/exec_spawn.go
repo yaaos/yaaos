@@ -11,6 +11,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
@@ -99,12 +101,12 @@ type execRunner struct {
 	closeOnce sync.Once
 }
 
-func (r *execRunner) Send(ctx context.Context, cmd *protocol.AgentCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error) {
-	wireCmd, err := encodeCommand(cmd)
+func (r *execRunner) Send(ctx context.Context, cmd command.WorkspaceCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error) {
+	wireBytes, err := cmd.MarshalWire()
 	if err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("encode command: %w", err)
 	}
-	if err := r.enc.Write(wireCmd); err != nil {
+	if err := r.enc.Write(json.RawMessage(wireBytes)); err != nil {
 		return protocol.AgentEvent{}, fmt.Errorf("write command: %w", err)
 	}
 	// Read events in a loop — see `inProcessRunner.Send` for the

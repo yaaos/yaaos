@@ -5,10 +5,16 @@
 ## Where things are
 
 - `cmd/agent/` — entrypoint; `supervisor` and `workspace` subcommands.
-- `internal/` — packages: `ipc`, `protocol`, `supervisor`, `workspace`, `tracing`, `identity`, `activity`, `secret`, `backoff`, `observability`.
-- `bin/ci` — `gofmt`, `go mod tidy` drift, `golangci-lint`, build, `go test -race`, `govulncheck`, `semgrep`.
+- `internal/` — packages: `ipc`, `protocol`, `command`, `supervisor`, `workspace`, `tracing`, `identity`, `activity`, `secret`, `backoff`, `observability`.
+- `bin/ci` — `gofmt`, `go mod tidy` drift, `golangci-lint` (includes `depguard` layer checks + `exhaustive` enum guards), build, `go test -race`, `govulncheck`, `semgrep`.
 
-Internal architecture, package responsibilities, and wire-protocol details → [architecture.md](architecture.md).
+Internal architecture and package layout → [architecture.md](architecture.md).
+
+Per-package docs: [protocol.md](protocol.md) · [command.md](command.md) · [activity.md](activity.md) · [identity.md](identity.md) · [observability.md](observability.md) · [supervisor.md](supervisor.md) · [workspace.md](workspace.md) · [workspace_lifecycle.md](workspace_lifecycle.md).
+
+Coding conventions → [patterns.md](patterns.md).
+
+Control-plane ↔ WorkspaceAgent protocol → [`docs/workspace-agent-protocol.md`](../../../docs/workspace-agent-protocol.md).
 
 ## Configuration
 
@@ -16,10 +22,10 @@ Environment variables consumed by `agent supervisor`:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `YAAOS_BACKEND_URL` | `http://localhost:8080` | Control-plane base URL. |
+| `YAAOS_BACKEND_URL` | `https://app.yaaos.cloud` | Control-plane base URL. |
 | `YAAOS_AGENT_POD_ID` | random 32-hex | Stable id presented during identity exchange. |
 | `YAAOS_AGENT_VERSION` | `0.0.0-dev` | Reported during identity exchange. |
-| `YAAOS_SIGNED_STS_REQUEST` | placeholder | Signed STS payload for identity exchange. Any non-empty value satisfies the current placeholder verifier. |
+| `YAAOS_SIGNED_STS_REQUEST` | `placeholder-unsigned-sts` | Signed STS payload for identity exchange. Any non-empty value satisfies the current placeholder verifier. |
 
 ## Wire protocol
 

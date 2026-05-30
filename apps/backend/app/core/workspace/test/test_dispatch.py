@@ -49,6 +49,37 @@ async def test_try_claim_succeeds_on_unclaimed_active_workspace(db_session) -> N
 
 
 @pytest.mark.asyncio
+async def test_try_claim_persists_owning_agent_id(db_session) -> None:
+    """When the caller passes `agent_id` (create-dispatch path), it's written
+    onto the row alongside `current_command_id` so the workspace is hard-tied
+    to its owning pod."""
+    ws = await _seed_active_workspace(db_session)
+    cmd_id = uuid4()
+    wfx_id = uuid4()
+    agent_id = uuid4()
+    ok = await try_claim(
+        ws.id,
+        command_id=cmd_id,
+        workflow_execution_id=wfx_id,
+        agent_id=agent_id,
+        session=db_session,
+    )
+    assert ok is True
+    await db_session.refresh(ws)
+    assert ws.agent_id == agent_id
+
+
+@pytest.mark.asyncio
+async def test_try_claim_without_agent_id_leaves_owner_null(db_session) -> None:
+    """The in-memory path passes no agent_id; the row's agent_id stays NULL."""
+    ws = await _seed_active_workspace(db_session)
+    ok = await try_claim(ws.id, command_id=uuid4(), workflow_execution_id=uuid4(), session=db_session)
+    assert ok is True
+    await db_session.refresh(ws)
+    assert ws.agent_id is None
+
+
+@pytest.mark.asyncio
 async def test_second_claim_loses_to_first(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
     first_cmd, second_cmd = uuid4(), uuid4()

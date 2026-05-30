@@ -1,7 +1,7 @@
-// RealHandler — production workspace.Handler that owns the per-workspace
-// tempdir lifecycle. Implements all five AgentCommand kinds:
+// RealHandler — production command.WorkspaceOps that owns the per-workspace
+// tempdir lifecycle. Implements all five workspace command kinds:
 //
-//   - CreateWorkspace      — `os.MkdirTemp` under the configured root +
+//   - CloneWorkspace       — `os.MkdirTemp` under the configured root +
 //                            real `git clone` via the configured
 //                            `CloneFunc` (auth injected as
 //                            `x-access-token:<token>@…`) + a
@@ -10,25 +10,25 @@
 //   - WriteFiles           — write each (path, content) entry under the
 //                            workspace root. Refuses paths that escape
 //                            the root via `..` or absolute components.
-//   - RefreshWorkspaceAuth — overwrite the stored auth token in-place.
+//   - RefreshAuth          — overwrite the stored auth token in-place.
 //                            No I/O — used by the supervisor when the
 //                            backend rotates a GitHub installation token
 //                            mid-flight.
-//   - InvokeClaudeCode     — read `invocation.exec` from the wire
+//   - RunClaude            — read `invocation.exec` from the wire
 //                            ({argv, stdin, env}), merge env
 //                            on top of `os.Environ()`, add TRACEPARENT
 //                            for span linkage, dispatch via
 //                            `RunStreaming` with the workspace tempdir
 //                            as cwd. Captured stdout is returned in the
-//                            output map. Zero biz logic — the backend
-//                            owns prompt assembly + argv flags.
-//   - CleanupWorkspace     — `os.RemoveAll` the tempdir + drop the slot.
+//                            typed InvokeResult. Zero biz logic — the
+//                            backend owns prompt assembly + argv flags.
+//   - Cleanup              — `os.RemoveAll` the tempdir + drop the slot.
 //                            Idempotent on a missing workspace_id.
 //
 // Concurrency: a single sync.Mutex serializes slot lookups + mutations.
-// Each Handler method is short and non-blocking; the workspace process
-// itself dispatches commands single-file via `workspace.Run`, so
-// contention is bounded by the supervisor's per-workspace pool serializer.
+// Each method is short and non-blocking; the workspace process itself
+// dispatches commands single-file via `workspace.Run`, so contention is
+// bounded by the supervisor's per-workspace pool serializer.
 
 package workspace
 
@@ -46,6 +46,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/secret"
 	"github.com/yaaos/agent/internal/tracing"
@@ -100,7 +101,7 @@ type realSlot struct {
 	authTok  secret.Secret // never logged in cleartext
 }
 
-// RealHandler implements workspace.Handler for production. Construct
+// RealHandler implements command.WorkspaceOps for production. Construct
 // with NewRealHandler.
 type RealHandler struct {
 	cfg   RealHandlerConfig
@@ -110,7 +111,8 @@ type RealHandler struct {
 
 // NewRealHandler returns a fresh handler with the given config. Use
 // `workspace.Run(ctx, in, out, NewRealHandler(...), opts)` from the
-// `agent workspace` subcommand entry.
+// `agent workspace` subcommand entry point. RealHandler implements
+// command.WorkspaceOps.
 func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 	if cfg.DirPerm == 0 {
 		cfg.DirPerm = 0o700
@@ -130,18 +132,17 @@ func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 // event; the backend's workflow engine treats it as a fatal step error.
 var ErrUnknownWorkspace = errors.New("workspace not created")
 
-func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateWorkspaceCommand) (map[string]any, error) {
+func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
 	h.mu.Lock()
-	if _, exists := h.slots[cmd.WorkspaceID]; exists {
+	if existing, exists := h.slots[cmd.WorkspaceID]; exists {
 		// Idempotent: a second CreateWorkspace for the same id is a
 		// supervisor-side bug, but we don't want to crash the workspace
 		// process. Keep the existing slot, report reused=true.
-		slot := h.slots[cmd.WorkspaceID]
+		path := existing.path
 		h.mu.Unlock()
-		return map[string]any{
-			"workspace_id": cmd.WorkspaceID,
-			"path":         slot.path,
-			"reused":       true,
+		return command.CreateResult{
+			Path:   path,
+			Reused: true,
 		}, nil
 	}
 	h.mu.Unlock()
@@ -152,7 +153,7 @@ func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateW
 	}
 	path, err := os.MkdirTemp(root, "yaaos-ws-"+sanitizeID(cmd.WorkspaceID)+"-")
 	if err != nil {
-		return nil, fmt.Errorf("mkdir tempdir: %w", err)
+		return command.CreateResult{}, fmt.Errorf("mkdir tempdir: %w", err)
 	}
 	if err := os.Chmod(path, h.cfg.DirPerm); err != nil {
 		// Best-effort: the tempdir already exists with default perms.
@@ -167,7 +168,7 @@ func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateW
 	if err := h.cfg.CloneFunc(ctx, path, cmd.Repo, cmd.Auth, cmd.History); err != nil {
 		// Tear down the empty tempdir on clone failure so we don't leak.
 		_ = os.RemoveAll(path)
-		return nil, fmt.Errorf("git clone: %w", err)
+		return command.CreateResult{}, fmt.Errorf("git clone: %w", err)
 	}
 
 	// Startup-reconciliation manifest: write the workspace_id to a
@@ -179,7 +180,7 @@ func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateW
 	// empty.
 	manifestPath := filepath.Join(path, ".workspace-id")
 	if err := os.WriteFile(manifestPath, []byte(cmd.WorkspaceID), 0o600); err != nil {
-		// Manifest is best-effort; CreateWorkspace shouldn't fail
+		// Manifest is best-effort; CloneWorkspace shouldn't fail
 		// because of it. An orphan workspace without manifest is
 		// merely invisible to reconciliation, not broken.
 		_ = err
@@ -190,10 +191,9 @@ func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateW
 	// Re-check: another goroutine may have raced us in the meantime.
 	if existing, raced := h.slots[cmd.WorkspaceID]; raced {
 		_ = os.RemoveAll(path)
-		return map[string]any{
-			"workspace_id": cmd.WorkspaceID,
-			"path":         existing.path,
-			"reused":       true,
+		return command.CreateResult{
+			Path:   existing.path,
+			Reused: true,
 		}, nil
 	}
 	h.slots[cmd.WorkspaceID] = &realSlot{
@@ -202,53 +202,53 @@ func (h *RealHandler) CreateWorkspace(ctx context.Context, cmd *protocol.CreateW
 		authKind: cmd.Auth.Kind,
 		authTok:  secret.New(cmd.Auth.Token),
 	}
-	return map[string]any{
-		"workspace_id": cmd.WorkspaceID,
-		"path":         path,
-		"repo":         cmd.Repo.ExternalID,
-		"head_sha":     cmd.Repo.HeadSHA,
-		"branch":       cmd.Repo.BranchName,
+	return command.CreateResult{
+		Path:    path,
+		Repo:    cmd.Repo.ExternalID,
+		HeadSHA: cmd.Repo.HeadSHA,
+		Branch:  cmd.Repo.BranchName,
+		Reused:  false,
 	}, nil
 }
 
-func (h *RealHandler) WriteFiles(_ context.Context, cmd *protocol.WriteFilesCommand) (map[string]any, error) {
+func (h *RealHandler) WriteFiles(_ context.Context, cmd *protocol.WriteFilesCommand) (command.WriteFilesResult, error) {
 	h.mu.Lock()
 	slot, ok := h.slots[cmd.WorkspaceID]
 	h.mu.Unlock()
 	if !ok {
-		return nil, ErrUnknownWorkspace
+		return command.WriteFilesResult{}, ErrUnknownWorkspace
 	}
 	written := 0
 	for _, entry := range cmd.Files {
 		full, err := safeJoin(slot.path, entry.Path)
 		if err != nil {
-			return nil, fmt.Errorf("file %q: %w", entry.Path, err)
+			return command.WriteFilesResult{}, fmt.Errorf("file %q: %w", entry.Path, err)
 		}
 		if err := os.MkdirAll(filepath.Dir(full), h.cfg.DirPerm); err != nil {
-			return nil, fmt.Errorf("file %q: mkdir parent: %w", entry.Path, err)
+			return command.WriteFilesResult{}, fmt.Errorf("file %q: mkdir parent: %w", entry.Path, err)
 		}
 		if err := os.WriteFile(full, []byte(entry.Content), h.cfg.FilePerm); err != nil {
-			return nil, fmt.Errorf("file %q: write: %w", entry.Path, err)
+			return command.WriteFilesResult{}, fmt.Errorf("file %q: write: %w", entry.Path, err)
 		}
 		written++
 	}
-	return map[string]any{
-		"workspace_id": cmd.WorkspaceID,
-		"files_count":  written,
+	return command.WriteFilesResult{
+		WorkspaceID: cmd.WorkspaceID,
+		FilesCount:  written,
 	}, nil
 }
 
-func (h *RealHandler) RefreshWorkspaceAuth(_ context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (map[string]any, error) {
+func (h *RealHandler) RefreshAuth(_ context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (command.RefreshResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	slot, ok := h.slots[cmd.WorkspaceID]
 	if !ok {
-		return nil, ErrUnknownWorkspace
+		return command.RefreshResult{}, ErrUnknownWorkspace
 	}
 	slot.authTok = secret.New(cmd.NewToken)
-	return map[string]any{
-		"workspace_id": cmd.WorkspaceID,
-		"refreshed":    true,
+	return command.RefreshResult{
+		WorkspaceID: cmd.WorkspaceID,
+		Refreshed:   true,
 	}, nil
 }
 
@@ -265,20 +265,20 @@ type invocationExec struct {
 	} `json:"exec"`
 }
 
-func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (map[string]any, error) {
+func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	h.mu.Lock()
 	slot, ok := h.slots[cmd.WorkspaceID]
 	h.mu.Unlock()
 	if !ok {
-		return nil, ErrUnknownWorkspace
+		return command.InvokeResult{}, ErrUnknownWorkspace
 	}
 
 	var inv invocationExec
 	if err := json.Unmarshal(cmd.Invocation, &inv); err != nil {
-		return nil, fmt.Errorf("decode invocation: %w", err)
+		return command.InvokeResult{}, fmt.Errorf("decode invocation: %w", err)
 	}
 	if len(inv.Exec.Argv) == 0 {
-		return nil, errors.New("invocation.exec.argv missing or empty")
+		return command.InvokeResult{}, errors.New("invocation.exec.argv missing or empty")
 	}
 
 	// Env layering, low-to-high priority:
@@ -304,16 +304,16 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 	// `context.WithTimeout`. Here we just inherit that ctx — the
 	// subprocess is killed via SIGTERM/SIGKILL on ctx cancel.
 	//
-	// Live streaming: pull the Emitter `workspace.Run`
-	// installed into ctx; forward each stream-json line as a progress
-	// AgentEvent so the supervisor (and ultimately the SPA's activity
-	// view) sees Claude Code's work as it happens, not just at the end.
-	// We also accumulate the lines into `accumulated` so the terminal
-	// event still carries the full stdout — the backend's CodeReview
-	// step parses the final JSON response out of stdout, not the
-	// progress events. `RunStreaming`'s stdout buffer is bypassed when
-	// `OnStdoutLine` is set, so this local accumulation is the only
-	// place the bytes are retained for the success path.
+	// Live streaming: pull the Emitter workspace.Run installed into ctx;
+	// forward each stream-json line as a progress AgentEvent so the
+	// supervisor (and ultimately the SPA's activity view) sees Claude
+	// Code's work as it happens, not just at the end. We also accumulate
+	// lines into `accumulated` so the terminal InvokeResult still carries
+	// the full stdout — the backend's CodeReview step parses the final
+	// JSON response out of stdout, not the progress events.
+	// `RunStreaming`'s stdout buffer is bypassed when `OnStdoutLine` is
+	// set, so this local accumulation is the only place the bytes are
+	// retained for the success path.
 	emitter := EmitterFromContext(ctx)
 	var accumulated bytes.Buffer
 	res, err := RunStreaming(ctx, RunStreamingOptions{
@@ -348,28 +348,23 @@ func (h *RealHandler) InvokeClaudeCode(ctx context.Context, cmd *protocol.Invoke
 			if len(stderrExcerpt) > 2048 {
 				stderrExcerpt = stderrExcerpt[:2048] + "...[truncated]"
 			}
-			return nil, fmt.Errorf("claude exit %d: %s", res.ExitCode, stderrExcerpt)
+			return command.InvokeResult{}, fmt.Errorf("claude exit %d: %s", res.ExitCode, stderrExcerpt)
 		}
-		return nil, fmt.Errorf("claude subprocess: %w", err)
+		return command.InvokeResult{}, fmt.Errorf("claude subprocess: %w", err)
 	}
 
-	stdoutExcerpt := ""
-	if len(res.Stdout) <= 16*1024 {
-		stdoutExcerpt = string(res.Stdout)
-	} else {
-		stdoutExcerpt = string(res.Stdout[:16*1024]) + "...[truncated]"
-	}
-	return map[string]any{
-		"workspace_id":   cmd.WorkspaceID,
-		"exit_code":      res.ExitCode,
-		"duration_ms":    res.Duration.Milliseconds(),
-		"stdout":         string(res.Stdout), // full output for the engine to parse
-		"stderr":         string(res.Stderr),
-		"stdout_excerpt": stdoutExcerpt,
+	return command.InvokeResult{
+		WorkspaceID: cmd.WorkspaceID,
+		ExecResult: command.ExecResult{
+			ExitCode: res.ExitCode,
+			Stdout:   string(res.Stdout),
+			Stderr:   string(res.Stderr),
+			Duration: res.Duration,
+		},
 	}, nil
 }
 
-func (h *RealHandler) CleanupWorkspace(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (map[string]any, error) {
+func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	h.mu.Lock()
 	slot, ok := h.slots[cmd.WorkspaceID]
 	if ok {
@@ -378,19 +373,19 @@ func (h *RealHandler) CleanupWorkspace(_ context.Context, cmd *protocol.CleanupW
 	h.mu.Unlock()
 	if !ok {
 		// Idempotent: cleanup of an unknown workspace is a no-op success.
-		return map[string]any{
-			"workspace_id": cmd.WorkspaceID,
-			"destroyed":    false,
-			"reason":       "unknown_workspace",
+		return command.CleanupResult{
+			WorkspaceID: cmd.WorkspaceID,
+			Destroyed:   false,
+			Reason:      "unknown_workspace",
 		}, nil
 	}
 	if err := os.RemoveAll(slot.path); err != nil {
-		return nil, fmt.Errorf("cleanup %q: %w", slot.path, err)
+		return command.CleanupResult{}, fmt.Errorf("cleanup %q: %w", slot.path, err)
 	}
-	return map[string]any{
-		"workspace_id": cmd.WorkspaceID,
-		"destroyed":    true,
-		"path":         slot.path,
+	return command.CleanupResult{
+		WorkspaceID: cmd.WorkspaceID,
+		Destroyed:   true,
+		Path:        slot.path,
 	}, nil
 }
 

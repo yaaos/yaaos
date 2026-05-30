@@ -2,11 +2,18 @@ package activity
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
 )
+
+// Logger is the minimal logging surface the Conductor needs.
+// The supervisor injects its own logger at construction so activity logs
+// carry the same standard dimensions (org_id, agent_id) as the rest of
+// the supervisor's output.
+type Logger interface {
+	Warn(msg string, kv ...any)
+}
 
 // SendFunc writes one outbound JSON frame onto the WebSocket. The
 // Conductor doesn't own the WS — it's parameterized via this callback
@@ -34,15 +41,32 @@ type Conductor struct {
 	mapping *WorkspaceMapping
 	batcher *Batcher
 	send    SendFunc
+	log     Logger
 }
 
+// nullLogger is the default Logger when none is supplied: discards all output.
+type nullLogger struct{}
+
+func (nullLogger) Warn(string, ...any) {}
+
 func NewConductor(flushInterval time.Duration, send SendFunc) *Conductor {
+	return NewConductorWithLogger(flushInterval, send, nil)
+}
+
+// NewConductorWithLogger constructs a Conductor that logs via the supplied
+// Logger. When log is nil a silent no-op is used. The supervisor passes its
+// own logger so activity logs carry the standard org_id/agent_id dimensions.
+func NewConductorWithLogger(flushInterval time.Duration, send SendFunc, log Logger) *Conductor {
+	if log == nil {
+		log = nullLogger{}
+	}
 	subs := NewSubscriptionSet()
 	mapping := NewWorkspaceMapping()
 	c := &Conductor{
 		subs:    subs,
 		mapping: mapping,
 		send:    send,
+		log:     log,
 	}
 	c.batcher = NewBatcher(subs, flushInterval, c.flushOne)
 	return c
@@ -95,15 +119,15 @@ func (c *Conductor) Publish(workspaceID string, ev protocol.AgentEvent) {
 func (c *Conductor) flushOne(workspaceID string, events []protocol.AgentEvent) {
 	wf, ok := c.mapping.Get(workspaceID)
 	if !ok {
-		slog.Warn("activity.drop_batch_no_mapping", "workspace_id", workspaceID)
+		c.log.Warn("activity.drop_batch_no_mapping", "workspace_id", workspaceID)
 		return
 	}
 	frame, err := EncodeBatch(wf, events)
 	if err != nil {
-		slog.Warn("activity.encode_batch_failed", "workflow_execution_id", wf, "err", err.Error())
+		c.log.Warn("activity.encode_batch_failed", "workflow_execution_id", wf, "err", err.Error())
 		return
 	}
 	if err := c.send(frame); err != nil {
-		slog.Warn("activity.send_batch_failed", "workflow_execution_id", wf, "err", err.Error())
+		c.log.Warn("activity.send_batch_failed", "workflow_execution_id", wf, "err", err.Error())
 	}
 }

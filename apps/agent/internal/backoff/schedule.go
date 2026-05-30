@@ -49,6 +49,19 @@ func New() *Schedule {
 	return &Schedule{steps: defaultSteps, rng: rand.Float64}
 }
 
+// NewWithSteps returns a Schedule with a caller-supplied step list.
+// The last step pins forever (same as the default ramp). Used when the
+// default 1m-60m ramp is too coarse — e.g. event-post retry where the
+// target is a transient HTTP blip, not a multi-minute outage.
+func NewWithSteps(steps []time.Duration) *Schedule {
+	if len(steps) == 0 {
+		steps = defaultSteps
+	}
+	s := make([]time.Duration, len(steps))
+	copy(s, steps)
+	return &Schedule{steps: s, rng: rand.Float64}
+}
+
 // Peek returns the next scheduled delay (jittered) WITHOUT advancing
 // the counter. Use to drive the `connection.backoff_seconds` gauge.
 func (s *Schedule) Peek() time.Duration {

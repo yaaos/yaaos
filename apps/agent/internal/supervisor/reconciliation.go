@@ -152,12 +152,11 @@ func sweepOrphanWorkspaceDirs(root string, known map[string]struct{}, log Logger
 }
 
 // cleanupForgottenWorkspaces removes the on-disk directories the backend
-// said it no longer tracks. `paths` is the workspace_id → path map the
-// supervisor built at scan time + augments with new CreateWorkspace
-// rows (so live workspaces are eligible for cleanup too — the backend
-// names them in `forgotten_workspaces` when their workflow already
-// terminated). Removes that succeed are removed from the returned map;
-// the caller swaps its own map for the returned one.
+// said it no longer tracks. `paths` is the workspace_id → path map from
+// `Pool.Paths()` — it includes every registry record with a known on-disk
+// path (Active, Orphaned, and Defunct). Removes that succeed are absent
+// from the returned map; the caller uses that to decide which registry
+// records to drop.
 //
 // Best-effort: a remove failure logs at warn and leaves the entry in
 // the map so the next heartbeat retries. An unknown workspace_id in

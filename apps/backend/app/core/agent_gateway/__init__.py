@@ -16,7 +16,7 @@ Provides:
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
-from app.core.agent_gateway.bearers import revoke_all_for_org
+from app.core.agent_gateway.bearers import revoke_all_for_agent, revoke_all_for_org
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
     lookup_org_by_arn,
@@ -38,12 +38,12 @@ from app.core.agent_gateway.service import (
     ensure_agent_row,
     get_agent_info,
     has_any_reachable_agent,
-    has_stale_agents_for_org,
     pick_agent_for_org,
     queue_depth,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
+    stale_agent_ids,
 )
 from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
@@ -57,11 +57,14 @@ from app.core.agent_gateway.types import (
     TERMINAL_EVENT_KINDS,
     AgentCommand,
     AgentCommandKind,
+    AgentConfig,
     AgentEvent,
     AgentEventKind,
     AgentRef,
     AuthBlock,
+    ClaimRequest,
     CleanupWorkspaceCommand,
+    ConfigUpdateCommand,
     CreateWorkspaceCommand,
     GatewayError,
     HeartbeatRequest,
@@ -85,12 +88,15 @@ __all__ = [
     "TERMINAL_EVENT_KINDS",
     "AgentCommand",
     "AgentCommandKind",
+    "AgentConfig",
     "AgentEvent",
     "AgentEventKind",
     "AgentQueues",
     "AgentRef",
     "AuthBlock",
+    "ClaimRequest",
     "CleanupWorkspaceCommand",
+    "ConfigUpdateCommand",
     "CreateWorkspaceCommand",
     "GatewayError",
     "HeartbeatRequest",
@@ -123,7 +129,6 @@ __all__ = [
     "get_report_sink",
     "get_subscriber_registry",
     "has_any_reachable_agent",
-    "has_stale_agents_for_org",
     "lookup_org_by_arn",
     "pick_agent_for_org",
     "queue_depth",
@@ -132,8 +137,10 @@ __all__ = [
     "record_workspace_event",
     "register_org_arn_lookup",
     "register_report_sink",
+    "revoke_all_for_agent",
     "revoke_all_for_org",
     "shutdown",
+    "stale_agent_ids",
 ]
 
 from app.core.shutdown_registry import register_web_shutdown_hook

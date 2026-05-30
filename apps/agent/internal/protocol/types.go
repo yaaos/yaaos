@@ -3,14 +3,13 @@
 //
 // Hand-written. Field tags match the JSON keys the backend emits and accepts.
 //
-// AgentCommand is a discriminated union over `kind`. The wire form is a
-// flat JSON object — the decoder peeks at `kind` and routes into the
-// right concrete type via UnmarshalJSON on the wrapper.
+// Wire commands arrive as flat JSON discriminated by `kind`. Consumers call
+// command.Decode (internal/command) to unmarshal raw bytes into the concrete
+// typed command — this package does not decode the union itself.
 package protocol
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -23,6 +22,7 @@ const (
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
+	KindConfigUpdate         CommandKind = "ConfigUpdate"
 )
 
 // CommandHeader is embedded in every concrete AgentCommand. Carries the
@@ -94,85 +94,6 @@ type CleanupWorkspaceCommand struct {
 	CommandHeader
 }
 
-// AgentCommand is the discriminated union returned by the claim endpoint.
-// Exactly one of the typed pointers is non-nil after a successful
-// UnmarshalJSON call; the other fields are nil.
-type AgentCommand struct {
-	Kind                 CommandKind
-	CreateWorkspace      *CreateWorkspaceCommand
-	WriteFiles           *WriteFilesCommand
-	RefreshWorkspaceAuth *RefreshWorkspaceAuthCommand
-	InvokeClaudeCode     *InvokeClaudeCodeCommand
-	CleanupWorkspace     *CleanupWorkspaceCommand
-}
-
-// UnmarshalJSON peeks at the `kind` field to decide which concrete type
-// to decode into. Unknown kinds are an error — the supervisor MUST refuse
-// to dispatch a command shape it doesn't understand.
-func (c *AgentCommand) UnmarshalJSON(data []byte) error {
-	var probe struct {
-		Kind CommandKind `json:"kind"`
-	}
-	if err := json.Unmarshal(data, &probe); err != nil {
-		return fmt.Errorf("protocol: probe kind: %w", err)
-	}
-	c.Kind = probe.Kind
-	switch probe.Kind {
-	case KindCreateWorkspace:
-		var v CreateWorkspaceCommand
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		c.CreateWorkspace = &v
-	case KindWriteFiles:
-		var v WriteFilesCommand
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		c.WriteFiles = &v
-	case KindRefreshWorkspaceAuth:
-		var v RefreshWorkspaceAuthCommand
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		c.RefreshWorkspaceAuth = &v
-	case KindInvokeClaudeCode:
-		var v InvokeClaudeCodeCommand
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		c.InvokeClaudeCode = &v
-	case KindCleanupWorkspace:
-		var v CleanupWorkspaceCommand
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		c.CleanupWorkspace = &v
-	default:
-		return fmt.Errorf("protocol: unknown command kind %q", probe.Kind)
-	}
-	return nil
-}
-
-// Header returns the embedded CommandHeader from whichever concrete type
-// is set. Useful for logging + ack flow regardless of kind.
-func (c *AgentCommand) Header() CommandHeader {
-	switch c.Kind {
-	case KindCreateWorkspace:
-		return c.CreateWorkspace.CommandHeader
-	case KindWriteFiles:
-		return c.WriteFiles.CommandHeader
-	case KindRefreshWorkspaceAuth:
-		return c.RefreshWorkspaceAuth.CommandHeader
-	case KindInvokeClaudeCode:
-		return c.InvokeClaudeCode.CommandHeader
-	case KindCleanupWorkspace:
-		return c.CleanupWorkspace.CommandHeader
-	default:
-		return CommandHeader{}
-	}
-}
-
 // ── Events ──────────────────────────────────────────────────────────────
 
 type EventKind string
@@ -196,24 +117,6 @@ type AgentEvent struct {
 	Traceparent   string         `json:"traceparent"`
 }
 
-type WorkspaceEventKind string
-
-const (
-	WSEventCreated   WorkspaceEventKind = "created"
-	WSEventReady     WorkspaceEventKind = "ready"
-	WSEventExited    WorkspaceEventKind = "exited"
-	WSEventDestroyed WorkspaceEventKind = "destroyed"
-	WSEventFailed    WorkspaceEventKind = "failed"
-)
-
-type WorkspaceEvent struct {
-	WorkspaceID string             `json:"workspace_id"`
-	CommandID   string             `json:"command_id"`
-	Kind        WorkspaceEventKind `json:"kind"`
-	Message     string             `json:"message,omitempty"`
-	ReportedAt  time.Time          `json:"reported_at"`
-}
-
 // ── Identity / heartbeat / claim ───────────────────────────────────────
 
 type IdentityExchangeRequest struct {
@@ -226,6 +129,7 @@ type IdentityExchangeResponse struct {
 	Bearer    string    `json:"bearer"`
 	ExpiresAt time.Time `json:"expires_at"`
 	AgentID   string    `json:"agent_id"`
+	OrgID     string    `json:"org_id"`
 }
 
 type HeartbeatWorkspaceEntry struct {
@@ -245,5 +149,30 @@ type HeartbeatResponse struct {
 }
 
 type ClaimRequest struct {
-	WaitSeconds int `json:"wait_seconds"`
+	WaitSeconds        int      `json:"wait_seconds"`
+	Lifecycle          string   `json:"lifecycle"`            // "unconfigured" | "configured"
+	ActiveWorkspaceIDs []string `json:"active_workspace_ids"` // IDs of Active-state workspaces
+}
+
+// AgentConfigWire is the raw JSON wire shape of the runtime configuration
+// delivered via ConfigUpdateCommand. The "Wire" suffix distinguishes it from
+// command.AgentConfig — the typed form Decode produces, whose OTLPToken is a
+// secret.Secret. OTLPToken is a plain string here (the raw wire value); Decode
+// wraps it in secret.Secret immediately, so this struct must never be logged
+// before that wrapping.
+type AgentConfigWire struct {
+	MaxWorkspaces int    `json:"max_workspaces"`
+	OTLPEndpoint  string `json:"otlp_endpoint"`
+	OTLPToken     string `json:"otlp_token"` // secret — wrapped by Decode; never log raw
+	OTLPDataset   string `json:"otlp_dataset"`
+}
+
+// ConfigUpdateCommand is the agent-scoped command that delivers runtime
+// configuration. It applies globally to the agent process; the workspace_id
+// inherited from the embedded CommandHeader is always empty for this kind.
+// The config payload is nested under `config` (the workspace commands are
+// flat). See command.ConfigUpdateCommand for the typed form used after Decode.
+type ConfigUpdateCommand struct {
+	CommandHeader
+	Config AgentConfigWire `json:"config"`
 }
