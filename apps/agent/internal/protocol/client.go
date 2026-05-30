@@ -110,15 +110,6 @@ func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event A
 	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
 }
 
-// PostWorkspaceEvent reports a workspace-state transition.
-func (c *Client) PostWorkspaceEvent(ctx context.Context, workspaceID string, event WorkspaceEvent) error {
-	path := fmt.Sprintf("/api/v1/workspaces/%s/events", workspaceID)
-	if event.ReportedAt.IsZero() {
-		event.ReportedAt = time.Now().UTC()
-	}
-	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
-}
-
 // doJSON is the generic POST helper. `out` may be nil for endpoints that
 // don't return a typed body. `withBearer=false` is only used by the
 // identity-exchange path which is unauthenticated.

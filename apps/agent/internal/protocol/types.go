@@ -117,24 +117,6 @@ type AgentEvent struct {
 	Traceparent   string         `json:"traceparent"`
 }
 
-type WorkspaceEventKind string
-
-const (
-	WSEventCreated   WorkspaceEventKind = "created"
-	WSEventReady     WorkspaceEventKind = "ready"
-	WSEventExited    WorkspaceEventKind = "exited"
-	WSEventDestroyed WorkspaceEventKind = "destroyed"
-	WSEventFailed    WorkspaceEventKind = "failed"
-)
-
-type WorkspaceEvent struct {
-	WorkspaceID string             `json:"workspace_id"`
-	CommandID   string             `json:"command_id"`
-	Kind        WorkspaceEventKind `json:"kind"`
-	Message     string             `json:"message,omitempty"`
-	ReportedAt  time.Time          `json:"reported_at"`
-}
-
 // ── Identity / heartbeat / claim ───────────────────────────────────────
 
 type IdentityExchangeRequest struct {

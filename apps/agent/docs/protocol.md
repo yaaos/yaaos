@@ -8,9 +8,9 @@
 - All concrete command wire structs: `CreateWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`.
 - `CommandHeader` — embedded in every concrete command; carries `command_id`, `workspace_id`, `traceparent`, `kind`.
 - `CommandKind` constants.
-- Event types: `AgentEvent`, `WorkspaceEvent`, `EventKind`/`WorkspaceEventKind` constants.
+- Event types: `AgentEvent`, `EventKind` constants.
 - Identity, heartbeat, and claim HTTP types.
-- `Client` — the HTTP client for the 5 backend endpoints.
+- `Client` — the HTTP client for the 4 backend endpoints the agent calls.
 
 **Does not own:**
 - Union dispatch or `kind`-switch decoding — that is `command.Decode` (`internal/command`).
@@ -43,5 +43,5 @@
 ## Entry points
 
 - `types.go` — all wire structs, `CommandKind` constants, `CommandHeader`, event types.
-- `client.go` — `Client`, `ClaimCommand`, `PostCommandEvent`, `Heartbeat`, `ExchangeIdentity`.
+- `client.go` — `Client`, `ExchangeIdentity`, `Heartbeat`, `ClaimCommand`, `PostCommandEvent`.
 - `openapi_drift_test.go` — tag-conformance assertion; fails when a field name drifts from the spec.

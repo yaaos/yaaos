@@ -2,6 +2,24 @@
 
 > OS-process scheduler + IPC framing + repo clone + Claude Code subprocess manager; zero business logic.
 
+## Orientation
+
+A single Go binary running as two processes: the **supervisor** (long-lived parent — talks to the control plane, owns coordination) and per-checkout **workspace** children (one per repo, doing git/file/Claude Code work in an isolated temp dir). They speak over pipes (newline-framed JSON).
+
+```
+Control plane ──Command──> Supervisor ──routes via──> Pool ──spawns/feeds──> Workspace child
+     ▲                          │                       │                        │
+     └──events/heartbeat────────┘                  Registry                  temp dir + git
+                                              (one record per workspace)
+```
+
+- **Command** — a unit of work from the control plane, modeled as a `Command` interface with two families: `WorkspaceCommand` (executed in a child against a `WorkspaceOps` capability) and `AgentCommand` (agent-scoped, executed in the supervisor). Adding a kind = a new type implementing the interface. Zero policy — commands carry fully-specified work.
+- **Workspace** — a repo checkout with a lifecycle; the **Pool** owns one registry record per workspace (`{state, path, current command, runner}`) and is the single source of truth heartbeat and disk-sweep read. State has two axes: liveness (`Active`/`Defunct`/`Orphaned`) and busy-ness (current command).
+- **Agent lifecycle** — after auth the agent is `unconfigured` and does no workspace work; its claim declares that state, the control plane sends a `ConfigUpdateCommand`, and the agent becomes `configured`, capped at `max_workspaces`.
+- **Concurrency** — one root context; the supervisor owns all goroutines; cancel is the only shutdown. **N** (active workspaces) drives process/FD footprint; claim-worker count drives execution width, independent of N.
+- **Errors** — command errors become failure events, transport errors retry, only boot-time errors crash, panics are recovered at the worker boundary.
+- **Observability** — every log/span/metric carries `org_id` + `agent_id`; local logs are text, OTLP export is structured and late-bound on config.
+
 ## Principle
 
 The agent is **zero biz logic**. Every threshold, prompt, lesson, depth, and timeout comes from the control plane via AgentCommand payload. The agent owns: process spawning, IPC framing, repo clone, credential redaction, and telemetry. No policy.
@@ -14,6 +32,7 @@ Imports flow downward only. `depguard` in `apps/agent/.golangci.yml` enforces th
 supervisor ──→ workspace, command, activity
 workspace  ──→ command, protocol
 command    ──→ protocol
+activity   ──→ protocol
 protocol   (leaf — no internal imports)
 ```
 
@@ -28,13 +47,13 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 
 - `cmd/agent/` — main entrypoint; subcommand dispatch.
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes; partial-read tolerance + concurrency-safe encoder.
-- `internal/protocol/` — wire types + HTTP client matching [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml); `openapi_drift_test.go` asserts every property name has a matching `json:` tag.
+- `internal/protocol/` — wire types + HTTP client matching [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml); `openapi_drift_test.go` asserts every property name has a matching `json:` tag. See [protocol.md](protocol.md).
 - `internal/command/` — polymorphic `Command` interface, the 5 workspace command types + `ConfigUpdateCommand`, `WorkspaceOps`/`AgentOps` capability seams, typed result structs, and the `Decode` factory. See [command.md](command.md).
-- `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses.
-- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup; `StubHandler` for tests.
+- `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses. See [supervisor.md](supervisor.md).
+- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup; `StubHandler` for tests. See [workspace.md](workspace.md).
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
 - `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
-- `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`.
+- `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`. See [activity.md](activity.md).
 - `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap.
 - `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`).
 - `internal/observability/` — OTel SDK bootstrap, metric instrument declarations, standard dimension helpers (`SetStandardDimensions`, `StandardAttrs`). See [observability.md](observability.md).

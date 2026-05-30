@@ -3,8 +3,8 @@
 # Enabled set is the standard high-signal Go linters plus a few extras
 # (bodyclose for HTTP-client safety, gocritic for diagnostic checks,
 # revive as a faster golint successor, depguard for layer-boundary
-# enforcement). gosimple was merged into staticcheck in v2 so it's no
-# longer a separate linter.
+# enforcement, exhaustive for enum-switch completeness). gosimple was
+# merged into staticcheck in v2 so it's no longer a separate linter.
 
 version: "2"
 
@@ -23,9 +23,9 @@ linters:
     - bodyclose
     - gocritic
     - depguard
+    - exhaustive
   # revive's `exported` and `package-comments` rules require a doc comment
-  # on every exported symbol / package. At POC phase that produces stub
-  # comments ("X does X") with no signal. Disable both and keep revive's
+  # on every exported symbol / package. Disable both and keep revive's
   # higher-signal defaults (var-naming, early-return, unused-parameter,
   # etc.).
   settings:
@@ -35,6 +35,10 @@ linters:
           disabled: true
         - name: package-comments
           disabled: true
+    exhaustive:
+      # A switch with a `default` case is considered exhaustive. Used for
+      # command.Decode whose default returns an error on unknown kinds.
+      default-signifies-exhaustive: true
     depguard:
       rules:
         # protocol is the leaf: it must not import command (or any layer above it).
@@ -49,6 +53,17 @@ linters:
               desc: "protocol is a leaf package; it must not import supervisor"
             - pkg: "github.com/yaaos/agent/internal/workspace"
               desc: "protocol is a leaf package; it must not import workspace"
+        # activity must not import command, supervisor, or workspace.
+        no_activity_importing_upper_layers:
+          files:
+            - "**/internal/activity/**"
+          deny:
+            - pkg: "github.com/yaaos/agent/internal/command"
+              desc: "activity must not import command — downward-only layer graph"
+            - pkg: "github.com/yaaos/agent/internal/supervisor"
+              desc: "activity must not import supervisor — downward-only layer graph"
+            - pkg: "github.com/yaaos/agent/internal/workspace"
+              desc: "activity must not import workspace — downward-only layer graph"
         # workspace must not import supervisor (downward-only graph).
         no_workspace_importing_supervisor:
           files:

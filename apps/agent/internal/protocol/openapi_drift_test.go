@@ -69,16 +69,18 @@ var schemaToStruct = map[string]struct {
 	"AgentConfig":                 {reflect.TypeOf(AgentConfig{}), nil},
 	"ConfigUpdateCommand":         {reflect.TypeOf(ConfigUpdateCommand{}), nil},
 	"AgentEvent":                  {reflect.TypeOf(AgentEvent{}), nil},
-	"WorkspaceEvent":              {reflect.TypeOf(WorkspaceEvent{}), nil},
 }
 
 // skipped — schemas the test deliberately doesn't mirror to a Go struct.
 // ErrorEnvelope is HTTP error shape (handled inline in the client);
 // AgentCommand union dispatch lives in AgentCommand.UnmarshalJSON which
 // reads `kind` and switches over the five concrete kinds.
+// WorkspaceEvent is a backend-side type; the agent never emits these events
+// so the Go mirror was removed while the spec entry remains for the backend.
 var skippedSchemas = map[string]struct{}{
-	"ErrorEnvelope": {},
-	"AgentCommand":  {},
+	"ErrorEnvelope":  {},
+	"AgentCommand":   {},
+	"WorkspaceEvent": {},
 }
 
 // specPath resolves to apps/backend/openapi/agent-api.yaml relative to
@@ -274,29 +276,6 @@ func TestOpenAPIDrift_AgentEventKindsMatchSpecEnum(t *testing.T) {
 	}
 	if len(yamlKinds) != len(goKinds) {
 		t.Errorf("AgentEvent.kind drift: spec has %d values, Go has %d", len(yamlKinds), len(goKinds))
-	}
-}
-
-func TestOpenAPIDrift_WorkspaceEventKindsMatchSpecEnum(t *testing.T) {
-	spec := loadSpec(t)
-	var yamlKinds []string
-	if kind, ok := spec.Components.Schemas["WorkspaceEvent"].Properties["kind"]; ok {
-		yamlKinds = kind.Enum
-	}
-	goKinds := map[string]struct{}{
-		string(WSEventCreated):   {},
-		string(WSEventReady):     {},
-		string(WSEventExited):    {},
-		string(WSEventDestroyed): {},
-		string(WSEventFailed):    {},
-	}
-	for _, k := range yamlKinds {
-		if _, ok := goKinds[k]; !ok {
-			t.Errorf("WorkspaceEvent.kind enum value %q in spec is not in WorkspaceEventKind consts", k)
-		}
-	}
-	if len(yamlKinds) != len(goKinds) {
-		t.Errorf("WorkspaceEvent.kind drift: spec has %d values, Go has %d", len(yamlKinds), len(goKinds))
 	}
 }
 
