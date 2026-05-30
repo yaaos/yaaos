@@ -211,7 +211,7 @@ async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
     workspace_id = uuid4()
 
-    command_id = await dispatch_create_workspace(
+    result = await dispatch_create_workspace(
         org_id,
         workspace_id,
         repo=RepoRef(
@@ -224,16 +224,56 @@ async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -
         traceparent="00-aabb-1122-01",
         session=db_session,
     )
-    assert command_id is not None
-    # The command landed on the picked pod's queue (keyed by agent_pod_id).
-    assert queue_depth(seeded["agent_pod_id"]) == 1
+    assert result is not None
+    # The owning agent is the picked WorkspaceAgentRow.id; the command is
+    # enqueued under that id (NOT agent_pod_id) so claim_next can find it.
+    assert result.agent_id == seeded["id"]
+    assert queue_depth(seeded["id"]) == 1
+    # The pod_id is NOT a queue key anymore.
+    assert queue_depth(seeded["agent_pod_id"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_create_workspace_command_claimable_by_same_agent(db_session) -> None:
+    """End-to-end: a command enqueued by dispatch_create_workspace for an
+    agent is claimable by that same agent_id via claim_next. Guards the
+    enqueue/claim key inconsistency."""
+    from app.core.agent_gateway import claim_next  # noqa: PLC0415
+
+    org_id = uuid4()
+    await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
+    workspace_id = uuid4()
+
+    result = await dispatch_create_workspace(
+        org_id,
+        workspace_id,
+        repo=RepoRef(
+            plugin_id="github",
+            external_id="123",
+            clone_url="https://github.com/me/repo.git",
+            head_sha="deadbeef",
+        ),
+        auth=AuthBlock(kind="github_installation", token="tok"),
+        traceparent="00-aabb-1122-01",
+        session=db_session,
+    )
+    assert result is not None
+    # A configured agent claims by its own id and gets the CreateWorkspace cmd.
+    claimed = await claim_next(
+        result.agent_id,
+        wait_seconds=0,
+        lifecycle="configured",
+        active_workspace_ids=[],
+    )
+    assert claimed is not None
+    assert claimed.command_id == result.command_id
 
 
 @pytest.mark.asyncio
 async def test_dispatch_create_workspace_returns_none_when_no_agent(db_session) -> None:
     org_id = uuid4()
     # No agents seeded — caller is expected to handle None as "not reachable".
-    command_id = await dispatch_create_workspace(
+    result = await dispatch_create_workspace(
         org_id,
         uuid4(),
         repo=RepoRef(
@@ -246,7 +286,7 @@ async def test_dispatch_create_workspace_returns_none_when_no_agent(db_session) 
         traceparent="00-aabb-1122-01",
         session=db_session,
     )
-    assert command_id is None
+    assert result is None
 
 
 # ── Provider health_check ─────────────────────────────────────────────

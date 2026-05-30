@@ -25,6 +25,7 @@ async def try_claim(
     *,
     command_id: UUID,
     workflow_execution_id: UUID,
+    agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> bool:
     """Atomically claim `workspace_id` for `command_id` + `workflow_execution_id`.
@@ -35,9 +36,20 @@ async def try_claim(
     second concurrent caller racing on the same row sees rowcount=0 and
     backs off.
 
+    `agent_id` (the owning `WorkspaceAgentRow.id`) is written onto the row in
+    the same UPDATE when supplied — the create-dispatch path passes it so the
+    workspace is hard-tied to the pod that ran `CreateWorkspace`. The in-memory
+    path omits it, leaving `WorkspaceRow.agent_id` NULL.
+
     Caller commits; the outbox row enqueueing the AgentCommand should go
     in the same transaction so claim + dispatch land atomically.
     """
+    values: dict[str, UUID] = {
+        "current_command_id": command_id,
+        "current_holder_workflow_id": workflow_execution_id,
+    }
+    if agent_id is not None:
+        values["agent_id"] = agent_id
     result = await session.execute(
         update(WorkspaceRow)
         .where(
@@ -45,10 +57,7 @@ async def try_claim(
             WorkspaceRow.current_command_id.is_(None),
             WorkspaceRow.status == "active",
         )
-        .values(
-            current_command_id=command_id,
-            current_holder_workflow_id=workflow_execution_id,
-        )
+        .values(**values)
     )
     claimed = bool(result.rowcount)
     if not claimed:

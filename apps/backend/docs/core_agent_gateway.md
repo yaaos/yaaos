@@ -15,7 +15,8 @@
 - **`WorkspaceAgentReportSink` IoC seam** — `core/workspace` implements the Protocol and registers at its own import time (`workspace/__init__.py`). agent_gateway's service functions call the registered sink for all workspace-state reads/writes; the `agent_gateway → workspace` import edge does not exist. Canonical direction: workspace → agent_gateway. Both single-slot registries (`register_report_sink`, `register_org_arn_lookup`) are idempotent for the same value but raise on a conflicting re-registration, so a double-wiring bug surfaces at boot rather than silently swapping the singleton. Tests that need to swap stubs reach `clear_report_sink` directly from `app.core.agent_gateway.report_sink` (intra-module submodule import).
 - **`OrgArnLookup` IoC seam** — `/identity/exchange` needs to resolve a canonical IAM ARN to an org id + aws_region, but `core` cannot import `domain`. `org_arn_lookup.py` declares `OrgArnRef` (a frozen dataclass) + `register_org_arn_lookup` / `lookup_org_by_arn`. `domain/orgs` registers its implementation at import time; the endpoint calls `lookup_org_by_arn` without any `core → domain` edge.
 - **`org_context` wrap on every actor-resolving endpoint** — heartbeat, claim, workspace-events, command-events, and the activity WebSocket (entire connection lifetime). Excluded: `/identity/exchange` (bootstraps the bearer; no agent identity yet).
-- **Per-agent identity check on `agent_id`-addressed endpoints** — `heartbeat`, `claim`, and the activity WebSocket bind a path `agent_id`; they additionally require `bearer.agent_id == path agent_id` (`_require_self` in `web.py`; WebSocket closes 4403, HTTP raises 403 `forbidden`). The `org_context` wrap blocks cross-org access; this closes the within-org IDOR where one pod's bearer addresses another pod's row/queue/channel. `post_workspace_event` / `post_command_event` bind `workspace_id` / `command_id`, for which the schema records no agent-ownership edge (`workspaces` carries `org_id` + the single-flight claim columns, never `agent_id`), so their authorization is the org scope plus the stale-claim guard — not a per-agent check.
+- **Per-agent identity check on `agent_id`-addressed endpoints** — `heartbeat`, `claim`, and the activity WebSocket bind a path `agent_id`; they additionally require `bearer.agent_id == path agent_id` (`_require_self` in `web.py`; WebSocket closes 4403, HTTP raises 403 `forbidden`). The `org_context` wrap blocks cross-org access; this closes the within-org IDOR where one pod's bearer addresses another pod's row/queue/channel.
+- **Per-agent ownership check on workspace/command-event posts** — `post_workspace_event` / `post_command_event` bind `workspace_id` / `command_id`, which resolve to a workspace carrying an owning `agent_id` ([`core/workspace`](core_workspace.md) `WorkspaceRow.agent_id`, set at create-dispatch). The sink resolves the owner (`owning_agent_for_workspace` / `owning_agent_for_command`); when it isn't the bearer's agent, `_require_workspace_owner` raises 403 `forbidden` (same envelope as `_require_self`). A command that resolves to no workspace (e.g. an agent-scoped `ConfigUpdate`, which has no `workspace_id`) or a workspace with a NULL `agent_id` (in-memory/legacy) carries no ownership edge — authorization then falls back to the org scope plus the stale-claim guard, so a legitimate ConfigUpdate terminal event still reaches the existing 410-on-no-claim path rather than being 403'd.
 - **`org_id` on the identity-exchange response** — the response carries `org_id` (the `workspace_agents.org_id` for the matched row). The agent pins both `org_id` and `agent_id` on first exchange and verifies they are unchanged on every bearer renewal; a mismatch triggers a fatal exit on the agent side.
 - **ARN canonicalization** — `assumed-role/ROLE/SESSION` → `iam::ACCT:role/ROLE`, lowercased. IAM role names are case-insensitive in AWS; lowering both sides avoids mismatches without losing uniqueness.
 - **`AgentQueues` is ContextVar-bound.** The active dispatch-queue registry is held in a ContextVar. `bind_agent_queues` is the production DI seam — called at startup in `app/web.py` and `app/worker.py`. The `agent_queues_isolation` autouse fixture in `app/testing/isolation` binds a fresh `AgentQueues()` per test so there is no shared per-agent FIFO state between tests.
@@ -33,13 +34,13 @@
 - **AgentCommand** — discriminated union: `CreateWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace`.
 - **AgentEvent** — `progress` (non-terminal) or `completed_{success|failure|skipped}` (terminal).
 - **WorkspaceEvent** — `created | ready | exited | destroyed | failed`.
-- **AgentRef** — `agent_id` + `agent_pod_id`; returned by `pick_agent_for_org` (least-loaded reachable pod).
+- **AgentRef** — `agent_id` + `agent_pod_id`; returned by `pick_agent_for_org` (least-loaded reachable pod). Queue operations (enqueue/claim/queue_depth) all key on `agent_id` (= `WorkspaceAgentRow.id`), the same key the `/agents/{agent_id}/...` routes bind — never `agent_pod_id`.
 - **BearerContext** — resolved identity from a verified bearer: `bearer_id`, `agent_id`, `org_id`.
 
 ## Data owned
 
 - `workspace_agents` — per-pod identity rows; one per `(org_id, agent_pod_id)`.
-- `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip)`. Revocation cascades from settings actions (`arn_change`, `mode_switch`, `disconnect`, `manual_rotate`) and failsafe-6 (`agent_loss`).
+- `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip)`. Revocation cascades from settings actions (`arn_change`, `mode_switch`, `disconnect`, `manual_rotate`) org-wide via `revoke_all_for_org`, and from failsafe-6 (`agent_loss`) per-pod via `revoke_all_for_agent` (only the lost pod's bearers).
 
 ## How it's tested
 
@@ -50,6 +51,8 @@
 `test/test_queue_binding.py` covers ContextVar isolation for `AgentQueues` and `SubscriberRegistry`: fresh bind hides prior state; fail-fast `RuntimeError` fires before bind; `claim_next` drains from the bound registry.
 
 `test/test_report_sink_delegation.py` covers sink delegation: heartbeat reconciliation via stub sink; workspace-event dispatch and rejection via stub sink; stale-claim guard raises `StaleClaimError` on `accepted=False` outcome.
+
+`test/test_endpoint_authz_service.py` covers per-endpoint authz: `heartbeat` / `claim` reject a foreign path `agent_id` (403); `post_workspace_event` / `post_command_event` reject a foreign owning `agent_id` (403) and allow the owner (200); an agent-scoped command (no owning workspace, e.g. ConfigUpdate) is NOT 403'd — it falls through to the stale-claim 410.
 
 `test/test_activity_publish_service.py` covers the WS `activity_batch` path delivering events to `subscribe_workspace_activity`.
 

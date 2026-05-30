@@ -235,7 +235,6 @@ expose = [
   "get_report_sink",
   "get_subscriber_registry",
   "has_any_reachable_agent",
-  "has_stale_agents_for_org",
   "lookup_org_by_arn",
   "pick_agent_for_org",
   "queue_depth",
@@ -244,8 +243,10 @@ expose = [
   "record_workspace_event",
   "register_org_arn_lookup",
   "register_report_sink",
+  "revoke_all_for_agent",
   "revoke_all_for_org",
   "shutdown",
+  "stale_agent_ids",
 ]
 from = ["app.core.agent_gateway"]
 
