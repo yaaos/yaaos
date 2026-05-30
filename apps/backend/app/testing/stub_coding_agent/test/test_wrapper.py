@@ -18,7 +18,7 @@ from app.domain.coding_agent import (
     register_plugin,
 )
 from app.domain.vcs import Diff, VCSPullRequest
-from app.testing.isolation import clear_coding_agent_plugins as clear_plugins
+from app.testing.seed import clear_coding_agent_plugins as clear_plugins
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,

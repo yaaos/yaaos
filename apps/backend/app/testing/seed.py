@@ -1,8 +1,14 @@
-"""Seed helpers for service tests.
+"""Seed, reset, and read helpers for tests — all via production service APIs.
 
-Functions that insert canonical test rows (orgs, users, memberships, etc.)
-via production service APIs so each service test starts from a known, minimal
-state without coupling to DB models.
+Functions that insert canonical test rows (orgs, users, memberships, etc.),
+reset registries, or read produced state, so each service test starts from a
+known, minimal state without coupling to DB models.
+
+Pytest-free by design: unlike `app/testing/isolation` (which imports
+`pytest_asyncio` for its fixtures), this module pulls in no test framework, so
+production-reachable testing code — the stub/fake coding-agent wrappers and
+`e2e_setup`, all imported at app startup in stub/test mode — can import these
+helpers without dragging pytest into the production image.
 """
 
 from __future__ import annotations
@@ -15,12 +21,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway import ensure_agent_row
 
 __all__ = [
+    "clear_coding_agent_plugins",
     "delete_org",
     "delete_user_artifacts",
+    "read_email_inbox",
     "seed_agent",
     "seed_workspace",
     "set_session_last_seen",
 ]
+
+
+def read_email_inbox() -> list:
+    """Return the list of `SentEmail` items captured in the current test's inbox.
+
+    The list is mutable — tests may call `.clear()` on it if they need to
+    discard prior messages within a single test body.
+    """
+    from app.domain.orgs.email import get_email_inbox  # noqa: PLC0415
+
+    return get_email_inbox().messages
+
+
+def clear_coding_agent_plugins() -> None:
+    """Unregister all coding-agent plugins. Uses the public unregister API.
+
+    Equivalent to calling `unregister_coding_agent_plugin` for every registered
+    plugin. Used by testing helpers that manage full registry snapshots
+    (e.g. `register_fake_coding_agent`, `wrap_all_registered_plugins`).
+    """
+    from app.domain.coding_agent import (  # noqa: PLC0415
+        list_registered_plugins,
+        unregister_coding_agent_plugin,
+    )
+
+    for plugin in list_registered_plugins():
+        unregister_coding_agent_plugin(plugin.meta.id)
 
 
 async def seed_agent(

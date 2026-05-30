@@ -18,7 +18,7 @@ from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.d
 from app.domain.orgs import invite as invite_service
 from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
-from app.testing.isolation import read_email_inbox
+from app.testing.seed import read_email_inbox
 
 
 def _app() -> FastAPI:

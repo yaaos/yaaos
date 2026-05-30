@@ -82,4 +82,4 @@ See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/codi
 - `test/test_inbox_binding.py` — ContextVar isolation for the email inbox: `send_plain` writes to the bound inbox; fresh bind hides prior messages; fail-fast `RuntimeError` before bind.
 - `test/test_tenancy_delegation.py` — service tests verifying `create_org` + `create_membership` delegate through `core/tenancy`, and SSO authz flags are written via `set_sso_authz_for_org`.
 
-Email inbox isolation between tests is provided by the `email_inbox_isolation` autouse fixture in `app/testing/isolation`. Tests read sent emails via `app.testing.isolation.read_email_inbox()`.
+Email inbox isolation between tests is provided by the `email_inbox_isolation` autouse fixture in `app/testing/isolation`. Tests read sent emails via `app.testing.seed.read_email_inbox()`.

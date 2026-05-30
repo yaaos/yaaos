@@ -61,22 +61,11 @@ async def email_inbox_isolation() -> None:
     """Bind a fresh email inbox for each test.
 
     Autouse so every test gets an isolated inbox. Tests that need to read
-    sent emails import `read_email_inbox` from `app.testing.isolation`.
+    sent emails import `read_email_inbox` from `app.testing.seed`.
     """
     from app.domain.orgs.email import _Inbox, bind_email_inbox  # noqa: PLC0415
 
     bind_email_inbox(_Inbox())
-
-
-def read_email_inbox() -> list:
-    """Return the list of `SentEmail` items captured in the current test's inbox.
-
-    The list is mutable — tests may call `.clear()` on it if they need to
-    discard prior messages within a single test body.
-    """
-    from app.domain.orgs.email import get_email_inbox  # noqa: PLC0415
-
-    return get_email_inbox().messages
 
 
 @pytest_asyncio.fixture
@@ -136,22 +125,6 @@ async def recovery_policies_isolation():
     _clear_recovery_policies_for_tests()
 
 
-def clear_coding_agent_plugins() -> None:
-    """Unregister all coding-agent plugins. Uses the public unregister API.
-
-    Equivalent to calling `unregister_coding_agent_plugin` for every registered
-    plugin. Used by testing helpers that manage full registry snapshots
-    (e.g. `register_fake_coding_agent`, `wrap_all_registered_plugins`).
-    """
-    from app.domain.coding_agent import (  # noqa: PLC0415
-        list_registered_plugins,
-        unregister_coding_agent_plugin,
-    )
-
-    for plugin in list_registered_plugins():
-        unregister_coding_agent_plugin(plugin.meta.id)
-
-
 @contextmanager
 def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
     """Context manager: install *plugin* for the duration of the block, then
@@ -178,10 +151,8 @@ def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
 
 __all__ = [
     "agent_queues_isolation",
-    "clear_coding_agent_plugins",
     "email_inbox_isolation",
     "pubsub_isolation",
-    "read_email_inbox",
     "recovery_policies_isolation",
     "scoped_vcs_plugin",
     "subscriber_registry_isolation",

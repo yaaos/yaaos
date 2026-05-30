@@ -42,7 +42,7 @@ from app.domain.reviewer import (
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
 from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
-from app.testing.isolation import read_email_inbox
+from app.testing.seed import read_email_inbox
 
 
 def _config() -> ProviderConfig:

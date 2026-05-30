@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.domain.orgs.email import _Inbox, bind_email_inbox, get_email_inbox, send_plain
-from app.testing.isolation import read_email_inbox
+from app.testing.seed import read_email_inbox
 
 # ── Binding / isolation ────────────────────────────────────────────────
 

@@ -20,7 +20,7 @@ from app.domain.orgs import (
     remove_member,
 )
 from app.domain.orgs import repository as orgs_repo
-from app.testing.isolation import read_email_inbox
+from app.testing.seed import read_email_inbox
 
 
 async def _bootstrap_org_and_owner(db):

@@ -171,7 +171,7 @@ def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[
     on exit.
     """
     from app.domain.coding_agent import list_registered_plugins, register_plugin  # noqa: PLC0415
-    from app.testing.isolation import clear_coding_agent_plugins as clear_plugins  # noqa: PLC0415
+    from app.testing.seed import clear_coding_agent_plugins as clear_plugins  # noqa: PLC0415
 
     fake = FakeCodingAgentPlugin(plugin_id=plugin_id)
     # Snapshot existing registrations; replace target slot with fake.
