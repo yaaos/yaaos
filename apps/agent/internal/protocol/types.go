@@ -23,6 +23,7 @@ const (
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
+	KindConfigUpdate         CommandKind = "ConfigUpdate"
 )
 
 // CommandHeader is embedded in every concrete AgentCommand. Carries the

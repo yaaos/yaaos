@@ -16,6 +16,7 @@ The agent is **zero biz logic**. Every threshold, prompt, lesson, depth, and tim
 - `cmd/agent/` — main entrypoint; subcommand dispatch.
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes; partial-read tolerance + concurrency-safe encoder.
 - `internal/protocol/` — wire types + HTTP client matching [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml); `openapi_drift_test.go` asserts every property name has a matching `json:` tag.
+- `internal/command/` — polymorphic `Command` interface, the 5 workspace command types + `ConfigUpdateCommand`, `WorkspaceOps`/`AgentOps` capability seams, typed result structs, and the `Decode` factory. See [command.md](command.md).
 - `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses.
 - `internal/workspace/` — per-workspace dispatch loop (`Run` + `Handler`); `RealHandler` (production) owns tempdir lifecycle: clone, write-files, auth-refresh, InvokeClaudeCode, cleanup; `StubHandler` for tests.
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
