@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -13,8 +14,8 @@ import (
 // intentionally tight and grows additively.
 //
 // Backoff-related counters (`connection.failures`, `connection.backoff_seconds`)
-// are declared here so commit D wires its retry loops to instruments
-// that already exist.
+// are declared here so retry loops can record against instruments
+// that always exist.
 type Instruments struct {
 	CommandsClaimed          metric.Int64Counter
 	CommandsCompleted        metric.Int64Counter // attributes: result=success|failure|timeout
@@ -28,6 +29,38 @@ var (
 	metricsOnce sync.Once
 	metricsRef  *Instruments
 )
+
+// stdDimsMu guards stdOrgID and stdAgentID.
+var stdDimsMu sync.RWMutex
+var (
+	stdOrgID   string
+	stdAgentID string
+)
+
+// SetStandardDimensions stores the org_id and agent_id that will appear on
+// every metric record via StandardAttrs. Called once after identity exchange;
+// safe to call from any goroutine.
+func SetStandardDimensions(orgID, agentID string) {
+	stdDimsMu.Lock()
+	defer stdDimsMu.Unlock()
+	stdOrgID = orgID
+	stdAgentID = agentID
+}
+
+// StandardAttrs returns a metric.MeasurementOption that attaches the
+// process-wide org_id and agent_id to a metric record. If
+// SetStandardDimensions has not been called, the attributes are empty
+// strings (no-op for uninitialized pods).
+func StandardAttrs() metric.MeasurementOption {
+	stdDimsMu.RLock()
+	org := stdOrgID
+	agent := stdAgentID
+	stdDimsMu.RUnlock()
+	return metric.WithAttributes(
+		attribute.String("org_id", org),
+		attribute.String("agent_id", agent),
+	)
+}
 
 // Metrics returns the global agent metric instruments. Before Init runs
 // — or when OTel is disabled — every instrument resolves through the

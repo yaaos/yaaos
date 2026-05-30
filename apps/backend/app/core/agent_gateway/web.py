@@ -198,6 +198,7 @@ async def exchange_identity(
         bearer=plaintext,
         expires_at=record.expires_at,
         agent_id=agent_id,
+        org_id=org_id,
     )
 
 

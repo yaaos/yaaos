@@ -33,11 +33,11 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses.
 - `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup; `StubHandler` for tests.
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
-- `internal/identity/` — SigV4-signed STS `GetCallerIdentity` for control-plane verification.
+- `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
 - `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`.
 - `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap.
 - `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`).
-- `internal/observability/` — OTel metrics declarations; `otelslog` bridge for log fan-out.
+- `internal/observability/` — OTel SDK bootstrap, metric instrument declarations, standard dimension helpers (`SetStandardDimensions`, `StandardAttrs`). See [observability.md](observability.md).
 
 ## Wire-protocol internals
 
@@ -69,3 +69,35 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 ### Credential redaction
 
 All auth tokens flow through `internal/secret.Secret`. `fmt.Sprintf`, `json.Marshal`, and `log.Printf` variants all emit `"[REDACTED]"`; `.Value()` is the only way to unwrap. No token bytes leak into logs or error messages.
+
+## Observability
+
+All three OTel signals (traces, metrics, logs) share two standard dimensions on every record produced after identity exchange: `org_id` and `agent_id`. These are set once via `observability.SetStandardDimensions` immediately after the first successful identity exchange and never change for the process lifetime.
+
+- **Resource attributes** (pod-level): `service.name`, `service.version`, `service.instance.id` = `agent_pod_id`.
+- **Span / metric attributes** (post-exchange): `org_id`, `agent_id`. Per-command spans also carry `workspace_id`, `command_id`, `kind`.
+- **Base slog logger**: the supervisor calls `slog.SetDefault(slog.Default().With("org_id", ..., "agent_id", ...))` after first exchange so every subsequent `slog.*` call emits both dimensions automatically.
+- **OTLP disabled**: `observability.Init` is a no-op; instruments resolve to no-op SDK providers. Zero overhead.
+
+Details → [observability.md](observability.md).
+
+## Error handling — fatal-on-mismatch carve-out
+
+The supervisor's normal error model is: retry-with-backoff forever, log warnings, never panic. One exception is carved out: **identity-integrity violations on bearer renewal**.
+
+After first exchange, `supervisor` pins `agentID` and `orgID`. Every subsequent call to `exchangeIdentity` (bearer renewal) must return the same values. If the backend returns different `AgentID` or `OrgID`, `runOneRefreshCycle` returns `fatal=true` and `bearerRefreshLoop` calls `os.Exit(1)`.
+
+Rationale: a pod that silently continues operating under a different identity would corrupt org-scoped audit and workflow records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
+
+## Concurrency model
+
+The supervisor runs these goroutines concurrently after identity exchange:
+
+- **N claim workers** (`Config.Concurrency`, default 4) — each runs its own `claimLoop`; they share the `Pool` (mutex-guarded) and the `protocol.Client` (inherently safe).
+- **Heartbeat loop** — fires on `Config.HeartbeatInterval` (default 30 s); reads `Pool.Snapshot()` under the pool's lock.
+- **Bearer refresh loop** — wakes ~1 h before bearer expiry; calls `exchangeIdentity` and `client.SetBearer` (atomic store).
+- **Disk sweep loop** — fires every 5 min; reads `Pool.KnownIDs()` under the pool's lock; calls `os.RemoveAll` for orphan dirs.
+- **Activity WS read loop** (optional) — runs while the WS is connected; exits on transport error, triggering the reconnect loop.
+- **WS reconnect loop** (optional) — waits on `wsReadLoopDone`, sleeps on the WS backoff schedule, re-dials.
+
+No goroutine shares mutable state without a lock or atomic. The `Pool` guards all workspace-record mutations with a `sync.Mutex`. `Conductor.SubscriptionSet` and `WorkspaceMapping` each have their own independent locks. `observability.SetStandardDimensions` is guarded by `stdDimsMu`.

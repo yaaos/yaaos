@@ -90,7 +90,7 @@ func TestInit_FallsBackOnUnwritableDir(t *testing.T) {
 }
 
 func TestInit_ExtraHandlerReceivesRecords(t *testing.T) {
-	// The OTel slog bridge in commit C plugs in via Config.ExtraHandlers.
+	// The OTel slog bridge plugs in via Config.ExtraHandlers.
 	// Verify the fan-out delivers to extras.
 	captured := &captureHandler{}
 	dir := t.TempDir()

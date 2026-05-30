@@ -147,6 +147,7 @@ type IdentityExchangeResponse struct {
 	Bearer    string    `json:"bearer"`
 	ExpiresAt time.Time `json:"expires_at"`
 	AgentID   string    `json:"agent_id"`
+	OrgID     string    `json:"org_id"`
 }
 
 type HeartbeatWorkspaceEntry struct {

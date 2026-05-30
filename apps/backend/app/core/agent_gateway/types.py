@@ -175,6 +175,7 @@ class IdentityExchangeResponse(BaseModel):
     bearer: str
     expires_at: datetime
     agent_id: UUID
+    org_id: UUID
 
 
 class HeartbeatWorkspaceEntry(BaseModel):
