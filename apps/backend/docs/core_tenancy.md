@@ -36,3 +36,5 @@
 - `apps/backend/app/core/tenancy/models.py` — `OrgRow`, `MembershipRow`.
 - `apps/backend/app/core/tenancy/repository.py` — raw ORM access (intra-module only).
 - `apps/backend/app/core/tenancy/test/test_tenancy_service.py` — service tests.
+
+Test teardown that hard-deletes an org row uses `delete_org` from `app.testing.seed` — there is no production org-deletion flow.

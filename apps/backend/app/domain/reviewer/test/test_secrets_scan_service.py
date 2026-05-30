@@ -129,7 +129,7 @@ async def test_secrets_scan_advances_when_diff_fetch_fails(workflow_context_prov
         async def fetch_diff(self, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")
 
-    from app.domain.vcs import scoped_vcs_plugin  # noqa: PLC0415
+    from app.testing.isolation import scoped_vcs_plugin  # noqa: PLC0415
 
     with scoped_vcs_plugin(_RaisingPlugin()):  # type: ignore[arg-type]
         register_workflow_context_provider(

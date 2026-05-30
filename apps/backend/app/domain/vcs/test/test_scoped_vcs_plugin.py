@@ -5,10 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.core.plugin_kit import PluginMeta
-from app.domain.vcs import (
-    is_registered,
-    scoped_vcs_plugin,
-)
+from app.domain.vcs import is_registered
+from app.domain.vcs.registry import scoped_vcs_plugin
 
 
 class _FakeVCSPlugin:

@@ -40,7 +40,7 @@ from app.core.workflow import (
     WorkflowState,
     get_execution_summary,
 )
-from app.core.workspace import _seed_workspace_for_tests
+from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
 
 

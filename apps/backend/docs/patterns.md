@@ -424,9 +424,9 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 ## `scoped_*` context managers for import-time registries
 
-Modules with import-time registries expose `register_*`, `unregister_*`, and `scoped_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception.
+Modules with import-time registries expose `register_*` and `unregister_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception. The `scoped_*` context managers themselves are NOT in a production module's `__all__` — they live in `app/testing/isolation` (cross-module callers) or in the submodule only (intra-module callers).
 
-Modules with this pattern today: `domain.vcs` (`scoped_vcs_plugin`).
+`app.testing.isolation.scoped_vcs_plugin(plugin)` — cross-module tests import from `app.testing.isolation`; intra-module tests in `domain/vcs/test/` may import from `app.domain.vcs.registry` directly.
 
 `app.testing.workflow_harness.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine via `core.workflow.bind_engine`, yields it, and restores the prior engine on exit — even on exception. Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 

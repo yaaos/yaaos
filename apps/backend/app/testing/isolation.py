@@ -7,9 +7,18 @@ registration/deregistration APIs — no direct submodule attribute access.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest_asyncio
 
 from app.core.redis import RedisPubsub, bind_pubsub
+from app.domain.vcs import (
+    get_plugin,
+    is_registered,
+    register_vcs_plugin,
+    unregister_vcs_plugin,
+)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -127,12 +136,54 @@ async def recovery_policies_isolation():
     _clear_recovery_policies_for_tests()
 
 
+def clear_coding_agent_plugins() -> None:
+    """Unregister all coding-agent plugins. Uses the public unregister API.
+
+    Equivalent to calling `unregister_coding_agent_plugin` for every registered
+    plugin. Used by testing helpers that manage full registry snapshots
+    (e.g. `register_fake_coding_agent`, `wrap_all_registered_plugins`).
+    """
+    from app.domain.coding_agent import (  # noqa: PLC0415
+        list_registered_plugins,
+        unregister_coding_agent_plugin,
+    )
+
+    for plugin in list_registered_plugins():
+        unregister_coding_agent_plugin(plugin.meta.id)
+
+
+@contextmanager
+def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
+    """Context manager: install *plugin* for the duration of the block, then
+    restore the prior entry (if any) on exit — even if an exception is raised.
+
+    If *plugin.meta.id* is already registered the prior entry is saved and
+    replaced; on exit the prior entry is restored. If the id was not
+    registered the plugin is simply unregistered on exit.
+
+    Uses only the public VCS registry API (register/unregister/is_registered).
+    """
+    plugin_id = plugin.meta.id
+    prior = get_plugin(plugin_id) if is_registered(plugin_id) else None
+    if prior is not None:
+        unregister_vcs_plugin(plugin_id)
+    register_vcs_plugin(plugin)
+    try:
+        yield plugin
+    finally:
+        unregister_vcs_plugin(plugin_id)
+        if prior is not None:
+            register_vcs_plugin(prior)
+
+
 __all__ = [
     "agent_queues_isolation",
+    "clear_coding_agent_plugins",
     "email_inbox_isolation",
     "pubsub_isolation",
     "read_email_inbox",
     "recovery_policies_isolation",
+    "scoped_vcs_plugin",
     "subscriber_registry_isolation",
     "workflow_context_provider_isolation",
     "workspace_providers_isolation",

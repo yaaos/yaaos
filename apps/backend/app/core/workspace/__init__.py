@@ -13,7 +13,6 @@ from app.core.workspace.dispatch import (
     try_claim,
 )
 from app.core.workspace.service import (
-    _seed_workspace_for_tests,
     close_workspace,
     create_workspace,
     force_close_all,
@@ -88,7 +87,6 @@ __all__ = [
     "WorkspaceSpec",
     "WorkspaceStatus",
     "WorkspaceTicketContext",
-    "_seed_workspace_for_tests",
     "assert_workflow_context_provider",
     "close_workspace",
     "create_workspace",

@@ -35,6 +35,6 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 ## Gotchas
 
-- `_*_for_tests` helpers are production exports — cross-module test callers need them. Not used by production code.
+- `_set_session_last_seen_for_tests` and `_delete_user_artifacts_for_tests` are NOT in `__all__`. Cross-module callers use `set_session_last_seen` / `delete_user_artifacts` from `app.testing.seed`.
 - Partial unique index `uq_user_emails_email_active` on `lower(email) WHERE verified_at IS NOT NULL` — verified emails are globally unique; deactivation frees them lazily.
 

@@ -171,7 +171,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.coding_agent", "app.testing.isolation"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -179,7 +179,7 @@ depends_on = ["app.core.tasks", "app.core.webserver"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.workspace", "app.domain.coding_agent", "app.testing.isolation"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -358,8 +358,6 @@ expose = [
   "User",
   "UserEmail",
   "UserNotFoundError",
-  "_delete_user_artifacts_for_tests",
-  "_set_session_last_seen_for_tests",
   "can_be_sso_exempt_owner",
   "create_email",
   "create_oauth_identity",
@@ -510,7 +508,6 @@ expose = [
   "OrgMembershipInfo",
   "OrgNotFoundError",
   "OrgRef",
-  "_delete_org_for_tests",
   "change_role",
   "clear_vcs_state",
   "create_membership",
@@ -619,7 +616,6 @@ expose = [
   "WorkspaceSpec",
   "WorkspaceStatus",
   "WorkspaceTicketContext",
-  "_seed_workspace_for_tests",
   "assert_workflow_context_provider",
   "close_workspace",
   "create_workspace",
@@ -685,7 +681,6 @@ expose = [
   "assemble_stale_check_prompt",
   "assemble_verify_fix_prompt",
   "build_invocation",
-  "clear_plugins",
   "get_plugin",
   "health_check_all",
   "incremental_review",
@@ -999,7 +994,6 @@ expose = [
   "list_plugin_metas",
   "register_vcs_plugin",
   "registered_plugin_ids",
-  "scoped_vcs_plugin",
   "unregister_vcs_plugin",
 ]
 from = ["app.domain.vcs"]

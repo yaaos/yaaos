@@ -8,7 +8,6 @@ from app.domain.vcs.registry import (
     list_plugin_metas,
     register_vcs_plugin,
     registered_plugin_ids,
-    scoped_vcs_plugin,
     unregister_vcs_plugin,
 )
 from app.domain.vcs.types import (
@@ -78,6 +77,5 @@ __all__ = [
     "list_plugin_metas",
     "register_vcs_plugin",
     "registered_plugin_ids",
-    "scoped_vcs_plugin",
     "unregister_vcs_plugin",
 ]

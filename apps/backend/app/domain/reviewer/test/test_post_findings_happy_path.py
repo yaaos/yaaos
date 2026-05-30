@@ -17,7 +17,6 @@ from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
-    _seed_workspace_for_tests,
     register_workflow_context_provider,
     register_workspace_provider,
 )
@@ -26,6 +25,7 @@ from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
 from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
+from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 
 
 class _StubWorkspaceProvider:

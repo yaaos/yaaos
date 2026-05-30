@@ -17,7 +17,6 @@ from app.domain.coding_agent import (
     ReviewContext,
     ReviewResult,
     ValidationResult,
-    clear_plugins,
     get_plugin,
     health_check_all,
     list_registered_plugins,
@@ -26,6 +25,7 @@ from app.domain.coding_agent import (
     review,
     validate_config,
 )
+from app.domain.coding_agent.service import clear_plugins
 
 
 class _StubPlugin:

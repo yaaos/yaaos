@@ -23,7 +23,7 @@ Signatures in `app/domain/vcs/types.py`:
 
 ## Registry
 
-`app/domain/vcs/registry.py` — process-global `_PLUGINS` dict, one singleton per plugin. `register_vcs_plugin` rejects duplicates; `scoped_vcs_plugin(plugin)` is the test-safe context manager. See [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
+`app/domain/vcs/registry.py` — process-global `_PLUGINS` dict, one singleton per plugin. `register_vcs_plugin` rejects duplicates. `scoped_vcs_plugin(plugin)` is the test-safe context manager and lives in `app/testing/isolation` — cross-module tests import it from there; intra-module tests may reach it via `app.domain.vcs.registry` directly.
 
 ## Events
 

@@ -66,7 +66,7 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
     from sqlalchemy import text  # noqa: PLC0415
 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.core.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.testing.seed import delete_user_artifacts as _delete_user_artifacts_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as cleanup:
         await cleanup.execute(text("DELETE FROM memberships WHERE user_id = :uid"), {"uid": user.id})
@@ -90,7 +90,7 @@ async def test_logout_all_revokes_every_session(db_session) -> None:
     assert resp.status_code == 200
 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.core.identity import _delete_user_artifacts_for_tests  # noqa: PLC0415
+    from app.testing.seed import delete_user_artifacts as _delete_user_artifacts_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as cleanup:
         assert await session_lifecycle.lookup(cleanup, s1.raw_token) is None

@@ -210,7 +210,7 @@ async def test_remove_member_revokes_sessions(seeded, db_session) -> None:
         )
     assert resp.status_code == 200
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.core.tenancy import _delete_org_for_tests  # noqa: PLC0415
+    from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
         assert await session_lifecycle.lookup(s, member_session.raw_token) is None
@@ -243,7 +243,7 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
     async with get_sessionmaker()() as s:
         assert await session_lifecycle.lookup(s, member_session.raw_token) is None
         # Cleanup the seeded org so other tests see a clean slate.
-        from app.core.tenancy import _delete_org_for_tests  # noqa: PLC0415
+        from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
         await _delete_org_for_tests(s, org.org_id)
         await s.commit()

@@ -21,8 +21,8 @@ import pytest
 
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace import RepoRefForSpec, WorkspaceProvisionError, WorkspaceSpec
-from app.domain import vcs
 from app.plugins.in_memory_workspace import get_provider
+from app.testing.isolation import scoped_vcs_plugin
 
 
 class _FakeGitHubPlugin:
@@ -72,7 +72,7 @@ def _register_fake_github(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Register a fake github vcs plugin for the duration of one test."""
     del monkeypatch
     fake = _FakeGitHubPlugin()
-    with vcs.scoped_vcs_plugin(fake):  # type: ignore[arg-type]
+    with scoped_vcs_plugin(fake):  # type: ignore[arg-type]
         yield fake
 
 

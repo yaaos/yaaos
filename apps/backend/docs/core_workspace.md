@@ -44,3 +44,5 @@
 ## How it's tested
 
 `app/core/workspace/test/test_dispatch.py` covers `try_claim` / `release_claim` contention. `app/core/workspace/test/test_provider_fail_fast.py` covers the fail-fast contract: `get_workflow_context_provider()` raises when unbound; `assert_workflow_context_provider()` raises / passes correctly. Lifecycle coverage (provision → active → close → expired → destroy → destroyed; retry increment; `destroy_failed` after 3 attempts; `startup_recovery`) lives in reviewer integration tests and the workspace plugin's own tests. `app/core/workspace/test/test_connection_status_endpoint.py` covers the HTTP route: auth enforcement (401, 403) and the `not_configured` happy path. Recovery-policy tests live in `app/core/workflow/test/test_recovery_registry.py` (registry lives in [`core/workflow`](core_workflow.md)). `app/core/workspace/test/test_agent_report.py` covers the sink implementation: kind→status map, stale-claim guard, heartbeat reconciliation, and claim resolution.
+
+Cross-module tests that need a workspace row without the full provision flow use `seed_workspace` from `app.testing.seed`.

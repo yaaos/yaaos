@@ -216,11 +216,8 @@ class StubCodingAgentPlugin:
 
 def wrap_all_registered_plugins() -> int:
     """Replace every registered coding-agent plugin with a stub wrapping it."""
-    from app.domain.coding_agent import (  # noqa: PLC0415
-        clear_plugins,
-        list_registered_plugins,
-        register_plugin,
-    )
+    from app.domain.coding_agent import list_registered_plugins, register_plugin  # noqa: PLC0415
+    from app.testing.isolation import clear_coding_agent_plugins as clear_plugins  # noqa: PLC0415
 
     originals = list_registered_plugins()
     count = 0

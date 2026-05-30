@@ -14,7 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import ensure_agent_row
 
-__all__ = ["seed_agent"]
+__all__ = [
+    "delete_org",
+    "delete_user_artifacts",
+    "seed_agent",
+    "seed_workspace",
+    "set_session_last_seen",
+]
 
 
 async def seed_agent(
@@ -46,3 +52,101 @@ async def seed_agent(
             row.last_heartbeat_at = datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds)
             await session.flush()
     return {"id": agent_id, "agent_pod_id": pod_id, "org_id": org_id}
+
+
+async def seed_workspace(
+    *,
+    org_id: UUID,
+    provider_id: str,
+    plugin_state: dict,
+    sha: str,
+    current_command_id: UUID | None = None,
+    current_holder_workflow_id: UUID | None = None,
+    status: str | None = None,
+    caller_session: AsyncSession | None = None,
+) -> str:
+    """Insert a workspace row in `active` state with caller-supplied plugin_state.
+
+    For cross-module tests that need a workspace in the DB without going through
+    the full provision flow. Returns the workspace id string.
+
+    When `caller_session` is supplied the row is added to the caller's transaction
+    (no commit — the caller commits). When omitted a new session is opened and
+    committed immediately.
+
+    `current_command_id` and `current_holder_workflow_id` are optional — set
+    them when the test needs to simulate a claimed workspace (agent_gateway tests).
+    """
+    from app.core.database import session as get_session  # noqa: PLC0415
+    from app.core.workspace.models import WorkspaceRow  # noqa: PLC0415
+    from app.core.workspace.types import WorkspaceStatus  # noqa: PLC0415
+
+    def _utcnow() -> datetime:
+        return datetime.now(UTC)
+
+    def _build_row() -> WorkspaceRow:
+        return WorkspaceRow(
+            org_id=org_id,
+            provider_id=provider_id,
+            spec={"sha": sha},
+            status=status or WorkspaceStatus.ACTIVE.value,
+            expires_at=_utcnow() + timedelta(hours=1),
+            plugin_state=plugin_state,
+            current_command_id=current_command_id,
+            current_holder_workflow_id=current_holder_workflow_id,
+        )
+
+    if caller_session is not None:
+        row = _build_row()
+        caller_session.add(row)
+        await caller_session.flush()
+        return str(row.id)
+
+    async with get_session() as s:
+        row = _build_row()
+        s.add(row)
+        await s.flush()
+        ws_id = row.id
+        await s.commit()
+    return str(ws_id)
+
+
+async def delete_org(session: AsyncSession, org_id: UUID) -> None:
+    """Hard-delete an org row. Cascades to memberships, invitations, etc.
+
+    Test-only teardown helper — there is no production org-deletion flow.
+    Routes through the owning module's repository to keep raw SQL in one place.
+    """
+    from app.core.tenancy.repository import delete_org as _delete_org_row  # noqa: PLC0415
+
+    await _delete_org_row(session, org_id)
+
+
+async def delete_user_artifacts(db: AsyncSession, *, user_id: UUID) -> None:
+    """Delete all identity-owned rows for `user_id` (user, emails, OAuth
+    identities, sessions). DB-level CASCADE handles child rows when deleting
+    the user row — callers that need cross-module cleanup (e.g. memberships)
+    must handle those separately.
+    """
+    from sqlalchemy import delete  # noqa: PLC0415
+
+    from app.core.identity.models import UserRow  # noqa: PLC0415
+
+    await db.execute(delete(UserRow).where(UserRow.id == user_id))
+
+
+async def set_session_last_seen(
+    db: AsyncSession,
+    *,
+    token_hash: str,
+    last_seen_at: datetime,
+) -> None:
+    """Write `last_seen_at` for a session row identified by `token_hash`.
+    Helper to simulate idle sessions in tests without importing SessionRow.
+    """
+    from app.core.identity import repository as repo  # noqa: PLC0415
+
+    row = await repo.get_session_by_hash(db, token_hash)
+    assert row is not None, f"session not found for hash: {token_hash[:8]}..."
+    row.last_seen_at = last_seen_at
+    await db.flush()
