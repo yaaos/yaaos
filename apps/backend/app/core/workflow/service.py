@@ -18,8 +18,6 @@ See `apps/backend/docs/core_workflow.md`.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -1155,6 +1153,19 @@ def get_engine() -> WorkflowEngine:
     return _engine
 
 
+def bind_engine(instance: WorkflowEngine | None) -> WorkflowEngine | None:
+    """Swap the process-singleton engine and return the prior instance.
+
+    The test harness (`app.testing.workflow_harness.scoped_engine`) is the
+    intended caller. Production code reads the engine via `get_engine()` and
+    never calls this function.
+    """
+    global _engine
+    prior = _engine
+    _engine = instance
+    return prior
+
+
 def register_workflow(wf: Workflow) -> None:
     """Register a workflow spec on the process-singleton engine."""
     get_engine().register_workflow(wf)
@@ -1164,42 +1175,3 @@ def unregister_workflow(workflow_name: str, version: int) -> None:
     """Remove a workflow from the process-singleton engine by name + version."""
     key = (workflow_name, version)
     get_engine()._workflows.pop(key, None)
-
-
-@contextmanager
-def scoped_engine() -> Iterator[WorkflowEngine]:
-    """Context manager: swap in a fresh engine for the duration of the block.
-
-    The prior engine (if any) is restored on exit — even if an exception is
-    raised. Intended for tests that need to register custom commands or
-    workflows in isolation without contaminating the process-singleton engine.
-    """
-    global _engine
-    saved = _engine
-    _engine = WorkflowEngine()
-    try:
-        yield _engine
-    finally:
-        _engine = saved
-
-
-@contextmanager
-def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
-    """Context manager: install *wf* on the process-singleton engine for the
-    duration of the block, then restore the prior entry (if any) on exit —
-    even if an exception is raised.
-
-    If the same (name, version) pair is already registered, the prior entry is
-    saved and replaced; on exit it is restored. If it was not registered, the
-    workflow is simply unregistered on exit."""
-    key = (wf.name, wf.version)
-    engine = get_engine()
-    prior = engine._workflows.get(key)
-    engine._workflows[key] = wf
-    try:
-        yield wf
-    finally:
-        if prior is None:
-            engine._workflows.pop(key, None)
-        else:
-            engine._workflows[key] = prior

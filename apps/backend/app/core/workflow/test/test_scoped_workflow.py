@@ -11,9 +11,9 @@ from app.core.workflow import (
     Workflow,
     WorkflowNotFoundError,
     get_engine,
-    scoped_workflow,
 )
 from app.core.workflow.types import CommandCategory
+from app.testing.workflow_harness import scoped_workflow
 
 
 class _NoopLocal:

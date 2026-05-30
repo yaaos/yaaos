@@ -27,9 +27,9 @@ from app.core.workflow import (
     Step,
     TerminalAction,
     Workflow,
-    scoped_engine,
 )
 from app.plugins.github.intake_type import GithubIntakeType
+from app.testing.workflow_harness import scoped_engine
 
 
 class _NoopLocal:

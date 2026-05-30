@@ -39,9 +39,9 @@ from app.core.workflow import (
     Workflow,
     WorkflowState,
     get_execution_summary,
-    scoped_engine,
 )
 from app.core.workspace import _seed_workspace_for_tests
+from app.testing.workflow_harness import scoped_engine
 
 
 def _make_create_command() -> CreateWorkspaceCommand:

@@ -27,7 +27,7 @@ from sqlalchemy import select
 
 from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
-from app.core.workflow import Outcome, WorkflowState, get_execution_summary, scoped_engine
+from app.core.workflow import Outcome, WorkflowState, get_execution_summary
 from app.core.workspace import (
     WorkspaceStatus,
     WorkspaceTicketContext,
@@ -41,6 +41,7 @@ from app.domain.reviewer.commands import (
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create as create_ticket
 from app.testing.fake_coding_agent import register_fake_coding_agent
+from app.testing.workflow_harness import scoped_engine
 
 
 class _StubWorkspaceProvider:

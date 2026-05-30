@@ -20,7 +20,8 @@
 
 - `register_workflow` allows forward references to unregistered commands; `start()` validates them and fails loud (no row written) when a step references an unregistered command.
 - `TERMINAL_STATES = {done, failed, cancelled}` — check before enqueuing further work.
-- `scoped_workflow` / `unregister_workflow` are required for test isolation; see [patterns.md § `scoped_*` context managers](patterns.md).
+- `unregister_workflow` removes a workflow from the process-singleton engine.
+- Test isolation uses `scoped_engine` / `scoped_workflow` from [`app/testing/workflow_harness`](../app/testing/workflow_harness.py); those names are no longer on `core/workflow`'s public surface. See [patterns.md § `scoped_*` context managers](patterns.md).
 
 ## Vocabulary
 

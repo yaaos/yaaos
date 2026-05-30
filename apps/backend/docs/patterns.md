@@ -426,9 +426,9 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 Modules with import-time registries expose `register_*`, `unregister_*`, and `scoped_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception.
 
-Modules with this pattern today: `core.workflow` (`scoped_engine`, `scoped_workflow`), `domain.vcs` (`scoped_vcs_plugin`).
+Modules with this pattern today: `domain.vcs` (`scoped_vcs_plugin`).
 
-`core.workflow.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It saves the current engine, creates a fresh one, yields it, then restores the prior one on exit — replacing the former `svc._engine = None; eng = get_engine(); svc._engine = eng; ... svc._engine = None` pattern.
+`app.testing.workflow_harness.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine via `core.workflow.bind_engine`, yields it, and restores the prior engine on exit — even on exception. Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 
 `domain.coding_agent.service.scoped_coding_agent(plugin)` and `core.tasks.service.scoped_task_registration(task_ref)` follow the same contract but are intra-module helpers — they live in their submodule's `service.py` and are NOT re-exported from the package `__all__`. Tests inside those modules import them via direct submodule import.
 

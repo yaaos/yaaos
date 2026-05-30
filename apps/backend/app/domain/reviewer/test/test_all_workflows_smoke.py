@@ -21,7 +21,7 @@ import pytest
 
 from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once
-from app.core.workflow import Outcome, WorkflowState, get_execution_summary, scoped_engine
+from app.core.workflow import Outcome, WorkflowState, get_execution_summary
 from app.core.workspace import (
     WorkspaceTicketContext,
     register_workflow_context_provider,
@@ -41,6 +41,7 @@ from app.domain.reviewer.workflows import (
     stale_check_v1,
     verify_fix_v1,
 )
+from app.testing.workflow_harness import scoped_engine
 
 
 class _StubWorkspaceProvider:

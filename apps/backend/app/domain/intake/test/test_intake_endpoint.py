@@ -19,7 +19,6 @@ from app.core.workflow import (
     Workflow,
     WorkflowState,
     get_execution_summary,
-    scoped_engine,
 )
 from app.domain.intake import (
     IntakePrepared,
@@ -29,6 +28,7 @@ from app.domain.intake import (
 from app.domain.intake import web as _intake_web  # noqa: F401 — registers routes
 from app.domain.intake.registry import _reset_registry_for_tests
 from app.domain.tickets import get as get_ticket
+from app.testing.workflow_harness import scoped_engine
 
 
 class _StubIntakeType:

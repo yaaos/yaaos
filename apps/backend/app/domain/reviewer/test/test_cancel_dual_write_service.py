@@ -23,10 +23,10 @@ from app.core.workflow import (
     TerminalAction,
     Workflow,
     get_execution_summary,
-    scoped_engine,
 )
 from app.domain.orgs import repository as orgs_repo
 from app.domain.tickets import create as create_ticket
+from app.testing.workflow_harness import scoped_engine
 
 
 def _app() -> FastAPI:

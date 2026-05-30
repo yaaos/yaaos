@@ -573,6 +573,7 @@ expose = [
   "WorkflowExecutionSummary",
   "WorkflowNotFoundError",
   "WorkflowState",
+  "bind_engine",
   "get_awaiting_human_execution",
   "get_engine",
   "get_execution_summary",
@@ -588,8 +589,6 @@ expose = [
   "request_cancel",
   "resume_hitl",
   "route_workflow",
-  "scoped_engine",
-  "scoped_workflow",
   "start_step",
   "unregister_workflow",
 ]

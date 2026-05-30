@@ -15,6 +15,7 @@ from app.core.workflow.service import (
     HitlHistoryEntry,
     WorkflowEngine,
     WorkflowExecutionSummary,
+    bind_engine,
     get_awaiting_human_execution,
     get_engine,
     get_execution_summary,
@@ -27,8 +28,6 @@ from app.core.workflow.service import (
     request_cancel,
     resume_hitl,
     route_workflow,
-    scoped_engine,
-    scoped_workflow,
     start_step,
     unregister_workflow,
 )
@@ -72,6 +71,7 @@ __all__ = [
     "WorkflowExecutionSummary",
     "WorkflowNotFoundError",
     "WorkflowState",
+    "bind_engine",
     "get_awaiting_human_execution",
     "get_engine",
     "get_execution_summary",
@@ -87,8 +87,6 @@ __all__ = [
     "request_cancel",
     "resume_hitl",
     "route_workflow",
-    "scoped_engine",
-    "scoped_workflow",
     "start_step",
     "unregister_workflow",
 ]
