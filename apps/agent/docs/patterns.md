@@ -58,3 +58,30 @@ If adding a new enum value causes `exhaustive` to fail, add the matching `case` 
 ## Depguard layer rule
 
 The full rule set lives in `apps/agent/.golangci.yml`. When adding a new internal package, decide which layer it belongs to (leaf, `activity`/`command`/`workspace`, or `supervisor`) and add the corresponding deny rules. Running `golangci-lint run` after the addition confirms placement.
+
+## Testing
+
+> The agent's tests are pure-stdlib, fake-driven at capability seams, with a per-layer map answering "what test, what double, where."
+
+1. **Pure standard library.** `testing` package + hand-written `if got != want { t.Errorf }`. No testify, gomock, or moq.
+2. **Fakes at capability seams, never mocks.** Hand-written fakes at `WorkspaceOps`, `AgentOps`, `identity.Provider`, `CloneFunc`, `RunFunc` are the idiom. A fake is a working stand-in asserted on *state*; a mock records call-expectations on *behavior*. Mocks are not used.
+3. **Doubles by composition.** Embed `StubHandler`, override the one method under test.
+4. **Table-driven + `t.Run` subtests** when ≥ 3 cases exercise one behavior.
+5. **`httptest.Server` for transport.** A real in-process HTTP/WS server, not a stub, at HTTP and WebSocket boundaries.
+6. **`testing/synctest` for time.** Virtual-time bubble; never `time.Sleep` polling; never a hand-rolled clock interface.
+7. **`-race` per concurrency invariant.** A dedicated contention test for each invariant (cap, same-id, backoff, dedup, child-watcher). Reviewer-gated convention, not CI-enforced; the race detector already runs suite-wide in `bin/ci`.
+8. **Hygiene.** `t.Helper()` in helpers; `t.Cleanup` over `defer`.
+9. **White-box by default; black-box for public contracts.** `package x_test` form for the public/wire contract (as `command_test` already does); white-box (`package x`) everywhere else.
+10. **`openapi_drift_test.go` is the cross-plane contract guard.** The named mechanism keeping Go↔Python wire-coherent; see `internal/protocol/openapi_drift_test.go` and [architecture.md § Testing model](architecture.md#testing-model).
+11. **No cross-package test helpers.** Follows the module-boundary rule above; `testing/synctest` needs no shared fake-clock helper, so the rule holds.
+
+### Per-layer map
+
+| Layer | Test | Double | Lives in |
+|---|---|---|---|
+| Command logic | decode round-trip + `Execute` | fake `WorkspaceOps` / `AgentOps` | `command/*_test.go` |
+| Registry / lifecycle / pool | concurrency invariants | in-process `Pool` + `StubHandler`, `-race` | `supervisor/*_test.go` |
+| Transport (client / identity / activity WS) | wire round-trip, auth, reconnect | `httptest.Server` | `protocol/`, `supervisor/`, `activity/` |
+| Child subprocess | orchestration + signal/pipe mechanics | fake `RunFunc` + `TestHelperProcess` | `workspace/` |
+| Timing loops | interval / expiry / backoff | `testing/synctest` bubble | `backoff/`, `activity/`, `supervisor/` |
+| Wire contract | Go↔Python schema parity | reflection drift test | `protocol/openapi_drift_test.go` |

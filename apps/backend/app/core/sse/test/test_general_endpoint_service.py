@@ -21,10 +21,11 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 
-from app.core.auth import AuthMiddleware, Role, register_handler
+from app.core.auth import Action, AuthMiddleware, Role, register_handler
 from app.core.identity import repository as identity_repo
+from app.core.sessions import require
 from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
 from app.domain.orgs import repository as orgs_repo
@@ -129,6 +130,72 @@ async def test_general_endpoint_returns_403_for_non_member(seeded) -> None:
 
 @pytest.mark.service
 @pytest.mark.asyncio
+async def test_sse_route_accepts_org_query_param_without_header(seeded) -> None:
+    """An `/api/sse/*` route authenticates from the `org` query param alone
+    (no X-Org-Slug header) → 200.
+
+    The browser `EventSource` API cannot set request headers, so SSE routes
+    accept the org slug in the `org` query param. Driven against a tiny
+    non-streaming probe route mounted under `/api/sse` (so it hits the same
+    middleware classification + `require()` query-param resolution) — the real
+    `/general` stream is infinite and httpx-ASGITransport hangs on its close.
+    """
+    app_ = _make_app()
+    probe = APIRouter()
+
+    @probe.get("/_authprobe", dependencies=[Depends(require(Action.ORG_READ))])
+    async def _authprobe() -> dict[str, bool]:
+        return {"ok": True}
+
+    app_.include_router(probe, prefix="/api/sse")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_), base_url="http://test") as c:
+        resp = await c.get(
+            f"/api/sse/_authprobe?org={seeded['org_a'].slug}",
+            cookies={"yaaos_session": seeded["token"]},
+        )
+    assert resp.status_code == 200, f"query-param org should authenticate; got {resp.status_code}"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_general_endpoint_org_query_param_for_non_member_is_masked(seeded) -> None:
+    """`?org=<slug>` for an org the user is not a member of → 404 (existence masked).
+
+    Confirms the query-param path runs through the same membership check as
+    the header path — it is not a bypass.
+    """
+    async with _client() as c:
+        resp = await c.get(
+            f"/api/sse/general?org={seeded['org_b'].slug}",
+            cookies={"yaaos_session": seeded["token"]},
+        )
+    assert resp.status_code in (403, 404)
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_general_stream_yields_comment_prelude_before_any_event() -> None:
+    """The stream emits an SSE comment prelude immediately on connect, before
+    any event is published.
+
+    The prelude flushes the response headers so the browser's EventSource
+    transitions to OPEN and fires `onopen` right away — without it a stream
+    that blocks waiting for its first event never flushes, so a client that
+    missed the triggering event never learns it is connected and never
+    reconciles. The prelude precedes Redis subscription, so no broker is
+    needed to observe it.
+    """
+    gen = _general_stream(uuid.uuid4())
+    first = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    await gen.aclose()
+    # SSE comment line: starts with ':' and is ignored by EventSource message
+    # handlers (so it never fires onmessage), but still flushes headers.
+    assert first.startswith(":"), f"first frame must be an SSE comment prelude; got {first!r}"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
 async def test_general_endpoint_streams_org_scoped_events(seeded, redis_or_skip) -> None:
     """Org-A subscriber receives only org-A events; org-B events are not delivered.
 
@@ -141,6 +208,10 @@ async def test_general_endpoint_streams_org_scoped_events(seeded, redis_or_skip)
     org_b_id: uuid.UUID = seeded["org_b"].org_id
 
     gen = _general_stream(org_a_id)
+    # First frame is the connect prelude (yielded before subscription); drain
+    # it so the collector below waits on the first real data frame.
+    prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
     # Yield control so the generator registers its Redis subscription before
     # we publish — Redis pub/sub is fire-and-forget; earlier publishes drop.

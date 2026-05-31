@@ -17,8 +17,9 @@
 //   - RunClaude            — read `invocation.exec` from the wire
 //                            ({argv, stdin, env}), merge env
 //                            on top of `os.Environ()`, add TRACEPARENT
-//                            for span linkage, dispatch via
-//                            `RunStreaming` with the workspace tempdir
+//                            for span linkage, dispatch via the
+//                            configured `RunFunc` (production default:
+//                            `RunStreaming`) with the workspace tempdir
 //                            as cwd. Captured stdout is returned in the
 //                            typed InvokeResult. Zero biz logic — the
 //                            backend owns prompt assembly + argv flags.
@@ -80,6 +81,11 @@ type RealHandlerConfig struct {
 	// image; see Dockerfile). Tests inject a no-op or a local-
 	// bare-repo clone so they don't touch the network.
 	CloneFunc CloneFunc
+
+	// RunFunc spawns the Claude Code subprocess. Defaults to
+	// `RunStreaming`; production default is a real child process. Tests
+	// inject a fake so they don't spawn a real Claude binary.
+	RunFunc RunFunc
 }
 
 // CloneFunc clones `repo` into `dest`. `auth` carries the credential
@@ -87,6 +93,11 @@ type RealHandlerConfig struct {
 // into the clone URL via HTTPS basic auth. `history` is the shallow-
 // clone depth (`--depth <history>`); pass 0 to skip the flag.
 type CloneFunc func(ctx context.Context, dest string, repo protocol.RepoRef, auth protocol.AuthBlock, history int) error
+
+// RunFunc spawns the Claude Code subprocess (or any streaming child).
+// Production default is `RunStreaming`; tests inject a fake so they don't
+// spawn a real Claude binary.
+type RunFunc func(ctx context.Context, opts RunStreamingOptions) (*RunStreamingResult, error)
 
 // realSlot tracks one workspace's state across the command sequence.
 //
@@ -122,6 +133,9 @@ func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 	}
 	if cfg.CloneFunc == nil {
 		cfg.CloneFunc = gitClone
+	}
+	if cfg.RunFunc == nil {
+		cfg.RunFunc = RunStreaming
 	}
 	return &RealHandler{cfg: cfg, slots: make(map[string]*realSlot)}
 }
@@ -316,7 +330,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// retained for the success path.
 	emitter := EmitterFromContext(ctx)
 	var accumulated bytes.Buffer
-	res, err := RunStreaming(ctx, RunStreamingOptions{
+	res, err := h.cfg.RunFunc(ctx, RunStreamingOptions{
 		Argv:  inv.Exec.Argv,
 		Stdin: []byte(inv.Exec.Stdin),
 		Env:   env,

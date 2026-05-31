@@ -100,7 +100,7 @@ func TestBindExporter_InstallsExporter_TracesAndMetricsExport(t *testing.T) {
 			break
 		}
 		Metrics().CommandsClaimed.Add(ctx, 1)
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // reason: real OTLP/HTTP export to httptest.Server — goroutine blocked on OS network I/O, not durably blocked in synctest sense.
 	}
 	if metricHits.Load() == 0 {
 		t.Errorf("BindExporter did not install a working metric exporter: no /v1/metrics POSTs")
@@ -188,7 +188,7 @@ func TestInit_WithMockReceiver_TracesAndMetricsAndLogs(t *testing.T) {
 		if traceHits.Load() > 0 && metricHits.Load() > 0 && logHits.Load() > 0 {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // reason: real OTLP/HTTP export to httptest.Server — goroutine blocked on OS network I/O, not durably blocked in synctest sense.
 	}
 	if traceHits.Load() == 0 {
 		t.Errorf("no /v1/traces POSTs observed")

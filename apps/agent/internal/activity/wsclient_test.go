@@ -194,7 +194,7 @@ func TestRunInbound_FeedsConductor(t *testing.T) {
 	// Wait for the subscribe to propagate.
 	deadline := time.Now().Add(2 * time.Second)
 	for !cond.subs.Contains("ws-1") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // reason: WS read goroutine blocks on OS network I/O (httptest.Server); not durably blocked in synctest sense.
 	}
 	if !cond.subs.Contains("ws-1") {
 		t.Fatal("subscribe never reached the Conductor")

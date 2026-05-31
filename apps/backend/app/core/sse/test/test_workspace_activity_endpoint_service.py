@@ -83,6 +83,10 @@ async def test_non_owned_wfx_yields_empty_stream(cross_org_seed, redis_or_skip) 
     hangs on close for infinite streams.
     """
     gen = _workspace_activity_stream(cross_org_seed["org_a"].org_id, cross_org_seed["foreign_wfx_id"])
+    # Drain the connect prelude (yielded before subscription) so the collector
+    # below waits on a real data frame, not the prelude.
+    prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
     # Yield control to let the subscription register, then publish to a
     # different org's channel for the same wfx id — should NOT reach the stream.
@@ -111,6 +115,10 @@ async def test_workspace_activity_endpoint_streams_org_scoped(redis_or_skip) -> 
     wfx_id = uuid.uuid4()
 
     gen = _workspace_activity_stream(org_id, wfx_id)
+    # Drain the connect prelude (yielded before subscription) so the collector
+    # below waits on the first real data frame.
+    prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
     # Yield control so the generator registers its Redis subscription before
     # we publish — Redis pub/sub is fire-and-forget; earlier publishes drop.

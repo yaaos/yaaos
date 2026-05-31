@@ -26,6 +26,12 @@
 - **OTLP exporter late-binds on first ConfigUpdate** — `observability.BindExporter` is called inside `ApplyConfig`; it installs the real OTLP/HTTP trace/metric/log providers against the config's endpoint. No-op when `OTLPEndpoint` is empty or the providers are already installed (env-var startup path or a prior ConfigUpdate). See [observability.md](observability.md).
 - **Dedup cache guards against re-execution** — `routeCommand` checks an in-memory bounded LRU (1024 entries, `command_id → terminal AgentEvent`) before dispatch. A hit skips the workspace subprocess entirely and replays the cached event through the terminal-event retry loop. The cache entry is written before the first POST so re-delivery during an in-flight POST also hits the cache. The cache is cleared on pod restart (at-least-once; crash-loss accepted).
 - **Terminal-event retry loop in `postTerminalEvent`** — retries `PostCommandEvent` with a short backoff ramp (1s/2s/5s/10s/30s). Stops on success or `ErrStaleClaim` (410 Gone). Progress events bypass this and remain best-effort single-shot. The `eventPostBackoff` field is separate from connection-surface backoffs so event-post retries don't interfere with claim or heartbeat timing.
+- **Shutdown-vs-in-flight contract** — when the root `ctx` is cancelled (supervisor shutdown) while `Pool.Dispatch` has a `Send` in-flight, the per-command `sendCtx` also cancels; `Send` returns `ctx.Err()`; the pool emits `completed_failure` with `failure_reason` prefixed `"runner:"`. No in-flight command is silently dropped — the caller always receives a terminal event. See `pool.go:failureEvent`.
+- **Concurrent invariants each have a `-race` test** — see [patterns.md § Testing](patterns.md) principle 7. Covered: registry cap, same-id atomicity, per-surface backoff independence, dedup LRU consistency, and `execRunner.Close` idempotency.
+
+## Testing
+
+- Timing-sensitive supervisor tests run in `testing/synctest` bubbles where feasible. The activity-WS integration test (`supervisor_activity_ws_test.go`) uses a real `httptest.Server` WS connection; its subscribe-propagation poll cannot be bubbled because the WS read goroutine blocks on OS network I/O. See [patterns.md § Testing](patterns.md) principle 6.
 
 ## Gotchas
 

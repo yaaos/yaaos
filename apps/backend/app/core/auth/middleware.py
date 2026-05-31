@@ -39,7 +39,7 @@ from app.core.auth.context import (
     unbind_request_structlog_vars,
     user_id_var,
 )
-from app.core.auth.types import RouteSecurity, classify_route
+from app.core.auth.types import RouteSecurity, classify_route, org_slug_in_query_allowed
 
 log = structlog.get_logger("auth.middleware")
 
@@ -128,8 +128,15 @@ class AuthMiddleware:
             return
 
         if category is RouteSecurity.ORG_SCOPED:
-            # Header required.
-            if not request.headers.get("X-Org-Slug"):
+            # Org slug required — normally via the `X-Org-Slug` header. SSE
+            # stream routes also accept it in the `org` query param because the
+            # browser `EventSource` API cannot set headers (see
+            # `org_slug_in_query_allowed`). The slug runs through the same
+            # membership check either way.
+            has_org = bool(request.headers.get("X-Org-Slug")) or (
+                org_slug_in_query_allowed(path) and bool(request.query_params.get("org"))
+            )
+            if not has_org:
                 start, body = _json_response(400, {"error": "missing_org_slug"})
                 await send(start)
                 await send(body)

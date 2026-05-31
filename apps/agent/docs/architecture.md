@@ -66,7 +66,7 @@ Supervisor maintains a bidirectional WS to `/api/v1/agents/{id}/activity` when `
 
 ### Live progress streaming
 
-`RealHandler.RunClaude` wires `RunStreaming.OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the workflow engine — only `completed_*` events resume it.
+`RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the workflow engine — only `completed_*` events resume it.
 
 ### Workspace registry and lifecycle
 
@@ -120,3 +120,7 @@ The supervisor runs these goroutines concurrently after identity exchange:
 - **WS reconnect loop** (optional) — waits on `wsReadLoopDone`, sleeps on the WS backoff schedule, re-dials.
 
 No goroutine shares mutable state without a lock or atomic. The `Pool` guards all workspace-record mutations with a `sync.Mutex`. `Conductor.SubscriptionSet` and `WorkspaceMapping` each have their own independent locks. `observability.SetStandardDimensions` is guarded by `stdDimsMu`.
+
+## Testing model
+
+Tests are pure-stdlib and fake-driven at the capability seams (`WorkspaceOps`, `AgentOps`, `identity.Provider`, `CloneFunc`, `RunFunc`); timing tests run in a `testing/synctest` bubble; every concurrency invariant ships a `-race` test (reviewer-gated convention); `protocol/openapi_drift_test.go` is the cross-plane Go↔Python schema-parity guard. Full per-layer map → [patterns.md § Testing](patterns.md#testing).

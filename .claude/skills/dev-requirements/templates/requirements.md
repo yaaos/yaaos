@@ -29,7 +29,9 @@
 
 <observable signal — not vibes>
 
-## Open questions
+## Blocking handoff questions
+
+> Owned by this stage. Must be empty before `/dev-architect` runs — these are unresolved requirements (scope, behavior, outcome) that block the handoff.
 
 - <requirements punch list — unresolved scope, behavior, or outcome questions>
 
@@ -37,8 +39,10 @@
 
 <grounded in code, not docs. cite file:line for load-bearing claims>
 
-## Tech questions for dev-architect
+## Notes for architecture
 
-> Tech/architecture questions that surfaced — for dev-architect to resolve. Capture only; do not answer here.
+> Forward-looking material for dev-architect — ideas, leanings, watch-outs, AND tech/architecture questions that surfaced. Informs but does NOT block (unlike Blocking handoff questions). Capture only; do not resolve here. Self-label each bullet.
 
-- <bullet>
+- [question] <architecture/implementation question to resolve>
+- [idea] <a leaning or approach worth considering>
+- [watch out] <a trap or constraint dev-architect should know>

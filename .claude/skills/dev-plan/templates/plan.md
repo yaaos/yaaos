@@ -34,7 +34,9 @@ Each phase block is the contract with a fresh subagent. Restate load-bearing fac
   - Re-read `requirements.md`; walk each use case "After" against the running system.
   - Confirm doc updates from prior phases are landed and current.
 
-## Open questions
+## Blocking handoff questions
+
+> Owned by this stage. Must be empty before `/dev-implement` runs.
 
 <!-- ONLY a genuine unresolved decision that needs a human answer before/during execution.
      The dev-plan precondition guarantees requirements.md + architecture.md questions are
@@ -43,3 +45,10 @@ Each phase block is the contract with a fresh subagent. Restate load-bearing fac
      out-of-scope; already-decided things → not questions. -->
 
 - None.
+
+## Notes for implementation
+
+> Forward-looking material for dev-implement — reuse pointers, gotchas, and non-blocking questions that surfaced while planning. Informs but does NOT block. Self-label each bullet. Omit (or "None.") if nothing surfaced.
+
+- [idea] <reuse pointer or approach hint>
+- [watch out] <a trap the executor should know>

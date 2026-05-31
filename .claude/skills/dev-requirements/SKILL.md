@@ -37,11 +37,11 @@ Use the template at `.claude/skills/dev-requirements/templates/requirements.md`.
 
 Rules the template encodes:
 
-- **Problem · Desired outcome · Use cases · In/Out scope · Success signal · Open questions · Current state · Tech questions for dev-architect** — all required sections.
+- **Problem · Desired outcome · Use cases · In/Out scope · Success signal · Blocking handoff questions · Current state · Notes for architecture** — all required sections.
 - Use cases each carry `actor + goal · Today · After`. "Today" may say "doesn't exist".
 - "Current state" is grounded in code (cite `file:line`), not docs.
-- **Open questions** = requirements only (scope, behavior, outcome).
-- **Tech questions for dev-architect** = capture-only bucket for architecture/implementation questions that surfaced. Do NOT attempt to answer them here — they're inputs to dev-architect.
+- **Blocking handoff questions** = requirements unknowns owned by THIS stage (scope, behavior, outcome). Must be empty before dev-architect runs.
+- **Notes for architecture** = capture-only forward bucket for dev-architect — ideas, leanings, watch-outs, AND architecture/implementation questions that surfaced. Informs but does NOT block. Do NOT attempt to resolve here; self-label each bullet (`[question]` / `[idea]` / `[watch out]`).
 
 No technical solution. No architecture. No module breakdown.
 
@@ -53,7 +53,25 @@ No technical solution. No architecture. No module breakdown.
 - **Slug chosen at first write.** Kebab-case, derived from context. Collision → pick a different slug from context (not a numeric bump). No rename hygiene after.
 - **No-handoff rule.** Do not suggest the next skill at the end of a user-initiated run. (Chained runs from `dev-debug` bypass this.)
 - **Bail clause.** If no coherent problem crystallizes, do NOT write a file. Say so plainly — don't litter `plan/ticket/` with stubs.
-- **Done-state.** Soft-close: announce when the checklist looks full ("I think requirements.md is complete — anything missing?"). Keep incorporating changes if the user continues. No hard ceremony.
+- **Done-state.** Soft-close: announce when the checklist looks full ("I think requirements.md is complete — anything missing?"). Keep incorporating changes if the user continues. No hard ceremony. At soft-close, **offer the audit** (see below) — never run it unasked.
+
+## Audit (on demand)
+
+A clean-context auditor that catches what this skill can't see after a long drafting conversation — the orchestrator is anchored on its own draft.
+
+- **On-demand only.** Offer it at soft-close ("Want me to run a clean-context audit?"). Spawn ONLY on an explicit yes. Never automatic.
+- **Spawn an `Explore` subagent** (read-only) with the **same model as this skill (opus)**. Give it `plan/ticket/<slug>/requirements.md` and the repo path — nothing from this conversation. Clean context is the point.
+- **Audit prompt — the agent reads only the doc + codebase and reports findings on:**
+  1. Missing details — underspecified bullets, hand-wave phrasing, undefined terms.
+  2. Inconsistencies / contradictions between sections.
+  3. Unverified code claims — resolve every `file:line` in § Current state; flag any that don't exist or don't say what the doc claims.
+  4. Scope drift, both directions — content beyond stated scope; gaps where the problem / desired outcome isn't fully covered by use cases + scope.
+  5. Hidden assumptions stated as fact.
+  6. Convention / `CLAUDE.md` violations — service-test default, no planning vocabulary, present-tense docs, same-PR doc discipline.
+  7. Untestable success signal — vibes instead of an observable/measurable signal.
+  8. Missing actor / use-case the problem implies but isn't captured.
+- **Output contract.** The agent returns a terse findings list — each: severity (blocking / should-fix / nit) · location (section · `file:line` where relevant) · what's wrong · suggested fix.
+- **Triage with the user.** The orchestrator presents findings and decides fixes WITH the user. No raw-dump of the agent's full transcript; no auto-fix.
 
 ## Output to user at end
 

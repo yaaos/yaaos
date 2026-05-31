@@ -33,6 +33,11 @@
 - **Conductor** — the assembled facade the supervisor calls; owns `Start`/`Stop` lifecycle and the `HandleInbound`/`Publish` API.
 - **SendFunc** — caller-supplied callback that writes one encoded frame onto the WebSocket.
 
+## Testing
+
+- Timing tests (`Batcher` flush interval, `Conductor` flush-to-wire) run inside `testing/synctest` bubbles — fake time advances deterministically; no wall-clock polling. See [patterns.md § Testing](patterns.md) principle 6.
+- The `wsclient_test.go` transport test (`TestRunInbound_FeedsConductor`) uses a real `httptest.Server` WS connection; its subscribe-propagation poll loop cannot be bubbled because the WS read goroutine blocks on OS network I/O.
+
 ## Entry points
 
 - `apps/agent/internal/activity/conductor.go` — `Conductor`, `NewConductor`, `NewConductorWithLogger`, `HandleInbound`, `Publish`.

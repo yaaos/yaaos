@@ -139,7 +139,7 @@ func TestSupervisor_ActivityWS_ProgressEventsRouteThroughConductor(t *testing.T)
 	fs.push(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
 	deadline := time.Now().Add(2 * time.Second)
 	for !s.conductor.IsSubscribed("ws-1") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // reason: WS read goroutine blocks on OS network I/O (httptest.Server); not durably blocked in synctest sense.
 	}
 	if !s.conductor.IsSubscribed("ws-1") {
 		t.Fatal("subscribe never propagated into the Conductor")

@@ -52,6 +52,7 @@ from app.core.auth.types import (
     RouteSecurity,
     classify_route,
     is_org_scoped_path,
+    org_slug_in_query_allowed,
 )
 
 __all__ = [
@@ -87,6 +88,7 @@ __all__ = [
     "limiter",
     "org_context",
     "org_id_var",
+    "org_slug_in_query_allowed",
     "public_route",
     "register_handler",
     "require_org_context",

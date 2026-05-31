@@ -21,6 +21,7 @@ from app.core.auth import (
     actor_id_var,
     actor_kind_var,
     org_id_var,
+    org_slug_in_query_allowed,
     required_role_for,
     route_security_resolved,
     user_id_var,
@@ -84,12 +85,18 @@ def require(action: Action) -> Callable[..., None]:
             # clears the stale session + csrf cookies on the way out.
             # Browser's next request starts clean → no cascading 401 loop.
             raise AuthFailure("unauthenticated")
-        if not x_org_slug:
+        # SSE routes accept the slug via the `org` query param because the
+        # browser EventSource API cannot set the X-Org-Slug header. Same
+        # membership check applies (see `org_slug_in_query_allowed`).
+        slug = x_org_slug
+        if not slug and org_slug_in_query_allowed(request.url.path):
+            slug = request.query_params.get("org")
+        if not slug:
             # Middleware should have caught this, but defend in depth.
             raise _err(400, "missing_org_slug")
 
         async with db_session() as s:
-            auth_org = await resolve_auth_org(s, user_id=user_id, slug=x_org_slug)
+            auth_org = await resolve_auth_org(s, user_id=user_id, slug=slug)
 
         if auth_org is None:
             # Mask existence — same shape whether org is absent or user has no membership.

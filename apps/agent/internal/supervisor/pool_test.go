@@ -640,6 +640,71 @@ func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
 	}
 }
 
+// TestPool_ShutdownDuringInFlight_EmitsCompletedFailure pins the present
+// contract for what happens when the supervisor cancels the root context while
+// a command Send is in-flight: Pool.Dispatch must emit a completed_failure event
+// with kind=completed_failure, FailureReason prefixed with "runner:", and the
+// original CommandID + Traceparent preserved in the event header fields.
+//
+// This is the shutdown-drain contract: no in-flight command is silently
+// dropped — the caller always receives a terminal event (failureEvent at
+// pool.go:512-519) even when the outer context is cancelled mid-Send.
+func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
+	// hangingForeverOps (defined in this file) blocks all command bodies
+	// including CreateWorkspace until ctx cancels — simulates a workspace
+	// operation interrupted by supervisor shutdown (root ctx cancel).
+	pool := NewPool(InProcessSpawn(hangingForeverOps{}), nil)
+	defer pool.CloseAll(context.Background())
+
+	const wsID = "ws-shutdown"
+	const cmdID = "cmd-shutdown"
+	const traceparent = "tp-shutdown"
+
+	cmd := &command.CreateWorkspaceCommand{
+		Proto: protocol.CreateWorkspaceCommand{
+			CommandHeader: protocol.CommandHeader{
+				CommandID:   cmdID,
+				WorkspaceID: wsID,
+				Traceparent: traceparent,
+				Kind:        protocol.KindCreateWorkspace,
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	result := make(chan protocol.AgentEvent, 1)
+	go func() {
+		result <- pool.Dispatch(ctx, cmd, nil, 0)
+	}()
+
+	// Give the dispatch goroutine time to enter the blocking Send, then
+	// cancel the context (simulating supervisor shutdown).
+	time.Sleep(20 * time.Millisecond) // reason: waiting for the dispatch goroutine to reach the blocking Send inside the fake RunFunc; channel rendezvous would require exposing internal pool state.
+	cancel()
+
+	var ev protocol.AgentEvent
+	select {
+	case ev = <-result:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Pool.Dispatch did not return after context cancel (possible deadlock)")
+	}
+
+	// Contract assertions: completed_failure with runner: prefix, header fields preserved.
+	if ev.Kind != protocol.EventCompletedFailure {
+		t.Errorf("kind: want completed_failure got %q", ev.Kind)
+	}
+	if !strings.Contains(ev.FailureReason, "runner:") {
+		t.Errorf("failure_reason: want 'runner:' prefix, got %q", ev.FailureReason)
+	}
+	if ev.CommandID != cmdID {
+		t.Errorf("command_id: want %q got %q", cmdID, ev.CommandID)
+	}
+	if ev.Traceparent != traceparent {
+		t.Errorf("traceparent: want %q got %q", traceparent, ev.Traceparent)
+	}
+}
+
 // TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure proves
 // that any non-create WorkspaceCommand for an unseen workspace_id yields a
 // completed_failure with reason containing "no workspace runner".

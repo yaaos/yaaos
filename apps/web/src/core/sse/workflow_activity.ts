@@ -7,6 +7,7 @@
  * cuts off the WorkspaceAgent's activity batches all the way through.
  */
 
+import { getCurrentOrgSlug } from "@core/api";
 import { useEffect, useState } from "react";
 
 export interface WorkflowActivityEvent {
@@ -24,7 +25,13 @@ export function useWorkflowActivityStream(
 
   useEffect(() => {
     if (!workflowExecutionId) return;
-    const url = `/api/sse/workspace_activity/${workflowExecutionId}`;
+    // `/api/sse` is org-scoped, but EventSource can't send X-Org-Slug — the
+    // slug rides in the `?org=` query param instead (backend accepts it for
+    // SSE routes). Read it from the URL; the hook only runs inside an org.
+    const slug = getCurrentOrgSlug();
+    const url = slug
+      ? `/api/sse/workspace_activity/${workflowExecutionId}?org=${encodeURIComponent(slug)}`
+      : `/api/sse/workspace_activity/${workflowExecutionId}`;
     const es = new EventSource(url, { withCredentials: true });
     es.onmessage = (ev) => {
       try {

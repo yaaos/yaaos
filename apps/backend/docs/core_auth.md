@@ -22,13 +22,15 @@
 |---|---|---|---|
 | `PUBLIC` | no | no | no |
 | `USER_SCOPED` | yes (route dep) | no | no |
-| `ORG_SCOPED` | yes (route dep) | yes | yes (`require(action)`) |
+| `ORG_SCOPED` | yes (route dep) | yes¹ | yes (`require(action)`) |
+
+¹ `/api/sse/*` routes accept the org slug in the `?org=` query param instead, because the browser `EventSource` API cannot set headers (`org_slug_in_query_allowed`). The slug runs through the same membership check, so it is not a bypass.
 
 `classify_route(path, method)` is the single source of truth. Method-exact > exact > prefix. Unclassified `/api/*` falls through as `PUBLIC`.
 
 **Middleware order on `/api/*`:**
 1. Reset all identity contextvars (ASGI may reuse the task).
-2. Classify route. `ORG_SCOPED` without `X-Org-Slug` → 400 immediately. `USER_SCOPED` and `ORG_SCOPED` mutations → CSRF double-submit check.
+2. Classify route. `ORG_SCOPED` without `X-Org-Slug` (nor `?org=` on `/api/sse/*`) → 400 immediately. `USER_SCOPED` and `ORG_SCOPED` mutations → CSRF double-submit check.
 3. Post-response guard: if response is 2xx and `route_security_resolved` is still `None`, substitute 500 + log. Forgetting a security dep crashes, not leaks.
 4. Tag OTel span with `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`.
 

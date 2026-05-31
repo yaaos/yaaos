@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
 )
@@ -573,6 +575,218 @@ func localBareRepo(t *testing.T) (cloneURL, headSHA string) {
 	mustRun(workDir, "clone", "--bare", workDir, bareDir)
 	sha := mustRun(workDir, "rev-parse", "HEAD")
 	return "file://" + bareDir, sha
+}
+
+// ── RunFunc seam tests ────────────────────────────────────────────────────
+//
+// These tests exercise RunClaude orchestration through a fake RunFunc so no
+// real Claude binary is needed. They cover env layering, emitter forwarding,
+// stdout accumulation, non-zero exit mapping, and error propagation.
+
+// fakeRunFunc builds a RunFunc that returns a canned result, optionally
+// after calling onCall with the received options. The result's Stdout is
+// returned verbatim; callers set it to the expected accumulated bytes.
+func fakeRunFunc(result *RunStreamingResult, err error, onCall func(RunStreamingOptions)) RunFunc {
+	return func(_ context.Context, opts RunStreamingOptions) (*RunStreamingResult, error) {
+		if onCall != nil {
+			onCall(opts)
+		}
+		// Simulate the streaming path: if result has Stdout and no
+		// OnStdoutLine is set, return it as-is. If OnStdoutLine is set
+		// (which RunClaude always sets), call the callback for each line
+		// in Stdout and leave result.Stdout empty — matching RunStreaming's
+		// contract so the accumulator in RunClaude fills it.
+		if opts.OnStdoutLine != nil && result != nil && len(result.Stdout) > 0 {
+			for _, line := range bytes.Split(bytes.TrimRight(result.Stdout, "\n"), []byte("\n")) {
+				opts.OnStdoutLine(line)
+			}
+			r := *result
+			r.Stdout = nil
+			return &r, err
+		}
+		if result != nil {
+			r := *result
+			return &r, err
+		}
+		return nil, err
+	}
+}
+
+// rawInvocation builds a JSON invocation blob from argv/stdin/env.
+func rawInvocation(t *testing.T, argv []string, stdin string, env map[string]string) []byte {
+	t.Helper()
+	body := map[string]any{
+		"exec": map[string]any{
+			"argv":  argv,
+			"stdin": stdin,
+			"env":   env,
+		},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("rawInvocation: %v", err)
+	}
+	return b
+}
+
+// realHandlerWithFakeRun builds a RealHandler whose RunClaude calls fn
+// instead of the real RunStreaming.
+func realHandlerWithFakeRun(t *testing.T, fn RunFunc) *RealHandler {
+	t.Helper()
+	return NewRealHandler(RealHandlerConfig{
+		Root:      t.TempDir(),
+		CloneFunc: noopClone,
+		RunFunc:   fn,
+	})
+}
+
+// recordingEmitter captures Progress calls in order.
+type recordingEmitter struct {
+	calls []map[string]any
+}
+
+func (e *recordingEmitter) Progress(outputs map[string]any) bool {
+	e.calls = append(e.calls, outputs)
+	return true
+}
+
+func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
+	// Happy path: fake RunFunc returns multi-line stdout with ExitCode 0.
+	// Asserts: env layering (BYOK key reaches RunFunc), emitter forwarding
+	// (each line becomes a progress event), stdout accumulation (RunClaude
+	// replaces RunStreaming's empty Stdout with the accumulated bytes).
+	cannedOutput := []byte("line-one\nline-two\n")
+	var capturedOpts RunStreamingOptions
+	fake := fakeRunFunc(
+		&RunStreamingResult{Stdout: cannedOutput, ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) { capturedOpts = opts },
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	_ = cr
+
+	emitter := &recordingEmitter{}
+	ctx := ContextWithEmitter(context.Background(), emitter)
+
+	res, err := h.RunClaude(ctx, &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation: rawInvocation(t,
+			[]string{"claude", "--print"},
+			"prompt text",
+			map[string]string{"ANTHROPIC_API_KEY": "sk-test-byok"},
+		),
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+
+	// env layering: BYOK key must be in the env RunFunc received.
+	foundBYOK := false
+	for _, kv := range capturedOpts.Env {
+		if kv == "ANTHROPIC_API_KEY=sk-test-byok" {
+			foundBYOK = true
+		}
+	}
+	if !foundBYOK {
+		t.Errorf("BYOK key not found in RunFunc env: %v", capturedOpts.Env)
+	}
+
+	// emitter forwarding: two lines → two progress events.
+	if len(emitter.calls) != 2 {
+		t.Errorf("emitter calls: want 2 got %d", len(emitter.calls))
+	} else {
+		if emitter.calls[0]["stream_line"] != "line-one" {
+			t.Errorf("progress[0].stream_line: want 'line-one' got %v", emitter.calls[0]["stream_line"])
+		}
+		if emitter.calls[1]["stream_line"] != "line-two" {
+			t.Errorf("progress[1].stream_line: want 'line-two' got %v", emitter.calls[1]["stream_line"])
+		}
+		if emitter.calls[0]["workspace_id"] != "ws-1" {
+			t.Errorf("progress.workspace_id: want 'ws-1' got %v", emitter.calls[0]["workspace_id"])
+		}
+	}
+
+	// stdout accumulation: RunClaude must fill res.Stdout from the
+	// accumulator (the fake's OnStdoutLine path left result.Stdout nil).
+	if strings.TrimRight(res.Stdout, "\n") != "line-one\nline-two" {
+		t.Errorf("accumulated stdout: want 'line-one\\nline-two' got %q", res.Stdout)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("exit_code: want 0 got %d", res.ExitCode)
+	}
+}
+
+func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T) {
+	// Non-zero exit from the fake: RunClaude must map it to a command error
+	// per the error taxonomy (return nil result + error with exit code).
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 42, Stderr: []byte("something failed"), Duration: time.Millisecond},
+		// Zero-value ExitError: RunClaude only type-matches it via errors.As and
+		// reads ExitCode/Stderr from RunStreamingResult above — it never touches
+		// the (nil) ProcessState. If that branch ever calls a method on the
+		// matched ExitError, build a real one here instead.
+		&exec.ExitError{},
+		nil,
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+	})
+	if err == nil {
+		t.Fatal("want error on non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "exit 42") {
+		t.Errorf("err should mention 'exit 42', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "something failed") {
+		t.Errorf("err should include stderr excerpt, got %q", err.Error())
+	}
+}
+
+func TestRealHandler_RunClaude_FakeRunFunc_RunFuncReturnsError_PropagatesAsCommandError(t *testing.T) {
+	// RunFunc returns a plain error (e.g. startup failure). RunClaude must
+	// propagate it wrapped as a command error — no panic, no lost error.
+	fake := fakeRunFunc(nil, errors.New("subprocess startup failed"), nil)
+	h := realHandlerWithFakeRun(t, fake)
+	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+	})
+	if err == nil {
+		t.Fatal("want error when RunFunc returns error")
+	}
+	if !strings.Contains(err.Error(), "claude subprocess") {
+		t.Errorf("err should contain 'claude subprocess', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "subprocess startup failed") {
+		t.Errorf("err should wrap original message, got %q", err.Error())
+	}
+}
+
+func TestRealHandler_RunClaude_FakeRunFunc_CwdIsWorkspacePath(t *testing.T) {
+	// RunFunc receives the workspace tempdir as Dir.
+	var capturedDir string
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) { capturedDir = opts.Dir },
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+
+	h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{ //nolint:errcheck
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+	})
+	if capturedDir != cr.Path {
+		t.Errorf("RunFunc Dir: want %q got %q", cr.Path, capturedDir)
+	}
 }
 
 func TestRealHandler_CloneWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) {

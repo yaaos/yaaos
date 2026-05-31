@@ -9,6 +9,7 @@
 - **Receives:** framed JSON `WorkspaceCommand` bytes over stdin (`ipc.Decoder`).
 - **Emits:** framed JSON `AgentEvent` bytes over stdout (`ipc.Encoder`); terminal events are `completed_success` or `completed_failure`; intermediate events are `progress`.
 - **Hands to:** `command.WorkspaceOps` methods (one per command kind); `ipc.Encoder` for all outbound events.
+- **Capability seams in `RealHandlerConfig`:** `CloneFunc` (git clone) and `RunFunc` (Claude Code subprocess). Both default to their production implementations; tests inject fakes. See [patterns.md § Testing](patterns.md#testing) for the fake-at-seam convention.
 
 ## Why / invariants
 
@@ -26,11 +27,14 @@
 ## Vocabulary
 
 - **`WorkspaceOps`** — the capability seam `workspace.Run` calls for each command kind; production: `RealHandler`; tests: `StubHandler` or a custom implementation.
+- **`CloneFunc`** — function type for git clone; `RealHandlerConfig` field; production default is `gitClone`.
+- **`RunFunc`** — function type for Claude Code subprocess dispatch (`func(context.Context, RunStreamingOptions) (*RunStreamingResult, error)`); `RealHandlerConfig` field; production default is `RunStreaming`. Tests inject a fake to avoid spawning a real Claude binary.
 - **`Run`** — the dispatcher loop entrypoint; one goroutine per workspace subprocess (or in-process equivalent in tests).
 - **`inProcessRunner`** — test double wiring `workspace.Run` in a goroutine over `io.Pipe` pairs; used by `InProcessSpawn` in supervisor tests.
 
 ## Entry points
 
 - `apps/agent/internal/workspace/workspace.go` — `Run`, `executeCommand`, `StubHandler`.
-- `apps/agent/internal/workspace/realhandler.go` — `RealHandler`.
+- `apps/agent/internal/workspace/realhandler.go` — `RealHandler`, `RealHandlerConfig`, `CloneFunc`, `RunFunc` type definitions.
+- `apps/agent/internal/workspace/subprocess.go` — `RunStreaming`, `RunStreamingOptions`, `RunStreamingResult`.
 - `apps/agent/internal/workspace/emitter.go` — `Emitter`, `EmitterFromContext`.

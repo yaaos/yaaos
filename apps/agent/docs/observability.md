@@ -58,6 +58,10 @@ Key counters emitted by the supervisor (all carry `org_id` + `agent_id`):
 - `bindMetrics` is called from `Init` after the real provider installs, swapping out no-op instruments. Tests that call `Metrics()` before `Init` get no-ops — fine for unit tests; service tests need the real provider only if they assert metric values.
 - `SetStandardDimensions` is safe to call concurrently (guarded by `stdDimsMu`); it's a process-wide singleton, called once after identity exchange.
 
+## Testing
+
+- `otel_test.go` uses a real `httptest.Server` as the OTLP receiver; its polling loops wait on real HTTP export and cannot run in `testing/synctest` bubbles (OTLP SDK goroutines block on OS network I/O). See [patterns.md § Testing](patterns.md) principle 6 for the general rule.
+
 ## Entry points
 
 - `apps/agent/internal/observability/otel.go` — `Init`, `Config`, `Result`.

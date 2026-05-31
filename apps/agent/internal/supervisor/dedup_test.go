@@ -3,6 +3,7 @@ package supervisor
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/yaaos/agent/internal/protocol"
@@ -98,6 +99,68 @@ func TestDedupCache_1024Cap(t *testing.T) {
 	// The second-oldest entry should still be present.
 	if _, ok := c.lookup("cmd-1"); !ok {
 		t.Error("cmd-1 should be present (only cmd-0 was evicted)")
+	}
+}
+
+// TestDedupCache_ConcurrentStoreAndLookup proves the mu-guarded LRU stays
+// consistent under concurrent store and lookup calls. Multiple goroutines
+// store distinct command IDs while others simultaneously look up the same IDs.
+// Post-condition: every stored entry is either retrievable (if still in the
+// cache) or has been evicted by a later store — the cache must not panic,
+// corrupt internal state, or produce a hit for an ID that was never stored.
+// Run with -race to exercise the mu guard under contention.
+func TestDedupCache_ConcurrentStoreAndLookup(t *testing.T) {
+	const cap = 32
+	const writers = 4
+	const writesPerWriter = 64
+	c := newDedupCache(cap)
+
+	var wg sync.WaitGroup
+
+	// Writers: each stores a disjoint set of command IDs.
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < writesPerWriter; i++ {
+				id := fmt.Sprintf("w%d-cmd-%d", w, i)
+				c.store(id, protocol.AgentEvent{
+					CommandID: id,
+					Kind:      protocol.EventCompletedSuccess,
+				})
+			}
+		}(w)
+	}
+
+	// Readers: concurrently look up IDs that may or may not exist yet.
+	// We only assert no panic and no cross-contamination (a hit must carry
+	// the correct CommandID).
+	for r := 0; r < writers; r++ {
+		wg.Add(1)
+		go func(r int) {
+			defer wg.Done()
+			for i := 0; i < writesPerWriter; i++ {
+				id := fmt.Sprintf("w%d-cmd-%d", r, i)
+				ev, ok := c.lookup(id)
+				if ok && ev.CommandID != id {
+					// A hit with the wrong payload is a corruption.
+					t.Errorf("lookup %q: got CommandID %q (cross-contamination)", id, ev.CommandID)
+				}
+			}
+		}(r)
+	}
+
+	wg.Wait()
+
+	// Sanity: the cache did not lose structural integrity — it should still
+	// accept new stores and return coherent hits.
+	c.store("sentinel", protocol.AgentEvent{CommandID: "sentinel", Kind: protocol.EventCompletedFailure})
+	ev, ok := c.lookup("sentinel")
+	if !ok {
+		t.Error("post-concurrent: sentinel store+lookup miss (LRU corrupted?)")
+	}
+	if ok && ev.CommandID != "sentinel" {
+		t.Errorf("post-concurrent: sentinel got %q", ev.CommandID)
 	}
 }
 
