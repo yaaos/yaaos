@@ -1,6 +1,6 @@
 ---
 name: yaaos-finding-schema
-description: Central finding schema for the yaaos-review pipeline. Every reviewer skill references this for the finding shape, severity rubric, confidence rubric, evidence guardrail, prompt-injection guard, and shared repo-level context (CLAUDE.md + REVIEW.md).
+description: Central finding schema for the yaaos-review pipeline. Every reviewer skill references this for the finding shape, severity rubric, confidence rubric, evidence guardrail, rule-citation fields (rule_violated, rule_source), prompt-injection guard, and shared repo-level context (CLAUDE.md + REVIEW.md).
 ---
 
 # yaaos-finding-schema
@@ -23,6 +23,8 @@ Every reviewer and adversary emits an array of findings matching this shape:
   "severity": "blocker|should_fix|nit",
   "confidence": "verified|plausible|speculative",
   "rationale": "...",
+  "rule_violated": "...",
+  "rule_source": "generic | path/to/doc.md:14",
   "suggested_fix": "..."
 }
 ```
@@ -34,8 +36,15 @@ JSON Schema at [schema.json](schema.json). Final output wrapper at [review-outpu
 - `category` — one of the three reviewer categories. Must match the emitting reviewer's category.
 - `severity` — see severity rubric below.
 - `confidence` — see confidence rubric below.
-- `rationale` — must satisfy the evidence guardrail (below).
-- `suggested_fix` — concrete next action; may be terse but must be actionable.
+- `rationale` — must satisfy the evidence guardrail (below). Reviewers write terse, technical prose. The Wave 4 restate pass rewrites this in place into plain peer-engineer language before final emission; the raw reviewer prose is preserved in the run directory's `wave2/<category>.json` for audit.
+- `rule_violated` — the named rule or principle violated, on its own field so renderers can surface it cleanly. **Shape:** one line, free-form prose. **Lead with the named standard when one exists**, separated from a short clause by ` — ` (em dash). Examples:
+  - `"OWASP A02 — non-constant-time MAC comparison"` (named standard + clause)
+  - `"Dependency direction — domain layer must not import from web"` (repo-local rule, treated as a "named standard" of its own)
+  - `"Transaction atomicity — side-effects that depend on a write must enqueue inside the same transaction"` (named principle + clause)
+
+  If no standard naturally names the rule, lead with a short Title-Case noun phrase that does (e.g., `"Existing-pattern reuse"`, `"Lock-step migration"`). Avoid bare sentences without a leading name. **Reviewers populate this; nothing downstream paraphrases it.**
+- `rule_source` — either the literal string `"generic"` (universal principle like OWASP, dependency direction, transaction atomicity) or a citation of the form `"path/to/doc.md:LINE"` copied verbatim from the pattern-finder conventions digest. Tells a reader whether the rule is repo-local or universal.
+- `suggested_fix` — concrete next action; terse and actionable when written by the reviewer. The Wave 4 restate pass rewrites this in place into plain peer-engineer language alongside `rationale`.
 
 ## Severity rubric
 
@@ -98,9 +107,20 @@ Weak ground; adversary raised meaningful counter-evidence the reviewer could not
 
 1. **Specific file:line reference** — beyond the structured `file`/`line` fields, restate inline so the rationale stands alone.
 2. **A quoted snippet** of the relevant code (one line or a short block, copied from source).
-3. **Which rule, principle, or pattern the finding violates** — name the standard ("OWASP A03 injection", "module dependency direction", "transaction atomicity"), not just "this is wrong".
+3. **Which rule, principle, or pattern the finding violates** — name the standard, do not just say "this is wrong". Populate the standalone `rule_violated` field with the same name, and set `rule_source` accordingly (see below).
 
 **Reviewers that cannot cite concrete evidence MUST NOT emit the finding.** This is the single biggest calibration improvement available — verbalized confidence becomes reliable only when forced through an evidence requirement.
+
+### Where the rule comes from — prefer repo-local, fall back to generic
+
+The Wave 1 pattern-finder digest contains `conventions[]` entries that may carry a `source` field of the form `"path/to/doc.md:LINE"` (a rule extracted from `CLAUDE.md` or a doc it links to) — those are the repo's own stated rules.
+
+When picking the `rule_violated` for a finding:
+
+1. **If a `doc-rule` from the pattern-finder digest applies, prefer it.** Use that rule's phrasing for `rule_violated` and copy its `source` verbatim into `rule_source`. Findings cited against the repo's own docs feel native and are harder to dismiss.
+2. **Otherwise, fall back to a generic principle** (`"OWASP A03 — Injection"`, `"module dependency direction"`, `"transaction atomicity"`, etc.) and set `rule_source` to the literal string `"generic"`.
+
+Never invent a `rule_source` path — only copy from the conventions digest. If no doc-rule applies, the answer is `"generic"`, not a guessed citation.
 
 ## Repo-level context
 
@@ -122,10 +142,10 @@ Highest-priority additional instructions for the review pipeline specifically. W
 
 **Baseline protections NOT overridable by REVIEW.md (or CLAUDE.md):**
 
-- Evidence guardrail (file:line + quoted code + rule violated)
+- Evidence guardrail (file:line + quoted code + rule violated, with `rule_violated` and `rule_source` populated)
 - Severity bucket names (Blocker / Should-fix / Nit)
 - Confidence bucket names (Verified / Plausible / Speculative)
-- JSON finding schema
+- JSON finding schema (including `rule_violated` and `rule_source`)
 - Prompt-injection guard
 
 **REVIEW.md CAN tune:**

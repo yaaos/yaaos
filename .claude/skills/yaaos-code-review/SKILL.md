@@ -20,6 +20,7 @@ References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the find
   - Verify that new code doesn't duplicate an existing utility (pattern-finder).
   - Confirm callers/consumers of changed interfaces (analyzer).
   - Place findings in the right file context (locator).
+  - **Pick `rule_violated` and `rule_source`** — the pattern-finder digest's `conventions[]` may include `doc-rule` entries with a `source: "path/to/doc.md:LINE"` citation. When one applies to a finding, prefer it over a generic principle (see [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md)).
 - Repo-level context (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md).
 - `$OUTPUT_PATH` for findings JSON.
 
@@ -171,12 +172,13 @@ Write a JSON object to `$OUTPUT_PATH`:
 ```json
 {
   "findings": [
-    { "file": "...", "line": 1, "category": "code", "severity": "blocker", "confidence": "verified", "rationale": "...", "suggested_fix": "..." }
+    { "file": "...", "line": 1, "category": "code", "severity": "blocker", "confidence": "verified", "rationale": "...", "rule_violated": "...", "rule_source": "generic | path/to/doc.md:LINE", "suggested_fix": "..." }
   ]
 }
 ```
 
 - `category` MUST be `"code"` for every finding.
+- Every finding MUST populate `rule_violated` and `rule_source`. See [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md).
 - Empty `findings: []` is valid output.
 - Return to orchestrator only `{path, one_line_summary}`.
 
@@ -184,24 +186,28 @@ Write a JSON object to `$OUTPUT_PATH`:
 
 ```json
 {
-  "file": "apps/backend/app/workers/sync_invoice.py",
+  "file": "src/workers/sync_invoice.py",
   "line": 58,
   "category": "code",
   "severity": "blocker",
   "confidence": "verified",
-  "rationale": "apps/backend/app/workers/sync_invoice.py:58 enqueues the downstream notifier with `enqueue_notify(invoice.id)` AFTER the `with transaction:` block on line 50 has closed. If the worker dequeues before the DB commit propagates, it reads no row and silently no-ops. Violates the transaction-atomicity rule: side-effects that depend on a write must be enqueued inside the same transaction (e.g., via an outbox or on-commit callback).",
+  "rationale": "src/workers/sync_invoice.py:58 enqueues the downstream notifier with `enqueue_notify(invoice.id)` AFTER the `with transaction:` block on line 50 has closed. If the worker dequeues before the DB commit propagates, it reads no row and silently no-ops.",
+  "rule_violated": "Transaction atomicity — side-effects that depend on a write must enqueue inside the same transaction",
+  "rule_source": "generic",
   "suggested_fix": "Move `enqueue_notify(invoice.id)` inside the `with transaction:` block, or use the outbox pattern (insert into outbox table inside the transaction; a separate dispatcher reads and enqueues)."
 }
 ```
 
 ```json
 {
-  "file": "apps/web/src/components/UserMenu.tsx",
+  "file": "web/src/components/UserMenu.tsx",
   "line": 32,
   "category": "code",
   "severity": "should_fix",
   "confidence": "plausible",
-  "rationale": "apps/web/src/components/UserMenu.tsx:32 calls `users.map(u => fetchAvatar(u.id))` inside the render, producing one network call per user. The pattern-finder (Wave 1) shows `useBatchedAvatars` already exists at apps/web/src/hooks/useBatchedAvatars.ts and is used by SettingsList. Violates the existing-pattern-reuse rule: new code should use the established batched fetch.",
+  "rationale": "web/src/components/UserMenu.tsx:32 calls `users.map(u => fetchAvatar(u.id))` inside the render, producing one network call per user. The pattern-finder (Wave 1) shows `useBatchedAvatars` already exists at web/src/hooks/useBatchedAvatars.ts and is used by SettingsList.",
+  "rule_violated": "Existing-pattern reuse — use the batched-fetch helper instead of per-item network calls in render paths",
+  "rule_source": "docs/conventions.md:42",
   "suggested_fix": "Replace the inline map with `const avatars = useBatchedAvatars(users.map(u => u.id))` and read from `avatars` in the render."
 }
 ```

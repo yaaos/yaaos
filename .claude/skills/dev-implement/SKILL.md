@@ -53,7 +53,7 @@ For each phase in `plan.md`, in order:
    - `git status --porcelain` must list exactly the paths in `files_touched` (modulo file mode quirks). Mismatch → phase failure.
 5. **Planning-artifact leak check** on the staged diff (see below).
 6. **Stage and commit:** `git add <files_touched...>` (exactly those paths, never `git add -A`), then commit with `<slug>: phase N — <phase goal>`. Skip commit if `files_touched` is empty.
-7. **Append per-phase block to `impl-log.md`** via transform: `files_touched + tests_added` → Summary bullets; `autonomous_decisions[]` → nested list (omit if empty); `ci_status` + SHA → Commit line; `notes` → Notes (omit if empty).
+7. **Append per-phase block to `impl-log.md`** via transform: `files_touched + tests_added` → Summary bullets; `autonomous_decisions[]` → nested list (omit if empty); `ci_status` + SHA → Commit line; `notes[]` → Notes nested list (omit if empty or absent). The Notes list captures deferred-not-fixed observations the subagent surfaced — surface them to the user verbatim so they can be ticketed.
 8. Loop.
 
 ### Subagent prompt shape
@@ -73,7 +73,7 @@ Nothing else. No conversation context, no exploration notes, no orchestrator com
 
 ### Out-of-scope edits
 
-The subagent may edit files outside the phase's declared "Files touched" when necessary; each must appear in `files_touched` AND in `autonomous_decisions`. The orchestrator commits them along with the rest and surfaces the decision in the impl-log block. Does not stop.
+The subagent may edit files outside the phase's declared "Files touched" — both when **necessary** to complete the phase AND when it spots a small, obvious incidental fix (broken test, stale doc, dead code, typo) along the way. Either kind is legitimate; the subagent applies its own small/obvious gate (see the subagent skill). Each such file must appear in `files_touched` AND in `autonomous_decisions`. The orchestrator commits them along with the rest and surfaces the decision in the impl-log block. The orchestrator does not stop on out-of-scope edits.
 
 ## Final phase (orchestrator-owned, not delegated)
 

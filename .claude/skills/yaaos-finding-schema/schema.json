@@ -5,7 +5,7 @@
   "description": "A single finding emitted by a reviewer or revised by an adversary in the yaaos-review pipeline.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["file", "line", "category", "severity", "confidence", "rationale", "suggested_fix"],
+  "required": ["file", "line", "category", "severity", "confidence", "rationale", "rule_violated", "rule_source", "suggested_fix"],
   "properties": {
     "file": {
       "type": "string",
@@ -31,12 +31,22 @@
     },
     "rationale": {
       "type": "string",
-      "description": "Must satisfy the evidence guardrail: includes a file:line reference, a quoted code snippet, and the rule/principle violated.",
+      "description": "Must satisfy the evidence guardrail: includes a file:line reference, a quoted code snippet, and the rule/principle violated. Wave 4 restate pass rewrites this in place for plain-language output; raw reviewer text is preserved in the wave2 file for audit.",
+      "minLength": 1
+    },
+    "rule_violated": {
+      "type": "string",
+      "description": "Named rule or principle the finding violates (e.g., 'OWASP A02 — non-constant-time MAC comparison', 'domain layer must not import from web'). Populated by the reviewer; never paraphrased downstream.",
+      "minLength": 1
+    },
+    "rule_source": {
+      "type": "string",
+      "description": "Either the literal string 'generic' (universal principle) or a 'path/to/doc.md:LINE' citation copied verbatim from the pattern-finder conventions digest.",
       "minLength": 1
     },
     "suggested_fix": {
       "type": "string",
-      "description": "Concrete actionable next step.",
+      "description": "Concrete actionable next step. Wave 4 restate pass rewrites this in place for plain-language output.",
       "minLength": 1
     }
   }

@@ -17,6 +17,7 @@ References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the find
 
 - The diff.
 - Wave 1 mapping file paths (locator, analyzer, pattern-finder) — these establish the current architecture and conventions. Read them before judging fit.
+  - **Pick `rule_violated` and `rule_source` from the pattern-finder digest** — its `conventions[]` may include `doc-rule` entries with a `source: "path/to/doc.md:LINE"` citation. When one applies to a finding, prefer it over a generic principle (see [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md)).
 - Repo-level context (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md).
 - `$OUTPUT_PATH` for findings JSON.
 
@@ -93,12 +94,13 @@ Write a JSON object to `$OUTPUT_PATH`:
 ```json
 {
   "findings": [
-    { "file": "...", "line": 1, "category": "architecture", "severity": "should_fix", "confidence": "verified", "rationale": "...", "suggested_fix": "..." }
+    { "file": "...", "line": 1, "category": "architecture", "severity": "should_fix", "confidence": "verified", "rationale": "...", "rule_violated": "...", "rule_source": "generic | path/to/doc.md:LINE", "suggested_fix": "..." }
   ]
 }
 ```
 
 - `category` MUST be `"architecture"` for every finding.
+- Every finding MUST populate `rule_violated` and `rule_source`. See [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md).
 - Empty `findings: []` is valid output.
 - Return to orchestrator only `{path, one_line_summary}`.
 
@@ -106,12 +108,14 @@ Write a JSON object to `$OUTPUT_PATH`:
 
 ```json
 {
-  "file": "apps/backend/app/domain/billing/invoices.py",
+  "file": "src/domain/billing/invoices.py",
   "line": 87,
   "category": "architecture",
   "severity": "blocker",
   "confidence": "verified",
-  "rationale": "apps/backend/app/domain/billing/invoices.py:87 imports `from app.web.routes.checkout import format_response`. The codebase's dependency direction (per Wave 1 analyzer output) is web → domain, not the reverse; domain modules must not import from web. Violates the layer dependency direction documented in apps/backend/docs/modularity.md.",
+  "rationale": "src/domain/billing/invoices.py:87 imports `from app.web.routes.checkout import format_response`. The codebase's dependency direction (per Wave 1 analyzer output) is web → domain, not the reverse; domain modules must not import from web.",
+  "rule_violated": "Dependency direction — domain layer must not import from web (direction is web → domain)",
+  "rule_source": "docs/architecture.md:18",
   "suggested_fix": "Move `format_response` formatting logic into a domain-layer module or into the web layer's own service file; remove the upward import from invoices.py."
 }
 ```

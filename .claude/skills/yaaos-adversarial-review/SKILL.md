@@ -107,12 +107,13 @@ Write a JSON object to `$OUTPUT_PATH`:
 ```json
 {
   "findings": [
-    { "file": "...", "line": 1, "category": "security|architecture|code", "severity": "...", "confidence": "...", "rationale": "...", "suggested_fix": "..." }
+    { "file": "...", "line": 1, "category": "security|architecture|code", "severity": "...", "confidence": "...", "rationale": "...", "rule_violated": "...", "rule_source": "generic | path/to/doc.md:LINE", "suggested_fix": "..." }
   ]
 }
 ```
 
 - Each finding's `category` MUST match the paired reviewer's category — adversaries do not change category.
+- **`rule_violated` and `rule_source` are pass-through fields.** Copy them verbatim from the reviewer's finding. Adversaries do not paraphrase the rule or invent a new source. (If you genuinely believe the reviewer cited the wrong rule, REFUTE the finding — do not silently swap rules.)
 - Refuted findings simply do not appear in `findings[]`.
 - An empty `findings: []` is valid output (means everything was refuted).
 - Return to the orchestrator only `{path, one_line_summary}` — never inline.

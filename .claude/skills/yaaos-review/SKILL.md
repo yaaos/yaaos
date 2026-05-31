@@ -44,8 +44,16 @@ Invoke the `yaaos-review-core` skill with:
 - `$DIFF_PATH` set to the path captured above.
 - `$BASE_REF`, `$HEAD_REF` set for the run record.
 
-The core orchestrator handles run-id generation, all four waves, and the final stdout emission. This skill does nothing after delegating.
+The core orchestrator handles run-id generation, all four waves, and writes `<run-dir>/final.json`. Record the `<run-dir>` path the core used.
 
-## Output
+## Step 4 — Render and print
 
-The core emits the final review JSON to stdout. This skill adds no wrapping prose around it.
+Read `<run-dir>/final.json`. Print:
+
+1. The tally header (one line per `tally` field).
+2. For each finding in `findings[]`, render using the **stdout-flavor** of [yaaos-finding-schema/template.md](../yaaos-finding-schema/template.md). Stdout-flavor includes the **Code** block: read `finding.file` at `finding.line` and include one line of context (or a short block if the construct spans lines).
+3. Finally, print the raw `final.json` (pretty-printed) so downstream coding agents have the structured data.
+
+The rendered blocks come first (for the human reader); the JSON dump comes last (for tool consumption). Separate the two with a clear header line (e.g., `=== final.json ===`).
+
+`final.json` itself carries NO pre-rendered text — rendering happens here, fresh, every run.

@@ -58,40 +58,9 @@ To determine in-diff: parse `<run-dir>/diff.patch` once into a set of `(file, li
 
 ### 4.1 Comment body template
 
-Markdown body for every finding (line comment OR issue comment — same shape):
+Render every finding (line comment OR issue comment — same shape) using the **PR-flavor** of [yaaos-finding-schema/template.md](../yaaos-finding-schema/template.md). PR-flavor omits the **Code** block — GitHub already anchors the comment to the relevant `file:line`, so the snippet would be redundant noise.
 
-```
-**yaaos-<category>**
-
-**<headline>**
-
-<body>
-
-**Suggested fix:** <suggested_fix>
-```
-
-Where:
-
-- `<category>` is the finding's `category` (`security`, `code`, `architecture`).
-- `<headline>` is the first sentence of `rationale` (split on the first `. ` or newline; strip trailing period). If `rationale` is a single sentence, use it whole as the headline and leave `<body>` empty (omit the blank-line + body line).
-- `<body>` is the remainder of `rationale` after the headline.
-- `<id>` is a synthesized tag — `<prefix>-NNN`, zero-padded to 3 digits, numbered within category in the final sorted order. Prefixes: `security` → `sec`, `code` → `code`, `architecture` → `arch`. Example: `sec-003`.
-
-Final shape:
-
-```
-**yaaos-<category>**
-
-**[<severity> · <category> · <confidence>] <headline>**
-
-<body>
-
-**Suggested fix:** <suggested_fix>
-
-<sub><code><id></code></sub>
-```
-
-The `<sub>` tag renders smaller than body text on GitHub; the `<code>` keeps the tag visually distinct. The footer is the last line, separated from the suggested-fix block by a blank line.
+All field sourcing and rendering rules live in the template skill; do not redefine them here. The `<headline>` synthesis (first sentence of `rationale`), the `<id>` synthesis (`<prefix>-NNN` zero-padded, numbered within category in `final.json`'s sort order), and the `<sub><code>…</code></sub>` footer all come from the template.
 
 ### 4.2 Build and post the review
 

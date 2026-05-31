@@ -17,6 +17,7 @@ References [yaaos-finding-schema](../yaaos-finding-schema/SKILL.md) for the find
 
 - The diff (raw `git diff` or `gh pr diff` text).
 - Wave 1 mapping file paths (locator, analyzer, pattern-finder). Read them to ground claims in concrete code; do not re-do their work.
+  - **Pick `rule_violated` and `rule_source` from the pattern-finder digest** — its `conventions[]` may include `doc-rule` entries with a `source: "path/to/doc.md:LINE"` citation (e.g., a repo-local security policy). When one applies, prefer it over a generic OWASP citation; otherwise fall back to OWASP (see [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md)).
 - Repo-level context (`CLAUDE.md` + `REVIEW.md`) — see [yaaos-finding-schema § Repo-level context](../yaaos-finding-schema/SKILL.md).
 - An `$OUTPUT_PATH` where the findings JSON will be written.
 
@@ -130,12 +131,13 @@ Write a JSON object to `$OUTPUT_PATH`:
 ```json
 {
   "findings": [
-    { "file": "...", "line": 1, "category": "security", "severity": "blocker", "confidence": "verified", "rationale": "...", "suggested_fix": "..." }
+    { "file": "...", "line": 1, "category": "security", "severity": "blocker", "confidence": "verified", "rationale": "...", "rule_violated": "...", "rule_source": "generic | path/to/doc.md:LINE", "suggested_fix": "..." }
   ]
 }
 ```
 
 - `category` MUST be `"security"` for every finding.
+- Every finding MUST populate `rule_violated` and `rule_source`. See [yaaos-finding-schema § Where the rule comes from](../yaaos-finding-schema/SKILL.md).
 - Empty `findings: []` is valid output when nothing is found.
 - Return to the orchestrator only `{path, one_line_summary}` — never inline the findings.
 
@@ -143,12 +145,14 @@ Write a JSON object to `$OUTPUT_PATH`:
 
 ```json
 {
-  "file": "apps/backend/app/routes/admin.py",
+  "file": "src/routes/admin.py",
   "line": 42,
   "category": "security",
   "severity": "blocker",
   "confidence": "verified",
-  "rationale": "apps/backend/app/routes/admin.py:42 declares `@app.route('/admin/users/<id>')` without an authz check; the surrounding decorator chain (lines 38-41) only requires authentication, not admin role. Violates OWASP A01 — Broken Access Control: any authenticated user can read any other user's record.",
+  "rationale": "src/routes/admin.py:42 declares `@app.route('/admin/users/<id>')` without an authz check; the surrounding decorator chain (lines 38-41) only requires authentication, not admin role. Any authenticated user can read any other user's record.",
+  "rule_violated": "OWASP A01 — Broken Access Control",
+  "rule_source": "generic",
   "suggested_fix": "Add `@require_role('admin')` above the route or assert `current_user.is_admin` at the top of the handler before the DB read."
 }
 ```

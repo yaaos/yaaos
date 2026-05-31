@@ -11,6 +11,7 @@ Local-only. Records per-phase completions (or failures) and any autonomous decis
   - <one-line bullet per meaningful file or test added>
 - **Autonomous decisions:** <!-- omit this whole field if empty -->
   - **<one-line what>** — why: <one line>; where: `<file:line>` <!-- where is optional -->
-- **Notes:** <one line if anything unusual; otherwise omit this field>
+- **Notes:** <!-- deferred-not-fixed observations the subagent surfaced; omit this whole field if empty -->
+  - <one terse line per deferred item>
 
 <repeat per phase>
