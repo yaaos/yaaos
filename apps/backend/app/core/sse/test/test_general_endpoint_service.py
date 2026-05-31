@@ -21,10 +21,11 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 
-from app.core.auth import AuthMiddleware, Role, register_handler
+from app.core.auth import Action, AuthMiddleware, Role, register_handler
 from app.core.identity import repository as identity_repo
+from app.core.sessions import require
 from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
 from app.domain.orgs import repository as orgs_repo
@@ -129,23 +130,31 @@ async def test_general_endpoint_returns_403_for_non_member(seeded) -> None:
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_general_endpoint_accepts_org_query_param_without_header(seeded, redis_or_skip) -> None:
-    """`GET /api/sse/general?org=<slug>` with a session but NO X-Org-Slug header → 200.
+async def test_sse_route_accepts_org_query_param_without_header(seeded) -> None:
+    """An `/api/sse/*` route authenticates from the `org` query param alone
+    (no X-Org-Slug header) → 200.
 
     The browser `EventSource` API cannot set request headers, so SSE routes
-    accept the org slug in the `org` query param. Reads only the connect
-    prelude so the test doesn't block on the indefinite stream.
+    accept the org slug in the `org` query param. Driven against a tiny
+    non-streaming probe route mounted under `/api/sse` (so it hits the same
+    middleware classification + `require()` query-param resolution) — the real
+    `/general` stream is infinite and httpx-ASGITransport hangs on its close.
     """
-    async with _client() as c:
-        async with c.stream(
-            "GET",
-            f"/api/sse/general?org={seeded['org_a'].slug}",
+    app_ = _make_app()
+    probe = APIRouter()
+
+    @probe.get("/_authprobe", dependencies=[Depends(require(Action.ORG_READ))])
+    async def _authprobe() -> dict[str, bool]:
+        return {"ok": True}
+
+    app_.include_router(probe, prefix="/api/sse")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_), base_url="http://test") as c:
+        resp = await c.get(
+            f"/api/sse/_authprobe?org={seeded['org_a'].slug}",
             cookies={"yaaos_session": seeded["token"]},
-        ) as resp:
-            assert resp.status_code == 200, f"query-param org should authenticate; got {resp.status_code}"
-            async for line in resp.aiter_lines():
-                assert line.startswith(":"), f"first frame must be the comment prelude; got {line!r}"
-                break
+        )
+    assert resp.status_code == 200, f"query-param org should authenticate; got {resp.status_code}"
 
 
 @pytest.mark.service
