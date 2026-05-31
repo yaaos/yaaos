@@ -60,7 +60,7 @@ Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `membershi
 Notable constraints:
 - `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.
 - Partial unique `uq_invitations_pending_org_email` on `(org_id, lower(email)) WHERE accepted_at IS NULL` — blocks duplicate pending invites.
-- `orgs.registered_iam_arn` partial UNIQUE (`WHERE NOT NULL`), stored lowercased. Paired with `orgs.aws_region` via check constraint `ck_orgs_arn_region_paired` (both-or-neither). ARN must match `arn:aws:iam::<12-digit>:role/<name>` with no path slashes — paths are stripped by AWS's assumed-role form, so different-path roles could collide on the same canonical. `PATCH /api/orgs` runs an app-layer cross-org collision check before the DB write, returning 422 `arn_already_registered` instead of a DB constraint 500.
+- `orgs.registered_iam_arn` partial UNIQUE (`WHERE NOT NULL`), stored lowercased. Paired with `orgs.aws_region` via check constraint `ck_orgs_arn_region_paired` (both-or-neither). ARN must match `arn:aws:iam::<12-digit>:role/<name>` with no path slashes — paths are stripped by AWS's assumed-role form, so different-path roles could collide on the same canonical. `PATCH /api/orgs` runs an app-layer cross-org collision check before the DB write, returning 422 `arn_already_registered` instead of a DB constraint 500. When the ARN changes or is cleared, `PATCH /api/orgs` calls `revoke_all_for_arn(old_arn)` before writing — agents holding old-ARN bearers 401 on their next call.
 
 ## SSO discover
 

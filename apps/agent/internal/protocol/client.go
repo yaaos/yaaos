@@ -155,6 +155,28 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any, w
 	}
 }
 
+// Deregister sends DELETE /api/v1/agent/identity — the graceful-shutdown
+// "going away" signal. The control plane eagerly marks the agent offline,
+// revokes the bearer, and expires any held workspaces. Best-effort: errors
+// are returned but the caller (supervisor shutdown) always continues.
+func (c *Client) Deregister(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/v1/agent/identity", nil)
+	if err != nil {
+		return err
+	}
+	c.applyBearer(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("deregister: unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
 func (c *Client) applyBearer(req *http.Request) {
 	if c.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearer)

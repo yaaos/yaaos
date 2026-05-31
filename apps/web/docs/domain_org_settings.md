@@ -36,6 +36,7 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 `WorkspacesSettingsPage.tsx` at `/orgs/$slug/settings/workspaces`. Admin-only. No mode selector — the system has exactly one provider (`remote_agent`). Renders:
 - **AWS configuration card** — IAM role ARN input + AWS region dropdown. Save calls `PATCH /api/orgs` with `registered_iam_arn` + `aws_region`. ARN validated client-side against `arn:aws:iam::\d{12}:role/[\w+=,.@-]+`; Save disabled until valid. Server lowercases before storing and returns 422 `arn_already_registered` if another org holds the same ARN.
+  - **ARN-change confirmation** — when the saved ARN differs from the current value and one or more online/stale agents exist, a `ConfirmModal` appears before saving: "This will disconnect N running WorkspaceAgents and fail their in-flight Workspaces. Continue?" N comes from `GET /api/orgs/{slug}/agents` (online + stale count). Cancel aborts the save; confirm proceeds. The modal uses the `destructive` tone.
 - **Agent deployment card** — deploy snippet + backend URL + min version info.
 
 ## Tests

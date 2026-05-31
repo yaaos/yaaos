@@ -160,3 +160,17 @@ class WorkspaceAgentReportSinkImpl:
         if row is None:
             return None
         return row[0]
+
+    async def handle_agent_loss(
+        self,
+        agent_ids: set[UUID],
+        session: AsyncSession,
+    ) -> None:
+        """Delegate to `_failsafe_agent_loss` in service.py.
+
+        Bridges the IoC seam so agent_gateway can trigger agent-loss cleanup
+        without importing core/workspace directly.
+        """
+        from app.core.workspace.service import _failsafe_agent_loss  # noqa: PLC0415
+
+        await _failsafe_agent_loss(session, agent_ids)

@@ -552,14 +552,16 @@ async def _reaper_sweep_once() -> None:
         # 1b-ii. Liveness sweeper — compute reachable/stale/offline transitions
         # for all workspace-agent rows. Lives in core/agent_gateway (which owns
         # workspace_agents); called here because this loop runs each reaper tick.
+        # Returns newly-offline agent IDs to feed directly into failsafe-6.
         from app.core.agent_gateway import compute_agent_liveness_transitions  # noqa: PLC0415
 
-        await compute_agent_liveness_transitions(now, session=s)
+        newly_offline = await compute_agent_liveness_transitions(now, session=s)
 
         # 1c. Agent-loss (failsafe 6) — per-pod. A workspace whose owning
-        # agent is individually stale is expired and that pod's bearers
-        # revoked, even when sibling pods in the same org are healthy.
-        await _failsafe_agent_loss(s, now)
+        # agent just went offline is expired and that pod's bearers revoked,
+        # even when sibling pods in the same org are healthy.
+        if newly_offline:
+            await _failsafe_agent_loss(s, set(newly_offline))
 
         # 2. Find rows to destroy.
         rows = (
@@ -584,45 +586,54 @@ async def _reaper_sweep_once() -> None:
         await _attempt_destroy(row)
 
 
-async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
-    """Mark workspaces EXPIRED + revoke their owning pod's bearers when that
-    pod has gone stale beyond the heartbeat threshold (failsafe 6).
+async def _failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
+    """Mark workspaces EXPIRED + revoke their owning pod's bearers for each
+    newly-offline agent (failsafe 6).
 
-    Per-pod: a workspace whose owning `owning_agent_id` is individually stale (no
-    heartbeat within the threshold) is expired even when sibling pods in the
-    same org are healthy. Only the dead pod's bearers are revoked, not the
-    whole org's — healthy pods keep their bearers and their workspaces.
+    Per-pod: only the supplied `offline_agent_ids` are processed — healthy
+    sibling pods keep their bearers and their workspaces untouched.
+
+    For each expired workspace that holds an in-flight `current_command_id`,
+    a synthetic terminal-failure event is enqueued via `HANDLE_AGENT_EVENT`
+    so the owning WorkflowExecution resumes (fails the step) rather than
+    hanging in AWAITING_AGENT indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
-    """
-    from app.core.agent_gateway import revoke_all_for_agent, stale_agent_ids  # noqa: PLC0415
 
-    cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Active workspaces with a known owning pod (`owning_agent_id` non-null means
-    # the workspace was dispatched through a remote agent).
+    Called both by the reaper sweep (with the newly-offline set from
+    `compute_agent_liveness_transitions`) and eagerly by the graceful-shutdown
+    DELETE handler (with the single agent's ID).
+    """
+    from app.core.agent_gateway import revoke_all_for_agent  # noqa: PLC0415
+    from app.core.tasks import enqueue  # noqa: PLC0415
+    from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
+
+    # Active/Creating workspaces whose owning pod is in the offline set.
     candidate_rows = (
         await s.execute(
             select(
-                WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.status, WorkspaceRow.owning_agent_id
+                WorkspaceRow.id,
+                WorkspaceRow.org_id,
+                WorkspaceRow.status,
+                WorkspaceRow.owning_agent_id,
+                WorkspaceRow.current_command_id,
+                WorkspaceRow.current_holder_workflow_id,
             ).where(
-                WorkspaceRow.owning_agent_id.is_not(None),
+                WorkspaceRow.owning_agent_id.in_(offline_agent_ids),
                 WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
             )
         )
     ).all()
     if not candidate_rows:
-        return
-
-    owning_agent_ids = {row[3] for row in candidate_rows}
-    stale_ids = await stale_agent_ids(owning_agent_ids, cutoff=cutoff, session=s)
-    if not stale_ids:
+        # Still revoke bearers even if there are no workspace rows (agent
+        # may have been idle with no workspaces claimed).
+        for owning_agent_id in offline_agent_ids:
+            await revoke_all_for_agent(owning_agent_id, "agent_loss", session=s)
         return
 
     expired_count = 0
-    for ws_id, org_id, status, owning_agent_id in candidate_rows:
-        if owning_agent_id not in stale_ids:
-            continue
+    for ws_id, org_id, status, _owning_agent_id, current_command_id, holder_workflow_id in candidate_rows:
         await s.execute(
             update(WorkspaceRow).where(WorkspaceRow.id == ws_id).values(status=WorkspaceStatus.EXPIRED.value)
         )
@@ -636,13 +647,29 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
         )
         expired_count += 1
 
-    # Revoke each lost pod's bearers — that pod re-exchanges when it returns.
-    for owning_agent_id in stale_ids:
+        # Synthesize a terminal failure for any in-flight command so the
+        # owning WorkflowExecution resumes (fails its step) rather than
+        # waiting forever in AWAITING_AGENT.
+        if current_command_id is not None and holder_workflow_id is not None:
+            await enqueue(
+                HANDLE_AGENT_EVENT,
+                args={
+                    "workflow_execution_id": str(holder_workflow_id),
+                    "agent_command_id": str(current_command_id),
+                    "outcome_label": "failure",
+                    "outputs": {},
+                    "traceparent": None,
+                },
+                session=s,
+            )
+
+    # Revoke each offline pod's bearers — that pod re-exchanges when it returns.
+    for owning_agent_id in offline_agent_ids:
         await revoke_all_for_agent(owning_agent_id, "agent_loss", session=s)
 
     log.warning(
         "workspace.failsafe_agent_loss",
-        stale_agent_count=len(stale_ids),
+        offline_agent_count=len(offline_agent_ids),
         expired_count=expired_count,
     )
 

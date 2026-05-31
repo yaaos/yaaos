@@ -91,7 +91,7 @@ depends_on = ["app.core.database", "app.core.observability", "app.core.tasks"]
 
 [[modules]]
 path = "app.core.workspace"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.plugin_kit", "app.core.sessions", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.plugin_kit", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.domain.coding_agent"
@@ -235,6 +235,7 @@ expose = [
   "has_any_reachable_agent",
   "list_agents_for_org",
   "lookup_org_by_arn",
+  "mark_agent_shutdown",
   "pick_agent_for_org",
   "queue_depth",
   "record_agent_event",
@@ -243,6 +244,7 @@ expose = [
   "register_org_arn_lookup",
   "register_report_sink",
   "revoke_all_for_agent",
+  "revoke_all_for_arn",
   "revoke_all_for_org",
   "shutdown",
   "stale_agent_ids",

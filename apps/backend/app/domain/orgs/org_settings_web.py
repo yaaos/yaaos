@@ -35,6 +35,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.core.agent_gateway import revoke_all_for_arn
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
@@ -234,6 +235,13 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
             existing = await _get_org_full_by_iam_arn(s, eff_arn)
             if existing is not None and existing.org_id != org_id:
                 raise _err(422, "arn_already_registered")
+
+        # Revoke old-ARN bearers when the registered ARN changes or is cleared.
+        # Agents holding those bearers 401 on their next call and must re-exchange
+        # under the new ARN. The sweeper marks them offline ~1 min later.
+        arn_changed = full.registered_iam_arn is not None and full.registered_iam_arn != eff_arn
+        if arn_changed:
+            await revoke_all_for_arn(full.registered_iam_arn, "arn_change", session=s)
 
         updated = await _update_org_fields(
             s,

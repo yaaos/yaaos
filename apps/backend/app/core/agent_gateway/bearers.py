@@ -15,7 +15,10 @@ Revocation:
 - `revoke_all_for_agent()` revokes every active bearer for an agent pod.
   Used by the manual-rotate path and by failsafe-6 agent-loss recovery.
 - `revoke_all_for_org()` revokes every active bearer for an org. Used by
-  the Workspace settings disconnect / mode-switch / arn-change actions.
+  the Workspace settings disconnect / mode-switch actions.
+- `revoke_all_for_arn()` revokes every active bearer whose `issued_iam_arn`
+  matches the supplied ARN. Used by `patch_org_settings` when the registered
+  ARN changes or is cleared — old-ARN bearers 401 on next call.
 """
 
 from __future__ import annotations
@@ -228,6 +231,26 @@ async def revoke_all_for_org(org_id: UUID, reason: str, *, session: AsyncSession
     return len(result.all())
 
 
+async def revoke_all_for_arn(arn: str, reason: str, *, session: AsyncSession) -> int:
+    """Revoke every active bearer whose `issued_iam_arn` matches `arn`. Returns count revoked.
+
+    Used by `patch_org_settings` when the registered ARN changes or is cleared
+    so agents that authenticated under the old ARN 401 on their next call.
+    Caller owns the transaction.
+    """
+    now = datetime.now(UTC)
+    result = await session.execute(
+        update(BearerTokenRow)
+        .where(
+            BearerTokenRow.issued_iam_arn == arn,
+            BearerTokenRow.revoked_at.is_(None),
+        )
+        .values(revoked_at=now, revoked_reason=reason)
+        .returning(BearerTokenRow.id)
+    )
+    return len(result.all())
+
+
 async def list_for_org(org_id: UUID, *, limit: int = 50) -> list[BearerRecord]:
     """Recent bearers for the Workspace settings security feed / bearers table.
 
@@ -259,6 +282,7 @@ __all__ = [
     "list_for_org",
     "revoke",
     "revoke_all_for_agent",
+    "revoke_all_for_arn",
     "revoke_all_for_org",
     "set_verify_override",
     "verify",

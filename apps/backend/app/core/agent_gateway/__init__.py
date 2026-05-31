@@ -16,7 +16,7 @@ Provides:
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
-from app.core.agent_gateway.bearers import revoke_all_for_agent, revoke_all_for_org
+from app.core.agent_gateway.bearers import revoke_all_for_agent, revoke_all_for_arn, revoke_all_for_org
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
     lookup_org_by_arn,
@@ -40,6 +40,7 @@ from app.core.agent_gateway.service import (
     get_agent_info,
     has_any_reachable_agent,
     list_agents_for_org,
+    mark_agent_shutdown,
     pick_agent_for_org,
     queue_depth,
     record_agent_event,
@@ -136,6 +137,7 @@ __all__ = [
     "has_any_reachable_agent",
     "list_agents_for_org",
     "lookup_org_by_arn",
+    "mark_agent_shutdown",
     "pick_agent_for_org",
     "queue_depth",
     "record_agent_event",
@@ -144,6 +146,7 @@ __all__ = [
     "register_org_arn_lookup",
     "register_report_sink",
     "revoke_all_for_agent",
+    "revoke_all_for_arn",
     "revoke_all_for_org",
     "shutdown",
     "stale_agent_ids",

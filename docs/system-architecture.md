@@ -78,7 +78,8 @@ Three concepts span all apps:
 - **Workflow engine** (`core/workflow`) — typed `Workflow` definitions driven by three taskiq task bodies over `core/tasks` + `core/outbox`. Workspace commands park in `awaiting_agent` and resume on terminal AgentEvent. Five workflows: `pr_review_v1`, `incremental_review_v1`, `verify_fix_v1`, `stale_check_v1`, `answer_question_v1`. See [`core_workflow.md`](../apps/backend/docs/core_workflow.md).
 - **Workspace provider abstraction** (`core/workspace`) — `RemoteAgentWorkspaceProvider` dispatches via wire protocol to the customer-deployed Go agent. Single-flight claim via `try_claim`/`release_claim`. See [`core_workspace.md`](../apps/backend/docs/core_workspace.md).
 - **WorkspaceAgent** (`apps/agent/`) — customer-deployed Go binary; holds source code locally. Five HTTPS endpoints + one bidirectional WebSocket under `/api/v1/`. Agent identity on operational channels is bearer-derived — no `{agent_id}` path segment. Full protocol contract: [`docs/workspace-agent-protocol.md`](../docs/workspace-agent-protocol.md).
-  - `POST /api/v1/agent/identity` — SigV4-signed STS → 1-hour bearer. Replays the customer's `GetCallerIdentity` against AWS STS (or mock-aws in dev/test); audience-checks `X-Yaaos-Audience`; canonicalizes ARN; derives `instance_id` from role-session-name; matches against `orgs.registered_iam_arn`; issues bearer via `bearer_tokens` ledger (sha256 stored, plaintext returned once).
+  - `POST /api/v1/agent/identity` — SigV4-signed STS → 1-hour bearer. Replays the customer's `GetCallerIdentity` against AWS STS (or mock-aws in dev/test); audience-checks `X-Yaaos-Audience`; canonicalizes ARN; derives `instance_id` from role-session-name; matches against `orgs.registered_iam_arn`; issues bearer via `bearer_tokens` ledger (sha256 stored, plaintext returned once). Region mismatch (verified ARN matched org, wrong region) writes an `identity_exchange_failed` audit row on the org.
+  - `DELETE /api/v1/agent/identity` — graceful-shutdown "going away" signal. Sets agent offline, revokes bearer, expires held workspaces, synthesizes terminal failures for in-flight commands. Dashboard flips offline without waiting for the sweeper.
   - `POST /api/v1/agent/heartbeat` — liveness + workspace inventory reconciliation. Persists `claimed_workspace_count = len(workspaces)`.
   - `POST /api/v1/agent/commands/claim` — long-poll for next AgentCommand.
   - `POST /api/v1/workspaces/{id}/events` — workspace-state transitions.
@@ -113,6 +114,8 @@ Three concepts span all apps:
 ### Audit log
 
 One append-only `audit_log` table owned by `core/audit_log`. Row shape: `{id, org_id, created_at, entity_kind, entity_id, kind ("<entity>.<verb_past>"), payload (Pydantic-validated JSONB), actor}`. Reads never write. Progress steps go to structlog, not audit. Each domain module writes its own entries.
+
+**Identity-exchange failures.** Only org-attributable failures reach audit (`entity_kind="org"`): a region mismatch where the canonical ARN matched a registered org writes `identity_exchange_failed` with `{category, attempted_arn, source_ip}`. Non-attributable failures (unregistered ARN, parse/replay/AWS errors) stay structlog-only — `audit_entries.org_id` is mandatory.
 
 ### Org scoping
 

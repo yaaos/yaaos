@@ -8,9 +8,14 @@
  * sigv4-signs `GetCallerIdentity` with its own credentials and we replay
  * against AWS STS to verify.
  *
+ * When the registered ARN changes or is cleared and running agents exist,
+ * a confirmation dialog shows the affected agent count before saving.
+ *
  * Org-admin only.
  */
 
+import { getCurrentOrgSlug, useAgents } from "@core/api";
+import { ConfirmModal } from "@shared/components/layout/confirm-modal";
 import { Button } from "@shared/components/ui/button";
 import { Input } from "@shared/components/ui/input";
 import { Label } from "@shared/components/ui/label";
@@ -41,9 +46,12 @@ const ARN_RE = /^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/;
 export function WorkspacesSettingsPage() {
   const { data, isLoading } = useOrgSettings();
   const update = useUpdateOrgSettings();
+  const orgSlug = getCurrentOrgSlug() ?? "";
+  const { data: agents } = useAgents(orgSlug);
 
   const [arn, setArn] = useState("");
   const [region, setRegion] = useState("us-east-1");
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -54,8 +62,29 @@ export function WorkspacesSettingsPage() {
   const arnValid = ARN_RE.test(arn);
   const canSave = arnValid && region.length > 0;
 
+  // Count online + stale agents (those that would be disconnected on ARN change).
+  const activeAgentCount = (agents ?? []).filter(
+    (a) => a.state === "reachable" || a.state === "stale",
+  ).length;
+
+  // ARN is changing (or being cleared) when saved value differs from current.
+  const arnChanging =
+    data != null &&
+    (arn.toLowerCase() !== (data.registered_iam_arn ?? "").toLowerCase() ||
+      (data.registered_iam_arn != null && arn === ""));
+
   const onSave = () => {
     if (!canSave) return;
+    // Show confirmation when the ARN is changing and running agents exist.
+    if (arnChanging && activeAgentCount > 0) {
+      setConfirmOpen(true);
+      return;
+    }
+    doSave();
+  };
+
+  const doSave = () => {
+    setConfirmOpen(false);
     update.mutate({
       registered_iam_arn: arn,
       aws_region: region,
@@ -86,6 +115,17 @@ export function WorkspacesSettingsPage() {
         />
         <SetupChecklistCard region={region} />
       </div>
+
+      <ConfirmModal
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Change registered ARN?"
+        body={`This will disconnect ${activeAgentCount} running WorkspaceAgent${activeAgentCount === 1 ? "" : "s"} and fail their in-flight Workspaces. Continue?`}
+        confirmLabel="Change ARN"
+        tone="destructive"
+        onConfirm={doSave}
+        pending={update.isPending}
+      />
     </OrgSettingsLayout>
   );
 }

@@ -99,6 +99,21 @@ class WorkspaceAgentReportSink(Protocol):
         """
         ...
 
+    async def handle_agent_loss(
+        self,
+        agent_ids: set[UUID],
+        session: object,
+    ) -> None:
+        """Expire workspaces owned by the supplied agent IDs, synthesize terminal
+        failures for in-flight commands, and revoke those agents' bearers.
+
+        Called by the graceful-shutdown DELETE handler with a single-element set
+        (the shutting-down agent's ID). Also called by the reaper with the
+        newly-offline set from `compute_agent_liveness_transitions`.
+        `session` is an `AsyncSession`; caller commits.
+        """
+        ...
+
 
 # ── Single-slot registry ───────────────────────────────────────────────
 

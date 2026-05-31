@@ -432,6 +432,28 @@ async def ensure_agent_row(
     return row.id
 
 
+async def mark_agent_shutdown(
+    agent_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Set `state=offline` + `last_shutdown_at=now` on the agent row.
+
+    Called by the graceful-shutdown DELETE handler immediately before revoking
+    bearers + triggering workspace cleanup. Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    now = datetime.now(UTC)
+    row = (
+        await session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent_id))
+    ).scalar_one_or_none()
+    if row is not None:
+        row.state = "offline"
+        row.last_shutdown_at = now
+        await session.flush()
+
+
 async def get_agent_info(
     agent_id: UUID,
     *,

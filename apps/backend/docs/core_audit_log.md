@@ -18,6 +18,10 @@
 
 **Actor decomposition** — five DB columns (`actor_kind`, `actor_login`, `actor_agent_id`, `actor_user_id`, `actor_workspace_id`) reassembled into one `Actor` at read time via `AuditEntry.from_row`. The `Actor` type lives in `core/audit_log/actor.py` and is re-exported from the package.
 
+## Notable audit row shapes
+
+- **`identity_exchange_failed`** — `entity_kind="org"`, `entity_id=org.id`. Only written for region-mismatch failures where the ARN matched a registered org (so `org_id` is known). Non-attributable failures (unregistered ARN, parse/replay/AWS errors) stay structlog-only. Payload: `{category, attempted_arn, source_ip}`. Actor: `SYSTEM`.
+
 ## Gotchas
 
 - `list_for_org` caps at 500 per call. `list_for_entity` caps at 50 (cursor via `before_ts`).

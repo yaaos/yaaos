@@ -346,7 +346,25 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	// Reap any still-running workspace subprocesses on shutdown. Each
 	// runner gets SIGTERM → grace → SIGKILL via its own Close.
 	s.pool.CloseAll(context.Background())
+
+	// Graceful-shutdown "going away" signal — tell the control plane we're
+	// exiting cleanly so it can mark the agent offline + fail held workspaces
+	// immediately rather than waiting for the liveness sweeper's next tick.
+	// Best-effort: errors are logged but never cause a non-zero exit here.
+	if err := s.sendGoingAway(); err != nil {
+		s.log.Warn("supervisor.deregister_failed", "err", err.Error())
+	}
 	return nil
+}
+
+// sendGoingAway calls DELETE /api/v1/agent/identity with a short deadline.
+// The control plane eagerly marks the agent offline and expires its workspaces.
+// Called as the last act of a clean shutdown (after all loops have stopped).
+func (s *Supervisor) sendGoingAway() error {
+	// 5s deadline: if the backend isn't reachable in 5s during shutdown, skip.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.client.Deregister(ctx)
 }
 
 // setupActivityWS dials the activity-stream WebSocket and wires the

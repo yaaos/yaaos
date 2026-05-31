@@ -12,6 +12,8 @@
 
 All agent operational channels live under `/api/v1/agent/...` with identity derived solely from the bearer — no `{agent_id}` path segment:
 
+- `POST /api/v1/agent/identity` — issue bearer (see Identity exchange below)
+- `DELETE /api/v1/agent/identity` — graceful shutdown "going away" signal (see below)
 - `POST /api/v1/agent/heartbeat`
 - `POST /api/v1/agent/commands/claim`
 - `POST /api/v1/commands/{id}/events` (per-resource ID retained)
@@ -19,6 +21,17 @@ All agent operational channels live under `/api/v1/agent/...` with identity deri
 - `WSS /api/v1/agent/activity`
 
 The `SubscriberRegistry` keys the WS sender on the bearer-derived `agent_id`.
+
+## Graceful shutdown — `DELETE /api/v1/agent/identity`
+
+The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The control plane eagerly:
+
+1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
+2. Revokes the bearer (reason `graceful_shutdown`).
+3. Calls `WorkspaceAgentReportSink.handle_agent_loss` — expires held workspaces, synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
+4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card offline without waiting for the sweeper's next tick.
+
+Returns 204. Idempotent — a revoked bearer 401s before the handler runs. Best-effort on the agent side: errors are logged but never prevent process exit.
 
 ## Liveness sweeper — `compute_agent_liveness_transitions`
 
@@ -48,6 +61,9 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 
 ## Why / invariants
 
+- **`DELETE /api/v1/agent/identity` runs inside `org_context`** — the same auth chain as all operational endpoints; the bearer-derived identity provides `org_id` + `agent_id`. Not on the public allowlist.
+- **`revoke_all_for_arn(arn, reason, session)` revokes by `issued_iam_arn`** — called by `patch_org_settings` on ARN change or clear so old-ARN agents 401 on their next request. Returns the count of revoked rows; caller commits.
+- **Region-mismatch failures write an org-level audit row** — kind `identity_exchange_failed`, only when the canonical ARN matched a registered org (so `org_id` is known). Failures that can't be attributed to an org (unregistered ARN, parse/endpoint/replay/AWS rejections) remain structlog-only. The audit payload carries `category`, `attempted_arn`, `source_ip`.
 - **Terminal AgentEvent enqueue is in the same transaction as the workspace mirror update** — prevents a workflow from missing its terminal event on crash between the two writes.
 - **Stale-claim guard (410)** — events whose `command_id` is not in any workspace's `current_command_id` are rejected by the sink; the endpoint maps `accepted=False` to 410 Gone.
 - **`WorkspaceAgentReportSink` IoC seam** — `core/workspace` implements the Protocol and registers at its own import time (`workspace/__init__.py`). agent_gateway's service functions call the registered sink for all workspace-state reads/writes; the `agent_gateway → workspace` import edge does not exist. Canonical direction: workspace → agent_gateway. Both single-slot registries (`register_report_sink`, `register_org_arn_lookup`) are idempotent for the same value but raise on a conflicting re-registration, so a double-wiring bug surfaces at boot rather than silently swapping the singleton. Tests that need to swap stubs reach `clear_report_sink` directly from `app.core.agent_gateway.report_sink` (intra-module submodule import).
@@ -78,7 +94,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 ## Data owned
 
 - `workspace_agents` — per-pod identity rows; one per `(org_id, instance_id)`. Columns: `instance_id` (role-session-name from STS ARN), `iam_arn`, `version`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count` (populated by `record_heartbeat` as `len(workspaces)`; not set by identity exchange), `last_heartbeat_at`, `last_shutdown_at`, `state`.
-- `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip, issued_iam_arn)`. Revocation cascades from settings actions (`arn_change`, `mode_switch`, `disconnect`, `manual_rotate`) org-wide via `revoke_all_for_org`, and from failsafe-6 (`agent_loss`) per-pod via `revoke_all_for_agent`.
+- `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip, issued_iam_arn)`. Revocation reasons: `arn_change` (ARN rotation via settings), `mode_switch`, `disconnect`, `manual_rotate`, `agent_loss` (per-pod), `graceful_shutdown` (DELETE handler). `revoke_all_for_arn` revokes by `issued_iam_arn`; `revoke_all_for_agent` by `agent_id`; `revoke_all_for_org` by `org_id`.
 
 ## How it's tested
 
@@ -97,5 +113,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 `test/test_heartbeat_count_service.py` covers `claimed_workspace_count` persistence: heartbeat with N workspaces sets count = N; zero workspaces sets 0; subsequent heartbeat reflects the latest count, not cumulative.
 
 `test/test_activity_publish_service.py` covers the WS `activity_batch` path delivering events to `subscribe_workspace_activity`.
+
+`test/test_graceful_shutdown_service.py` covers: DELETE revokes bearer + sets offline + stamps `last_shutdown_at`; DELETE expires held workspaces + enqueues `handle_agent_event` failure; missing bearer → 401; ARN change/clear via PATCH revokes old-ARN bearers; region-mismatch writes one `identity_exchange_failed` audit row attributed to the org; no-org ARN writes no audit row.
 
 Queue + registry isolation between tests is provided by the `agent_queues_isolation` and `subscriber_registry_isolation` autouse fixtures in `app/testing/isolation` — no explicit reset needed in tests. Seed an agent row via `app.testing.seed.seed_agent`.

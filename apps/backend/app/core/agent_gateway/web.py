@@ -43,6 +43,7 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.org_arn_lookup import lookup_org_by_arn
@@ -51,6 +52,7 @@ from app.core.agent_gateway.report_sink import get_report_sink
 from app.core.agent_gateway.service import (
     claim_next,
     ensure_agent_row,
+    mark_agent_shutdown,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
@@ -67,15 +69,28 @@ from app.core.agent_gateway.types import (
     UnauthorizedError,
     WorkspaceEvent,
 )
-from app.core.audit_log import ActorKind
+from app.core.audit_log import Actor, ActorKind, audit
 from app.core.auth import org_context, public_route, require_org_context
 from app.core.database import session as db_session
-from app.core.sse import publish_workspace_activity
+from app.core.sse import GeneralEventKind, publish_general_after_commit, publish_workspace_activity
 from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("agent_gateway.web")
 
 router = APIRouter()
+
+
+class _IdentityExchangeFailedAudit(BaseModel):
+    """Payload for `identity_exchange_failed` audit rows.
+
+    Only written for org-attributable failures (region mismatch on a verified
+    ARN that matched a registered org). No-org failures stay structlog-only —
+    `audit_entries.org_id` is mandatory, so unresolvable ARNs can't be recorded.
+    """
+
+    category: str
+    attempted_arn: str
+    source_ip: str | None
 
 
 # ── Bearer verifier (real ledger lookup) ────────────────────────────────
@@ -264,6 +279,23 @@ async def exchange_identity(
             attempted_region=verified.region,
             source_ip=source_ip,
         )
+        # Write an org-attributable audit row — the ARN matched a registered org
+        # so we know which org to attribute this failure to.
+        async with db_session() as s:
+            await audit(
+                entity_kind="org",
+                entity_id=org_id,
+                kind="identity_exchange_failed",
+                payload=_IdentityExchangeFailedAudit(
+                    category="region_mismatch",
+                    attempted_arn=verified.canonical_arn,
+                    source_ip=source_ip,
+                ),
+                actor=Actor(kind=ActorKind.SYSTEM),
+                org_id=org_id,
+                session=s,
+            )
+            await s.commit()
         raise HTTPException(
             status_code=401,
             detail={"error": "unauthorized", "detail": "sts_verification_failed"},
@@ -315,6 +347,55 @@ async def exchange_identity(
         instance_id=instance_id,
         org_id=org_id,
     )
+
+
+@router.delete("/agent/identity")
+async def deregister_identity(
+    agent: bearers.BearerContext = Depends(_bearer_dep),
+) -> Response:
+    """Graceful-shutdown "going away" signal.
+
+    The agent sends this as the last action of its SIGTERM/SIGINT handler,
+    after stopping its heartbeat + claim loops and draining the WS. The
+    control plane eagerly:
+
+    1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
+    2. Revokes the bearer so subsequent calls 401 immediately.
+    3. Expires any workspaces owned by this agent and synthesizes terminal
+       failure events for in-flight commands so their WorkflowExecutions resume.
+    4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
+       offline without waiting for the sweeper's next tick.
+
+    Returns 204. Idempotent — calling on an already-offline/revoked agent is
+    harmless (bearer verify fails → 401 before this handler runs).
+    """
+    async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
+        async with db_session() as s:
+            # 1. Mark offline eagerly.
+            await mark_agent_shutdown(agent.agent_id, session=s)
+
+            # 2. Revoke this bearer immediately.
+            await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
+
+            # 3. Expire owned workspaces + synthesize terminal failures.
+            await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+
+            # 4. SSE — cache-invalidate so the dashboard flips the card offline.
+            publish_general_after_commit(
+                s,
+                org_id=agent.org_id,
+                kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
+                payload={},
+            )
+
+            await s.commit()
+
+    log.info(
+        "agent_gateway.graceful_shutdown",
+        agent_id=str(agent.agent_id),
+        org_id=str(agent.org_id),
+    )
+    return Response(status_code=204)
 
 
 @router.post("/agent/heartbeat")
