@@ -60,6 +60,16 @@ Notes-column format: `new` rows write a one-line rationale; `changed` rows write
 - **Columns:** <added / changed / dropped. Same format rule as Tables.>
 - **Migrations:** <forward + rollback notes>
 
-## Open questions
+## Blocking handoff questions
 
-- <architectural-level unknowns — distinct from requirements.md and plan.md lists>
+> Owned by this stage. Must be empty before `/dev-plan` runs — architectural-level unknowns that block the handoff. Distinct from requirements.md and plan.md lists.
+
+- <architectural-level unknown>
+
+## Notes for planning
+
+> Forward-looking material for dev-plan — slicing hints, sequencing leanings, watch-outs, and non-blocking questions that surfaced while designing. Informs but does NOT block. Capture only; do not resolve here. Self-label each bullet.
+
+- [idea] <a slicing or sequencing leaning>
+- [watch out] <a trap dev-plan should know>
+- [question] <non-blocking planning question>

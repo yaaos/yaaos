@@ -23,6 +23,7 @@ from app.core.auth import Action, org_id_var
 from app.core.sessions import require
 from app.core.sse.service import (
     serialize_for_sse,
+    sse_prelude,
     subscribe_general,
     subscribe_workspace_activity,
 )
@@ -32,13 +33,24 @@ router = APIRouter()
 
 
 async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
-    """Translate general pub/sub events into SSE frames for the caller's org."""
+    """Translate general pub/sub events into SSE frames for the caller's org.
+
+    Yields a connect prelude first so the client's EventSource fires `onopen`
+    immediately (see `sse_prelude`); the stream would otherwise not flush
+    headers until its first event.
+    """
+    yield sse_prelude()
     async for event in subscribe_general(org_id):
         yield serialize_for_sse(event)
 
 
 async def _workspace_activity_stream(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[str]:
-    """Translate workspace-activity pub/sub events into SSE frames."""
+    """Translate workspace-activity pub/sub events into SSE frames.
+
+    Yields a connect prelude first (see `sse_prelude`) for the same
+    header-flush reason as `_general_stream`.
+    """
+    yield sse_prelude()
     async for event in subscribe_workspace_activity(org_id, workflow_execution_id):
         yield serialize_for_sse(event)
 

@@ -306,6 +306,7 @@ expose = [
   "limiter",
   "org_context",
   "org_id_var",
+  "org_slug_in_query_allowed",
   "public_route",
   "register_handler",
   "require_org_context",
@@ -481,6 +482,7 @@ expose = [
   "publish_general_after_commit",
   "publish_workspace_activity",
   "serialize_for_sse",
+  "sse_prelude",
   "subscribe_general",
   "subscribe_workspace_activity",
 ]

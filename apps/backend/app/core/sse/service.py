@@ -195,3 +195,17 @@ def serialize_for_sse(payload: dict[str, Any]) -> str:
     subscribers use this before writing to the HTTP response.
     """
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def sse_prelude() -> str:
+    """Initial SSE comment frame yielded on connect, before any event.
+
+    Flushes the response headers so the client's `EventSource` transitions to
+    OPEN and fires `onopen` immediately — without it a stream that blocks
+    waiting for its first event never flushes, so a client that missed the
+    triggering event (Redis pub/sub has no replay) never learns it is
+    connected and never reconciles. Comment frames (lines starting with `:`)
+    are ignored by `EventSource` message handlers, so this never surfaces as
+    a spurious event.
+    """
+    return ": connected\n\n"

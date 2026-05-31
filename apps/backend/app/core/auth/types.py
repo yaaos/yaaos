@@ -248,3 +248,17 @@ def classify_route(path: str, method: str | None = None) -> RouteSecurity | None
 def is_org_scoped_path(path: str, method: str | None = None) -> bool:
     """Shortcut: returns True iff `(method, path)` classifies as ORG_SCOPED."""
     return classify_route(path, method) is RouteSecurity.ORG_SCOPED
+
+
+# SSE streams are consumed by the browser `EventSource` API, which cannot set
+# request headers. For these routes only, the org slug may ride in the `org`
+# query parameter as an alternative to the `X-Org-Slug` header. The resolved
+# slug still flows through the same membership check, so authorization is
+# identical to the header path.
+SSE_PATH_PREFIX = "/api/sse/"
+
+
+def org_slug_in_query_allowed(path: str) -> bool:
+    """True iff `path` may carry its org slug in the `org` query parameter
+    (instead of the `X-Org-Slug` header). SSE stream routes only."""
+    return path.startswith(SSE_PATH_PREFIX)

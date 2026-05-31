@@ -31,14 +31,14 @@ Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
 ### UI live update via SSE
 
-SPA mounts one `EventSource` on `GET /api/sse/general` (`withCredentials: true`) at app root. Each event invalidates TanStack Query caches:
+SPA mounts one org-keyed `EventSource` on `GET /api/sse/general?org=<slug>` (`withCredentials: true`) from the root `AppShell`. The `?org=` query param carries the org because the browser `EventSource` API cannot set the `X-Org-Slug` header that `/api/sse` routes otherwise require; the backend accepts it for SSE routes and applies the same membership check. Each event invalidates TanStack Query caches:
 
 | Event `kind` | Invalidates |
 |---|---|
 | `ticket_status_changed` | `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]` |
 | anything else | silently ignored |
 
-Events carry `ticket_id`, `previous_status`, `new_status`. Polling (5s / 3s) remains as a safety net.
+Events carry `ticket_id`, `previous_status`, `new_status`. There is no polling fallback (`refetchOnWindowFocus` is off, no `refetchInterval`); SSE is the only live-update path, so the client reconciles list-level caches on every (re)connect (`onopen`) and the server emits a connect prelude so that fires promptly.
 
 ### GitHub auth chain
 

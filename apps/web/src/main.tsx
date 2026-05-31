@@ -1,7 +1,6 @@
 import { applyStoredTheme } from "@core/layout/theme";
 import { ErrorBoundary } from "@core/observability/error-boundary";
 import { router } from "@core/routing/router";
-import { SSESubscriber } from "@core/sse";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import React from "react";
@@ -28,9 +27,7 @@ ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <SSESubscriber>
-          <RouterProvider router={router} />
-        </SSESubscriber>
+        <RouterProvider router={router} />
         <Toaster theme="system" position="bottom-right" />
       </QueryClientProvider>
     </ErrorBoundary>

@@ -1,4 +1,5 @@
 import { Sidebar } from "@core/sidebar";
+import { useServerEvents } from "@core/sse";
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { BrokenIntegrationsBanner } from "./broken-integrations-banner";
 
@@ -8,6 +9,11 @@ import { BrokenIntegrationsBanner } from "./broken-integrations-banner";
 const STANDALONE_PATHS = new Set(["/login", "/orgs"]);
 
 export function AppShell() {
+  // Owns the browser-wide general-event SSE stream; (re)targets it at the
+  // active org as the route changes. Called unconditionally (before the
+  // standalone-path early return) to respect the rules-of-hooks.
+  useServerEvents();
+
   const { location } = useRouterState();
   const pathname = location.pathname;
 

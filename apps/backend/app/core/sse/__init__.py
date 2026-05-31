@@ -13,6 +13,7 @@ from app.core.sse.service import (
     publish_general_after_commit,
     publish_workspace_activity,
     serialize_for_sse,
+    sse_prelude,
     subscribe_general,
     subscribe_workspace_activity,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "publish_general_after_commit",
     "publish_workspace_activity",
     "serialize_for_sse",
+    "sse_prelude",
     "subscribe_general",
     "subscribe_workspace_activity",
 ]
