@@ -25,7 +25,10 @@ from app.domain.coding_agent.prompts import (
     schema_appendix,
 )
 from app.domain.coding_agent.service import (
+    CodingAgentRegistry,
     answer_question,
+    bind_coding_agent_registry,
+    current_coding_agent_registry,
     get_plugin,
     health_check_all,
     incremental_review,
@@ -36,7 +39,6 @@ from app.domain.coding_agent.service import (
     registered_plugin_ids,
     review,
     stale_check,
-    unregister_coding_agent_plugin,
     validate_config,
     verify_fix,
 )
@@ -75,6 +77,7 @@ __all__ = [
     "CodingAgentCacheMiss",
     "CodingAgentError",
     "CodingAgentPlugin",
+    "CodingAgentRegistry",
     "FindingAnchor",
     "FindingDraft",
     "FindingDraftList",
@@ -103,7 +106,9 @@ __all__ = [
     "assemble_review_prompt",
     "assemble_stale_check_prompt",
     "assemble_verify_fix_prompt",
+    "bind_coding_agent_registry",
     "build_invocation",
+    "current_coding_agent_registry",
     "get_plugin",
     "health_check_all",
     "incremental_review",
@@ -115,7 +120,6 @@ __all__ = [
     "review",
     "schema_appendix",
     "stale_check",
-    "unregister_coding_agent_plugin",
     "validate_config",
     "verify_fix",
 ]

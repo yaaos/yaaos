@@ -20,10 +20,10 @@ from app.domain.orgs import vcs_web as _vcs_web  # noqa: F401
 @pytest.fixture(autouse=True)
 def _ensure_github_registered() -> None:
     """Re-register the github plugin if a prior test cleared the registry."""
-    from app.domain.vcs import _PLUGINS  # noqa: PLC0415
+    from app.domain.vcs import is_registered  # noqa: PLC0415
     from app.plugins.github import bootstrap  # noqa: PLC0415
 
-    if "github" not in _PLUGINS:
+    if not is_registered("github"):
         bootstrap()
 
 

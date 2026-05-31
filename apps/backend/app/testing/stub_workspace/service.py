@@ -125,24 +125,24 @@ class StubWorkspaceProvider:
 def wrap_all_registered_workspace_providers() -> int:
     """Replace every registered workspace provider with a stub wrapping it.
 
-    Idempotent. Called from `app/web.py` when `YAAOS_WORKSPACE_STUB` is set
-    (mirrors how stub_coding_agent's wrap is wired).
+    Idempotent. Binds a fresh registry with wrapped entries; never mutates the
+    canonical registry dict.
     """
     from app.core.workspace import (  # noqa: PLC0415
-        list_workspace_providers,
-        register_workspace_provider,
-        unregister_workspace_provider,
+        WorkspaceRegistry,
+        bind_workspace_registry,
+        current_workspace_registry,
     )
 
-    originals = list_workspace_providers()
+    originals = current_workspace_registry().list()
+    fresh = WorkspaceRegistry()
     count = 0
-    for p in originals:
-        unregister_workspace_provider(p.meta.id)
     for real in originals:
         if isinstance(real, StubWorkspaceProvider):
-            register_workspace_provider(real)
+            fresh.replace(real)
         else:
-            register_workspace_provider(StubWorkspaceProvider(wrapped=real))
+            fresh.replace(StubWorkspaceProvider(wrapped=real))
             count += 1
+    bind_workspace_registry(fresh)
     log.info("stub_workspace.wrapped_all", count=count)
     return count

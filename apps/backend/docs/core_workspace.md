@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **Owns:** `Workspace` + `WorkspaceProvider` Protocols, provider registry, `workspaces` table lifecycle, reaper background loop, single-flight claim registry, three `WorkflowCommand` impls (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`). Implements and registers `WorkspaceAgentReportSink` (the IoC seam to [`core/agent_gateway`](core_agent_gateway.md)).
+- **Owns:** `Workspace` + `WorkspaceProvider` Protocols, `WorkspaceRegistry` (ContextVar-bound provider map), `workspaces` table lifecycle, reaper background loop, single-flight claim registry, three `WorkflowCommand` impls (`ProvisionWorkspace`, `CleanupWorkspace`, `RefreshWorkspaceAuth`). Implements and registers `WorkspaceAgentReportSink` (the IoC seam to [`core/agent_gateway`](core_agent_gateway.md)).
 - **Does not own:** lifecycle *policy* (that's callers); workspace filesystem internals (plugin-private); `domain/tickets` data (bridged via [Workflow-context callback](#workflow-context-callback)).
 - **Receives:** `WorkspaceSpec` from callers; AgentEvent ingestion goes through the registered sink. **Emits:** `workspace.transitioned` audit rows via [`core/audit_log`](core_audit_log.md); `WorkflowCommand` events to [`core/workflow`](core_workflow.md).
 

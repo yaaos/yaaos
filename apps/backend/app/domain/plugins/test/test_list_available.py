@@ -20,13 +20,13 @@ from app.domain.plugins import web as _plugins_web  # noqa: F401
 def _ensure_plugins_registered() -> None:
     """Re-register plugins if a prior test cleared the registries."""
     from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
-    from app.domain.vcs import _PLUGINS as _V_PLUGINS  # noqa: PLC0415
+    from app.domain.vcs import is_registered as _vcs_is_registered  # noqa: PLC0415
     from app.plugins.claude_code import bootstrap as _cc_bootstrap  # noqa: PLC0415
     from app.plugins.github import bootstrap as _gh_bootstrap  # noqa: PLC0415
 
     if "claude_code" not in _ca_ids():
         _cc_bootstrap()
-    if "github" not in _V_PLUGINS:
+    if not _vcs_is_registered("github"):
         _gh_bootstrap()
 
 

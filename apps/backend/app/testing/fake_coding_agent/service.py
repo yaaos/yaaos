@@ -167,32 +167,26 @@ class FakeCodingAgentPlugin:
 @contextmanager
 def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[no-untyped-def]
     """Context manager: register a `FakeCodingAgentPlugin` under `plugin_id`,
-    yielding the instance for setup + assertions. Restores prior registration
-    on exit.
+    yielding the instance for setup + assertions. Restores prior registry
+    binding on exit.
+
+    Binds a fresh registry copy with the fake substituted; restores the prior
+    binding on exit. Never mutates the canonical registry dict.
     """
-    from app.domain.coding_agent import list_registered_plugins, register_plugin  # noqa: PLC0415
-    from app.testing.seed import clear_coding_agent_plugins as clear_plugins  # noqa: PLC0415
+    from app.domain.coding_agent import (  # noqa: PLC0415
+        bind_coding_agent_registry,
+        current_coding_agent_registry,
+    )
 
     fake = FakeCodingAgentPlugin(plugin_id=plugin_id)
-    # Snapshot existing registrations; replace target slot with fake.
-    snapshot = list_registered_plugins()
-    clear_plugins()
-    replaced = False
-    for p in snapshot:
-        if p.meta.id == plugin_id:
-            register_plugin(fake)  # type: ignore[arg-type]
-            replaced = True
-        else:
-            register_plugin(p)
-    if not replaced:
-        register_plugin(fake)  # type: ignore[arg-type]
+    prior = current_coding_agent_registry()
+    fresh = prior.copy()
+    fresh.replace(fake)  # type: ignore[arg-type]
+    bind_coding_agent_registry(fresh)
     try:
         yield fake
     finally:
-        # Restore snapshot (drop fake, restore prior if it existed).
-        clear_plugins()
-        for p in snapshot:
-            register_plugin(p)
+        bind_coding_agent_registry(prior)
 
 
 __all__ = ["FakeCodingAgentPlugin", "register_fake_coding_agent"]

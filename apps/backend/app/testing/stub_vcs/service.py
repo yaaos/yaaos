@@ -21,13 +21,14 @@ from uuid import UUID
 
 from app.core.plugin_kit import PluginMeta
 from app.domain.vcs import (
-    _PLUGINS,
     Comment,
     Diff,
     FileSummary,
     Review,
     ReviewPostResult,
     VCSPullRequest,
+    bind_vcs_registry,
+    current_vcs_registry,
 )
 
 
@@ -170,17 +171,15 @@ def register_stub_vcs(*, plugin_id: str = "github") -> Iterator[StubVCSPlugin]:
     """Context manager: swap the registered VCS plugin for a `StubVCSPlugin`,
     yield the stub for state setup + assertions, restore on exit.
 
-    If `plugin_id` is already registered (the real plugin from `app.web`'s
-    bootstrap), the prior entry is saved + restored. If not, the slot is
-    removed on exit.
+    Binds a fresh registry copy with the stub inserted; restores the prior
+    registry binding on exit. Never mutates the canonical registry dict.
     """
     stub = StubVCSPlugin(plugin_id=plugin_id)
-    prior = _PLUGINS.get(plugin_id)
-    _PLUGINS[plugin_id] = stub  # type: ignore[assignment]
+    prior = current_vcs_registry()
+    fresh = prior.copy()
+    fresh.replace(stub)  # type: ignore[arg-type]
+    bind_vcs_registry(fresh)
     try:
         yield stub
     finally:
-        if prior is None:
-            _PLUGINS.pop(plugin_id, None)
-        else:
-            _PLUGINS[plugin_id] = prior
+        bind_vcs_registry(prior)

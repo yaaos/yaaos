@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway import ensure_agent_row
 
 __all__ = [
-    "clear_coding_agent_plugins",
     "delete_org",
     "delete_user_artifacts",
     "read_email_inbox",
@@ -40,22 +39,6 @@ def read_email_inbox() -> list:
     from app.domain.orgs.email import get_email_inbox  # noqa: PLC0415
 
     return get_email_inbox().messages
-
-
-def clear_coding_agent_plugins() -> None:
-    """Unregister all coding-agent plugins. Uses the public unregister API.
-
-    Equivalent to calling `unregister_coding_agent_plugin` for every registered
-    plugin. Used by testing helpers that manage full registry snapshots
-    (e.g. `register_fake_coding_agent`, `wrap_all_registered_plugins`).
-    """
-    from app.domain.coding_agent import (  # noqa: PLC0415
-        list_registered_plugins,
-        unregister_coding_agent_plugin,
-    )
-
-    for plugin in list_registered_plugins():
-        unregister_coding_agent_plugin(plugin.meta.id)
 
 
 async def seed_agent(

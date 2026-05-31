@@ -13,8 +13,11 @@ from app.core.workspace.dispatch import (
     try_claim,
 )
 from app.core.workspace.service import (
+    WorkspaceRegistry,
+    bind_workspace_registry,
     close_workspace,
     create_workspace,
+    current_workspace_registry,
     force_close_all,
     get_provider,
     get_workspace,
@@ -28,7 +31,6 @@ from app.core.workspace.service import (
     register_workspace_provider,
     start_reaper,
     startup_recovery,
-    unregister_workspace_provider,
     update_workspace_status,
     with_workspace,
 )
@@ -84,12 +86,15 @@ __all__ = [
     "WorkspaceNotFoundError",
     "WorkspaceProvider",
     "WorkspaceProvisionError",
+    "WorkspaceRegistry",
     "WorkspaceSpec",
     "WorkspaceStatus",
     "WorkspaceTicketContext",
     "assert_workflow_context_provider",
+    "bind_workspace_registry",
     "close_workspace",
     "create_workspace",
+    "current_workspace_registry",
     "force_close_all",
     "get_provider",
     "get_workflow_context_provider",
@@ -108,7 +113,6 @@ __all__ = [
     "start_reaper",
     "startup_recovery",
     "try_claim",
-    "unregister_workspace_provider",
     "update_workspace_status",
     "with_workspace",
 ]

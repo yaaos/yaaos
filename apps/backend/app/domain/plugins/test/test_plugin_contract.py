@@ -8,7 +8,8 @@ import pytest
 
 from app.domain.coding_agent import get_plugin as get_coding_agent_plugin
 from app.domain.coding_agent import registered_plugin_ids
-from app.domain.vcs import _PLUGINS as _VCS_PLUGINS
+from app.domain.vcs import get_plugin as get_vcs_plugin
+from app.domain.vcs import is_registered as vcs_is_registered
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +20,7 @@ def _ensure_plugins_registered() -> None:
 
     if "claude_code" not in registered_plugin_ids():
         _cc_bootstrap()
-    if "github" not in _VCS_PLUGINS:
+    if not vcs_is_registered("github"):
         _gh_bootstrap()
 
 
@@ -29,12 +30,12 @@ def test_github_install_url_is_none() -> None:
     `install_url(org_id)` contract method (which is for browser-redirect-only
     installs). Returning None here keeps `POST /api/vcs` from short-circuiting
     on github."""
-    plugin = _VCS_PLUGINS["github"]
+    plugin = get_vcs_plugin("github")
     assert plugin.install_url(uuid4()) is None
 
 
 def test_github_validate_settings_accepts_empty_and_installation_id() -> None:
-    plugin = _VCS_PLUGINS["github"]
+    plugin = get_vcs_plugin("github")
     assert plugin.validate_settings({}) == {}
     assert plugin.validate_settings({"installation_id": 12345}) == {"installation_id": 12345}
 
@@ -42,7 +43,7 @@ def test_github_validate_settings_accepts_empty_and_installation_id() -> None:
 def test_github_validate_settings_rejects_unknown_keys() -> None:
     from app.domain.vcs import VCSValidationError  # noqa: PLC0415
 
-    plugin = _VCS_PLUGINS["github"]
+    plugin = get_vcs_plugin("github")
     with pytest.raises(VCSValidationError):
         plugin.validate_settings({"installation_id": 1, "rogue": "value"})
 

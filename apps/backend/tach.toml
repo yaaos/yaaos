@@ -171,7 +171,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.coding_agent", "app.testing.seed"]
+depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.coding_agent"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -179,7 +179,7 @@ depends_on = ["app.core.tasks", "app.core.webserver"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.workspace", "app.domain.coding_agent", "app.testing.seed"]
+depends_on = ["app.core.workspace", "app.domain.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -619,12 +619,15 @@ expose = [
   "WorkspaceNotFoundError",
   "WorkspaceProvider",
   "WorkspaceProvisionError",
+  "WorkspaceRegistry",
   "WorkspaceSpec",
   "WorkspaceStatus",
   "WorkspaceTicketContext",
   "assert_workflow_context_provider",
+  "bind_workspace_registry",
   "close_workspace",
   "create_workspace",
+  "current_workspace_registry",
   "force_close_all",
   "get_provider",
   "get_workflow_context_provider",
@@ -643,7 +646,6 @@ expose = [
   "start_reaper",
   "startup_recovery",
   "try_claim",
-  "unregister_workspace_provider",
   "update_workspace_status",
   "with_workspace",
 ]
@@ -658,6 +660,7 @@ expose = [
   "CodingAgentCacheMiss",
   "CodingAgentError",
   "CodingAgentPlugin",
+  "CodingAgentRegistry",
   "FindingAnchor",
   "FindingDraft",
   "FindingDraftList",
@@ -686,7 +689,9 @@ expose = [
   "assemble_review_prompt",
   "assemble_stale_check_prompt",
   "assemble_verify_fix_prompt",
+  "bind_coding_agent_registry",
   "build_invocation",
+  "current_coding_agent_registry",
   "get_plugin",
   "health_check_all",
   "incremental_review",
@@ -698,7 +703,6 @@ expose = [
   "review",
   "schema_appendix",
   "stale_check",
-  "unregister_coding_agent_plugin",
   "validate_config",
   "verify_fix",
 ]
@@ -991,16 +995,17 @@ expose = [
   "VCSPlugin",
   "VCSPullRequest",
   "VCSRateLimitError",
+  "VCSRegistry",
   "VCSTransientError",
   "VCSValidationError",
-  "_PLUGINS",
+  "bind_vcs_registry",
+  "current_vcs_registry",
   "get_installation_token",
   "get_plugin",
   "is_registered",
   "list_plugin_metas",
   "register_vcs_plugin",
   "registered_plugin_ids",
-  "unregister_vcs_plugin",
 ]
 from = ["app.domain.vcs"]
 

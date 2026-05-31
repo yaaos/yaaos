@@ -1,8 +1,8 @@
 """Isolation fixtures for service tests.
 
 Provides pytest fixtures that reset per-module singletons to a clean state
-before each test. All resets are performed by calling each module's production
-registration/deregistration APIs — no direct submodule attribute access.
+before each test. All resets are performed by binding a fresh instance per
+test context — no direct submodule attribute mutation, no restore loops.
 """
 
 from __future__ import annotations
@@ -10,14 +10,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import pytest
 import pytest_asyncio
 
 from app.core.redis import RedisPubsub, bind_pubsub
 from app.domain.vcs import (
-    get_plugin,
-    is_registered,
-    register_vcs_plugin,
-    unregister_vcs_plugin,
+    bind_vcs_registry,
+    current_vcs_registry,
 )
 
 
@@ -68,6 +67,55 @@ async def email_inbox_isolation() -> None:
     bind_email_inbox(_Inbox())
 
 
+@pytest.fixture(scope="session")
+def _canonical_registries():
+    """Build canonical plugin registry snapshots once per session.
+
+    Imports the three plugin packages (triggering their import-time
+    bootstrap), then optionally wraps with stubs when YAAOS_CODING_AGENT_STUB
+    is set, and returns snapshots via .copy(). Never calls bootstrap() again —
+    the import handles it.
+    """
+    import os  # noqa: PLC0415
+
+    import app.plugins.claude_code  # noqa: PLC0415
+    import app.plugins.github  # noqa: PLC0415
+    import app.plugins.in_memory_workspace  # noqa: F401, PLC0415
+
+    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+        from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415
+        from app.testing.stub_workspace import wrap_all_registered_workspace_providers  # noqa: PLC0415
+
+        wrap_all_registered_plugins()
+        wrap_all_registered_workspace_providers()
+
+    from app.core.workspace import current_workspace_registry  # noqa: PLC0415
+    from app.domain.coding_agent import current_coding_agent_registry  # noqa: PLC0415
+
+    class _Snapshot:
+        coding_agent = current_coding_agent_registry().copy()
+        vcs = current_vcs_registry().copy()
+        workspace = current_workspace_registry().copy()
+
+    return _Snapshot()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def plugin_registries_isolation(_canonical_registries) -> None:
+    """Bind a fresh copy of each canonical plugin registry per test.
+
+    Unconditional + autouse. A test that registers or swaps a plugin only
+    affects its own copy; the next test rebinds from the canonical snapshot —
+    no restore, no leak, no order dependence.
+    """
+    from app.core.workspace import bind_workspace_registry  # noqa: PLC0415
+    from app.domain.coding_agent import bind_coding_agent_registry  # noqa: PLC0415
+
+    bind_coding_agent_registry(_canonical_registries.coding_agent.copy())
+    bind_vcs_registry(_canonical_registries.vcs.copy())
+    bind_workspace_registry(_canonical_registries.workspace.copy())
+
+
 @pytest_asyncio.fixture
 async def workflow_context_provider_isolation():
     """Reset the workflow-context provider before and after the test.
@@ -88,24 +136,18 @@ async def workflow_context_provider_isolation():
 
 @pytest_asyncio.fixture
 async def workspace_providers_isolation():
-    """Clear the workspace-provider registry before and after the test.
+    """Bind an empty workspace-provider registry before the test, then
+    restore the canonical binding on exit.
 
     Non-autouse: tests that register custom workspace providers must
-    request this fixture to ensure isolation. Uses the public
-    list/unregister API to clear without needing a private clear function.
+    request this fixture to ensure isolation — the autouse
+    `plugin_registries_isolation` restores canonical next test regardless,
+    but this fixture lets the test start from an explicitly empty registry.
     """
-    from app.core.workspace import (  # noqa: PLC0415
-        list_workspace_providers,
-        unregister_workspace_provider,
-    )
+    from app.core.workspace import WorkspaceRegistry, bind_workspace_registry  # noqa: PLC0415
 
-    def _clear() -> None:
-        for p in list_workspace_providers():
-            unregister_workspace_provider(p.meta.id)
-
-    _clear()
+    bind_workspace_registry(WorkspaceRegistry())
     yield
-    _clear()
 
 
 @pytest_asyncio.fixture
@@ -128,30 +170,25 @@ async def recovery_policies_isolation():
 @contextmanager
 def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
     """Context manager: install *plugin* for the duration of the block, then
-    restore the prior entry (if any) on exit — even if an exception is raised.
+    restore the prior registry binding on exit — even if an exception is raised.
 
-    If *plugin.meta.id* is already registered the prior entry is saved and
-    replaced; on exit the prior entry is restored. If the id was not
-    registered the plugin is simply unregistered on exit.
-
-    Uses only the public VCS registry API (register/unregister/is_registered).
+    Binds a fresh registry copy with the plugin inserted; restores the prior
+    binding on exit. Never mutates the canonical registry dict.
     """
-    plugin_id = plugin.meta.id
-    prior = get_plugin(plugin_id) if is_registered(plugin_id) else None
-    if prior is not None:
-        unregister_vcs_plugin(plugin_id)
-    register_vcs_plugin(plugin)
+    prior = current_vcs_registry()
+    fresh = prior.copy()
+    fresh.replace(plugin)  # type: ignore[arg-type]
+    bind_vcs_registry(fresh)
     try:
         yield plugin
     finally:
-        unregister_vcs_plugin(plugin_id)
-        if prior is not None:
-            register_vcs_plugin(prior)
+        bind_vcs_registry(prior)
 
 
 __all__ = [
     "agent_queues_isolation",
     "email_inbox_isolation",
+    "plugin_registries_isolation",
     "pubsub_isolation",
     "recovery_policies_isolation",
     "scoped_vcs_plugin",

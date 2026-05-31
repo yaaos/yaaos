@@ -27,7 +27,7 @@ Mirrors `meta` from the real plugin. Holds the wrapped instance for `validate_co
 
 ### `wrap_all_registered_plugins()`
 
-Swaps entries in `domain/coding_agent._PLUGINS` in place. Idempotent. Future coding-agent plugins require zero changes here.
+Reads the current `CodingAgentRegistry` via `current_coding_agent_registry()`, builds a fresh `CodingAgentRegistry` with each entry wrapped, and binds it via `bind_coding_agent_registry()`. Idempotent — already-wrapped entries are kept as-is. Future coding-agent plugins require zero changes here.
 
 ### Why a wrapper, not a free-standing fake
 

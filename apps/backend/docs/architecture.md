@@ -33,7 +33,7 @@ Each plugin exposes `meta: PluginMeta` (`id`, `type`, `display_name`, `descripti
 
 - **Workflow engine** — every review run passes through [`core/workflow`](core_workflow.md); commands are typed Pydantic steps dispatched by category (Workspace / Local / HITL).
 - **`PRReviewAggregate`** — durable layer in [`domain/reviewer`](domain_reviewer.md); survives restarts; owns `Review` / `Finding` state across runs.
-- **Plugin registry** — process-global dicts keyed by `meta.id`; swappable without restarts during tests via `scoped_*` helpers.
+- **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `meta.id`; per-test isolation binds a fresh copy so tests never share state.
 - **Two process lifecycles** — web (`app/web.py`) and worker (`app/worker.py`); each registers shutdown hooks independently via `app.core.shutdown_registry`.
 - **Composition roots** — `app/web.py` and `app/worker.py` own all side-effect imports; bootstrap order is load-bearing (see [`patterns.md § Bootstrap composition order`](patterns.md#bootstrap-composition-order)).
 

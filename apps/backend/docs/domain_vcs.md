@@ -23,7 +23,7 @@ Signatures in `app/domain/vcs/types.py`:
 
 ## Registry
 
-`app/domain/vcs/registry.py` — process-global `_PLUGINS` dict, one singleton per plugin. `register_vcs_plugin` rejects duplicates. `scoped_vcs_plugin(plugin)` is the test-safe context manager and lives in `app/testing/isolation` — cross-module tests import it from there; intra-module tests may reach it via `app.domain.vcs.registry` directly.
+`app/domain/vcs/registry.py` — `VCSRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_vcs_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_vcs_plugin` rejects duplicates. `scoped_vcs_plugin(plugin)` in `app/testing/isolation` is the context manager for ad-hoc per-test swaps — it binds a fresh copy with the plugin replaced and restores the prior binding on exit.
 
 ## Events
 

@@ -9,16 +9,17 @@ import pytest
 
 from app.core.plugin_kit import PluginMeta
 from app.domain.coding_agent import (
+    CodingAgentRegistry,
     HealthStatus,
     InvocationStatus,
     ReviewContext,
     ReviewResult,
     ValidationResult,
+    bind_coding_agent_registry,
     list_registered_plugins,
     register_plugin,
 )
 from app.domain.vcs import Diff, VCSPullRequest
-from app.testing.seed import clear_coding_agent_plugins as clear_plugins
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,
@@ -110,7 +111,8 @@ def test_meta_mirrors_wrapped() -> None:
 
 
 def test_wrap_all_is_idempotent() -> None:
-    clear_plugins()
+    # Start from an empty registry so the test is independent of suite state.
+    bind_coding_agent_registry(CodingAgentRegistry())
     dummy = _DummyPlugin()
     register_plugin(dummy)
     assert wrap_all_registered_plugins() == 1
@@ -119,4 +121,3 @@ def test_wrap_all_is_idempotent() -> None:
     assert isinstance(plugins[0], StubCodingAgentPlugin)
     # second call is a no-op — already wrapped
     assert wrap_all_registered_plugins() == 0
-    clear_plugins()

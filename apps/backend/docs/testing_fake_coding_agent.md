@@ -9,7 +9,7 @@
 ## Public interface
 
 - `FakeCodingAgentPlugin(plugin_id="claude_code")` — instantiate directly; set return-value attributes to drive outcomes.
-- `register_fake_coding_agent(plugin_id="claude_code")` — context manager. Registers the instance in `domain/coding_agent._PLUGINS`, yields it for setup/assertions, restores prior registration on exit.
+- `register_fake_coding_agent(plugin_id="claude_code")` — context manager. Binds a fresh `CodingAgentRegistry` copy with the fake substituted, yields the fake for setup/assertions, restores the prior registry binding on exit.
 
 ## Module architecture
 

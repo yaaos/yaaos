@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -78,41 +79,79 @@ async def _audit_transition(
 log = structlog.get_logger("workspace")
 
 
-_PROVIDERS: dict[str, WorkspaceProvider] = {}
+class WorkspaceRegistry:
+    """Workspace provider map. ContextVar-bound so each test context gets a
+    fresh, isolated instance; production rides the import-time default for the
+    process lifetime — it never calls bind_workspace_registry(). The ContextVar
+    exists solely for per-test isolation (see app/testing/isolation.py)."""
+
+    def __init__(self) -> None:
+        self._providers: dict[str, WorkspaceProvider] = {}
+
+    def register(self, provider: WorkspaceProvider) -> None:
+        if provider.meta.id in self._providers:
+            raise ValueError(f"workspace provider {provider.meta.id!r} already registered")
+        self._providers[provider.meta.id] = provider
+
+    def replace(self, provider: WorkspaceProvider) -> None:
+        """Overwrite-or-insert; used by stub helpers."""
+        self._providers[provider.meta.id] = provider
+
+    def get(self, provider_id: str) -> WorkspaceProvider:
+        try:
+            return self._providers[provider_id]
+        except KeyError as e:
+            raise WorkspaceError(f"workspace provider not found: {provider_id}") from e
+
+    def get_or_none(self, provider_id: str) -> WorkspaceProvider | None:
+        """Return the provider for `provider_id`, or None if not registered.
+        Used in paths where an unknown provider id is a warning-level event,
+        not an exception (e.g. get_workspace, _attempt_destroy)."""
+        return self._providers.get(provider_id)
+
+    def is_registered(self, provider_id: str) -> bool:
+        return provider_id in self._providers
+
+    def list(self) -> list[WorkspaceProvider]:
+        return list(self._providers.values())
+
+    def copy(self) -> WorkspaceRegistry:
+        clone = WorkspaceRegistry()
+        clone._providers = dict(self._providers)
+        return clone
+
+
+_providers_var: ContextVar[WorkspaceRegistry | None] = ContextVar("_workspace_registry_var", default=None)
+# Import-time default: plugins that call register_workspace_provider() at
+# module-import time (bootstrap()) land here when no per-test binding is active.
+# Production never calls bind_workspace_registry(); the ContextVar exists solely
+# for per-test isolation.
+_default_registry = WorkspaceRegistry()
+
+
+def bind_workspace_registry(instance: WorkspaceRegistry) -> None:
+    _providers_var.set(instance)
+
+
+def current_workspace_registry() -> WorkspaceRegistry:
+    return _providers_var.get() or _default_registry
 
 
 def register_workspace_provider(provider: WorkspaceProvider) -> None:
-    if provider.meta.id in _PROVIDERS:
-        raise ValueError(f"workspace provider {provider.meta.id!r} already registered")
-    _PROVIDERS[provider.meta.id] = provider
-
-
-def unregister_workspace_provider(plugin_id: str) -> None:
-    """Remove a workspace provider from the registry. No-op if not registered."""
-    _PROVIDERS.pop(plugin_id, None)
+    current_workspace_registry().register(provider)
 
 
 def get_provider(provider_id: str) -> WorkspaceProvider:
-    try:
-        return _PROVIDERS[provider_id]
-    except KeyError as e:
-        raise WorkspaceError(f"workspace provider not found: {provider_id}") from e
+    return current_workspace_registry().get(provider_id)
 
 
 def is_workspace_provider_registered(plugin_id: str) -> bool:
-    return plugin_id in _PROVIDERS
+    return current_workspace_registry().is_registered(plugin_id)
 
 
 def list_workspace_providers() -> list[WorkspaceProvider]:
     """Return registered providers in insertion order."""
-    return list(_PROVIDERS.values())
-
-
-def _clear_workspace_providers_for_tests() -> None:
-    """Clear the workspace provider registry. For test isolation only —
-    call via the `workspace_providers_isolation` fixture in `app/testing/isolation`,
-    never from production code."""
-    _PROVIDERS.clear()
+    return current_workspace_registry().list()
 
 
 class _WorkspaceImpl:
@@ -332,7 +371,7 @@ async def get_workspace(workspace_id: UUID) -> Workspace | None:
         ).scalar_one_or_none()
     if row is None or row.plugin_state is None:
         return None
-    provider = _PROVIDERS.get(row.provider_id)
+    provider = current_workspace_registry().get_or_none(row.provider_id)
     if provider is None:
         log.warning(
             "workspace.get_workspace.provider_not_registered",
@@ -602,7 +641,7 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
 
 
 async def _attempt_destroy(row: WorkspaceRow) -> None:
-    provider = _PROVIDERS.get(row.provider_id)
+    provider = current_workspace_registry().get_or_none(row.provider_id)
     if provider is None:
         log.warning("workspace.destroy_no_provider", workspace_id=str(row.id), provider_id=row.provider_id)
         async with get_session() as s:
@@ -730,7 +769,7 @@ def start_reaper(interval_seconds: int) -> None:
 async def health_check_all() -> dict[str, HealthStatus]:
     """Aggregate health across registered providers (used by settings)."""
     out: dict[str, HealthStatus] = {}
-    for plugin_id, provider in _PROVIDERS.items():
+    for plugin_id, provider in current_workspace_registry()._providers.items():
         try:
             out[plugin_id] = await provider.health_check()
         except Exception as e:

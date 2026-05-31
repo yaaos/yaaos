@@ -29,7 +29,7 @@ Signatures in `app/domain/coding_agent/types.py`. Each task method takes a `Work
 
 ## Registry
 
-`app/domain/coding_agent/service.py`. Process-global `_registry` keyed by `plugin.meta.id`. `register_plugin` rejects duplicates; `scoped_coding_agent(plugin)` (in `service.py`, not re-exported from the package) is the test-safe context manager — tests reach it via direct submodule import. `clear_coding_agent_plugins()` in `app/testing/seed` is used by testing helpers (`fake_coding_agent`, `stub_coding_agent`) that manage full registry snapshots. See [patterns.md § scoped_* context managers](patterns.md#scoped_-context-managers-for-import-time-registries).
+`app/domain/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
 
 ## Subagent prompt files (`reviewers/`)
 

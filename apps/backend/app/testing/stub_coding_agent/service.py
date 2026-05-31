@@ -215,18 +215,26 @@ class StubCodingAgentPlugin:
 
 
 def wrap_all_registered_plugins() -> int:
-    """Replace every registered coding-agent plugin with a stub wrapping it."""
-    from app.domain.coding_agent import list_registered_plugins, register_plugin  # noqa: PLC0415
-    from app.testing.seed import clear_coding_agent_plugins as clear_plugins  # noqa: PLC0415
+    """Replace every registered coding-agent plugin with a stub wrapping it.
 
-    originals = list_registered_plugins()
+    Binds a fresh registry with wrapped entries; never mutates the canonical
+    registry dict.
+    """
+    from app.domain.coding_agent import (  # noqa: PLC0415
+        CodingAgentRegistry,
+        bind_coding_agent_registry,
+        current_coding_agent_registry,
+    )
+
+    originals = current_coding_agent_registry().list()
+    fresh = CodingAgentRegistry()
     count = 0
-    clear_plugins()
     for real in originals:
         if isinstance(real, StubCodingAgentPlugin):
-            register_plugin(real)
+            fresh.replace(real)
         else:
-            register_plugin(StubCodingAgentPlugin(wrapped=real))
+            fresh.replace(StubCodingAgentPlugin(wrapped=real))
             count += 1
+    bind_coding_agent_registry(fresh)
     log.info("stub_coding_agent.wrapped_all", count=count)
     return count

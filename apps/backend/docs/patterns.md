@@ -424,21 +424,24 @@ Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; back
 
 Don't wrap every domain function — noise hurts more than detail helps.
 
-## `scoped_*` context managers for import-time registries
+## ContextVar-bound registries — test isolation model
 
-Modules with import-time registries expose `register_*` and `unregister_*` in `__all__`. Tests use `with scoped_*(...)` for temporary registrations — cleanup is automatic on block exit, even on exception. The `scoped_*` context managers themselves are NOT in a production module's `__all__` — they live in `app/testing/isolation` (cross-module callers) or in the submodule only (intra-module callers).
+The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) and the process singletons (`RedisPubsub`, `AgentQueues`, `SubscriberRegistry`, email inbox) are all held in `ContextVar`s. Production never calls `bind_*()` — each module holds a module-level default that captures import-time `bootstrap()` registrations. Test isolation is structural: bind a fresh copy per test, no restore needed.
 
-`app.testing.isolation.scoped_vcs_plugin(plugin)` — cross-module tests import from `app.testing.isolation`; intra-module tests in `domain/vcs/test/` may import from `app.domain.vcs.registry` directly.
+Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): imports the three plugin packages (triggering import-time bootstrap), optionally wraps with stubs, then snapshots the bound registries via `.copy()`. Runs once per session.
+
+Function-scoped autouse `plugin_registries_isolation` fixture: calls `bind_*()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test rebinds canonical — no restore, no leak, no order dependence.
+
+`app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
 
 `app.testing.workflow_harness.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine via `core.workflow.bind_engine`, yields it, and restores the prior engine on exit — even on exception. Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 
-`domain.coding_agent.service.scoped_coding_agent(plugin)` and `core.tasks.service.scoped_task_registration(task_ref)` follow the same contract but are intra-module helpers — they live in their submodule's `service.py` and are NOT re-exported from the package `__all__`. Tests inside those modules import them via direct submodule import.
+`core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
 Rules:
-- No wholesale-wipe between tests. Test exactly what you need, clean it up with the scoped helper.
-- `unregister_*` is a no-op if the id is absent — safe to call in finally blocks.
-- `scoped_*` registers on entry, unregisters on exit. The yielded value is the same object passed in.
-- `scoped_task_registration(task_ref)` — call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
+- No wholesale-wipe or `unregister_*` loop between tests. The autouse fixture handles isolation structurally.
+- `scoped_vcs_plugin` / `scoped_engine` / `scoped_workflow` bind on entry, restore prior binding on exit. The yielded value is the same object passed in.
+- Never alias the canonical registry dict in a helper — always `.copy()` to prevent leakage.
 
 ## Subscription self-cleanup (async generator pattern)
 

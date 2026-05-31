@@ -33,8 +33,10 @@ os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 # is deferred until after env vars are set because app.testing.isolation triggers
 # app.core.redis → app.core.config at import time.
 from app.testing.isolation import (  # noqa: F401
+    _canonical_registries,
     agent_queues_isolation,
     email_inbox_isolation,
+    plugin_registries_isolation,
     pubsub_isolation,
     recovery_policies_isolation,
     subscriber_registry_isolation,
@@ -93,50 +95,6 @@ def redis_or_skip(_redis_reachable: bool) -> None:
     """
     if not _redis_reachable:
         pytest.skip("Redis not reachable at settings.redis_url")
-
-
-def _ensure_plugins_registered() -> None:
-    """Repopulate the plugin registries if any are empty + re-wrap stubs.
-
-    Some unit tests (e.g. `test_coding_agent/test_registry.py`) call
-    `clear_plugins()` in teardown, which clears the global registries and
-    leaks empty state to subsequent tests. Service tests that drive
-    `reviewer.start_pr_review` / the github intake type need the real plugin
-    entries (wrapped by `stub_coding_agent` + `stub_workspace`) present
-    regardless of test ordering. Idempotent + cheap.
-    """
-    from app.core.workspace import is_workspace_provider_registered  # noqa: PLC0415
-    from app.domain.coding_agent import registered_plugin_ids as _ca_ids  # noqa: PLC0415
-    from app.domain.vcs.registry import _PLUGINS as _VCS  # noqa: PLC0415
-
-    if "claude_code" not in _ca_ids():
-        from app.plugins.claude_code.service import bootstrap as _cc  # noqa: PLC0415
-
-        _cc()
-    if "github" not in _VCS:
-        from app.plugins.github.service import bootstrap as _gh  # noqa: PLC0415
-
-        _gh()
-    if not is_workspace_provider_registered("in_process"):
-        from app.plugins.in_memory_workspace.service import bootstrap as _ws  # noqa: PLC0415
-
-        _ws()
-
-    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
-        from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415
-        from app.testing.stub_workspace import wrap_all_registered_workspace_providers  # noqa: PLC0415
-
-        wrap_all_registered_plugins()
-        wrap_all_registered_workspace_providers()
-
-
-@pytest.fixture(autouse=True)
-def _ensure_plugin_registries_populated(request):
-    """Fires for tests carrying `@pytest.mark.service`. See
-    `_ensure_plugins_registered` above for rationale."""
-    if request.node.get_closest_marker("service") is None:
-        return
-    _ensure_plugins_registered()
 
 
 @pytest_asyncio.fixture(scope="session")
