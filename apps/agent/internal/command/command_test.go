@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,6 +211,79 @@ func TestDecodeRoundTrip(t *testing.T) {
 			t.Fatal("Decode: expected error for max_workspaces=0, got nil")
 		}
 	})
+}
+
+// TestDecode_ConfigUpdate_Validation is a table-driven test for the full
+// ConfigUpdate validation matrix: valid inputs pass, each invalid input
+// returns a decode error with a relevant message.
+func TestDecode_ConfigUpdate_Validation(t *testing.T) {
+	cases := []struct {
+		name        string
+		maxWS       int
+		otlp        string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid max_workspaces and otlp_endpoint",
+			maxWS:   4,
+			otlp:    "https://otlp.example.com",
+			wantErr: false,
+		},
+		{
+			name:    "valid empty otlp_endpoint (OTLP disabled)",
+			maxWS:   4,
+			otlp:    "",
+			wantErr: false,
+		},
+		{
+			name:        "invalid max_workspaces zero",
+			maxWS:       0,
+			otlp:        "",
+			wantErr:     true,
+			errContains: "max_workspaces",
+		},
+		{
+			name:        "invalid otlp_endpoint not a url",
+			maxWS:       4,
+			otlp:        ":://broken",
+			wantErr:     true,
+			errContains: "otlp_endpoint",
+		},
+		{
+			name:        "invalid otlp_endpoint missing host",
+			maxWS:       4,
+			otlp:        "http://",
+			wantErr:     true,
+			errContains: "otlp_endpoint",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := mustMarshal(t, map[string]any{
+				"command_id":  "cmd-v",
+				"traceparent": "tp-v",
+				"kind":        "ConfigUpdate",
+				"config": map[string]any{
+					"max_workspaces": tc.maxWS,
+					"otlp_endpoint":  tc.otlp,
+				},
+			})
+			_, err := command.Decode(raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Decode: expected error, got nil")
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("error %q does not contain %q", err.Error(), tc.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Decode: unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 // TestDecodeUnknownKind verifies Decode returns an error for an unrecognised kind.

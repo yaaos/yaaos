@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
@@ -119,6 +120,16 @@ func Decode(raw []byte) (Command, error) {
 		// ConfigUpdate from silently defaulting the pool open to unlimited.
 		if v.Config.MaxWorkspaces < 1 {
 			return nil, fmt.Errorf("command: ConfigUpdate max_workspaces must be >= 1, got %d", v.Config.MaxWorkspaces)
+		}
+		// Validate otlp_endpoint when non-empty. An empty value means OTLP is
+		// disabled; a non-empty value must be a parseable URL with a scheme and
+		// host — a bare path or a broken scheme string would silently misconfigure
+		// the exporter.
+		if v.Config.OTLPEndpoint != "" {
+			u, err := url.Parse(v.Config.OTLPEndpoint)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				return nil, fmt.Errorf("command: ConfigUpdate otlp_endpoint must be a valid URL with scheme and host, got %q", v.Config.OTLPEndpoint)
+			}
 		}
 		return &ConfigUpdateCommand{
 			CommandHeader: v.CommandHeader,
