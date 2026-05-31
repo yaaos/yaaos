@@ -86,10 +86,10 @@ const NAV: NavConfig = {
         },
         {
           kind: "link",
-          id: "workspace",
-          label: "Workspace",
+          id: "workspaces",
+          label: "Workspaces",
           icon: Workflow,
-          path: "/settings/workspace",
+          path: "/settings/workspaces",
           role: "admin",
         },
       ],

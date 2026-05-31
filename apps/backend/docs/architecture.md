@@ -25,7 +25,7 @@ Protocols define seams; plugins implement them. Registration happens at import t
 |---|---|---|
 | `VCSPlugin` | `domain/vcs` | `plugins/github` |
 | `CodingAgentPlugin` | `domain/coding_agent` | `plugins/claude_code` |
-| `WorkspaceProvider` | `core/workspace` | `plugins/in_memory_workspace` |
+| `WorkspaceProvider` | `core/workspace` | `core/workspace/remote_provider` (`remote_agent`) |
 
 Each plugin exposes `meta: PluginMeta` (`id`, `type`, `display_name`, `description`, `docs_url`). The `id` is the registry key, URL prefix, and canonical accessor.
 

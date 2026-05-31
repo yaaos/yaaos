@@ -12,7 +12,7 @@ import {
   IntegrationsSettingsPage,
   MembersSettingsPage,
   VcsSettingsPage,
-  WorkspaceSettingsPage,
+  WorkspacesSettingsPage,
 } from "@domain/org_settings";
 import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
@@ -168,10 +168,10 @@ const orgSettingsIntegrationsRoute = createRoute({
   component: IntegrationsSettingsPage,
 });
 
-const orgSettingsWorkspaceRoute = createRoute({
+const orgSettingsWorkspacesRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/settings/workspace",
-  component: WorkspaceSettingsPage,
+  path: "/settings/workspaces",
+  component: WorkspacesSettingsPage,
 });
 
 // User-area pages nest under the current org so the URL alone carries
@@ -227,7 +227,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsCodingAgentDetailRoute,
     orgSettingsByokRoute,
     orgSettingsIntegrationsRoute,
-    orgSettingsWorkspaceRoute,
+    orgSettingsWorkspacesRoute,
     orgUserRedirectRoute,
     orgUserDetailsRoute,
     orgUserSecurityRoute,

@@ -24,7 +24,7 @@
 ## Vocabulary
 
 - **OrgRef** — caller-agnostic org identity: `org_id`, `slug`, `name`.
-- **OrgFullView** — extended org projection including all feature columns (`session_timeout_override`, `workspace_provider`, `registered_iam_arn`, `aws_region`, `vcs_plugin_id`, `vcs_settings`). Returned by `get_org_full`, `get_org_full_by_slug`, `update_org_fields`, etc. Used by any module that needs to read org feature columns without importing `OrgRow` — including `domain/orgs`, `domain/intake`, and `plugins/github`.
+- **OrgFullView** — extended org projection including all feature columns (`session_timeout_override`, `registered_iam_arn`, `aws_region`, `vcs_plugin_id`, `vcs_settings`). Returned by `get_org_full`, `get_org_full_by_slug`, `update_org_fields`, etc. Used by any module that needs to read org feature columns without importing `OrgRow` — including `domain/orgs`, `domain/intake`, and `plugins/github`.
 - **OrgMembershipInfo** — per-org membership projection: `user_id`, `org_id`, `role`, `handle`. Returned by `get_membership_info` and `list_memberships_for_org`.
 - **AuthOrg** — per-caller authz projection: `org_id`, `slug`, `role`, `sso_enabled`, `sso_exempt_owner_user_id`, `session_timeout_override`. Consumed by `core/sessions.require()` for the full auth gate in one lookup.
 - **MembershipView** — user's membership list item: `org_id`, `slug`, `org_name`, `role`, `handle`.

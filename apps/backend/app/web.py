@@ -94,7 +94,7 @@ from app.core.sse import web as _core_sse_web  # noqa: F401, E402
 from app.domain import integrations as _domain_integrations  # noqa: F401, E402
 
 # 6. Plugins.
-from app.plugins import in_memory_workspace, claude_code, github, linear, notion  # noqa: F401, E402
+from app.plugins import claude_code, github, linear, notion  # noqa: F401, E402
 
 # GitHub OAuth identity provider lives inside `plugins/github` now —
 # `plugins/oauth_github` was deleted. The github plugin's __init__ calls

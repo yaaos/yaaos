@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 export interface OrgSettings {
   slug: string;
   session_timeout_override: number | null;
-  workspace_provider: string | null;
   registered_iam_arn: string | null;
   aws_region: string | null;
 }
@@ -23,7 +22,6 @@ export function useUpdateOrgSettings() {
     mutationFn: async (
       body: Partial<{
         session_timeout_override: number | null;
-        workspace_provider: string | null;
         registered_iam_arn: string | null;
         aws_region: string | null;
       }>,

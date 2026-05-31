@@ -97,19 +97,13 @@ async def post_intake(request: Request, type: str = Path(...)) -> JSONResponse:
             )
 
         from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.core.tenancy import get_org_full  # noqa: PLC0415
-
-        # Resolve the org's workspace provider so the engine routes Workspace
-        # commands correctly. Null/missing → in_memory (POC default).
-        org = await get_org_full(s, prepared.org_id)
-        workspace_provider = (org.workspace_provider if org is not None else None) or "in_memory"
 
         engine = get_engine()
         workflow_execution_id = await engine.start(
             workflow_name=prepared.workflow_name,
             ticket_id=str(ticket_id),
             traceparent=current_traceparent(),
-            workspace_provider=workspace_provider,
+            workspace_provider="remote_agent",
             ticket_payload=dict(prepared.payload),
             session=s,
         )

@@ -12,15 +12,16 @@ the URL as `/api/orgs/{slug}` for readability; this implementation mirrors the
 other endpoints which all take the slug via header. The single endpoint
 returns the updated org's relevant settings.
 
-`workspace_provider` is `in_memory` or `remote_agent`. When set to
-`remote_agent`, `registered_iam_arn` must also be set — the identity-exchange
-verifier matches the agent's signed STS payload against this ARN.
+`registered_iam_arn` is the canonical IAM role ARN the customer registered; the
+identity-exchange verifier matches the agent's signed STS payload against this
+ARN. A cross-org uniqueness check fires at the application layer before the
+write — a duplicate ARN returns 422 `arn_already_registered` rather than a DB
+constraint 500.
 
 `/api/orgs/mine` lives on the public allowlist (see `core/auth/types.py`)
 because the SPA hits it before any org is selected — the session cookie
 identifies the user; no `X-Org-Slug` header is involved. `last_used_at` is
-null — there is no per-membership "last visited" column today
-(Open Question 3 in ).
+null — there is no per-membership "last visited" column today.
 """
 
 from __future__ import annotations
@@ -40,6 +41,9 @@ from app.core.identity import repository as identity_repo
 from app.core.sessions import require
 from app.core.tenancy import (
     get_org_full as _get_org_full,
+)
+from app.core.tenancy import (
+    get_org_full_by_iam_arn as _get_org_full_by_iam_arn,
 )
 from app.core.tenancy import (
     list_memberships_for_org as _list_memberships_for_org,
@@ -67,8 +71,6 @@ class _PatchOrgRequest(BaseModel):
     _set_session_timeout_override: bool = False  # internal: did the client include the key?
 
 
-_ALLOWED_WORKSPACE_PROVIDERS = {"in_memory", "remote_agent"}
-
 # Strict registration shape for `registered_iam_arn`: partition `aws`, service
 # `iam`, 12-digit account, `role/<name>` with NO path slashes. Full-matched
 # because looser matching enables a cross-org escalation: STS returns
@@ -83,7 +85,6 @@ _IAM_ROLE_ARN_RE = re.compile(r"^arn:aws:iam::\d{12}:role/[\w+=,.@-]+$", re.ASCI
 class _OrgSettingsResponse(BaseModel):
     slug: str
     session_timeout_override: int | None
-    workspace_provider: str | None = None
     registered_iam_arn: str | None = None
     aws_region: str | None = None
 
@@ -166,7 +167,6 @@ async def get_org_settings() -> _OrgSettingsResponse:
     return _OrgSettingsResponse(
         slug=full.slug,
         session_timeout_override=full.session_timeout_override,
-        workspace_provider=full.workspace_provider,
         registered_iam_arn=full.registered_iam_arn,
         aws_region=full.aws_region,
     )
@@ -175,8 +175,11 @@ async def get_org_settings() -> _OrgSettingsResponse:
 @router.patch("", dependencies=[Depends(require(Action.ORG_SETTINGS_WRITE))])
 async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
     """Update top-level org settings. Body is a JSON object; only the keys
-    actually present are touched. supports `session_timeout_override`
-    (null clears it, positive int sets minutes)."""
+    actually present are touched. Supports `session_timeout_override`
+    (null clears it, positive int sets minutes), `registered_iam_arn`, and
+    `aws_region`. A duplicate ARN already registered to another org returns
+    422 `arn_already_registered` — the app-layer check fires before the DB
+    write."""
     org_id = org_id_var.get()
     if org_id is None:
         raise _err(400, "no_org_context")
@@ -196,13 +199,6 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
                 if not isinstance(value, int) or value <= 0:
                     raise _err(422, "invalid_session_timeout_override")
             eff_timeout = value
-
-        eff_provider = full.workspace_provider
-        if "workspace_provider" in body:
-            value = body["workspace_provider"]
-            if value is not None and value not in _ALLOWED_WORKSPACE_PROVIDERS:
-                raise _err(422, "invalid_workspace_provider")
-            eff_provider = value
 
         eff_arn = full.registered_iam_arn
         if "registered_iam_arn" in body:
@@ -231,15 +227,18 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
         # the application layer so the API returns a 422, not a 500 from the DB.
         if (eff_arn is None) != (eff_region is None):
             raise _err(422, "arn_and_region_must_be_paired")
-        # Cross-field: remote_agent provider requires an ARN.
-        if eff_provider == "remote_agent" and not eff_arn:
-            raise _err(422, "remote_agent_requires_iam_arn")
+
+        # Cross-org ARN uniqueness — reject before the DB write so the caller
+        # gets a 422 instead of a 500 from the partial unique index violation.
+        if eff_arn is not None and eff_arn != full.registered_iam_arn:
+            existing = await _get_org_full_by_iam_arn(s, eff_arn)
+            if existing is not None and existing.org_id != org_id:
+                raise _err(422, "arn_already_registered")
 
         updated = await _update_org_fields(
             s,
             org_id,
             session_timeout_override=eff_timeout,
-            workspace_provider=eff_provider,
             registered_iam_arn=eff_arn,
             aws_region=eff_region,
         )
@@ -247,7 +246,6 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
     return _OrgSettingsResponse(
         slug=updated.slug,
         session_timeout_override=updated.session_timeout_override,
-        workspace_provider=updated.workspace_provider,
         registered_iam_arn=updated.registered_iam_arn,
         aws_region=updated.aws_region,
     )
@@ -328,8 +326,8 @@ async def config_status() -> ConfigStatusResponse:
         org_full = await _get_org_full(s, org_id)
         if org_full is None:
             raise _err(404, "org_not_found")
-        if not org_full.workspace_provider:
-            missing.append("workspace_provider")
+        if not org_full.registered_iam_arn:
+            missing.append("workspace")
 
         admin_memberships = await _list_memberships_for_org(s, org_id)
         admins: list[ConfigStatusAdmin] = []

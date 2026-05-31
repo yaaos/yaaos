@@ -23,7 +23,7 @@
 ### Authorization
 
 - Per-action `Role` mapping in [`core/auth/role_policy._REQUIRED_ROLE`](../apps/backend/app/core/auth/role_policy.py): `BUILDER < ADMIN < OWNER`. `Role` and `Action` enums in [`core/auth`](../apps/backend/docs/core_auth.md).
-- Owner/Admin-gated endpoints: `PATCH /api/orgs` (workspace_provider + registered_iam_arn), `GET /api/workspaces/connection_status`.
+- Owner/Admin-gated endpoints: `PATCH /api/orgs` (registered_iam_arn + aws_region), `GET /api/workspaces/connection_status`.
 
 ### Secrets at rest
 

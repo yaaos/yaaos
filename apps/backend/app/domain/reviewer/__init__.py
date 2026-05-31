@@ -265,7 +265,7 @@ async def start_pr_review(
         wfx_id = await get_engine().start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_uuid),
-            workspace_provider="in_memory",
+            workspace_provider="remote_agent",
             ticket_payload=dict(ctx.payload),
             session=s,
         )

@@ -25,8 +25,7 @@ def _make_workspace_row(
     return WorkspaceRow(
         id=uuid4(),
         org_id=uuid4(),
-        provider_id="in_memory",
-        provider="in_memory",
+        provider_id="remote_agent",
         spec={"sha": "deadbeef"},
         plugin_state={},
         status=status,

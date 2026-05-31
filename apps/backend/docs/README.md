@@ -10,7 +10,7 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-33 modules: **17 core · 8 domain · 5 plugins · 3 testing**. Each has a doc with five fixed sections.
+32 modules: **17 core · 8 domain · 4 plugins · 3 testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 
@@ -53,7 +53,6 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 |---|---|
 | [plugins_github](plugins_github.md) | `VCSPlugin` + `Provider` for GitHub: App auth, HMAC, REST, Manifest Flow, catch-up poller, OAuth login (collapsed `plugins/oauth_github` here). |
 | [plugins_claude_code](plugins_claude_code.md) | `CodingAgentPlugin` wrapping the Claude Code CLI. |
-| [plugins_in_memory_workspace](plugins_in_memory_workspace.md) | `WorkspaceProvider` using tempdir + git clone. |
 | [plugins_linear](plugins_linear.md) | `IntegrationProvider` for Linear (hosted MCP via `domain/integrations`). |
 | [plugins_notion](plugins_notion.md) | `IntegrationProvider` for Notion (hosted MCP via `domain/integrations`). |
 | [plugins_oauth_test](plugins_oauth_test.md) | Test-only `Provider` stub; refuses to load outside `YAAOS_ENV=test`. |

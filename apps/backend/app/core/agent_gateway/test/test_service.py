@@ -68,7 +68,7 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
     org_id = uuid4()
     ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
-        provider_id="in_memory",
+        provider_id="remote_agent",
         plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
@@ -229,7 +229,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         # can look up the workspace by command_id.
         seeded_ws_id = await _seed_workspace_for_tests(
             org_id=uuid4(),
-            provider_id="in_memory",
+            provider_id="remote_agent",
             plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,
@@ -322,7 +322,7 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         ws_org_id = uuid4()
         await _seed_workspace_for_tests(
             org_id=ws_org_id,
-            provider_id="in_memory",
+            provider_id="remote_agent",
             plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,

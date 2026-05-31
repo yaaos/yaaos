@@ -114,7 +114,6 @@ async def test_get_org_settings_returns_current_values(seeded, db_session) -> No
         db_session,
         seeded["org"].org_id,
         session_timeout_override=42,
-        workspace_provider="remote_agent",
         registered_iam_arn="arn:aws:iam::123456789012:role/yaaos-agent",
         aws_region="us-east-1",
     )
@@ -131,15 +130,14 @@ async def test_get_org_settings_returns_current_values(seeded, db_session) -> No
     body = r.json()
     assert body["slug"] == seeded["org"].slug
     assert body["session_timeout_override"] == 42
-    assert body["workspace_provider"] == "remote_agent"
     assert body["registered_iam_arn"] == "arn:aws:iam::123456789012:role/yaaos-agent"
     assert body["aws_region"] == "us-east-1"
 
 
 @pytest.mark.asyncio
 async def test_get_org_settings_defaults_when_unset(seeded) -> None:
-    """A freshly seeded org has no workspace_provider / registered_iam_arn /
-    session_timeout_override set — GET returns nulls."""
+    """A freshly seeded org has no registered_iam_arn / session_timeout_override
+    set — GET returns nulls."""
     sess = seeded["admin_sess"]
     async with _patch_client() as c:
         r = await c.get(
@@ -150,7 +148,6 @@ async def test_get_org_settings_defaults_when_unset(seeded) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["session_timeout_override"] is None
-    assert body["workspace_provider"] is None
     assert body["registered_iam_arn"] is None
 
 
@@ -206,16 +203,15 @@ async def test_patch_org_rejects_non_positive(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_org_admin_can_set_workspace_provider_and_arn(seeded, db_session) -> None:
-    """The SPA card PATCHes both fields together: provider + ARN. The
-    happy path returns 200 with the new values and a subsequent GET sees
-    them — this is the SPA's save → re-hydrate round-trip."""
+async def test_patch_org_admin_can_set_arn_and_region(seeded, db_session) -> None:
+    """The SPA card PATCHes IAM ARN + region. The happy path returns 200
+    with the new values and a subsequent GET sees them — the SPA's save →
+    re-hydrate round-trip."""
     sess = seeded["admin_sess"]
     async with _patch_client() as c:
         r = await c.patch(
             "/api/orgs",
             json={
-                "workspace_provider": "remote_agent",
                 "registered_iam_arn": "arn:aws:iam::123456789012:role/yaaos-agent",
                 "aws_region": "us-east-1",
             },
@@ -224,7 +220,6 @@ async def test_patch_org_admin_can_set_workspace_provider_and_arn(seeded, db_ses
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["workspace_provider"] == "remote_agent"
     assert body["registered_iam_arn"] == "arn:aws:iam::123456789012:role/yaaos-agent"
     assert body["aws_region"] == "us-east-1"
 
@@ -237,38 +232,16 @@ async def test_patch_org_admin_can_set_workspace_provider_and_arn(seeded, db_ses
             headers={"X-Org-Slug": seeded["org"].slug},
         )
     assert r2.status_code == 200
-    assert r2.json()["workspace_provider"] == "remote_agent"
     assert r2.json()["registered_iam_arn"] == "arn:aws:iam::123456789012:role/yaaos-agent"
 
 
 @pytest.mark.asyncio
-async def test_patch_org_remote_agent_without_arn_rejected(seeded) -> None:
-    """remote_agent without a registered ARN can't pass identity exchange —
-    the API enforces the cross-field invariant so a misconfigured org
-    can't slip through. The SPA mirrors this with a disabled Save
-    button + inline message."""
-    sess = seeded["admin_sess"]
-    async with _patch_client() as c:
-        r = await c.patch(
-            "/api/orgs",
-            json={"workspace_provider": "remote_agent"},
-            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
-        )
-    assert r.status_code == 422, r.text
-    assert r.json()["detail"]["error"] == "remote_agent_requires_iam_arn"
-
-
-@pytest.mark.asyncio
-async def test_patch_org_can_clear_workspace_provider(seeded, db_session) -> None:
-    """Selecting `— not configured —` in the SPA sends `workspace_provider:
-    null`, which clears the column. ARN persists by default unless the
-    SPA also clears it."""
-    # Pre-set to remote_agent + ARN.
+async def test_patch_org_can_clear_arn(seeded, db_session) -> None:
+    """Saving null ARN + region clears the workspace config."""
+    # Pre-set ARN.
     await update_org_fields(
         db_session,
         seeded["org"].org_id,
-        workspace_provider="remote_agent",
         registered_iam_arn="arn:aws:iam::123456789012:role/yaaos-agent",
         aws_region="us-east-1",
     )
@@ -278,28 +251,13 @@ async def test_patch_org_can_clear_workspace_provider(seeded, db_session) -> Non
     async with _patch_client() as c:
         r = await c.patch(
             "/api/orgs",
-            json={"workspace_provider": None, "registered_iam_arn": None, "aws_region": None},
+            json={"registered_iam_arn": None, "aws_region": None},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
             headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["workspace_provider"] is None
     assert body["registered_iam_arn"] is None
-
-
-@pytest.mark.asyncio
-async def test_patch_org_rejects_invalid_workspace_provider(seeded) -> None:
-    sess = seeded["admin_sess"]
-    async with _patch_client() as c:
-        r = await c.patch(
-            "/api/orgs",
-            json={"workspace_provider": "kubernetes"},
-            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
-        )
-    assert r.status_code == 422
-    assert r.json()["detail"]["error"] == "invalid_workspace_provider"
 
 
 @pytest.mark.parametrize(
@@ -333,7 +291,6 @@ async def test_patch_org_rejects_malformed_arn(seeded, bad_arn: str) -> None:
         r = await c.patch(
             "/api/orgs",
             json={
-                "workspace_provider": "remote_agent",
                 "registered_iam_arn": bad_arn,
                 "aws_region": "us-east-1",
             },
@@ -355,7 +312,6 @@ async def test_patch_org_lowercases_arn(seeded) -> None:
         r = await c.patch(
             "/api/orgs",
             json={
-                "workspace_provider": "remote_agent",
                 "registered_iam_arn": "arn:aws:iam::123456789012:role/Yaaos-Agent",
                 "aws_region": "us-east-1",
             },

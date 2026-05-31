@@ -264,9 +264,9 @@ AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowComma
 
 ## WorkspaceProvider contract
 
-[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; two implementations ship in : `InMemoryWorkspaceProvider` (existing in-process plugin) and `RemoteAgentWorkspaceProvider` (dispatches via [`core/agent_gateway`](core_agent_gateway.md)). The Protocol is the single seam between control plane and provider — both implementations enforce the same invariants (single-flight, failure-report-precedes-disposal, recovery). Per-org selection lives on `orgs.workspace_provider`.
+[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; the only shipped implementation is `RemoteAgentWorkspaceProvider` (`remote_agent`, in `core/workspace/remote_provider.py`), which dispatches via [`core/agent_gateway`](core_agent_gateway.md). The Protocol is the seam between the control plane and the remote agent — the single-flight, failure-report-precedes-disposal, and recovery invariants all enforce here.
 
-The Protocol's `run_coding_agent_cli` is synchronous-shaped — natural for the in-process provider, awkward for the remote provider. `RemoteAgentWorkspaceProvider` raises on those methods; the Workspace WorkflowCommands enqueue AgentCommands directly and the engine handles awaits through `handle_agent_event`. The Protocol shape is preserved for the in-process path's callers.
+The Protocol's `run_coding_agent_cli` is synchronous-shaped, but for the remote provider the Workspace WorkflowCommands enqueue AgentCommands and the engine awaits terminal events through `handle_agent_event`. The Protocol shape is preserved so `app/testing/stub_workspace` can wrap the registered implementation without importing provider internals.
 
 ## Audit log discipline
 
@@ -354,7 +354,7 @@ When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer
 Mechanics:
 
 - **Real Postgres via `db_session`.** Transactional rollback per test — production code's `session()` hits the override; inner `commit()` calls become SAVEPOINT releases; outer transaction rolls back on teardown. Empty DB at start of each test.
-- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that returns a canned `ReviewResult`. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` swaps the workspace providers for flows that provision a workspace.
+- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that returns a canned `ReviewResult`. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` (usually `remote_agent`) with a no-op `StubWorkspaceProvider` for flows that need to exercise the workspace lifecycle without real agent dispatch.
 - **HTTP routes via `httpx.ASGITransport`.** Drive endpoints in-process without a network listener. The pattern is already used by `app/domain/integrations/test/test_endpoints.py`, `app/domain/mcp_proxy/test/test_dispatch.py`, etc.
 - **Seed helpers from `app/testing/e2e_setup/`.** `seed_github_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
 
@@ -499,7 +499,7 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 3. Import webserver registry — `app.core.webserver` *before any module registers routes*.
 4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.workspace`.
 5. Domain modules in dependency order — types first (vcs, lessons), then coding_agent, then leaf domain modules, then dependents.
-6. Plugins — `in_memory_workspace`, `claude_code`, `github`.
+6. Plugins — `claude_code`, `github`.
 7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 8. Build the FastAPI app — `webserver.create_app()`.
 

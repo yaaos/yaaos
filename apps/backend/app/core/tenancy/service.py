@@ -111,7 +111,6 @@ class OrgFullView(BaseModel):
     slug: str
     display_name: str
     session_timeout_override: int | None = None
-    workspace_provider: str | None = None
     registered_iam_arn: str | None = None
     aws_region: str | None = None
     vcs_plugin_id: str | None = None
@@ -124,7 +123,6 @@ class OrgFullView(BaseModel):
             slug=row.slug,
             display_name=row.display_name,
             session_timeout_override=row.session_timeout_override,
-            workspace_provider=row.workspace_provider,
             registered_iam_arn=row.registered_iam_arn,
             aws_region=row.aws_region,
             vcs_plugin_id=row.vcs_plugin_id,
@@ -353,7 +351,6 @@ async def update_org_fields(
     org_id: UUID,
     *,
     session_timeout_override: int | None | _Unset = _UNSET,
-    workspace_provider: str | None | _Unset = _UNSET,
     registered_iam_arn: str | None | _Unset = _UNSET,
     aws_region: str | None | _Unset = _UNSET,
     archived_at: datetime | None | _Unset = _UNSET,
@@ -369,8 +366,6 @@ async def update_org_fields(
         raise LookupError(f"org {org_id} not found")
     if not isinstance(session_timeout_override, _Unset):
         row.session_timeout_override = session_timeout_override
-    if not isinstance(workspace_provider, _Unset):
-        row.workspace_provider = workspace_provider
     if not isinstance(registered_iam_arn, _Unset):
         row.registered_iam_arn = registered_iam_arn
     if not isinstance(aws_region, _Unset):

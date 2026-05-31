@@ -170,6 +170,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("034_orgs_sso_authz_columns", "orgs_sso_authz_columns"),
     ("035_uuid_pk_uuidv7_defaults", "uuid_pk_uuidv7_defaults"),
     ("036_workspaces_agent_id", "workspaces_agent_id"),
+    ("037_drop_provider_columns", "drop_provider_columns"),
 )
 
 
@@ -596,6 +597,24 @@ async def _apply_workspaces_agent_id(conn) -> None:  # type: ignore[no-untyped-d
     route to this agent so a workspace lives and dies with its owning pod.
     """
     await conn.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_id UUID"))
+
+
+async def _apply_drop_provider_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `workspaces.provider` and `orgs.workspace_provider`.
+
+    The system has exactly one provider (`remote_agent`). The `provider`
+    discriminator column on `workspaces` was used to choose in-memory vs
+    remote dispatch; `workspace_provider` on `orgs` tracked the org's chosen
+    mode. Both are no longer needed. Rollback re-adds both columns with their
+    previous defaults. Dev DBs are rebuilt; no data preservation.
+    Idempotent: both DROPs use IF EXISTS.
+    """
+    statements: list[str] = [
+        "ALTER TABLE workspaces DROP COLUMN IF EXISTS provider",
+        "ALTER TABLE orgs DROP COLUMN IF EXISTS workspace_provider",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
 
 
 async def _apply_collapse_ticket_status(conn) -> None:  # type: ignore[no-untyped-def]
@@ -1196,6 +1215,8 @@ async def _apply_pending() -> None:
                 await _apply_uuid_pk_uuidv7_defaults(conn)
             elif kind == "workspaces_agent_id":
                 await _apply_workspaces_agent_id(conn)
+            elif kind == "drop_provider_columns":
+                await _apply_drop_provider_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

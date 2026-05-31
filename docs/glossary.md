@@ -10,7 +10,7 @@
 | **Review job** | One review run for one PR (`queued → running → posted / failed / skipped / cancelled`). Owned by `domain/reviewer`. |
 | **Subagent** | A shipped reviewer specialty (`yaaos-architecture`, `-security`, `-line-level`, `-tests`, `-docs`, `-skill`). Markdown-defined in `app/domain/coding_agent/reviewers/`, installed into `~/.claude/agents/`. Each finding carries `source_agent`. |
 | **Coding agent** | The external CLI yaaos shells out to (Claude Code). Protocol: `domain/coding_agent.CodingAgentPlugin`. yaaos never calls an LLM directly. |
-| **Workspace** | Provisioned execution environment (tempdir + git clone). Lifecycle owned by `core/workspace` via `WorkspaceProvider`. |
+| **Workspace** | Provisioned execution environment owned by a remote WorkspaceAgent. Lifecycle owned by `core/workspace`; the only registered `WorkspaceProvider` is `remote_agent`. Dispatch via AgentCommand; org-level IAM ARN (`orgs.registered_iam_arn`) authorizes the agent pod. |
 | **Finding** | One reviewer comment: `file`, `line_start/end`, `severity` (`must-fix / nit / suggestion / info`), `title`, `body`, optional `rationale`, `snippet`, `source_agent`. Defined in `domain/vcs`. |
 | **Lesson** | Repo-scoped institutional memory: `{title, body, source_pr_url}`, 1000-char body cap. Surfaces in agent prompts. Owned by `domain/lessons`. |
 | **Plugin** | Vendor-specific implementation of a Protocol in `domain/` or `core/`. Three Protocols: `VCSPlugin` (github), `CodingAgentPlugin` (claude_code), `WorkspaceProvider`. Vendor SDKs only in `apps/backend/app/plugins/`. |

@@ -13,4 +13,4 @@ None.
 ## How it's tested
 
 - `test/test_list_available.py` — service lookups + endpoint auth (401, type filter, 422 on invalid type).
-- `test/test_plugin_contract.py` — shipped plugins (`github`, `claude_code`, `in_process`) expose `install_url` and `validate_settings`.
+- `test/test_plugin_contract.py` — shipped plugins (`github`, `claude_code`) expose `install_url` and `validate_settings`.

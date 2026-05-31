@@ -1,20 +1,19 @@
 """End-to-end composition test for the `pr_review_v1` workflow.
 
-Drives a ticket through `pr_review_v1` with the in_memory workspace
-provider. Asserts:
+Drives a ticket through `pr_review_v1` with the in-process dispatch path
+(workspace_provider="in_memory" in step_state so the engine runs Workspace
+commands inline). A stub WorkspaceProvider is registered so
+ProvisionWorkspace.execute() creates a real WorkspaceRow; CleanupWorkspace
+flips it to expired.
 
+Asserts:
 - CheckShouldReview (real body) reads admission signals from ticket
   payload; non-draft non-fork PR advances past the skip gate.
-- ProvisionWorkspace (real body) fetches ticket context through the
-  registered WorkflowContextProvider and creates a WorkspaceRow via the
-  stub workspace provider.
+- ProvisionWorkspace creates a workspace row via the registered stub provider.
 - CodeReview + PostFindings (stub bodies returning Outcome.success()) let
   the workflow advance.
-- CleanupWorkspace (real body) flips the WorkspaceRow to expired.
-
-Workflow terminates in `done` state; workspace row is `expired`. This is
-the composition proof that the dispatch routing + provider callback +
-two real lifecycle bodies actually fit together.
+- CleanupWorkspace flips the workspace row to expired.
+- Workflow terminates in `done` state.
 """
 
 from __future__ import annotations

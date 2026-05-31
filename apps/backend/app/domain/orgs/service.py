@@ -38,7 +38,6 @@ class Org(BaseModel):
     display_name: str
     archived_at: datetime | None
     created_at: datetime
-    workspace_provider: str | None
     session_timeout_override: int | None = None
 
     @classmethod
@@ -49,7 +48,6 @@ class Org(BaseModel):
             display_name=view.display_name,
             archived_at=None,
             created_at=datetime.now(UTC),
-            workspace_provider=view.workspace_provider,
             session_timeout_override=view.session_timeout_override,
         )
 

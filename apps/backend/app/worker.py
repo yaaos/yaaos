@@ -49,8 +49,7 @@ def main() -> int:
     assert_workflow_context_provider()
 
     import app.plugins.claude_code  # noqa: PLC0415
-    import app.plugins.github  # noqa: PLC0415
-    import app.plugins.in_memory_workspace  # noqa: F401, PLC0415
+    import app.plugins.github  # noqa: F401, PLC0415
 
     if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
         from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415

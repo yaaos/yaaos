@@ -30,10 +30,6 @@ class WorkspaceRow(Base):
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     plugin_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="creating")
-    # discriminator the engine uses to pick a dispatch path. `in_memory`
-    # (default) runs the in-process plugin; `remote_agent` dispatches through
-    # `core/agent_gateway`. Rows default to `in_memory` via the column default.
-    provider: Mapped[str] = mapped_column(String, nullable=False, server_default="in_memory")
     # single-flight claim: only one in-flight AgentCommand per workspace.
     # Set by `try_claim()`; cleared by `release_claim()` after the terminal
     # event has been observed (NOT before — failure-report-precedes-disposal).

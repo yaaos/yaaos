@@ -26,7 +26,7 @@ The module declares the TanStack `Register` augmentation so `<Link to="/orgs/$sl
 | `/orgs/$slug/tickets`, `…/$ticketId` | `TicketsPage`, `TicketDetailPage` | |
 | `/orgs/$slug/lessons` | `LessonsPage` | |
 | `/orgs/$slug/settings` | redirect | 303 → `/orgs/$slug/settings/auth`. |
-| `/orgs/$slug/settings/{auth,members,audit,vcs,coding-agents,coding-agents/$pluginId,api-keys,mcp-proxy,workspace}` | per-page `…SettingsPage` | Owner/Admin gates per page. |
+| `/orgs/$slug/settings/{auth,members,audit,vcs,coding-agents,coding-agents/$pluginId,api-keys,mcp-proxy,workspaces}` | per-page `…SettingsPage` | Owner/Admin gates per page. |
 | `/orgs/$slug/user` | redirect | 303 → `…/user/details`. |
 | `/orgs/$slug/user/{details,security,notifications}` | `DetailsPage`, `SecurityPage`, `NotificationsPage` | USER_SCOPED on the backend (`/api/user/*`, `/api/notifications/*`); the slug in the path is purely a frontend routing concern. |
 

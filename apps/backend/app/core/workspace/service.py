@@ -592,13 +592,12 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     from app.core.agent_gateway import revoke_all_for_agent, stale_agent_ids  # noqa: PLC0415
 
     cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Active remote-agent workspaces with a known owning pod. `workspaces.provider`
-    # and `workspaces.agent_id` are this module's own columns — no cross-module
-    # query needed to find candidates.
+    # Active workspaces with a known owning pod (`agent_id` non-null means the
+    # workspace was dispatched through a remote agent). No `provider` column
+    # needed — `agent_id` is the authoritative ownership marker.
     candidate_rows = (
         await s.execute(
             select(WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.status, WorkspaceRow.agent_id).where(
-                WorkspaceRow.provider == "remote_agent",
                 WorkspaceRow.agent_id.is_not(None),
                 WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
             )

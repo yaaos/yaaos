@@ -1,4 +1,4 @@
-"""Each shipped plugin (github, claude_code, in_process) exposes the contract methods: `install_url(org_id) -> str | None`, `validate_settings(d) -> d`."""
+"""Each shipped plugin (github, claude_code) exposes the contract methods: `install_url(org_id) -> str | None`, `validate_settings(d) -> d`."""
 
 from __future__ import annotations
 

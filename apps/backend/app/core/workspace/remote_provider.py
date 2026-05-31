@@ -56,8 +56,7 @@ log = structlog.get_logger("core.workspace.remote_provider")
 
 
 class RemoteAgentWorkspaceProvider:
-    """Implements `WorkspaceProvider`. Persisted under
-    `workspaces.provider = 'remote_agent'`.
+    """Implements `WorkspaceProvider`. Registered under id `remote_agent`.
 
     The Protocol shape was designed for in-process providers — its
     `provision/run/destroy` methods read like a synchronous call/return
