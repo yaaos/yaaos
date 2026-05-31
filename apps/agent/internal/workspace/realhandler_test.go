@@ -722,7 +722,11 @@ func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T
 	// per the error taxonomy (return nil result + error with exit code).
 	fake := fakeRunFunc(
 		&RunStreamingResult{ExitCode: 42, Stderr: []byte("something failed"), Duration: time.Millisecond},
-		&exec.ExitError{}, // non-zero exit
+		// Zero-value ExitError: RunClaude only type-matches it via errors.As and
+		// reads ExitCode/Stderr from RunStreamingResult above — it never touches
+		// the (nil) ProcessState. If that branch ever calls a method on the
+		// matched ExitError, build a real one here instead.
+		&exec.ExitError{},
 		nil,
 	)
 	h := realHandlerWithFakeRun(t, fake)

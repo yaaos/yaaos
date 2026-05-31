@@ -273,14 +273,14 @@ func TestHelperProcess(t *testing.T) {
 		select {}
 
 	case "sleep_past_grace":
-		// Write a line then sleep longer than the grace window so SIGKILL
-		// fires. Used by the synctest grace-window test to verify that
-		// the SIGKILL path actually runs within the grace period.
+		// Write a line then sleep far longer than the grace window. This child
+		// installs no signal handler, so the SIGTERM the parent sends on
+		// ctx-cancel terminates it immediately (Go's default disposition) —
+		// the long sleep is never reached and the SIGKILL grace path does not
+		// run here. The virtual-time SIGTERM→grace→SIGKILL pattern is
+		// demonstrated separately in TestGraceWindowPattern_Synctest.
 		fmt.Println("before-grace")
 		os.Stdout.Sync() //nolint:errcheck
-		// SIGTERM arrives first; we ignore it and sleep well past the grace.
-		// The real sleep time (2 s grace + buffer) is irrelevant in the
-		// synctest bubble — fake time advances instantly.
 		time.Sleep(60 * time.Second)
 		os.Exit(0)
 
@@ -291,8 +291,9 @@ func TestHelperProcess(t *testing.T) {
 }
 
 // helperCmd returns the argv for re-invoking this test binary as a child
-// subprocess running the given GO_HELPER_CMD behaviour.
-func helperCmd(t *testing.T, cmd string) []string {
+// subprocess. The behaviour the child runs is selected by GO_HELPER_CMD,
+// which helperEnv sets.
+func helperCmd(t *testing.T) []string {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -313,7 +314,7 @@ func helperEnv(cmd string) []string {
 func TestRunStreaming_HelperExactExitCode(t *testing.T) {
 	// A Go child can os.Exit(N) precisely; shell arithmetic may truncate
 	// exit codes on some systems. Verify RunStreaming surfaces exactly 42.
-	argv := helperCmd(t, "exit42")
+	argv := helperCmd(t)
 	res, err := RunStreaming(context.Background(), RunStreamingOptions{
 		Argv: argv,
 		Env:  helperEnv("exit42"),
@@ -337,7 +338,7 @@ func TestRunStreaming_HelperPartialOutputBeforeSIGTERM(t *testing.T) {
 	// The child writes one line then hangs. We cancel the context after
 	// 50 ms. The OnStdoutLine callback must have been called for the
 	// partial line before the cancel fires.
-	argv := helperCmd(t, "partial_then_hang")
+	argv := helperCmd(t)
 	var lines []string
 	var mu sync.Mutex
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -364,19 +365,6 @@ func TestRunStreaming_HelperPartialOutputBeforeSIGTERM(t *testing.T) {
 	}
 }
 
-// TestGraceWindowPattern_Synctest uses testing/synctest to verify the
-// SIGTERM → grace → SIGKILL timing pattern in deterministic virtual time.
-// This is the first synctest usage in the workspace package; it demonstrates
-// the convention (see patterns.md § Testing, rule 6: "Virtual-time bubble;
-// never time.Sleep polling; never a hand-rolled clock interface").
-//
-// RunStreaming itself cannot be tested with synctest because it spawns a
-// real OS subprocess whose pipe IO waits are not "durably blocked" in the
-// synctest sense — real OS syscalls can become ready at any moment, so the
-// fake clock refuses to advance while they're in flight. The pattern is
-// demonstrated here using a pure-Go channel stand-in for the subprocess,
-// asserting that the kill signal is sent after exactly the grace duration
-// and before any longer timeout.
 // TestGraceWindowPattern_Synctest uses testing/synctest to verify the
 // SIGTERM → grace → SIGKILL timing pattern in deterministic virtual time.
 // This is the first synctest usage in the workspace package; it demonstrates
@@ -437,15 +425,19 @@ func TestGraceWindowPattern_Synctest(t *testing.T) {
 }
 
 func TestRunStreaming_HelperGraceWindowTiming(t *testing.T) {
-	// The child ignores SIGTERM and sleeps well past the 2s grace window.
-	// Asserts: TimedOut is set, SIGKILL fires (run eventually returns),
-	// and the stdout line written before the hang is captured.
+	// The child writes a line then sleeps far past the 2s grace window. On
+	// ctx-cancel the parent sends SIGTERM, which terminates this child
+	// immediately (Go's default disposition — the child installs no handler),
+	// so RunStreaming returns without reaching the SIGKILL grace path.
+	// Asserts: TimedOut is set (driven by ctx cancellation, not by which kill
+	// signal landed), run eventually returns, and the stdout line written
+	// before the cancel is captured.
 	//
-	// Note: this test uses real wall-clock time (≈2.1 s) because RunStreaming
-	// spawns a real OS subprocess whose pipe IO is not durably blocked in the
-	// synctest sense — see TestGraceWindowPattern_Synctest for the virtual-time
-	// demonstration of the same pattern.
-	argv := helperCmd(t, "sleep_past_grace")
+	// Note: this test uses real wall-clock time because RunStreaming spawns a
+	// real OS subprocess whose pipe IO is not durably blocked in the synctest
+	// sense — see TestGraceWindowPattern_Synctest for the virtual-time
+	// demonstration of the full SIGTERM→grace→SIGKILL pattern.
+	argv := helperCmd(t)
 	var lines []string
 	var mu sync.Mutex
 	ctx, cancel := context.WithCancel(context.Background())

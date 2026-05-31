@@ -94,7 +94,7 @@ func TestBackoff_ConcurrentSurfaces_NoCrossContamination(t *testing.T) {
 	const advancesPerSurface = 3 // advance to step index 3 (15m with zeroJitter)
 
 	var wg sync.WaitGroup
-	errors := make([]string, surfaces)
+	errs := make([]string, surfaces)
 	for i := 0; i < surfaces; i++ {
 		wg.Add(1)
 		go func(idx int) {
@@ -106,18 +106,18 @@ func TestBackoff_ConcurrentSurfaces_NoCrossContamination(t *testing.T) {
 			got := s.Peek()
 			want := defaultSteps[advancesPerSurface]
 			if got != want {
-				errors[idx] = "surface " + string(rune('0'+idx)) + ": want " + want.String() + " got " + got.String()
+				errs[idx] = "surface " + string(rune('0'+idx)) + ": want " + want.String() + " got " + got.String()
 			}
 			// Also exercise Reset from a concurrent goroutine to touch mu
 			// from multiple directions simultaneously.
 			s.Reset()
 			if got := s.Peek(); got != defaultSteps[0] {
-				errors[idx] = "after reset: want " + defaultSteps[0].String() + " got " + got.String()
+				errs[idx] = "after reset: want " + defaultSteps[0].String() + " got " + got.String()
 			}
 		}(i)
 	}
 	wg.Wait()
-	for _, msg := range errors {
+	for _, msg := range errs {
 		if msg != "" {
 			t.Error(msg)
 		}
