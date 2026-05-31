@@ -40,7 +40,7 @@ async def _insert_agent(db_session, org_id: UUID) -> UUID:
     agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org_id,
-        agent_pod_id=uuid4(),
+        instance_id=f"test-task-{uuid4().hex[:8]}",
         iam_arn=f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}",
         version="0.0.1",
         state="reachable",

@@ -370,22 +370,31 @@ async def record_workspace_event(
 async def ensure_agent_row(
     *,
     org_id: UUID,
-    agent_pod_id: UUID,
+    instance_id: str,
     iam_arn: str,
     version: str | None,
     session: AsyncSession,
+    os: str | None = None,
+    cpu_count: int | None = None,
+    memory_bytes: int | None = None,
 ) -> UUID:
-    """Insert or update the `workspace_agents` row for `(org_id, agent_pod_id)`
+    """Insert or update the `workspace_agents` row for `(org_id, instance_id)`
     on a successful identity exchange. Returns the row's `id` — this is
     the `agent_id` the bearer is scoped to and that subsequent endpoints
-    use to address the pod. Caller commits."""
+    use to address the pod.
+
+    `instance_id` is the role-session-name derived from the STS assumed-role ARN.
+    Stable across pod restarts when the ECS task reuses the same session name.
+
+    Caller commits.
+    """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
     row = (
         await session.execute(
             select(WorkspaceAgentRow).where(
                 WorkspaceAgentRow.org_id == org_id,
-                WorkspaceAgentRow.agent_pod_id == agent_pod_id,
+                WorkspaceAgentRow.instance_id == instance_id,
             )
         )
     ).scalar_one_or_none()
@@ -393,9 +402,12 @@ async def ensure_agent_row(
     if row is None:
         row = WorkspaceAgentRow(
             org_id=org_id,
-            agent_pod_id=agent_pod_id,
+            instance_id=instance_id,
             iam_arn=iam_arn,
             version=version,
+            os=os,
+            cpu_count=cpu_count,
+            memory_bytes=memory_bytes,
             last_heartbeat_at=now,
             state="reachable",
         )
@@ -404,6 +416,13 @@ async def ensure_agent_row(
     else:
         row.iam_arn = iam_arn
         row.version = version
+        # Update static metadata on re-exchange (agent restart may report fresh values).
+        if os is not None:
+            row.os = os
+        if cpu_count is not None:
+            row.cpu_count = cpu_count
+        if memory_bytes is not None:
+            row.memory_bytes = memory_bytes
         row.last_heartbeat_at = now
         row.state = "reachable"
     return row.id
@@ -416,7 +435,7 @@ async def get_agent_info(
 ) -> dict | None:
     """Return a plain dict snapshot of the agent row, or None if absent.
 
-    Keys: `id`, `org_id`, `agent_pod_id`, `iam_arn`, `version`, `state`,
+    Keys: `id`, `org_id`, `instance_id`, `iam_arn`, `version`, `state`,
     `last_heartbeat_at`. Exists so cross-module tests can verify agent state
     without importing the Row class.
     """
@@ -428,7 +447,7 @@ async def get_agent_info(
     return {
         "id": row.id,
         "org_id": row.org_id,
-        "agent_pod_id": row.agent_pod_id,
+        "instance_id": row.instance_id,
         "iam_arn": row.iam_arn,
         "version": row.version,
         "state": row.state,
@@ -474,7 +493,7 @@ async def pick_agent_for_org(
         rows,
         key=lambda r: (queue_depth(r.id), -(r.last_heartbeat_at.timestamp() if r.last_heartbeat_at else 0)),
     )
-    return AgentRef(agent_id=best.id, agent_pod_id=best.agent_pod_id)
+    return AgentRef(agent_id=best.id, instance_id=best.instance_id)
 
 
 async def has_any_reachable_agent(

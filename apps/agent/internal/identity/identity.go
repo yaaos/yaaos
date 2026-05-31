@@ -1,78 +1,75 @@
 // Package identity defines the seam between the supervisor and the mechanism
 // that proves this agent pod's identity to the control plane.
 //
-// The Provider interface abstracts over the exchange protocol so the
-// supervisor does not depend on the concrete verification method. Today
-// the only implementation is placeholderProvider, which carries a
-// pre-signed STS payload. A SigV4-backed implementation can drop in
-// later with zero supervisor change.
+// The Provider interface abstracts over the signing protocol so the supervisor
+// does not depend on the concrete verification method. The supervisor owns the
+// HTTP exchange — Provider only signs the claim; it never contacts the backend.
 //
-// Credentials returned by Exchange are pinned by the supervisor on the
-// first successful call. Subsequent calls (bearer refresh) must return
-// the same AgentID and OrgID — a mismatch is an identity-integrity
-// violation and the supervisor treats it as fatal.
+// `NewProvider` is the factory; it selects the implementation based on the
+// `YAAOS_IDENTITY_PROVIDER` env var (default: "aws-sts").
+//
+// Identity-integrity invariant: the backend assigns AgentID and OrgID on the
+// first exchange. The supervisor pins them and verifies they are unchanged on
+// every bearer renewal — a mismatch is fatal.
 package identity
 
 import (
 	"context"
-	"time"
+	"encoding/json"
 )
 
-// Credentials is the result of a successful identity exchange.
-// AgentID and OrgID are assigned by the backend; they are pinned by the
-// supervisor on first exchange and must remain stable across renewals.
+// Credentials holds the result of a successful identity exchange as stamped
+// by the supervisor from the backend's response. The Provider never fills
+// these fields — it only produces the claim payload.
+//
+// AgentID and OrgID are pinned by the supervisor on first exchange and must
+// remain stable across renewals. Bearer and ExpiresAt rotate on each renewal.
+//
+// InstanceID is the backend-assigned pod identifier (role-session-name from
+// the STS assumed-role ARN). Stable across pod restarts that reuse the same
+// session name.
 type Credentials struct {
-	// Bearer is the short-lived token used to authenticate every subsequent
-	// API call. Returned by the backend on exchange.
-	Bearer string
-
-	// ExpiresAt is when Bearer expires. The supervisor refreshes ~1h before
-	// this deadline.
-	ExpiresAt time.Time
-
-	// AgentID is the per-pod row identifier assigned by the backend.
-	// Empty from placeholderProvider — filled in by the supervisor after
-	// the HTTP round-trip.
-	AgentID string
-
-	// OrgID is the organisation this agent pod belongs to.
-	// Empty from placeholderProvider — filled in by the supervisor after
-	// the HTTP round-trip.
-	OrgID string
+	Bearer     string
+	ExpiresAt  string // RFC3339 string as returned by the backend
+	AgentID    string
+	OrgID      string
+	InstanceID string
 }
 
-// Provider issues and renews credentials for this agent pod.
+// Provider signs the identity claim for this agent pod. The supervisor sends
+// the claim to the backend in `POST /api/v1/agent/identity`; the backend
+// replays it against AWS STS to verify.
+//
+// Provider does NOT contact the backend — it only produces a signed payload.
+// The supervisor owns the HTTP transport, so retry/backoff live outside this
+// interface.
 type Provider interface {
-	// Exchange contacts the control plane and returns fresh Credentials.
-	// Implementations are expected to be idempotent — the supervisor calls
-	// Exchange in a retry loop on startup and periodically for bearer
-	// renewal.
-	Exchange(ctx context.Context) (Credentials, error)
+	// Kind returns the claim type string sent in the wire request's `kind` field.
+	// Today only "aws-sts" is defined.
+	Kind() string
+
+	// SignClaim signs a GetCallerIdentity request with the pod's IAM credentials
+	// and returns the JSON-encoded envelope the backend's sts_verifier expects.
+	// The envelope shape:
+	//   {"url": "...", "headers": {...}, "body": "Action=GetCallerIdentity&Version=2011-06-15"}
+	//
+	// audience is embedded as an `X-Yaaos-Audience` header inside the signed
+	// envelope so the backend can validate the claim was produced for it.
+	//
+	// Returns (json.RawMessage, error). The raw JSON is passed as `payload` in
+	// the identity-exchange request body — the supervisor marshals the outer
+	// envelope.
+	SignClaim(ctx context.Context, audience string) (json.RawMessage, error)
 }
 
-// placeholderProvider carries a pre-built signed-STS payload and forwards it
-// as the Bearer field so the existing backend placeholder verifier accepts
-// the request. SigV4-signed STS requests are opaque byte strings; the
-// placeholder verifier accepts any non-empty value.
-type placeholderProvider struct {
-	signedRequest string
-}
-
-// NewPlaceholderProvider wraps the signed STS request payload. The
-// supervisor passes this to client.ExchangeIdentity which sends it over
-// the wire; the backend's placeholder verifier checks for non-empty.
-func NewPlaceholderProvider(signedRequest string) Provider {
-	return &placeholderProvider{signedRequest: signedRequest}
-}
-
-// Exchange returns the signed request as the Bearer field. AgentID and
-// OrgID are intentionally empty — the backend assigns them and the
-// supervisor stores them from the HTTP response, not from this struct.
-func (p *placeholderProvider) Exchange(_ context.Context) (Credentials, error) {
-	return Credentials{
-		Bearer: p.signedRequest,
-		// Placeholder bearer TTL: 24 hours, matching the real bearer TTL the
-		// backend issues. The supervisor will refresh before it expires.
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}, nil
+// NewProvider constructs the appropriate Provider for the current environment.
+// The YAAOS_IDENTITY_PROVIDER env var selects the implementation; it defaults
+// to "aws-sts". An unknown value causes a panic at startup.
+//
+// Environment variables read by each provider:
+//
+//	aws-sts: AWS_EC2_METADATA_SERVICE_ENDPOINT (IMDS URL, default auto-detected)
+//	         AWS_REGION (optional; the signed URL carries the region instead)
+func NewProvider() Provider {
+	return newAWSSTSProvider()
 }

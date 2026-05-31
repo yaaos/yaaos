@@ -171,6 +171,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("035_uuid_pk_uuidv7_defaults", "uuid_pk_uuidv7_defaults"),
     ("036_workspaces_agent_id", "workspaces_agent_id"),
     ("037_drop_provider_columns", "drop_provider_columns"),
+    ("038_agent_identity_exchange_schema", "agent_identity_exchange_schema"),
 )
 
 
@@ -597,6 +598,87 @@ async def _apply_workspaces_agent_id(conn) -> None:  # type: ignore[no-untyped-d
     route to this agent so a workspace lives and dies with its owning pod.
     """
     await conn.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_id UUID"))
+
+
+async def _apply_agent_identity_exchange_schema(conn) -> None:  # type: ignore[no-untyped-def]
+    """Reshape `workspace_agents` for real STS identity exchange.
+
+    - Drop `agent_pod_id` UUID column; replace with `instance_id` TEXT
+      (the role-session-name derived from the STS assumed-role ARN).
+    - Add unique constraint `uq_workspace_agents_org_instance` on `(org_id, instance_id)`.
+    - Add global unique index on `instance_id`.
+    - Add static OS metadata columns: `os`, `cpu_count`, `memory_bytes`.
+    - Add operational columns: `claimed_workspace_count`, `last_shutdown_at`.
+    - Rename `workspaces.agent_id` → `owning_agent_id`; add FK to workspace_agents.id +
+      partial index.
+    - Add `bearer_tokens.issued_iam_arn` TEXT + index.
+    Idempotent.
+    """
+    statements: list[str] = [
+        # workspace_agents: add instance_id TEXT if absent.
+        # On fresh databases (created with the updated model) `instance_id` already
+        # exists and `agent_pod_id` never did; the IF NOT EXISTS is a no-op.
+        # On existing databases `agent_pod_id` may exist as the old UUID column.
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS instance_id TEXT",
+        # Backfill from agent_pod_id only when that column still exists and has rows
+        # without an instance_id. Wrapped in a DO block so it's safe on fresh DBs
+        # that were never created with agent_pod_id.
+        "DO $$ BEGIN "
+        "  IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'workspace_agents' AND column_name = 'agent_pod_id') THEN "
+        "    UPDATE workspace_agents SET instance_id = agent_pod_id::text WHERE instance_id IS NULL; "
+        "  END IF; "
+        "END $$",
+        # Now we can add the NOT NULL constraint (safe — instance_id is either already
+        # non-null from model create_all, or we just backfilled from agent_pod_id).
+        "ALTER TABLE workspace_agents ALTER COLUMN instance_id SET NOT NULL",
+        # Drop old constraint before adding new one.
+        "ALTER TABLE workspace_agents DROP CONSTRAINT IF EXISTS uq_workspace_agents_org_pod",
+        "DROP INDEX IF EXISTS ix_workspace_agents_instance_id",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_workspace_agents_instance_id ON workspace_agents (instance_id)",
+        "ALTER TABLE workspace_agents DROP CONSTRAINT IF EXISTS uq_workspace_agents_org_instance",
+        "ALTER TABLE workspace_agents ADD CONSTRAINT uq_workspace_agents_org_instance "
+        "UNIQUE (org_id, instance_id)",
+        # Drop the old agent_pod_id column.
+        "ALTER TABLE workspace_agents DROP COLUMN IF EXISTS agent_pod_id",
+        # Static OS metadata.
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS os TEXT",
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS cpu_count BIGINT",
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS memory_bytes BIGINT",
+        # Operational columns.
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS claimed_workspace_count BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE workspace_agents ADD COLUMN IF NOT EXISTS last_shutdown_at TIMESTAMPTZ",
+        # workspaces: rename agent_id → owning_agent_id; add FK + index.
+        # Rename only if the old column exists AND the new column does not.
+        # On fresh DBs (model already has owning_agent_id) neither rename nor
+        # extra ADD COLUMN is needed. On DBs upgraded from migration 036
+        # the old agent_id column exists and must be renamed.
+        "DO $$ BEGIN "
+        "  IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'workspaces' AND column_name = 'agent_id') "
+        "     AND NOT EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'workspaces' AND column_name = 'owning_agent_id') THEN "
+        "    ALTER TABLE workspaces RENAME COLUMN agent_id TO owning_agent_id; "
+        "  END IF; "
+        "  IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'workspaces' AND column_name = 'agent_id') "
+        "     AND EXISTS (SELECT 1 FROM information_schema.columns "
+        "             WHERE table_name = 'workspaces' AND column_name = 'owning_agent_id') THEN "
+        "    ALTER TABLE workspaces DROP COLUMN agent_id; "
+        "  END IF; "
+        "END $$",
+        # Add FK (ON DELETE SET NULL so dropping an agent doesn't cascade-delete workspaces).
+        "ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS fk_workspaces_owning_agent",
+        "ALTER TABLE workspaces ADD CONSTRAINT fk_workspaces_owning_agent "
+        "FOREIGN KEY (owning_agent_id) REFERENCES workspace_agents(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_workspaces_owning_agent_id ON workspaces (owning_agent_id)",
+        # bearer_tokens: add issued_iam_arn.
+        "ALTER TABLE bearer_tokens ADD COLUMN IF NOT EXISTS issued_iam_arn TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_bearer_tokens_issued_iam_arn ON bearer_tokens (issued_iam_arn) "
+        "WHERE issued_iam_arn IS NOT NULL",
+    ]
+    for stmt in statements:
+        await conn.execute(text(stmt))
 
 
 async def _apply_drop_provider_columns(conn) -> None:  # type: ignore[no-untyped-def]
@@ -1217,6 +1299,8 @@ async def _apply_pending() -> None:
                 await _apply_workspaces_agent_id(conn)
             elif kind == "drop_provider_columns":
                 await _apply_drop_provider_columns(conn)
+            elif kind == "agent_identity_exchange_schema":
+                await _apply_agent_identity_exchange_schema(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

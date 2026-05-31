@@ -12,32 +12,44 @@ import (
 	"github.com/yaaos/agent/internal/protocol"
 )
 
-// stubProvider is a test-only identity.Provider that returns pre-canned
-// credentials. Swap Creds between calls to simulate a mismatching renewal.
+// stubProvider is a test-only identity.Provider that returns a pre-canned
+// signed claim payload. Implements the new Provider interface (Kind + SignClaim).
 type stubProvider struct {
-	Creds identity.Credentials
-	Err   error
+	SignErr error
+	// payload is returned as the SignClaim result. Defaults to a minimal JSON envelope.
+	payload string
 }
 
-func (s *stubProvider) Exchange(_ context.Context) (identity.Credentials, error) {
-	return s.Creds, s.Err
+func (s *stubProvider) Kind() string { return "aws-sts" }
+
+func (s *stubProvider) SignClaim(_ context.Context, _ string) (json.RawMessage, error) {
+	if s.SignErr != nil {
+		return nil, s.SignErr
+	}
+	p := s.payload
+	if p == "" {
+		p = `{"url":"https://sts.amazonaws.com/","headers":{"authorization":"AWS4-HMAC-SHA256 Credential=test"},"body":"Action=GetCallerIdentity&Version=2011-06-15"}`
+	}
+	return json.RawMessage(p), nil
 }
 
 // fakeExchangeServer returns an httptest.Server that handles
-// POST /api/v1/identity/exchange with the given AgentID and OrgID in the
-// response. The caller is responsible for closing the server.
+// POST /api/v1/agent/identity with the given AgentID, OrgID, and Bearer.
+// The caller is responsible for closing the server.
 func fakeExchangeServer(t *testing.T, agentID, orgID, bearer string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/identity/exchange" {
+		if r.URL.Path != "/api/v1/agent/identity" {
 			http.NotFound(w, r)
 			return
 		}
 		resp := map[string]any{
-			"bearer":     bearer,
-			"expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-			"agent_id":   agentID,
-			"org_id":     orgID,
+			"bearer":        bearer,
+			"expires_at":    time.Now().Add(time.Hour).Format(time.RFC3339),
+			"renewal_after": time.Now().Add(55 * time.Minute).Format(time.RFC3339),
+			"agent_id":      agentID,
+			"instance_id":   "task-test-001",
+			"org_id":        orgID,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -51,12 +63,7 @@ func TestBearerRefresh_MatchingCredentials_RotatesBearer(t *testing.T) {
 	srv := fakeExchangeServer(t, "agent-abc", "org-xyz", "bearer-v2")
 	defer srv.Close()
 
-	prov := &stubProvider{
-		Creds: identity.Credentials{
-			Bearer:    "signed-sts-payload",
-			ExpiresAt: time.Now().Add(24 * time.Hour),
-		},
-	}
+	prov := &stubProvider{}
 
 	cfg := Config{
 		BaseURL:    srv.URL,
@@ -65,7 +72,6 @@ func TestBearerRefresh_MatchingCredentials_RotatesBearer(t *testing.T) {
 	}
 	s := buildSupervisorForIdentityTest(cfg, prov, "agent-abc", "org-xyz")
 
-	// Run one refresh cycle. If it fatal-exits or errors, the test fails.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -85,12 +91,7 @@ func TestBearerRefresh_MismatchedAgentID_IsFatal(t *testing.T) {
 	srv := fakeExchangeServer(t, "agent-DIFFERENT", "org-xyz", "bearer-imposter")
 	defer srv.Close()
 
-	prov := &stubProvider{
-		Creds: identity.Credentials{
-			Bearer:    "signed-sts-payload",
-			ExpiresAt: time.Now().Add(24 * time.Hour),
-		},
-	}
+	prov := &stubProvider{}
 
 	cfg := Config{
 		BaseURL:    srv.URL,
@@ -114,12 +115,7 @@ func TestBearerRefresh_MismatchedOrgID_IsFatal(t *testing.T) {
 	srv := fakeExchangeServer(t, "agent-abc", "org-DIFFERENT", "bearer-wrong-org")
 	defer srv.Close()
 
-	prov := &stubProvider{
-		Creds: identity.Credentials{
-			Bearer:    "signed-sts-payload",
-			ExpiresAt: time.Now().Add(24 * time.Hour),
-		},
-	}
+	prov := &stubProvider{}
 
 	cfg := Config{
 		BaseURL:    srv.URL,

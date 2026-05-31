@@ -12,6 +12,8 @@
 
 ## Why / invariants
 
+- **Supervisor owns the identity exchange transport.** `identity.Provider.SignClaim` returns the signed claim; the supervisor builds the `IdentityExchangeRequest` (including `AgentMetadata`), POSTs it, and stamps `Credentials` from the response. Provider does not contact the backend.
+- **`refreshLead` is 5 minutes.** Bearers have a 1-hour TTL; the 5-minute lead gives the supervisor several retry attempts before the bearer expires under transient STS failures.
 - **Single pool mutex guards the registry.** All state reads/writes to workspace records go through `Pool`'s named mutators. No free-form field access.
 - **Lifecycle is derived from `config.Load() == nil`** — no separate enum. Nil means unconfigured; non-nil means configured. A restart clears the pointer and re-enters unconfigured (safe by default).
 - **Unconfigured gate in `routeWorkspaceCmd`** — all `WorkspaceCommand` dispatch paths return `completed_failure "agent unconfigured"` until the first `ConfigUpdateCommand` is applied. The claim loop runs regardless; claim requests carry `lifecycle` so the backend gates which commands to deliver.

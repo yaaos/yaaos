@@ -93,7 +93,7 @@ All auth tokens flow through `internal/secret.Secret`. `fmt.Sprintf`, `json.Mars
 
 All three OTel signals (traces, metrics, logs) share two standard dimensions on every record produced after identity exchange: `org_id` and `agent_id`. These are set once via `observability.SetStandardDimensions` immediately after the first successful identity exchange and never change for the process lifetime.
 
-- **Resource attributes** (pod-level): `service.name`, `service.version`, `service.instance.id` = `agent_pod_id`.
+- **Resource attributes** (pod-level): `service.name`, `service.version`, `service.instance.id` = `AgentPodID` (random hex; OTel resource label only — not the backend-assigned `instance_id`).
 - **Span / metric attributes** (post-exchange): `org_id`, `agent_id`. Per-command spans also carry `workspace_id`, `command_id`, `kind`.
 - **Base slog logger**: the supervisor calls `slog.SetDefault(slog.Default().With("org_id", ..., "agent_id", ...))` after first exchange so every subsequent `slog.*` call emits both dimensions automatically.
 - **OTLP disabled**: `observability.Init` is a no-op; instruments resolve to no-op SDK providers. Zero overhead.

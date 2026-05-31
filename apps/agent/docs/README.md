@@ -23,9 +23,10 @@ Environment variables consumed by `agent supervisor`:
 | Var | Default | Purpose |
 |---|---|---|
 | `YAAOS_BACKEND_URL` | `https://app.yaaos.cloud` | Control-plane base URL. |
-| `YAAOS_AGENT_POD_ID` | random 32-hex | Stable id presented during identity exchange. |
+| `YAAOS_AGENT_POD_ID` | random 32-hex | Local pod identifier used as an OTel resource attribute. Not sent on the wire. |
 | `YAAOS_AGENT_VERSION` | `0.0.0-dev` | Reported during identity exchange. |
-| `YAAOS_SIGNED_STS_REQUEST` | `placeholder-unsigned-sts` | Signed STS payload for identity exchange. Any non-empty value satisfies the current placeholder verifier. |
+| `AWS_EC2_METADATA_SERVICE_ENDPOINT` | auto (IMDS v2) | Override IMDS endpoint. Set to `http://mock-aws:4566` in dev/test compose to use mock-aws. |
+| `YAAOS_STS_HOST_OVERRIDE` | (none) | Allow an additional STS host (e.g. `mock-aws:4566`). Non-prod only; the backend refuses to boot if set with `YAAOS_ENV=prod`. |
 
 ## Wire protocol
 
@@ -174,4 +175,4 @@ Each failure logs `WARN` with `surface`, `class` (`auth`/`network`), and `next_s
 
 ## Local dev
 
-`docker compose up` brings up the backend + a dev-mode agent. Any non-empty `YAAOS_SIGNED_STS_REQUEST` satisfies the placeholder verifier. See [`docs/setup.md`](../../../docs/setup.md).
+`docker compose up` brings up the backend + a mock-aws sidecar + a dev-mode agent. The agent reads IMDS credentials from mock-aws and sigv4-signs a `GetCallerIdentity` request; the backend replays against the same mock-aws. Set `YAAOS_DEV_SEED_ARN` in `.env` to configure the registered IAM ARN. See [`docs/setup.md`](../../../docs/setup.md).

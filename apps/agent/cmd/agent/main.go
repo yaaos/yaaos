@@ -113,9 +113,11 @@ func runSupervisor() error {
 		Version:       envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
 		WorkspaceRoot: envOr("YAAOS_WORKSPACE_ROOT", ""),
 	}
-	// placeholderProvider carries the SigV4-signed STS request; a real
-	// SigV4 implementation drops in here with zero supervisor change.
-	prov := identity.NewPlaceholderProvider(envOr("YAAOS_SIGNED_STS_REQUEST", "placeholder-unsigned-sts"))
+	// NewProvider selects the signing implementation. In production and dev,
+	// the aws-sts provider reads IMDS credentials and sigv4-signs a
+	// GetCallerIdentity request. In tests, the supervisor can be constructed
+	// with a stub provider directly (see supervisor_test.go).
+	prov := identity.NewProvider()
 
 	// No global timeout — long-poll needs to wait. Per-call timeouts come
 	// from the request context. otelhttp.NewTransport adds a span per

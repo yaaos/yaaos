@@ -134,10 +134,11 @@ class WorkspaceAgentReportSinkImpl:
         workspace_id: UUID,
         session: AsyncSession,
     ) -> UUID | None:
-        """Return the owning `agent_id` for `workspace_id`, or None when the
-        row is missing or its `agent_id` is NULL. Pure read — no writes."""
+        """Return the owning agent id (`workspace_agents.id`) for `workspace_id`,
+        or None when the row is missing or its `owning_agent_id` is NULL. Pure
+        read — no writes."""
         row = (
-            await session.execute(select(WorkspaceRow.agent_id).where(WorkspaceRow.id == workspace_id))
+            await session.execute(select(WorkspaceRow.owning_agent_id).where(WorkspaceRow.id == workspace_id))
         ).one_or_none()
         if row is None:
             return None
@@ -148,12 +149,12 @@ class WorkspaceAgentReportSinkImpl:
         command_id: UUID,
         session: AsyncSession,
     ) -> UUID | None:
-        """Return the owning `agent_id` for the workspace holding `command_id`,
-        or None when no workspace holds it or its `agent_id` is NULL. Pure
+        """Return the owning agent id for the workspace holding `command_id`,
+        or None when no workspace holds it or its `owning_agent_id` is NULL. Pure
         read — no writes."""
         row = (
             await session.execute(
-                select(WorkspaceRow.agent_id).where(WorkspaceRow.current_command_id == command_id)
+                select(WorkspaceRow.owning_agent_id).where(WorkspaceRow.current_command_id == command_id)
             )
         ).one_or_none()
         if row is None:

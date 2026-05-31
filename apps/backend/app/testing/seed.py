@@ -48,18 +48,19 @@ async def seed_agent(
     iam_arn: str = "arn:aws:iam::123456789012:role/yaaos-agent",
     version: str = "0.0.1",
     heartbeat_age_seconds: int = 0,
+    instance_id: str | None = None,
 ) -> dict:
     """Insert a reachable workspace-agent row for testing.
 
-    Returns a dict with `id` (row PK), `agent_pod_id` (pod UUID), and
-    `org_id`. Backdates `last_heartbeat_at` when `heartbeat_age_seconds > 0`.
+    Returns a dict with `id` (row PK), `instance_id`, and `org_id`.
+    Backdates `last_heartbeat_at` when `heartbeat_age_seconds > 0`.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
-    pod_id = uuid4()
+    _instance_id = instance_id or f"test-instance-{uuid4().hex[:8]}"
     agent_id = await ensure_agent_row(
         org_id=org_id,
-        agent_pod_id=pod_id,
+        instance_id=_instance_id,
         iam_arn=iam_arn,
         version=version,
         session=session,
@@ -69,7 +70,7 @@ async def seed_agent(
         if row is not None:
             row.last_heartbeat_at = datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds)
             await session.flush()
-    return {"id": agent_id, "agent_pod_id": pod_id, "org_id": org_id}
+    return {"id": agent_id, "instance_id": _instance_id, "org_id": org_id}
 
 
 async def seed_workspace(
@@ -115,7 +116,7 @@ async def seed_workspace(
             plugin_state=plugin_state,
             current_command_id=current_command_id,
             current_holder_workflow_id=current_holder_workflow_id,
-            agent_id=agent_id,
+            owning_agent_id=agent_id,
         )
 
     if caller_session is not None:

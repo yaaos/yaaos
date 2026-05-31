@@ -313,7 +313,7 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
         plugin_state={},
         status=WorkspaceStatus.ACTIVE.value,
         expires_at=_utcnow() + timedelta(hours=1),
-        agent_id=stale["id"],
+        owning_agent_id=stale["id"],
     )
     live_ws = WorkspaceRow(
         id=uuid4(),
@@ -323,7 +323,7 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
         plugin_state={},
         status=WorkspaceStatus.ACTIVE.value,
         expires_at=_utcnow() + timedelta(hours=1),
-        agent_id=live["id"],
+        owning_agent_id=live["id"],
     )
     db_session.add_all([stale_ws, live_ws])
     await db_session.commit()

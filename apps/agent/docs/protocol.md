@@ -40,8 +40,30 @@
 - **CommandHeader** — the three routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`.
 - **Leaf** — a package with no internal imports; safe for any layer to import without cycles.
 
+## Identity wire format
+
+`POST /api/v1/agent/identity` body:
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | string | `"aws-sts"` (only value today) |
+| `agent_version` | string | semver, optional |
+| `agent_metadata` | `AgentMetadata` | `os`, `cpu_count`, `memory_bytes` — all optional |
+| `payload` | string | JSON-encoded sigv4-signed STS envelope: `{url, headers, body}` |
+
+Response:
+
+| Field | Notes |
+|---|---|
+| `bearer` | 1-hour bearer token |
+| `expires_at` | RFC3339 — agent must re-exchange before this |
+| `renewal_after` | RFC3339 — suggested renewal time (5 min before `expires_at`) |
+| `agent_id` | per-pod `workspace_agents.id` |
+| `instance_id` | role-session-name from the STS ARN; backend-derived, never supplied by agent |
+| `org_id` | org UUID |
+
 ## Entry points
 
-- `types.go` — all wire structs, `CommandKind` constants, `CommandHeader`, event types.
+- `types.go` — all wire structs, `CommandKind` constants, `CommandHeader`, event types, `AgentMetadata`, `IdentityExchangeRequest`, `IdentityExchangeResponse`.
 - `client.go` — `Client`, `ExchangeIdentity`, `Heartbeat`, `ClaimCommand`, `PostCommandEvent`.
 - `openapi_drift_test.go` — tag-conformance assertion; fails when a field name drifts from the spec.

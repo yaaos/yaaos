@@ -8,7 +8,7 @@ Five HTTPS endpoints + one WebSocket under `/api/v1/`. See `apps/backend/openapi
 
 | Endpoint | Direction | Purpose |
 |---|---|---|
-| `POST /api/v1/identity/exchange` | Agent → CP | STS-signed bootstrap → 24h bearer |
+| `POST /api/v1/agent/identity` | Agent → CP | STS-signed bootstrap → 1h bearer |
 | `POST /api/v1/agents/{id}/heartbeat` | Agent → CP | Liveness + workspace inventory; CP returns reconciliation hints |
 | `POST /api/v1/agents/{id}/commands/claim` | Agent → CP | Long-poll for next command (≤55s) |
 | `POST /api/v1/commands/{id}/events` | Agent → CP | Progress + terminal AgentEvent |
@@ -44,9 +44,19 @@ This prevents the agent from receiving a command for a workspace it no longer ho
 
 ## Bearer auth + renewal
 
-- The agent submits a pre-signed STS `GetCallerIdentity` on identity exchange; the backend issues a 24h bearer.
-- The agent re-exchanges before the bearer expires (`bearerRefreshLoop`). A renewal response that returns a different `agent_id` or `org_id` than the original exchange is an identity-integrity violation; the agent exits fatally.
-- The agent pins `agent_id` + `org_id` from the first exchange and carries them on every log/span/metric.
+- The agent sigv4-signs a `GetCallerIdentity` via `identity.awsSTSProvider`; the backend replays it against AWS STS (or mock-aws in dev/test) and issues a 1-hour bearer.
+- The response includes `renewal_after` (5 min before `expires_at`); the supervisor re-exchanges at that time (`bearerRefreshLoop`).
+- Renewal is non-revoking — the old bearer stays valid to its own `expires_at`. The agent atomically swaps the bearer after rotation.
+- A renewal that returns different `agent_id`, `org_id`, or `instance_id` than the first exchange is an identity-integrity violation; the agent exits fatally.
+- The agent pins `agent_id`, `org_id`, and `instance_id` from the first exchange and carries them on every log/span/metric.
+
+## Identity wire format
+
+`POST /api/v1/agent/identity` request body fields: `kind` (`"aws-sts"`), `agent_version`, `agent_metadata` (`os`, `cpu_count`, `memory_bytes`), `payload` (sigv4-signed STS envelope JSON).
+
+Response: `bearer`, `expires_at`, `renewal_after`, `agent_id`, `instance_id` (backend-derived from role-session-name), `org_id`.
+
+The `X-Yaaos-Audience` header inside the signed `payload` must match the backend's `Host`. See [`apps/backend/docs/core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md) for the full identity exchange contract.
 
 ## Ordering + idempotency
 

@@ -12,27 +12,32 @@ import (
 
 func TestExchangeIdentityHappyPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/identity/exchange" {
+		if r.URL.Path != "/api/v1/agent/identity" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(IdentityExchangeResponse{
-			Bearer:    "test-bearer",
-			ExpiresAt: time.Now().Add(time.Hour).UTC(),
-			AgentID:   "agent-1",
+			Bearer:       "test-bearer",
+			ExpiresAt:    time.Now().Add(time.Hour).UTC(),
+			RenewalAfter: time.Now().Add(55 * time.Minute).UTC(),
+			AgentID:      "agent-1",
+			InstanceID:   "task-abc-123",
 		})
 	}))
 	defer server.Close()
 
 	cli := NewClient(server.URL, nil)
 	resp, err := cli.ExchangeIdentity(context.Background(), IdentityExchangeRequest{
-		AgentPodID:    "pod-1",
-		SignedRequest: "stub",
+		Kind:    "aws-sts",
+		Payload: `{"url":"https://sts.amazonaws.com/","headers":{},"body":""}`,
 	})
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
 	if resp.Bearer != "test-bearer" || resp.AgentID != "agent-1" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.InstanceID != "task-abc-123" {
+		t.Fatalf("instance_id: want %q, got %q", "task-abc-123", resp.InstanceID)
 	}
 }
 

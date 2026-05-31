@@ -581,24 +581,25 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
     """Mark workspaces EXPIRED + revoke their owning pod's bearers when that
     pod has gone stale beyond the heartbeat threshold (failsafe 6).
 
-    Per-pod: a workspace whose owning `agent_id` is individually stale (no
+    Per-pod: a workspace whose owning `owning_agent_id` is individually stale (no
     heartbeat within the threshold) is expired even when sibling pods in the
     same org are healthy. Only the dead pod's bearers are revoked, not the
     whole org's — healthy pods keep their bearers and their workspaces.
 
-    Workspaces with a NULL `agent_id` (in-memory/legacy) are skipped — they
+    Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
     """
     from app.core.agent_gateway import revoke_all_for_agent, stale_agent_ids  # noqa: PLC0415
 
     cutoff = now - timedelta(seconds=AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS)
-    # Active workspaces with a known owning pod (`agent_id` non-null means the
-    # workspace was dispatched through a remote agent). No `provider` column
-    # needed — `agent_id` is the authoritative ownership marker.
+    # Active workspaces with a known owning pod (`owning_agent_id` non-null means
+    # the workspace was dispatched through a remote agent).
     candidate_rows = (
         await s.execute(
-            select(WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.status, WorkspaceRow.agent_id).where(
-                WorkspaceRow.agent_id.is_not(None),
+            select(
+                WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.status, WorkspaceRow.owning_agent_id
+            ).where(
+                WorkspaceRow.owning_agent_id.is_not(None),
                 WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
             )
         )
@@ -612,8 +613,8 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
         return
 
     expired_count = 0
-    for ws_id, org_id, status, agent_id in candidate_rows:
-        if agent_id not in stale_ids:
+    for ws_id, org_id, status, owning_agent_id in candidate_rows:
+        if owning_agent_id not in stale_ids:
             continue
         await s.execute(
             update(WorkspaceRow).where(WorkspaceRow.id == ws_id).values(status=WorkspaceStatus.EXPIRED.value)
@@ -629,8 +630,8 @@ async def _failsafe_agent_loss(s: Any, now: datetime) -> None:
         expired_count += 1
 
     # Revoke each lost pod's bearers — that pod re-exchanges when it returns.
-    for agent_id in stale_ids:
-        await revoke_all_for_agent(agent_id, "agent_loss", session=s)
+    for owning_agent_id in stale_ids:
+        await revoke_all_for_agent(owning_agent_id, "agent_loss", session=s)
 
     log.warning(
         "workspace.failsafe_agent_loss",
@@ -792,7 +793,7 @@ async def get_workspace_claim_state(
                 WorkspaceRow.id,
                 WorkspaceRow.current_holder_workflow_id,
                 WorkspaceRow.status,
-                WorkspaceRow.agent_id,
+                WorkspaceRow.owning_agent_id,
             ).where(WorkspaceRow.current_command_id == command_id)
         )
     ).one_or_none()
@@ -802,7 +803,7 @@ async def get_workspace_claim_state(
         workspace_id=row[0],
         current_holder_workflow_id=row[1],
         status=row[2],
-        agent_id=row[3],
+        owning_agent_id=row[3],
     )
 
 
@@ -822,7 +823,7 @@ async def get_workspace_command_state(
                 WorkspaceRow.id,
                 WorkspaceRow.current_command_id,
                 WorkspaceRow.status,
-                WorkspaceRow.agent_id,
+                WorkspaceRow.owning_agent_id,
             ).where(WorkspaceRow.id == workspace_id)
         )
     ).one_or_none()
@@ -832,7 +833,7 @@ async def get_workspace_command_state(
         workspace_id=row[0],
         current_command_id=row[1],
         status=row[2],
-        agent_id=row[3],
+        owning_agent_id=row[3],
     )
 
 

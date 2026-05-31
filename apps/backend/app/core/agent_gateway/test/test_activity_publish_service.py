@@ -49,7 +49,7 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org.org_id,
-        agent_pod_id=uuid4(),
+        instance_id=f"test-task-{uuid4().hex[:8]}",
         iam_arn=org.registered_iam_arn,
         version="0.0.1",
         state="reachable",

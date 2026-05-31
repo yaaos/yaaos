@@ -1,11 +1,13 @@
 """SQLAlchemy models for the agent gateway.
 
-`workspace_agents` — per-pod identity row. One row per `(org_id, agent_pod_id)`;
+`workspace_agents` — per-pod identity row. One row per `(org_id, instance_id)`;
 multiple pods sharing an org's IAM role are normal (ECS service scaled to N tasks).
-The same logical agent role is identified across pods by `iam_arn`; per-pod
-liveness is tracked separately.
+`instance_id` is the role-session-name from the STS assumed-role ARN — derived
+by the backend on identity exchange, never supplied by the agent. The same
+`instance_id` is stable across pod restarts as long as the ECS task uses the same
+session name.
 
-`bearer_tokens` — ledger of issued bearers. One row per `/identity/exchange`
+`bearer_tokens` — ledger of issued bearers. One row per `/api/v1/agent/identity`
 success. `token_hash` is sha256 of the plaintext; plaintext is returned to the
 caller exactly once and is never persisted or logged. Revocation flips
 `revoked_at` to non-null. Authentication on every other gateway call hashes
@@ -17,7 +19,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, UniqueConstraint, func, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,17 +48,28 @@ class WorkspaceAgentRow(Base):
         PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
     )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    agent_pod_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    # instance_id is the role-session-name segment of the STS assumed-role ARN.
+    # Derived by the backend on exchange; never provided by the agent.
+    # Stable across pod restarts when the ECS task reuses the same session name.
+    instance_id: Mapped[str] = mapped_column(String, nullable=False)
     iam_arn: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Static OS metadata reported once at identity exchange.
+    os: Mapped[str | None] = mapped_column(String, nullable=True)
+    cpu_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_shutdown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # claimed_workspace_count: populated by the heartbeat path (not identity exchange).
+    claimed_workspace_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String, nullable=False, default="reachable")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
-        UniqueConstraint("org_id", "agent_pod_id", name="uq_workspace_agents_org_pod"),
+        UniqueConstraint("org_id", "instance_id", name="uq_workspace_agents_org_instance"),
+        Index("ix_workspace_agents_instance_id", "instance_id", unique=True),
         Index("ix_workspace_agents_org_heartbeat", "org_id", "last_heartbeat_at"),
     )
 
@@ -57,8 +80,7 @@ class BearerTokenRow(Base):
     on every gateway call hashes the incoming bearer and looks it up here.
 
     `revoked_reason` is one of: `arn_change`, `mode_switch`, `disconnect`,
-    `manual_rotate`, `agent_loss`. See plan/notes/finish_m05.md bearer-revoke
-    policy table for when each is used.
+    `manual_rotate`, `agent_loss`.
     """
 
     __tablename__ = "bearer_tokens"
@@ -81,5 +103,11 @@ class BearerTokenRow(Base):
     revoked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source_ip: Mapped[str | None] = mapped_column(INET, nullable=True)
+    # IAM ARN of the agent pod that was verified at issuance. Canonical form
+    # (iam::ACCT:role/ROLE, lowercased). Recorded for audit.
+    issued_iam_arn: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    __table_args__ = (Index("ix_bearer_tokens_org_issued", "org_id", "issued_at"),)
+    __table_args__ = (
+        Index("ix_bearer_tokens_org_issued", "org_id", "issued_at"),
+        Index("ix_bearer_tokens_issued_iam_arn", "issued_iam_arn"),
+    )

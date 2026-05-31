@@ -19,7 +19,7 @@ from app.core.redis.pubsub import (
     subscriber_count,
 )
 from app.core.redis.pubsub import shutdown as _bus_shutdown
-from app.core.redis.service import ping
+from app.core.redis.service import delete_keys_matching, ping
 from app.core.redis.service import shutdown as _client_shutdown
 from app.core.redis.sliding_window import sliding_window_hit
 from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook
@@ -35,6 +35,7 @@ async def shutdown() -> None:
 __all__ = [
     "RedisPubsub",
     "bind_pubsub",
+    "delete_keys_matching",
     "ping",
     "publish",
     "shutdown",

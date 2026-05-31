@@ -12,6 +12,7 @@ from app.core.workspace import (
     try_claim,
 )
 from app.core.workspace.models import WorkspaceRow
+from app.testing.seed import seed_agent
 
 
 async def _seed_active_workspace(db_session) -> WorkspaceRow:
@@ -51,31 +52,33 @@ async def test_try_claim_succeeds_on_unclaimed_active_workspace(db_session) -> N
 async def test_try_claim_persists_owning_agent_id(db_session) -> None:
     """When the caller passes `agent_id` (create-dispatch path), it's written
     onto the row alongside `current_command_id` so the workspace is hard-tied
-    to its owning pod."""
+    to its owning pod. owning_agent_id has a FK to workspace_agents.id."""
+    seeded = await seed_agent(org_id=uuid4(), session=db_session)
+    await db_session.flush()
+
     ws = await _seed_active_workspace(db_session)
     cmd_id = uuid4()
     wfx_id = uuid4()
-    agent_id = uuid4()
     ok = await try_claim(
         ws.id,
         command_id=cmd_id,
         workflow_execution_id=wfx_id,
-        agent_id=agent_id,
+        agent_id=seeded["id"],
         session=db_session,
     )
     assert ok is True
     await db_session.refresh(ws)
-    assert ws.agent_id == agent_id
+    assert ws.owning_agent_id == seeded["id"]
 
 
 @pytest.mark.asyncio
 async def test_try_claim_without_agent_id_leaves_owner_null(db_session) -> None:
-    """Callers that omit `agent_id` leave the row's agent_id NULL."""
+    """Callers that omit `agent_id` leave the row's owning_agent_id NULL."""
     ws = await _seed_active_workspace(db_session)
     ok = await try_claim(ws.id, command_id=uuid4(), workflow_execution_id=uuid4(), session=db_session)
     assert ok is True
     await db_session.refresh(ws)
-    assert ws.agent_id is None
+    assert ws.owning_agent_id is None
 
 
 @pytest.mark.asyncio

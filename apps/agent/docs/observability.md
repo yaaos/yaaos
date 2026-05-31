@@ -16,12 +16,12 @@ Every signal carries two kinds of attributes:
 - **Resource attributes** (pod-level, static for the process lifetime):
   - `service.name` = `yaaos-workspace-agent`
   - `service.version` = binary version
-  - `service.instance.id` = `agent_pod_id` — the per-pod identifier persisted locally and reported on heartbeat.
+  - `service.instance.id` = `AgentPodID` — a random hex id generated at startup, used as the OTel resource instance identifier. Not sent on the identity-exchange wire.
 - **Span / metric attributes** (set after identity exchange):
   - `org_id` — the org this pod belongs to; pinned on first identity exchange.
   - `agent_id` — the `workspace_agents` row PK; pinned on first identity exchange.
 
-`agent_pod_id` is resource-only because it's known before identity exchange and belongs to the OTel resource model. `org_id` and `agent_id` are span/metric attributes because they're assigned by the backend; they appear after `SetStandardDimensions` is called from the supervisor.
+`AgentPodID` is resource-only because it's known before identity exchange and belongs to the OTel resource model. `org_id` and `agent_id` are span/metric attributes because they're assigned by the backend; they appear after `SetStandardDimensions` is called from the supervisor.
 
 ## Resource vs attribute split — why
 

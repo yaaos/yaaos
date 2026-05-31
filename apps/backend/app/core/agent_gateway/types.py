@@ -192,18 +192,38 @@ class WorkspaceEvent(BaseModel):
 # ── Identity / heartbeat / claim ───────────────────────────────────────
 
 
-class IdentityExchangeRequest(BaseModel):
+class AgentMetadata(BaseModel):
+    """Static OS metadata reported once at identity exchange. All fields optional —
+    agents that cannot determine a value omit it."""
+
     model_config = ConfigDict(frozen=True)
-    agent_pod_id: UUID
-    version: str | None = None
-    signed_request: str
+    os: str | None = None
+    cpu_count: int | None = None
+    memory_bytes: int | None = None
+
+
+class IdentityExchangeRequest(BaseModel):
+    """Body of `POST /api/v1/agent/identity`.
+
+    `kind` identifies the signing mechanism (today: `aws-sts`).
+    `payload` is the JSON-encoded sigv4-signed STS GetCallerIdentity envelope.
+    `agent_metadata` carries static OS attributes (os, cpu_count, memory_bytes).
+    """
+
+    model_config = ConfigDict(frozen=True)
+    kind: str
+    agent_version: str | None = None
+    agent_metadata: AgentMetadata = AgentMetadata()
+    payload: str
 
 
 class IdentityExchangeResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
     bearer: str
     expires_at: datetime
+    renewal_after: datetime
     agent_id: UUID
+    instance_id: str
     org_id: UUID
 
 
@@ -239,14 +259,15 @@ class ClaimRequest(BaseModel):
 class AgentRef(BaseModel):
     """Minimal agent-pod reference returned by `pick_agent_for_org`.
 
-    Callers only need `agent_pod_id` to enqueue commands; `agent_id` is
-    the row PK used when the caller needs to address the row directly (e.g.
-    queue-depth checks).
+    `agent_id` is the row PK used when the caller needs to address the row
+    directly (e.g. queue-depth checks, claim routing). `instance_id` is the
+    role-session-name derived from the STS ARN — the backend-assigned stable
+    pod identifier.
     """
 
     model_config = ConfigDict(frozen=True)
     agent_id: UUID
-    agent_pod_id: UUID
+    instance_id: str
 
 
 # ── Errors ─────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/protocol"
 )
 
@@ -20,8 +20,10 @@ import (
 // and never call Run.
 type noopProvider struct{}
 
-func (noopProvider) Exchange(_ context.Context) (identity.Credentials, error) {
-	return identity.Credentials{}, nil
+func (noopProvider) Kind() string { return "aws-sts" }
+
+func (noopProvider) SignClaim(_ context.Context, _ string) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
 }
 
 // fakeActivityServer accepts one WS upgrade, captures the bearer header,

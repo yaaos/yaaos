@@ -43,6 +43,7 @@ The verifier:
 from __future__ import annotations
 
 import json
+import os
 import re
 import ssl
 import time
@@ -60,6 +61,36 @@ log = structlog.get_logger("core.agent_gateway.sts_verifier")
 # region check happens later (against `orgs.aws_region`); this just blocks
 # entirely-unknown hosts so a parse error catches them before replay.
 _STS_HOST_RE = re.compile(r"^sts(?:\.(?P<region>[a-z0-9-]+))?\.amazonaws\.com$")
+
+# Non-prod only: allow an additional STS host via env var. Used in dev/test
+# to point at the local mock-aws container. The env var is read exactly once
+# at module import; the result is compiled into a secondary regex that the
+# parser tries only when `YAAOS_ENV` is non-prod.
+#
+# Startup assertion: if `YAAOS_ENV=prod` but this override is also set, the
+# process must refuse to boot — a prod deployment should never talk to a mock.
+_STS_HOST_OVERRIDE_ENV = "YAAOS_STS_HOST_OVERRIDE"
+_YAAOS_ENV = os.environ.get("YAAOS_ENV", "prod")
+
+_sts_override_host: str | None = os.environ.get(_STS_HOST_OVERRIDE_ENV)
+
+if _sts_override_host and _YAAOS_ENV == "prod":
+    raise RuntimeError(
+        f"{_STS_HOST_OVERRIDE_ENV} is set but YAAOS_ENV=prod. "
+        "A production deployment must never use a mock STS host. "
+        "Unset the override or change YAAOS_ENV."
+    )
+
+_STS_OVERRIDE_RE: re.Pattern[str] | None = None
+if _sts_override_host and _YAAOS_ENV != "prod":
+    # Escape the host to prevent regex injection, then allow an optional port.
+    _escaped = re.escape(_sts_override_host)
+    _STS_OVERRIDE_RE = re.compile(rf"^{_escaped}(?::\d+)?$")
+    log.info(
+        "sts_verifier.mock_host_enabled",
+        host=_sts_override_host,
+        yaaos_env=_YAAOS_ENV,
+    )
 
 # The only body the replay endpoint accepts. Agents that signed anything
 # else would have been signing some other API call.
@@ -151,6 +182,29 @@ def canonicalize_arn(arn: str) -> str:
     return arn.lower()
 
 
+_ASSUMED_ROLE_SESSION_RE = re.compile(r"^arn:aws:sts::\d{12}:assumed-role/[^/]+/(?P<session>[^/]+)$")
+
+
+def extract_instance_id(raw_arn: str) -> str:
+    """Extract the role-session-name from an assumed-role ARN.
+
+    STS returns `arn:aws:sts::ACCOUNT:assumed-role/ROLE/SESSION` for workloads
+    running under an EC2 instance profile, EKS IRSA, or ECS task role. The
+    SESSION segment identifies the specific pod or task — it is the `instance_id`
+    the backend uses to key `workspace_agents` rows.
+
+    Returns the session name for assumed-role ARNs. Returns the full lowercased
+    ARN for non-assumed-role ARNs (IAM user/role) — callers expecting a
+    meaningful pod identifier should only call this for assumed-role ARNs.
+    """
+    m = _ASSUMED_ROLE_SESSION_RE.match(raw_arn)
+    if m:
+        return m.group("session")
+    # Non-assumed-role: use the full ARN as the instance_id. This handles
+    # the mock-aws test path where the fake ARN may be a plain role ARN.
+    return raw_arn.lower()
+
+
 # ── Replay-protection LRU ──────────────────────────────────────────────
 
 
@@ -232,16 +286,30 @@ def parse_signed_request(raw: str) -> SignedSTSRequest:
         raise InvalidSignedRequestError("missing body", FailureCategory.PARSE_ERROR)
 
     try:
-        parsed_host = httpx.URL(url).host
+        parsed = httpx.URL(url)
+        # Include port in the host string when matching against the override
+        # (e.g. "localhost:4566") but not for the production AWS regex (which
+        # only matches standard-port STS hostnames).
+        parsed_host = parsed.host
+        parsed_host_with_port = f"{parsed.host}:{parsed.port}" if parsed.port else parsed.host
     except Exception as exc:
         raise InvalidSignedRequestError(f"unparseable url: {exc}", FailureCategory.PARSE_ERROR) from exc
-    match = _STS_HOST_RE.match(parsed_host)
-    if not match:
-        raise InvalidSignedRequestError(
-            f"url host {parsed_host!r} is not an STS endpoint",
-            FailureCategory.ENDPOINT_DISALLOWED,
-        )
-    region = match.group("region") or _GLOBAL_STS_REGION
+
+    # Check override first (non-prod only; None in prod because startup assertion
+    # refuses to boot with override + YAAOS_ENV=prod).
+    if _STS_OVERRIDE_RE is not None and (
+        _STS_OVERRIDE_RE.match(parsed_host) or _STS_OVERRIDE_RE.match(parsed_host_with_port)
+    ):
+        # Override host: region defaults to us-east-1 (mock-aws is not regional).
+        region = _GLOBAL_STS_REGION
+    else:
+        match = _STS_HOST_RE.match(parsed_host)
+        if not match:
+            raise InvalidSignedRequestError(
+                f"url host {parsed_host!r} is not an STS endpoint",
+                FailureCategory.ENDPOINT_DISALLOWED,
+            )
+        region = match.group("region") or _GLOBAL_STS_REGION
 
     if body != _REQUIRED_BODY:
         raise InvalidSignedRequestError(
@@ -378,6 +446,7 @@ __all__ = [
     "SignedSTSRequest",
     "VerifiedIdentity",
     "canonicalize_arn",
+    "extract_instance_id",
     "parse_signed_request",
     "replay_caller_identity",
     "verify_identity",

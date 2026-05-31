@@ -36,10 +36,10 @@ async def try_claim(
     second concurrent caller racing on the same row sees rowcount=0 and
     backs off.
 
-    `agent_id` (the owning `WorkspaceAgentRow.id`) is written onto the row in
-    the same UPDATE when supplied — the create-dispatch path passes it so the
-    workspace is hard-tied to the pod that ran `CreateWorkspace`. The in-memory
-    path omits it, leaving `WorkspaceRow.agent_id` NULL.
+    `agent_id` (the owning `WorkspaceAgentRow.id`) is written as `owning_agent_id`
+    onto the row in the same UPDATE when supplied — the create-dispatch path
+    passes it so the workspace is hard-tied to the pod that ran `CreateWorkspace`.
+    The legacy path omits it, leaving `WorkspaceRow.owning_agent_id` NULL.
 
     Caller commits; the outbox row enqueueing the AgentCommand should go
     in the same transaction so claim + dispatch land atomically.
@@ -49,7 +49,7 @@ async def try_claim(
         "current_holder_workflow_id": workflow_execution_id,
     }
     if agent_id is not None:
-        values["agent_id"] = agent_id
+        values["owning_agent_id"] = agent_id
     result = await session.execute(
         update(WorkspaceRow)
         .where(

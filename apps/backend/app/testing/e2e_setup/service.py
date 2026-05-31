@@ -226,6 +226,16 @@ async def seed_bootstrap_owner(
             handle=email.split("@", 1)[0][:64].lower(),
             actor=Actor.system(),
         )
+        # Non-prod: seed IAM ARN + region from env so test-stack agents can
+        # exchange identity against mock-aws without manual UI configuration.
+        import os as _os  # noqa: PLC0415
+
+        from app.core.tenancy import update_org_fields  # noqa: PLC0415
+
+        seed_arn = _os.environ.get("YAAOS_DEV_SEED_ARN")
+        seed_region = _os.environ.get("YAAOS_DEV_SEED_REGION")
+        if seed_arn and seed_region:
+            await update_org_fields(s, org.id, registered_iam_arn=seed_arn, aws_region=seed_region)
         await s.commit()
         return {"user_id": str(user.id), "org_id": str(org.id), "org_slug": org_slug}
 

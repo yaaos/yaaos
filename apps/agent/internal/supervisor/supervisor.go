@@ -414,15 +414,54 @@ func (s *Supervisor) wsReconnectLoop(ctx context.Context, bearer string) {
 }
 
 func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityExchangeResponse, error) {
-	creds, err := s.provider.Exchange(ctx)
+	// The provider signs the claim; the supervisor owns the HTTP exchange.
+	// Audience is the backend's Host so the verifier can reject cross-instance
+	// replays; we pass the base URL's host portion. An empty audience is accepted
+	// by non-prod backends (e.g. mock-aws integration tests) — the backend only
+	// rejects a non-empty mismatching audience.
+	audience := hostFromURL(s.cfg.BaseURL)
+	payload, err := s.provider.SignClaim(ctx, audience)
 	if err != nil {
-		return nil, fmt.Errorf("identity provider: %w", err)
+		return nil, fmt.Errorf("identity: sign claim: %w", err)
 	}
+
+	meta := gatherAgentMetadata()
 	return s.client.ExchangeIdentity(ctx, protocol.IdentityExchangeRequest{
-		AgentPodID:    s.cfg.AgentPodID,
-		Version:       s.cfg.Version,
-		SignedRequest: creds.Bearer,
+		Kind:          s.provider.Kind(),
+		AgentVersion:  s.cfg.Version,
+		AgentMetadata: meta,
+		Payload:       string(payload),
 	})
+}
+
+// hostFromURL extracts the host (and optional port) from a URL string.
+// Used to derive the audience for the signed STS claim.
+func hostFromURL(rawURL string) string {
+	// Simple extraction: strip scheme and path.
+	s := rawURL
+	if i := len("https://"); len(s) > i && s[:i] == "https://" {
+		s = s[i:]
+	} else if i := len("http://"); len(s) > i && s[:i] == "http://" {
+		s = s[i:]
+	}
+	// Strip path.
+	if j := len(s); j > 0 {
+		for k, c := range s {
+			if c == '/' {
+				return s[:k]
+			}
+		}
+	}
+	return s
+}
+
+// gatherAgentMetadata collects static OS metadata for the identity exchange.
+// Fields that cannot be determined are left at their zero values (omitted from
+// the wire payload by the json:",omitempty" tags in IdentityExchangeRequest).
+func gatherAgentMetadata() protocol.AgentMetadata {
+	return protocol.AgentMetadata{
+		OS: goOS(),
+	}
 }
 
 // refreshResult carries the outcome of one identity-renewal attempt.
@@ -433,8 +472,8 @@ type refreshResult struct {
 }
 
 // runOneRefreshCycle calls exchangeIdentity and validates that the returned
-// AgentID+OrgID match the values pinned at startup. A mismatch is an
-// identity-integrity violation — caller must treat fatal=true as a
+// AgentID, OrgID, and InstanceID match the values pinned at startup. A mismatch
+// is an identity-integrity violation — caller must treat fatal=true as a
 // process-exit signal rather than a retryable error.
 func (s *Supervisor) runOneRefreshCycle(ctx context.Context, currentExpiry time.Time) refreshResult {
 	const retryInterval = 60 * time.Second
@@ -462,13 +501,14 @@ func (s *Supervisor) runOneRefreshCycle(ctx context.Context, currentExpiry time.
 	}
 }
 
-// bearerRefreshLoop re-exchanges identity ~1 hour before the bearer
-// expires so the supervisor keeps running across the 24-hour bearer TTL.
-// On exchange failure it logs and retries every 60s — the existing
-// bearer remains valid until its own expiry. An identity-integrity
-// violation (AgentID/OrgID mismatch) is fatal — the process exits.
+// bearerRefreshLoop re-exchanges identity ~5 minutes before the bearer
+// expires. Bearers have a 1-hour TTL; the 5-minute lead gives the agent
+// several retry attempts before the bearer expires. On exchange failure it
+// logs and retries every 60s — the existing bearer remains valid until its
+// own expiry. An identity-integrity violation (AgentID/OrgID mismatch) is
+// fatal — the process exits.
 func (s *Supervisor) bearerRefreshLoop(ctx context.Context, expiresAt time.Time) {
-	const refreshLead = time.Hour
+	const refreshLead = 5 * time.Minute
 	const retryInterval = 60 * time.Second
 	for {
 		wait := time.Until(expiresAt.Add(-refreshLead))

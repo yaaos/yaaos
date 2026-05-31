@@ -87,6 +87,12 @@ services:
       SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
       # Redis backs taskiq workflow tasks + sse_pubsub fanout.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # Non-prod: allow the STS verifier to accept the mock-aws host.
+      YAAOS_STS_HOST_OVERRIDE: ${YAAOS_STS_HOST_OVERRIDE:-mock-aws:4566}
+      # Org seed values — bootstrap reads these to set registered_iam_arn + aws_region
+      # on the first org in non-prod without the settings UI.
+      YAAOS_DEV_SEED_ARN: ${YAAOS_DEV_SEED_ARN:-arn:aws:iam::000000000000:role/yaaos-dev}
+      YAAOS_DEV_SEED_REGION: ${YAAOS_DEV_SEED_REGION:-us-east-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,9 +159,26 @@ services:
       timeout: 3s
       retries: 30
 
-  # Local WorkspaceAgent talking to the backend over the docker
-  # network. Uses the placeholder identity-exchange verifier (any
-  # non-empty YAAOS_SIGNED_STS_REQUEST satisfies it).
+  # Local mock of AWS IMDS + STS for dev/test identity exchange.
+  # The agent reads IMDS creds from this service and STS-replays to it;
+  # the backend replays the same signed request here to derive the ARN.
+  mock-aws:
+    build:
+      context: ./mock-aws
+      dockerfile: Dockerfile
+    environment:
+      YAAOS_DEV_SEED_ARN: ${YAAOS_DEV_SEED_ARN:-arn:aws:iam::000000000000:role/yaaos-dev}
+      YAAOS_DEV_SEED_INSTANCE_ID: ${YAAOS_DEV_SEED_INSTANCE_ID:-dev-task-00000000}
+      PORT: "4566"
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/latest/api/token -T 2 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Local WorkspaceAgent — uses real STS identity exchange against mock-aws.
   agent:
     build:
       context: ../apps/agent
@@ -163,10 +186,15 @@ services:
     environment:
       YAAOS_BACKEND_URL: http://web:8080
       YAAOS_AGENT_VERSION: dev
-      YAAOS_SIGNED_STS_REQUEST: placeholder-dev
+      # Direct the AWS SDK v2 IMDS client at mock-aws.
+      AWS_EC2_METADATA_SERVICE_ENDPOINT: http://mock-aws:4566
+      # STS override: the backend's sts_verifier allows this host in non-prod.
+      YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
     depends_on:
       web:
         condition: service_started
+      mock-aws:
+        condition: service_healthy
 
   # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
   # on the `web` service to `http://otel-collector:4317` to wire it up.

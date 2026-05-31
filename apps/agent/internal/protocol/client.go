@@ -44,10 +44,10 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 func (c *Client) SetBearer(b string) { c.bearer = b }
 
 // ExchangeIdentity POSTs the signed-STS payload and returns the bearer
-// + agent_id. On success the bearer is NOT stored — caller decides.
+// + agent_id + instance_id. On success the bearer is NOT stored — caller decides.
 func (c *Client) ExchangeIdentity(ctx context.Context, req IdentityExchangeRequest) (*IdentityExchangeResponse, error) {
 	var resp IdentityExchangeResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/identity/exchange", req, &resp, false); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/agent/identity", req, &resp, false); err != nil {
 		return nil, err
 	}
 	return &resp, nil

@@ -53,6 +53,8 @@
 | **Outbox** | DB-atomic outbound queue (`outbox_entries`). Written in the caller's transaction; drained post-commit. Backs `core/tasks.enqueue`. |
 | **`core/tasks`** | Thin taskiq + Redis wrapper. Three task names: `workflow.start_step`, `workflow.handle_agent_event`, `workflow.route_workflow`. |
 | **Activity event** | High-frequency CodingAgent telemetry. Flows WebSocket → `core/sse` → SSE → UI. Never persisted; demand-pull. |
+| **InstanceID** | The role-session-name extracted from the STS assumed-role ARN (`arn:aws:sts::ACCT:assumed-role/ROLE/SESSION` → `SESSION`). Derived by the backend at identity exchange; stable across pod restarts when the ECS task reuses the same session name. Stored as `workspace_agents.instance_id`. The agent learns its own `instance_id` from the exchange response — it never supplies it. |
+| **VerifiedInstanceID** | Synonym for `instance_id` when emphasizing that it was derived from a backend-verified STS ARN rather than self-reported by the agent. |
 | **Stale-claim guard** | `POST /api/v1/commands/{id}/events` returns `410 Gone` when inbound `command_id` no longer matches `workspaces.current_command_id`. Agent abandons silently. |
 | **Failure-report-precedes-disposal** | `core/workspace.release_claim` clears `current_command_id` but preserves `current_holder_workflow_id`. Workflows always resolve their workspace after claim release. |
 | **Demand-pull** | Activity events only flow when ≥1 UI tab is subscribed. `SubscriberRegistry` issues `subscribe`/`unsubscribe` on `0 → 1` / `1 → 0` transitions. |

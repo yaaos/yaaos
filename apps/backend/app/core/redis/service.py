@@ -50,6 +50,19 @@ def _get_client() -> Redis:
     return client
 
 
+async def delete_keys_matching(pattern: str) -> int:
+    """Delete all keys matching `pattern`. Returns count deleted.
+
+    Non-prod utility exposed for test teardown (e.g. rate-limit key cleanup).
+    Callers must ensure they only pass trusted patterns — this is a bulk delete.
+    """
+    redis = _get_client()
+    keys = await redis.keys(pattern)
+    if not keys:
+        return 0
+    return await redis.delete(*keys)
+
+
 async def ping() -> bool:
     """`PING` against Redis. Returns True on success, False on any error.
     Used by `/api/health` alongside `core/database.ping()`. Swallows all

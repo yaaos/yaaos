@@ -75,10 +75,18 @@ Visit `http://localhost:8080`. Dashboard renders the onboarding stepper until Gi
 
 ### Running the WorkspaceAgent locally
 
-The dev compose overlay includes an `agent` service (placeholder identity-exchange verifier accepts any non-empty `YAAOS_SIGNED_STS_REQUEST`):
+The dev compose includes a `mock-aws` sidecar that emulates AWS IMDS + STS `GetCallerIdentity`. The agent reads credentials from `mock-aws` and signs a `GetCallerIdentity` request against it; the backend replays against the same `mock-aws` to verify. Two env vars wire the identity loop end-to-end:
+
+| Var | Purpose |
+|---|---|
+| `YAAOS_DEV_SEED_ARN` | IAM role ARN registered in the first org. Default: `arn:aws:iam::000000000000:role/yaaos-dev`. |
+| `YAAOS_DEV_SEED_REGION` | AWS region for the org. Default: `us-east-1`. |
+| `YAAOS_DEV_SEED_INSTANCE_ID` | Role-session-name mock-aws returns. Default: `dev-task-00000000`. |
+
+Set these in `.env` before running `bin/dev-rebuild` or pass on the command line. `bin/bootstrap` seeds the first org's `registered_iam_arn` + `aws_region` from these vars automatically in non-prod.
 
 ```bash
-docker compose -f docker/docker-compose.dev.yml --env-file .env up -d --build agent
+docker compose -f docker/docker-compose.dev.yml --env-file .env up -d --build agent mock-aws
 ```
 
 ### WebSocket activity stream

@@ -186,7 +186,7 @@ class WorkspaceClaimState(BaseModel):
     # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
     # agent_gateway compares this against the bearer's agent_id to authorize
     # command-event posts.
-    agent_id: UUID | None
+    owning_agent_id: UUID | None
 
 
 class WorkspaceCommandState(BaseModel):
@@ -202,7 +202,7 @@ class WorkspaceCommandState(BaseModel):
     # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
     # agent_gateway compares this against the bearer's agent_id to authorize
     # workspace-event posts.
-    agent_id: UUID | None
+    owning_agent_id: UUID | None
 
 
 class WorkspaceError(Exception):

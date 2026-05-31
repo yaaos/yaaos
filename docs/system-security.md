@@ -18,7 +18,7 @@
 ### Authentication
 
 - **User sessions** — `core/sessions` issues session + CSRF cookies on OAuth callback. The default-deny `core/auth.AuthMiddleware` classifies every `/api/*` path as `PUBLIC`, `USER_SCOPED`, or `ORG_SCOPED`; routes declare matching deps (`public_route` / `require_session` / `require(action)`); a post-response guard 500s any 2xx that left `route_security_resolved` unset.
-- **WorkspaceAgent bearer** — placeholder verifier (any non-empty `Bearer <token>` after a successful identity-exchange). The org-side trust anchor lives on `orgs.registered_iam_arn`; `core/agent_gateway.ensure_agent_row` consumes the ARN presented at identity exchange.
+- **WorkspaceAgent bearer** — issued by `POST /api/v1/agent/identity` after STS replay verification. 1-hour TTL; the agent re-exchanges before expiry. The org-side trust anchor is `orgs.registered_iam_arn`; `core/agent_gateway.ensure_agent_row` finds or creates the `workspace_agents` row keyed on `(org_id, instance_id)`.
 
 ### Authorization
 
@@ -39,7 +39,11 @@
 
 ### IAM trust anchor
 
-Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_arn`). The agent in their ECS task assumes that role; the placeholder identity-exchange verifier accepts any non-empty signed-STS string.
+Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_arn`). The agent in their ECS task assumes that role; `POST /api/v1/agent/identity` replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS, canonicalizes the assumed-role ARN, and matches it against the registered ARN. The trust chain is AWS STS signature verification — yaaos never trusts the agent's own ARN claim.
+
+**Audience binding** — the `X-Yaaos-Audience` header in the signed payload must match the backend's canonical hostname. This prevents a valid signature produced for one yaaos instance from being replayed against another.
+
+**Host allowlist** — the STS endpoint URL in the signed request is validated against a regex allowlist of known AWS STS hostnames. In non-prod, `YAAOS_STS_HOST_OVERRIDE` extends the allowlist to admit a mock STS host; the process refuses to boot if `YAAOS_ENV=prod` and the override are set simultaneously.
 
 ### Workspace isolation (what ships)
 
@@ -98,7 +102,7 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
-| Agent pod identity spoofing | Not yet defended — placeholder verifier accepts any non-empty signed-STS string. |
+| Agent pod identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
 | Activity events leaking source content | Not yet defended — WebSocket plumbing exists but no pre-renderer audit on `domain/coding_agent` ActivityEvents. |
 | Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by workflow state-machine tests. |
 

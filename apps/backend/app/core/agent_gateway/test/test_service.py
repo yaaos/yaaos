@@ -474,7 +474,7 @@ def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
 
     return WorkspaceAgentRow(
         org_id=org_id,
-        agent_pod_id=uuid4(),
+        instance_id=f"test-task-{uuid4().hex[:8]}",
         iam_arn="arn:aws:iam::123456789012:role/test-role",
         version="0.1.0",
         last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=seconds_ago),
@@ -499,7 +499,7 @@ async def test_pick_agent_for_org_returns_agent_ref(db_session) -> None:
 
     assert result is not None
     assert isinstance(result, AgentRef)
-    assert result.agent_pod_id == row.agent_pod_id
+    assert result.instance_id == row.instance_id
     assert result.agent_id == row.id
 
 
@@ -541,7 +541,7 @@ async def test_pick_agent_for_org_prefers_less_loaded(db_session) -> None:
 
     result = await pick_agent_for_org(org_id, session=db_session)
     assert result is not None
-    assert result.agent_pod_id == row_b.agent_pod_id
+    assert result.instance_id == row_b.instance_id
 
 
 @pytest.mark.asyncio

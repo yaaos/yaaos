@@ -20,7 +20,7 @@ async def _fixture_org_and_agent(db_session) -> tuple:
     agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org.org_id,
-        agent_pod_id=uuid4(),
+        instance_id=f"test-task-{uuid4().hex[:8]}",
         iam_arn=org.registered_iam_arn,
         version="0.0.1",
         state="reachable",
@@ -103,7 +103,7 @@ async def test_revoke_all_for_agent_revokes_only_that_agent(db_session) -> None:
     other_agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org_id,
-        agent_pod_id=uuid4(),
+        instance_id=f"test-task-other-{uuid4().hex[:8]}",
         iam_arn="arn:aws:iam::123456789012:role/other",
         version="0.0.1",
         state="reachable",
@@ -183,3 +183,38 @@ async def test_verify_bumps_last_seen(db_session) -> None:
 
     await db_session.refresh(before)
     assert before.last_seen_at is not None
+
+
+async def test_issue_records_issued_iam_arn(db_session) -> None:
+    """Bearer row persists the canonical IAM ARN for audit."""
+    org_id, agent_id = await _fixture_org_and_agent(db_session)
+    arn = "arn:aws:iam::123456789012:role/yaaos-agent"
+
+    _plaintext, record = await bearers.issue(
+        agent_id=agent_id,
+        org_id=org_id,
+        session=db_session,
+        issued_iam_arn=arn,
+    )
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(select(BearerTokenRow).where(BearerTokenRow.id == record.id))
+    ).scalar_one()
+    assert row.issued_iam_arn == arn
+    assert record.issued_iam_arn == arn
+
+
+async def test_issue_default_ttl_is_one_hour(db_session) -> None:
+    """Default TTL is 1 hour (not 24h)."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    org_id, agent_id = await _fixture_org_and_agent(db_session)
+    before = datetime.now(UTC)
+    _plaintext, record = await bearers.issue(agent_id=agent_id, org_id=org_id, session=db_session)
+    after = datetime.now(UTC)
+    await db_session.commit()
+
+    # expires_at should be roughly 1 hour from issuance.
+    assert record.expires_at >= before + timedelta(minutes=59)
+    assert record.expires_at <= after + timedelta(hours=1, minutes=1)

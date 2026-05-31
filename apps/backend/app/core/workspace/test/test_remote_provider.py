@@ -45,10 +45,10 @@ async def _seed_reachable_agent(
 @pytest.mark.asyncio
 async def test_ensure_agent_row_inserts_on_first_exchange(db_session) -> None:
     org_id = uuid4()
-    pod_id = uuid4()
+    instance_id = f"test-task-{uuid4().hex[:8]}"
     agent_id = await ensure_agent_row(
         org_id=org_id,
-        agent_pod_id=pod_id,
+        instance_id=instance_id,
         iam_arn="arn:aws:iam::123456789012:role/yaaos-agent",
         version="0.0.1",
         session=db_session,
@@ -56,7 +56,7 @@ async def test_ensure_agent_row_inserts_on_first_exchange(db_session) -> None:
     info = await get_agent_info(agent_id, session=db_session)
     assert info is not None
     assert info["org_id"] == org_id
-    assert info["agent_pod_id"] == pod_id
+    assert info["instance_id"] == instance_id
     assert info["state"] == "reachable"
     assert info["last_heartbeat_at"] is not None
 
@@ -64,17 +64,17 @@ async def test_ensure_agent_row_inserts_on_first_exchange(db_session) -> None:
 @pytest.mark.asyncio
 async def test_ensure_agent_row_updates_existing(db_session) -> None:
     org_id = uuid4()
-    pod_id = uuid4()
+    instance_id = f"test-task-{uuid4().hex[:8]}"
     first_id = await ensure_agent_row(
         org_id=org_id,
-        agent_pod_id=pod_id,
+        instance_id=instance_id,
         iam_arn="arn-1",
         version="0.0.1",
         session=db_session,
     )
     second_id = await ensure_agent_row(
         org_id=org_id,
-        agent_pod_id=pod_id,
+        instance_id=instance_id,
         iam_arn="arn-2",
         version="0.0.2",
         session=db_session,
@@ -226,11 +226,9 @@ async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -
     )
     assert result is not None
     # The owning agent is the picked WorkspaceAgentRow.id; the command is
-    # enqueued under that id (NOT agent_pod_id) so claim_next can find it.
+    # enqueued under that id so claim_next can find it.
     assert result.agent_id == seeded["id"]
     assert queue_depth(seeded["id"]) == 1
-    # The pod_id is NOT a queue key anymore.
-    assert queue_depth(seeded["agent_pod_id"]) == 0
 
 
 @pytest.mark.asyncio

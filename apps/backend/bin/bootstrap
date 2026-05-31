@@ -94,11 +94,17 @@ async def _resolve_github_subject(login: str) -> str:
     return str(payload["id"])
 
 
-async def _ensure_org(s, *, slug: str, display_name: str):
+async def _ensure_org(s, *, slug: str, display_name: str, registered_iam_arn: str | None = None, aws_region: str | None = None):
     existing = await orgs_repo.get_org_by_slug(s, slug)
     if existing is not None:
         return existing, False
     row = await orgs_repo.insert_org(s, slug=slug, display_name=display_name)
+    # Non-prod only: seed the org's IAM ARN + region from env vars so the dev
+    # stack's mock-aws agent can exchange identity without visiting the UI.
+    if registered_iam_arn and aws_region:
+        from app.core.tenancy import update_org_fields  # noqa: PLC0415
+
+        await update_org_fields(s, row.org_id, registered_iam_arn=registered_iam_arn, aws_region=aws_region)
     return row, True
 
 
@@ -180,12 +186,30 @@ async def _run(stream: IO[str]) -> int:
     external_subject = await _resolve_github_subject(gh_login)
     handle = email.split("@", 1)[0][:64].lower()
 
+    # Non-prod: seed IAM ARN + region from env so the dev agent can exchange
+    # identity against mock-aws without manual settings-page configuration.
+    # These env vars are only honored when YAAOS_ENV != prod.
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    seed_arn: str | None = None
+    seed_region: str | None = None
+    if settings.is_non_prod:
+        seed_arn = os.environ.get("YAAOS_DEV_SEED_ARN")
+        seed_region = os.environ.get("YAAOS_DEV_SEED_REGION")
+
     async with db_session() as s:
         user, user_created = await _ensure_user(s, email=email, display_name=display_name)
         _, identity_created = await _ensure_oauth_identity(
             s, user_id=user.id, external_subject=external_subject
         )
-        org, org_created = await _ensure_org(s, slug=org_slug, display_name=org_name)
+        org, org_created = await _ensure_org(
+            s,
+            slug=org_slug,
+            display_name=org_name,
+            registered_iam_arn=seed_arn,
+            aws_region=seed_region,
+        )
         _, membership_created = await _ensure_owner_membership(
             s, user_id=user.id, org_id=org.org_id, handle=handle
         )

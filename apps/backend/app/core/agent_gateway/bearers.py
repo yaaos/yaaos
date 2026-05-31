@@ -1,6 +1,6 @@
 """Bearer-token ledger for the agent gateway.
 
-Every successful `/identity/exchange` issues a bearer through `issue()`,
+Every successful `/api/v1/agent/identity` issues a bearer through `issue()`,
 which generates 32 random bytes via `secrets.token_urlsafe`, stores the
 sha256 hash in `bearer_tokens`, and returns the plaintext exactly once.
 Plaintext is never persisted and never logged. Subsequent gateway calls
@@ -16,8 +16,6 @@ Revocation:
   Used by the manual-rotate path and by failsafe-6 agent-loss recovery.
 - `revoke_all_for_org()` revokes every active bearer for an org. Used by
   the Workspace settings disconnect / mode-switch / arn-change actions.
-
-See `plan/notes/finish_m05.md` for the bearer-revoke policy table.
 """
 
 from __future__ import annotations
@@ -34,8 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway.models import BearerTokenRow
 from app.core.database import session as db_session
 
-# 24h default — matches the IdentityExchangeResponse contract.
-DEFAULT_TTL_SECONDS = 24 * 60 * 60
+# 1h default — matches the IdentityExchangeResponse contract. The agent
+# re-exchanges ~5 min before expiry so a healthy agent never sees a 401
+# from an expired bearer under normal operation.
+DEFAULT_TTL_SECONDS = 60 * 60
 
 # Bearer plaintext length: secrets.token_urlsafe(32) → ~43 base64url chars.
 _TOKEN_BYTES = 32
@@ -64,6 +64,7 @@ class BearerRecord:
     revoked_reason: str | None
     last_seen_at: datetime | None
     source_ip: str | None
+    issued_iam_arn: str | None
 
 
 def _hash(token: str) -> bytes:
@@ -84,6 +85,7 @@ def _to_record(row: BearerTokenRow) -> BearerRecord:
         revoked_reason=row.revoked_reason,
         last_seen_at=row.last_seen_at,
         source_ip=row.source_ip,
+        issued_iam_arn=row.issued_iam_arn,
     )
 
 
@@ -94,12 +96,15 @@ async def issue(
     session: AsyncSession,
     source_ip: str | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    issued_iam_arn: str | None = None,
 ) -> tuple[str, BearerRecord]:
     """Generate a new bearer, persist its hash, return `(plaintext, record)`.
 
     Plaintext is the ONLY place the secret appears — the caller hands it
-    back in the `/identity/exchange` response and the agent stores it in
+    back in the `/api/v1/agent/identity` response and the agent stores it in
     memory. Never returned again.
+
+    `issued_iam_arn` records the canonical IAM ARN verified at issuance for audit.
 
     Caller owns the transaction. The row is flushed but not committed.
     """
@@ -115,6 +120,7 @@ async def issue(
         revoked_reason=None,
         last_seen_at=None,
         source_ip=source_ip,
+        issued_iam_arn=issued_iam_arn,
     )
     session.add(row)
     await session.flush()

@@ -44,7 +44,7 @@ LOAD_BEARING_URLS: set[tuple[str, str]] = {
     ("GET", "/api/orgs"),
     ("PATCH", "/api/orgs"),
     # wire protocol (Go agent depends on every one of these).
-    ("POST", "/api/v1/identity/exchange"),
+    ("POST", "/api/v1/agent/identity"),
 }
 
 

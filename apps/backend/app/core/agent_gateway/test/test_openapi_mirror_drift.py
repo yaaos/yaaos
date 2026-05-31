@@ -57,6 +57,7 @@ _SCHEMA_TO_CLASS: dict[str, tuple[str, set[str]]] = {
     "AgentConfig": ("AgentConfig", set()),
     "ConfigUpdateCommand": ("ConfigUpdateCommand", set()),
     "AgentEvent": ("AgentEvent", set()),
+    "AgentMetadata": ("AgentMetadata", set()),
     "WorkspaceEvent": ("WorkspaceEvent", set()),
 }
 

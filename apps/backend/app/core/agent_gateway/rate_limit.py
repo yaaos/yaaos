@@ -58,6 +58,21 @@ async def check_identity_exchange(*, source_ip: str | None, agent_pod_id: str | 
         await _hit(f"rl:identity_exchange:pod:{agent_pod_id}", PER_POD_LIMIT, PER_POD_WINDOW_SECONDS)
 
 
+async def reset_rate_limit_for_tests() -> None:
+    """Test hook: flush all identity-exchange rate-limit keys.
+
+    Called by the test fixture in `test/test_identity_exchange.py` between
+    tests so consecutive tests using the same source IP don't bleed into
+    each other's windows. Never called from production code.
+    """
+    from app.core.redis import delete_keys_matching  # noqa: PLC0415
+
+    try:
+        await delete_keys_matching("rl:identity_exchange:*")
+    except Exception:
+        pass
+
+
 __all__ = [
     "PER_IP_LIMIT",
     "PER_IP_WINDOW_SECONDS",

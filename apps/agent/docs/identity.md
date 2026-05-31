@@ -1,33 +1,36 @@
 # internal/identity
 
-> Seam that proves this agent pod's identity to the control plane.
+> Seam that signs the agent pod's identity claim for the control plane.
 
 ## Scope
 
-- **Owns:** `Provider` interface, `Credentials` struct, `placeholderProvider` implementation.
-- **Does not own:** the HTTP round-trip to `/identity/exchange` (owned by `internal/protocol.Client`) or the retry/backoff loop around it (owned by `internal/supervisor`).
-- **Receives:** a signed-request payload from the calling environment (env var `YAAOS_SIGNED_STS_REQUEST` in production).
-- **Emits:** `Credentials` — `Bearer`, `ExpiresAt`, `AgentID`, `OrgID`.
-- **Who it hands to:** `internal/supervisor` consumes `Provider.Exchange` in its startup loop and bearer-refresh loop.
+- **Owns:** `Provider` interface, `Credentials` struct, `awsSTSProvider` implementation, `NewProvider` factory.
+- **Does not own:** the HTTP exchange to `/api/v1/agent/identity` (owned by `internal/supervisor`), retry/backoff (owned by `internal/supervisor`), credential verification (owned by the backend's `sts_verifier`).
+- **Receives:** nothing at construction — credentials are read lazily from IMDS at `SignClaim` time.
+- **Emits:** `json.RawMessage` — the JSON-encoded sigv4-signed envelope passed as the `payload` field in `IdentityExchangeRequest`.
+- **Who it hands to:** `internal/supervisor` calls `provider.SignClaim(ctx, audience)` then builds and POSTs the full request.
 
 ## Why / invariants
 
-- **`AgentID` and `OrgID` are empty from `placeholderProvider`** — the backend assigns them on the first exchange; the supervisor reads them from the HTTP response (`IdentityExchangeResponse`), not from this struct.
-- **Fatal mismatch on renewal** — the supervisor pins `AgentID` and `OrgID` on first exchange. If `Exchange` is called again (bearer renewal) and the backend returns different values, the supervisor logs an error and calls `os.Exit(1)`. This is the identity-integrity invariant: an agent pod belongs to exactly one org and has one stable `agent_id` for its lifetime.
-- **`placeholderProvider` carries the signed-STS payload as the bearer field** — the backend's placeholder verifier checks for any non-empty `signed_request`; the real STS replay replaces this without changing the supervisor.
-- **`Provider` is the extension point** — a SigV4-backed implementation drops in at the `New` call site in `cmd/agent/main.go` with zero supervisor change.
+- **Supervisor owns the HTTP exchange.** `Provider` only signs; it never contacts the backend. This keeps retry/backoff logic, `AgentMetadata` collection, and bearer stamping in one place (supervisor).
+- **`awsSTSProvider` reads IMDS v2 at sign time.** Credentials are not cached by the provider — `aws.NewCredentialsCache` inside `config.LoadDefaultConfig` handles caching/refresh. The env var `AWS_EC2_METADATA_SERVICE_ENDPOINT` redirects IMDS to mock-aws in dev/test.
+- **Audience binding.** `X-Yaaos-Audience` is embedded inside the signed envelope before signing, so it's covered by the SigV4 signature and cannot be stripped by an attacker without invalidating the signature.
+- **`Credentials` is stamped by the supervisor from the backend response**, not by the provider. `Provider` never fills `Bearer`, `AgentID`, `OrgID`, or `InstanceID`.
+- **Identity-integrity invariant:** supervisor pins `AgentID`, `OrgID`, and `InstanceID` from the first exchange; any mismatch on renewal triggers a fatal exit.
 
 ## Gotchas
 
-- `NewPlaceholderProvider` is the only constructor today. Production substitutes the real SigV4 impl at the same call site.
-- `Credentials.Bearer` from `placeholderProvider` is the raw signed-request string, not a real bearer; the backend's placeholder verifier accepts it and issues a real bearer in the response.
+- `awsSTSProvider.SignClaim` contacts IMDS on every call. The call context should have a reasonable deadline — the supervisor passes the same ctx it uses for the exchange loop.
+- In tests, the supervisor is constructed with a stub provider that implements `Kind() + SignClaim()` directly; `NewProvider()` is not called from tests.
 
 ## Vocabulary
 
-- **Credentials** — the result of one `Exchange` call: `Bearer` (the signed-request payload forwarded to the backend), `ExpiresAt`, `AgentID`, `OrgID`.
-- **Provider** — the interface the supervisor depends on; hides the STS/SigV4 implementation detail.
-- **placeholderProvider** — the current implementation; forwards a pre-built signed-request string.
+- **Provider** — the interface the supervisor depends on; hides the IMDS/SigV4 detail.
+- **awsSTSProvider** — the production implementation; reads IMDS v2 creds, builds and sigv4-signs a `GetCallerIdentity` request, returns the JSON envelope.
+- **Credentials** — stamped by the supervisor from the backend's exchange response: `Bearer`, `ExpiresAt`, `AgentID`, `OrgID`, `InstanceID`. Never populated by the provider.
+- **Audience** — the backend's canonical hostname embedded as `X-Yaaos-Audience` inside the signed envelope.
 
 ## Entry points
 
-- `apps/agent/internal/identity/identity.go` — `Provider`, `Credentials`, `NewPlaceholderProvider`.
+- `apps/agent/internal/identity/identity.go` — `Provider` interface, `Credentials` struct, `NewProvider` factory.
+- `apps/agent/internal/identity/aws_sts.go` — `awsSTSProvider.Kind()`, `awsSTSProvider.SignClaim()`.
