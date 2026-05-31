@@ -34,7 +34,6 @@ os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 # app.core.redis → app.core.config at import time.
 from app.testing.isolation import (  # noqa: F401
     _canonical_registries,
-    agent_queues_isolation,
     email_inbox_isolation,
     plugin_registries_isolation,
     pubsub_isolation,

@@ -46,8 +46,11 @@
 | **WorkspaceAgent** | Customer-deployed Go binary in `apps/agent/` that holds source code locally and spawns workspace processes. Zero biz logic — all policy comes from control plane via AgentCommand payload. |
 | **Workflow** | Typed Pydantic data structure: `name`, `version`, ordered `steps`, `entry_step_id`. Five ship. Owned by `core/workflow`. |
 | **WorkflowCommand** | One unit of work within a workflow. Three categories: **Workspace** (parks in `awaiting_agent`), **Local** (inline), **HITL** (parks in `awaiting_human`). |
-| **AgentCommand** | Wire message backend → WorkspaceAgent. Five kinds: `CreateWorkspace`, `WriteFiles`, `RefreshWorkspaceAuth`, `InvokeClaudeCode`, `CleanupWorkspace`. Defined in `apps/backend/openapi/agent-api.yaml`. |
-| **AgentEvent** | Wire message WorkspaceAgent → backend. Kinds: `progress`, `completed_success`, `completed_failure`, `completed_skipped`. Terminal events resume parked workflow. |
+| **AgentCommand** | Wire message backend → WorkspaceAgent. Five kinds: `CreateWorkspace`, `WriteFiles`, `RefreshWorkspaceAuth`, `InvokeClaudeCode`, `CleanupWorkspace`. Defined in `apps/backend/openapi/agent-api.yaml`. Persisted in `agent_commands` (durable queue). |
+| **AgentEvent** | Wire message WorkspaceAgent → backend. Kinds: `progress`, `received`, `completed_success`, `completed_failure`, `completed_skipped`. `received` cancels the lease requeue. Terminal events resume parked workflow. |
+| **agent_commands** | Durable command queue in Postgres. One row per dispatched AgentCommand; lifecycle: `pending → claimed → delivered → done`. Commands survive backend restarts. `attempt` increments on each lease-timeout requeue; capped at `MAX_ATTEMPT`. |
+| **Command lease** | 30-second window after a command is `claimed`: the agent must POST a `received` event to flip the row to `delivered`. Without it the reaper requeues to `pending` on the next `cleanup_loop` tick. |
+| **Capacity-pull** | The agent declares `new_workspaces` (capacity for new CreateWorkspace commands) and `workspace_ids` (idle Active workspaces) on each claim request; the backend selects a matching batch from `agent_commands`. |
 | **WorkflowExecution** | In-flight workflow run. State: `pending → running → (awaiting_agent \| awaiting_human)* → done \| failed \| cancelled`. Carries `step_state` JSONB + `otel_trace_context`. |
 | **Pending human decision** | HITL pause row in `pending_human_decisions`. Resumed via `core/workflow.resume_hitl()`; resolution + re-enqueue in one transaction. |
 | **Outbox** | DB-atomic outbound queue (`outbox_entries`). Written in the caller's transaction; drained post-commit. Backs `core/tasks.enqueue`. |

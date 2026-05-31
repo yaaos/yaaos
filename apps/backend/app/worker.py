@@ -26,7 +26,6 @@ def main() -> int:
 
     import app.core.agent_gateway as _gw  # noqa: PLC0415
 
-    _gw.bind_agent_queues(_gw.AgentQueues())
     _gw.bind_subscriber_registry(_gw.SubscriberRegistry())
 
     from app.domain.orgs.email import _Inbox as _EmailInbox  # noqa: PLC0415

@@ -14,8 +14,6 @@ from app.core.agent_gateway import (
     connection_status_for_org,
     ensure_agent_row,
     get_agent_info,
-    pick_agent_for_org,
-    queue_depth,
     record_heartbeat,
 )
 from app.core.workspace.remote_provider import (
@@ -139,74 +137,14 @@ async def test_connection_status_lost_when_heartbeat_stale(db_session) -> None:
     assert status["pod_count"] == 1
 
 
-# ── pick_agent_for_org + dispatch_create_workspace ────────────────────
+# ── dispatch_create_workspace ─────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_pick_agent_returns_none_when_no_recent_heartbeat(db_session) -> None:
-    org_id = uuid4()
-    await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=180)
-    assert (await pick_agent_for_org(org_id, session=db_session)) is None
+async def test_dispatch_create_workspace_enqueues_pending_row(db_session) -> None:
+    """dispatch_create_workspace enqueues a pending row claimable by any agent."""
+    from app.core.agent_gateway import claim_batch  # noqa: PLC0415
 
-
-@pytest.mark.asyncio
-async def test_pick_agent_returns_recent_pod(db_session) -> None:
-    org_id = uuid4()
-    seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
-    picked = await pick_agent_for_org(org_id, session=db_session)
-    assert picked is not None
-    assert picked.agent_id == seeded["id"]
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_prefers_least_loaded_pod(db_session) -> None:
-    """Two reachable pods, both within the heartbeat cutoff. The one
-    with the smaller in-process queue depth wins, regardless of which
-    has the more recent heartbeat. Multi-pod load balancing."""
-    from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command  # noqa: PLC0415
-
-    org_id = uuid4()
-    busy = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
-    idle = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=15)
-
-    # Load up `busy` with two queued cleanup commands. `idle` stays at 0.
-    for _ in range(2):
-        await enqueue_command(
-            busy["id"],
-            CleanupWorkspaceCommand(
-                command_id=uuid4(),
-                workspace_id=uuid4(),
-                traceparent="00-aabb-1122-01",
-                auth=AuthBlock(kind="github_installation", token="x"),
-            ),
-        )
-    assert queue_depth(busy["id"]) == 2
-    assert queue_depth(idle["id"]) == 0
-
-    picked = await pick_agent_for_org(org_id, session=db_session)
-    assert picked is not None
-    assert picked.agent_id == idle["id"], "least-loaded pod should win despite older heartbeat"
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_tie_breaks_on_recent_heartbeat(db_session) -> None:
-    """Two idle reachable pods (queue depth 0 each): the more-recent
-    heartbeat wins. Stale-but-reachable pods lose to fresh ones at the
-    same load."""
-    org_id = uuid4()
-    stale = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=60)
-    fresh = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=2)
-
-    assert queue_depth(stale["id"]) == 0
-    assert queue_depth(fresh["id"]) == 0
-
-    picked = await pick_agent_for_org(org_id, session=db_session)
-    assert picked is not None
-    assert picked.agent_id == fresh["id"]
-
-
-@pytest.mark.asyncio
-async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -> None:
     org_id = uuid4()
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
     workspace_id = uuid4()
@@ -225,66 +163,17 @@ async def test_dispatch_create_workspace_enqueues_for_picked_agent(db_session) -
         session=db_session,
     )
     assert result is not None
-    # The owning agent is the picked WorkspaceAgentRow.id; the command is
-    # enqueued under that id so claim_next can find it.
-    assert result.agent_id == seeded["id"]
-    assert queue_depth(seeded["id"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_dispatch_create_workspace_command_claimable_by_same_agent(db_session) -> None:
-    """End-to-end: a command enqueued by dispatch_create_workspace for an
-    agent is claimable by that same agent_id via claim_next. Guards the
-    enqueue/claim key inconsistency."""
-    from app.core.agent_gateway import claim_next  # noqa: PLC0415
-
-    org_id = uuid4()
-    await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
-    workspace_id = uuid4()
-
-    result = await dispatch_create_workspace(
-        org_id,
-        workspace_id,
-        repo=RepoRef(
-            plugin_id="github",
-            external_id="123",
-            clone_url="https://github.com/me/repo.git",
-            head_sha="deadbeef",
-        ),
-        auth=AuthBlock(kind="github_installation", token="tok"),
-        traceparent="00-aabb-1122-01",
-        session=db_session,
-    )
-    assert result is not None
-    # A configured agent claims by its own id and gets the CreateWorkspace cmd.
-    claimed = await claim_next(
-        result.agent_id,
-        wait_seconds=0,
+    # Verify the command is claimable (it was inserted as pending).
+    batch = await claim_batch(
+        seeded["id"],
         lifecycle="configured",
-        active_workspace_ids=[],
-    )
-    assert claimed is not None
-    assert claimed.command_id == result.command_id
-
-
-@pytest.mark.asyncio
-async def test_dispatch_create_workspace_returns_none_when_no_agent(db_session) -> None:
-    org_id = uuid4()
-    # No agents seeded — caller is expected to handle None as "not reachable".
-    result = await dispatch_create_workspace(
-        org_id,
-        uuid4(),
-        repo=RepoRef(
-            plugin_id="github",
-            external_id="123",
-            clone_url="https://github.com/me/repo.git",
-            head_sha="deadbeef",
-        ),
-        auth=AuthBlock(kind="github_installation", token="tok"),
-        traceparent="00-aabb-1122-01",
+        new_workspaces=1,
+        workspace_ids=[],
+        wait_seconds=0,
         session=db_session,
     )
-    assert result is None
+    assert len(batch) == 1
+    assert batch[0].command_id == result.command_id
 
 
 # ── Provider health_check ─────────────────────────────────────────────

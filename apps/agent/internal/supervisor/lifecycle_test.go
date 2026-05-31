@@ -160,13 +160,16 @@ func TestClaimRequest_LifecycleFields(t *testing.T) {
 	s := buildUnconfiguredSupervisor(t)
 	defer s.pool.CloseAll(context.Background())
 
-	// Unconfigured → lifecycle="unconfigured", active_workspace_ids=[]
+	// Unconfigured → lifecycle="unconfigured", workspace_ids=[] new_workspaces=0
 	req := s.buildClaimRequest()
 	if req.Lifecycle != "unconfigured" {
 		t.Errorf("lifecycle: want 'unconfigured', got %q", req.Lifecycle)
 	}
-	if len(req.ActiveWorkspaceIDs) != 0 {
-		t.Errorf("active_workspace_ids: want empty, got %v", req.ActiveWorkspaceIDs)
+	if len(req.WorkspaceIDs) != 0 {
+		t.Errorf("workspace_ids: want empty, got %v", req.WorkspaceIDs)
+	}
+	if req.NewWorkspaces != 0 {
+		t.Errorf("new_workspaces: want 0, got %d", req.NewWorkspaces)
 	}
 
 	// Apply config → lifecycle="configured"

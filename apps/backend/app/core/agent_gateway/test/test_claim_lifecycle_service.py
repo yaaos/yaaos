@@ -1,13 +1,10 @@
-"""Service tests for lifecycle-gated claim_next.
+"""Service tests for lifecycle-gated claim_batch.
 
 Verifies:
 - Unconfigured claim returns ConfigUpdateCommand with default max_workspaces.
-- Configured claim returns first eligible queued command.
-- Configured claim with active_workspace_ids filters ineligible workspace commands
-  (WriteFiles for an inactive workspace stays queued while WriteFiles for an
-  active workspace is returned).
-- CreateWorkspace is always eligible regardless of active_workspace_ids.
-- AgentCommand is always eligible regardless of lifecycle.
+- Configured claim returns CreateWorkspace commands up to new_workspaces cap.
+- Configured claim with workspace_ids returns pending per named workspace.
+- Unconfigured claim leaves DB rows untouched.
 """
 
 from __future__ import annotations
@@ -15,22 +12,29 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 
-from app.core.agent_gateway import (
-    AgentCommandKind,
-    ClaimRequest,
-    ConfigUpdateCommand,
-    WriteFilesCommand,
-    WriteFilesEntry,
-    claim_next,
+from app.core.agent_gateway.models import AgentCommandRow
+from app.core.agent_gateway.service import (
+    DEFAULT_MAX_WORKSPACES,
+    claim_batch,
     enqueue_command,
-    queue_depth,
 )
 from app.core.agent_gateway.types import (
+    AgentCommandKind,
     AuthBlock,
+    ConfigUpdateCommand,
     CreateWorkspaceCommand,
     RepoRef,
+    WriteFilesCommand,
+    WriteFilesEntry,
 )
+from app.testing.seed import seed_agent
+
+
+async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
+    result = await seed_agent(org_id=org_id or uuid4(), session=db_session)
+    return UUID(str(result["id"]))
 
 
 def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
@@ -42,10 +46,10 @@ def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
     )
 
 
-def _make_create_cmd(workspace_id: UUID) -> CreateWorkspaceCommand:
+def _make_create_cmd(workspace_id: UUID | None = None) -> CreateWorkspaceCommand:
     return CreateWorkspaceCommand(
         command_id=uuid4(),
-        workspace_id=workspace_id,
+        workspace_id=workspace_id or uuid4(),
         traceparent="00-aabb-1122-01",
         repo=RepoRef(
             plugin_id="github",
@@ -64,129 +68,90 @@ def _make_create_cmd(workspace_id: UUID) -> CreateWorkspaceCommand:
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_claim_returns_config_update() -> None:
-    """An unconfigured claim always returns ConfigUpdateCommand, even if a
-    workspace command is queued."""
-    agent = uuid4()
-
-    # Enqueue a workspace command first.
+@pytest.mark.service
+async def test_unconfigured_claim_returns_config_update(db_session) -> None:
+    """An unconfigured claim always returns ConfigUpdateCommand."""
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
     ws_cmd = _make_write_cmd(uuid4())
-    await enqueue_command(agent, ws_cmd)
+    await enqueue_command(org_id=org_id, command=ws_cmd, session=db_session)
+    await db_session.flush()
 
-    req = ClaimRequest(wait_seconds=0, lifecycle="unconfigured", active_workspace_ids=[])
-    result = await claim_next(
-        agent,
-        wait_seconds=req.wait_seconds,
-        lifecycle=req.lifecycle,
-        active_workspace_ids=req.active_workspace_ids,
-    )
-
-    assert result is not None
-    assert isinstance(result, ConfigUpdateCommand), f"expected ConfigUpdateCommand, got {type(result)}"
-    assert result.kind == AgentCommandKind.CONFIG_UPDATE
-    assert result.config.max_workspaces > 0
-
-    # The workspace command must remain queued.
-    assert queue_depth(agent) == 1
-
-
-@pytest.mark.asyncio
-async def test_unconfigured_claim_returns_config_update_when_queue_empty() -> None:
-    """Unconfigured claim returns ConfigUpdateCommand even with an empty queue."""
-    agent = uuid4()
-    req = ClaimRequest(wait_seconds=0, lifecycle="unconfigured", active_workspace_ids=[])
-    result = await claim_next(
-        agent,
-        wait_seconds=req.wait_seconds,
-        lifecycle=req.lifecycle,
-        active_workspace_ids=req.active_workspace_ids,
-    )
-
-    assert result is not None
-    assert isinstance(result, ConfigUpdateCommand)
-    assert result.config.max_workspaces > 0
-
-
-# ── Configured claim — eligibility filter ─────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_configured_claim_returns_eligible_workspace_command() -> None:
-    """Configured claim returns WriteFiles for a workspace_id in active_workspace_ids."""
-    agent = uuid4()
-    ws_a = uuid4()
-
-    cmd_a = _make_write_cmd(ws_a)
-    await enqueue_command(agent, cmd_a)
-
-    result = await claim_next(
-        agent,
+    batch = await claim_batch(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
         wait_seconds=0,
-        lifecycle="configured",
-        active_workspace_ids=[ws_a],
+        session=db_session,
     )
-    assert result is cmd_a
-    assert queue_depth(agent) == 0
+    assert len(batch) == 1
+    assert isinstance(batch[0], ConfigUpdateCommand)
+    assert batch[0].kind == AgentCommandKind.CONFIG_UPDATE
+    assert batch[0].config.max_workspaces == DEFAULT_MAX_WORKSPACES
+
+    # The workspace command must remain pending.
+    row = (
+        await db_session.execute(select(AgentCommandRow).where(AgentCommandRow.id == ws_cmd.command_id))
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.status == "pending"
 
 
 @pytest.mark.asyncio
-async def test_configured_claim_leaves_ineligible_command_queued() -> None:
-    """WriteFiles for workspace B stays queued when only workspace A is active;
-    WriteFiles for A is returned."""
-    agent = uuid4()
-    ws_a = uuid4()
-    ws_b = uuid4()
-
-    cmd_b = _make_write_cmd(ws_b)
-    cmd_a = _make_write_cmd(ws_a)
-    await enqueue_command(agent, cmd_b)
-    await enqueue_command(agent, cmd_a)
-
-    result = await claim_next(
-        agent,
+@pytest.mark.service
+async def test_unconfigured_claim_returns_config_update_when_queue_empty(db_session) -> None:
+    """Unconfigured claim returns ConfigUpdateCommand even with no pending rows."""
+    agent_id = await _make_agent(db_session)
+    batch = await claim_batch(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
         wait_seconds=0,
-        lifecycle="configured",
-        active_workspace_ids=[ws_a],
+        session=db_session,
     )
-    # cmd_a (workspace A) is eligible — must be returned.
-    assert result is cmd_a
-    # cmd_b (workspace B) must remain queued.
-    assert queue_depth(agent) == 1
+    assert len(batch) == 1
+    assert isinstance(batch[0], ConfigUpdateCommand)
+    assert batch[0].config.max_workspaces > 0
+
+
+# ── Configured claim ───────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_configured_claim_create_always_eligible() -> None:
-    """CreateWorkspace is eligible regardless of active_workspace_ids."""
-    agent = uuid4()
-    new_ws = uuid4()
+@pytest.mark.service
+async def test_configured_claim_returns_create_workspaces(db_session) -> None:
+    """Configured claim with new_workspaces=1 returns one CreateWorkspace."""
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+    cmd = _make_create_cmd()
+    await enqueue_command(org_id=org_id, command=cmd, session=db_session)
+    await db_session.flush()
 
-    create_cmd = _make_create_cmd(new_ws)
-    await enqueue_command(agent, create_cmd)
-
-    result = await claim_next(
-        agent,
-        wait_seconds=0,
+    batch = await claim_batch(
+        agent_id,
         lifecycle="configured",
-        active_workspace_ids=[],  # no active workspaces yet
+        new_workspaces=1,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
     )
-    assert result is create_cmd
+    assert len(batch) == 1
+    assert batch[0].command_id == cmd.command_id
 
 
 @pytest.mark.asyncio
-async def test_configured_claim_returns_none_when_all_ineligible() -> None:
-    """If every queued command is for a non-active workspace, claim returns None
-    (no eligible work, even though the queue is non-empty)."""
-    agent = uuid4()
-    ws_b = uuid4()
-
-    await enqueue_command(agent, _make_write_cmd(ws_b))
-
-    result = await claim_next(
-        agent,
-        wait_seconds=0,
+@pytest.mark.service
+async def test_configured_claim_returns_none_when_empty(db_session) -> None:
+    """Configured claim with nothing enqueued returns empty batch."""
+    agent_id = await _make_agent(db_session)
+    batch = await claim_batch(
+        agent_id,
         lifecycle="configured",
-        active_workspace_ids=[],  # ws_b not active
+        new_workspaces=4,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
     )
-    assert result is None
-    # The ineligible command remains queued.
-    assert queue_depth(agent) == 1
+    assert batch == []

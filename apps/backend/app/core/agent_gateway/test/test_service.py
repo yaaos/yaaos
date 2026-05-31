@@ -1,5 +1,5 @@
-"""Service-level coverage for `core/agent_gateway` — per-agent FIFO,
-heartbeat reconciliation, terminal event routing, stale-claim guard."""
+"""Service-level coverage for `core/agent_gateway` — heartbeat reconciliation,
+terminal event routing, stale-claim guard, and agent liveness helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import pytest
 from app.core.agent_gateway import (
     AgentEvent,
     AgentEventKind,
-    AgentRef,
     AuthBlock,
     CreateWorkspaceCommand,
     HeartbeatRequest,
@@ -21,11 +20,7 @@ from app.core.agent_gateway import (
     StaleClaimError,
     WorkspaceEvent,
     WorkspaceEventKind,
-    claim_next,
-    enqueue_command,
     has_any_reachable_agent,
-    pick_agent_for_org,
-    queue_depth,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
@@ -76,63 +71,6 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
         caller_session=db_session,
     )
     return {"id": ws_id, "org_id": org_id, "command_id": cmd_id, "workflow_id": wfx_id}
-
-
-# ── In-memory FIFO ─────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_claim_returns_none_immediately_when_empty() -> None:
-    agent = uuid4()
-    assert await claim_next(agent, wait_seconds=0, lifecycle="configured") is None
-
-
-@pytest.mark.asyncio
-async def test_enqueue_then_claim() -> None:
-    agent = uuid4()
-    cmd = _make_create_command()
-    await enqueue_command(agent, cmd)
-    assert queue_depth(agent) == 1
-    # CreateWorkspaceCommand is always eligible — active_workspace_ids=[] is fine.
-    claimed = await claim_next(agent, wait_seconds=0, lifecycle="configured")
-    assert claimed is cmd
-    assert queue_depth(agent) == 0
-
-
-@pytest.mark.asyncio
-async def test_per_agent_queues_are_independent() -> None:
-    a, b = uuid4(), uuid4()
-    cmd_a = _make_create_command()
-    cmd_b = _make_create_command()
-    await enqueue_command(a, cmd_a)
-    await enqueue_command(b, cmd_b)
-    assert (await claim_next(a, wait_seconds=0, lifecycle="configured")) is cmd_a
-    assert (await claim_next(b, wait_seconds=0, lifecycle="configured")) is cmd_b
-
-
-@pytest.mark.asyncio
-async def test_long_poll_wakes_on_enqueue() -> None:
-    """A blocked claim_next returns the command as soon as enqueue_command
-    runs on the same agent — verifies the per-agent condition wires up
-    correctly."""
-    agent = uuid4()
-    cmd = _make_create_command()
-
-    async def _enqueue_after_delay() -> None:
-        await asyncio.sleep(0.05)
-        await enqueue_command(agent, cmd)
-
-    enqueue_task = asyncio.create_task(_enqueue_after_delay())
-    claimed = await claim_next(agent, wait_seconds=2, lifecycle="configured")
-    await enqueue_task
-    assert claimed is cmd
-
-
-@pytest.mark.asyncio
-async def test_long_poll_times_out_returning_none() -> None:
-    agent = uuid4()
-    claimed = await claim_next(agent, wait_seconds=1, lifecycle="configured")
-    assert claimed is None
 
 
 # ── Heartbeat reconciliation ───────────────────────────────────────────
@@ -465,7 +403,7 @@ async def test_workspace_event_with_stale_command_raises(db_session) -> None:
         await record_workspace_event(event, session=db_session)
 
 
-# ── pick_agent_for_org + has_any_reachable_agent ───────────────────────
+# ── has_any_reachable_agent ────────────────────────────────────────────
 
 
 def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
@@ -480,68 +418,6 @@ def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
         last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=seconds_ago),
         state=state,
     )
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_for_org_returns_none_when_no_agents(db_session) -> None:
-    result = await pick_agent_for_org(uuid4(), session=db_session)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_for_org_returns_agent_ref(db_session) -> None:
-    org_id = uuid4()
-    row = _make_agent_row(org_id)
-    db_session.add(row)
-    await db_session.flush()
-
-    result = await pick_agent_for_org(org_id, session=db_session)
-
-    assert result is not None
-    assert isinstance(result, AgentRef)
-    assert result.instance_id == row.instance_id
-    assert result.agent_id == row.id
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_for_org_ignores_stale_heartbeat(db_session) -> None:
-    org_id = uuid4()
-    stale = _make_agent_row(org_id, seconds_ago=200)  # beyond 90-s cutoff
-    db_session.add(stale)
-    await db_session.flush()
-
-    result = await pick_agent_for_org(org_id, session=db_session)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_for_org_ignores_unreachable_state(db_session) -> None:
-    org_id = uuid4()
-    row = _make_agent_row(org_id, state="lost")
-    db_session.add(row)
-    await db_session.flush()
-
-    result = await pick_agent_for_org(org_id, session=db_session)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_pick_agent_for_org_prefers_less_loaded(db_session) -> None:
-    """Among two reachable agents, the one with fewer queued commands wins."""
-    org_id = uuid4()
-    row_a = _make_agent_row(org_id, seconds_ago=5)
-    row_b = _make_agent_row(org_id, seconds_ago=10)
-    db_session.add(row_a)
-    db_session.add(row_b)
-    await db_session.flush()
-
-    # Enqueue two commands for row_a so row_b is less loaded.
-    await enqueue_command(row_a.id, _make_create_command())
-    await enqueue_command(row_a.id, _make_create_command())
-
-    result = await pick_agent_for_org(org_id, session=db_session)
-    assert result is not None
-    assert result.instance_id == row_b.instance_id
 
 
 @pytest.mark.asyncio

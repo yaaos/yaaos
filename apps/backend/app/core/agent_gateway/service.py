@@ -1,33 +1,27 @@
-"""Per-agent in-memory dispatch queue + event ingestion + stale-claim guard.
+"""Durable command dispatch + event ingestion + stale-claim guard.
 
-The control plane keeps one FIFO per `agent_id`. Workflows write commands
-into the queue via `enqueue_command(agent_id, command)`; the agent's
-long-poll consumes them with `claim_next(agent_id, *, wait_seconds)`.
-The queue is process-local — single-instance backends only at the POC scale.
+Commands are persisted in `agent_commands` (Postgres) and claimed via
+`FOR UPDATE SKIP LOCKED` batches. A 30-second lease on `claimed` rows is
+enforced by `requeue_stale_claimed`; the `cleanup_loop` in `core/workspace`
+calls it on each reaper tick.
 
 Event ingestion (`record_agent_event`) delegates the stale-claim guard lookup
 to the registered `WorkspaceAgentReportSink` (owned by `core/workspace`), then
 enqueues `core/workflow.handle_agent_event` via the outbox in the same
 transaction when the event is terminal.
 
-The active `AgentQueues` instance is ContextVar-bound. `bind_agent_queues` is
-the production DI seam — the composition root calls it at startup; the
-`agent_queues_isolation` fixture in `app/testing/isolation` binds a fresh
-instance per test. `get_agent_queues()` raises `RuntimeError` if called before
-any bind — fail-fast so forgotten startup binds surface immediately.
+`received` is a non-terminal event: when the agent POSTs it for a claimed
+command the lease is cancelled (`claimed → delivered`). Terminal events retire
+the row to `done`.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections import defaultdict, deque
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway.report_sink import (
@@ -36,9 +30,9 @@ from app.core.agent_gateway.report_sink import (
 )
 from app.core.agent_gateway.types import (
     AgentCommand,
+    AgentCommandKind,
     AgentConfig,
     AgentEvent,
-    AgentRef,
     ConfigUpdateCommand,
     CreateWorkspaceCommand,
     HeartbeatRequest,
@@ -55,83 +49,80 @@ log = structlog.get_logger("core.agent_gateway")
 # until then all agents share this global default.
 DEFAULT_MAX_WORKSPACES: int = 4
 
+# Lease window in seconds: if a claimed command has no `received` event within
+# this window it is requeued to `pending`.
+LEASE_SECONDS: int = 30
 
-# ── In-memory dispatch queues ───────────────────────────────────────────
+# Maximum requeue attempts before a command is retired to `done` as a terminal
+# failure. Prevents infinite retry of a structurally bad command.
+MAX_ATTEMPT: int = 5
 
 
-@dataclass
-class AgentQueues:
-    """Per-process in-memory FIFO registry for agent dispatch.
+# ── Durable command queue ───────────────────────────────────────────────
 
-    Holds one queue and one asyncio.Condition per agent_id. ContextVar-bound
-    so each test context gets a fresh, isolated instance.
+
+async def enqueue_command(
+    org_id: UUID,
+    command: AgentCommand,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Insert an AgentCommand row in `pending` status.
+
+    Called by `RemoteAgentWorkspaceProvider` inside the workflow engine's
+    start_step transaction — the insert is atomic with `try_claim`.
+
+    The DB-minted UUIDv7 PK serves as the idempotency key and FIFO sort key.
+    `agent_id` is left NULL at enqueue time; it is stamped by `claim_batch`.
     """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-    queues: dict[UUID, deque[AgentCommand]] = field(default_factory=lambda: defaultdict(deque))
-    conditions: dict[UUID, asyncio.Condition] = field(default_factory=dict)
-    conditions_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # workspace_id is NULL for org-scoped commands (ConfigUpdate,
+    # CreateWorkspace before an agent is assigned).
+    workspace_id: UUID | None = getattr(command, "workspace_id", None)
+    if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
+        workspace_id = None
+
+    # Override the command_id with the DB-minted UUIDv7 after flush so that
+    # producers stop generating their own UUID4 ids. For now we honour the
+    # caller-supplied id and treat it as the primary key.
+    row = AgentCommandRow(
+        id=command.command_id,
+        org_id=org_id,
+        workspace_id=workspace_id,
+        command_kind=str(command.kind),
+        payload=command.model_dump(mode="json"),
+        status="pending",
+    )
+    session.add(row)
+    await session.flush()
 
 
-_agent_queues_var: ContextVar[AgentQueues | None] = ContextVar("_agent_queues_var", default=None)
+async def pin_command_to_agent(
+    command_id: UUID,
+    agent_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Pre-assign a command row to `agent_id` before it is claimed.
 
-
-def bind_agent_queues(instance: AgentQueues) -> None:
-    """Bind `instance` as the active agent-queues registry for the current Context.
-
-    Called once at process startup (composition root) and once per test
-    (isolation fixture). Subsequent calls in the same Context replace the
-    prior binding.
+    Used by `dispatch_cleanup_workspace` to route post-create commands to
+    the workspace's owning agent, so `claim_batch`'s `workspace_ids` sweep
+    can find them by `(agent_id, workspace_id, status=pending)`.
+    Caller flushes/commits.
     """
-    _agent_queues_var.set(instance)
+    from sqlalchemy import update  # noqa: PLC0415
 
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-def get_agent_queues() -> AgentQueues:
-    """Return the active agent-queues registry. Raises `RuntimeError` if
-    `bind_agent_queues` has not been called — fail-fast so forgotten startup
-    binds surface immediately rather than silently producing wrong state."""
-    instance = _agent_queues_var.get()
-    if instance is None:
-        raise RuntimeError(
-            "agent queues not bound: call bind_agent_queues(AgentQueues()) at "
-            "process startup or use the agent_queues_isolation fixture in tests."
-        )
-    return instance
-
-
-async def _get_condition(agent_id: UUID) -> asyncio.Condition:
-    registry = get_agent_queues()
-    async with registry.conditions_lock:
-        cond = registry.conditions.get(agent_id)
-        if cond is None:
-            cond = asyncio.Condition()
-            registry.conditions[agent_id] = cond
-        return cond
-
-
-def queue_depth(agent_id: UUID) -> int:
-    """Number of commands pending for `agent_id`."""
-    return len(get_agent_queues().queues.get(agent_id, ()))
-
-
-# ── Dispatch ────────────────────────────────────────────────────────────
-
-
-async def enqueue_command(agent_id: UUID, command: AgentCommand) -> None:
-    """Push an AgentCommand onto the agent's FIFO and wake any blocked
-    long-poller. Called by `RemoteAgentWorkspaceProvider` from inside the
-    workflow engine's start_step transaction."""
-    get_agent_queues().queues[agent_id].append(command)
-    cond = await _get_condition(agent_id)
-    async with cond:
-        cond.notify()
+    await session.execute(
+        update(AgentCommandRow).where(AgentCommandRow.id == command_id).values(agent_id=agent_id)
+    )
+    await session.flush()
 
 
 def _build_config_update() -> ConfigUpdateCommand:
-    """Build a ConfigUpdateCommand from the global defaults.
-
-    max_workspaces uses DEFAULT_MAX_WORKSPACES — there is no per-agent
-    column or per-org override at this time.
-    """
+    """Build a ConfigUpdateCommand from the global defaults."""
     from uuid import uuid4  # noqa: PLC0415
 
     return ConfigUpdateCommand(
@@ -143,77 +134,230 @@ def _build_config_update() -> ConfigUpdateCommand:
     )
 
 
-def _is_eligible(cmd: AgentCommand, active_workspace_ids: frozenset[UUID]) -> bool:
-    """Return True if `cmd` should be returned on a configured claim.
+def _row_to_command(row: object) -> AgentCommand:
+    """Deserialize an AgentCommandRow payload back to a typed AgentCommand."""
+    from typing import Annotated  # noqa: PLC0415
 
-    Eligibility rules:
-    - ConfigUpdateCommand: always eligible (AgentCommand family).
-    - CreateWorkspaceCommand: always eligible (creates a new workspace).
-    - Other workspace commands: eligible only when their workspace_id is
-      in active_workspace_ids (the agent has that workspace running).
-    """
-    if isinstance(cmd, ConfigUpdateCommand):
-        return True
-    if isinstance(cmd, CreateWorkspaceCommand):
-        return True
-    # Workspace command for a specific workspace.
-    ws_id: UUID | None = getattr(cmd, "workspace_id", None)
-    if ws_id is None:
-        return True  # Unknown shape — pass through.
-    return ws_id in active_workspace_ids
+    from pydantic import Field, TypeAdapter  # noqa: PLC0415
+
+    from app.core.agent_gateway.types import (  # noqa: PLC0415
+        CleanupWorkspaceCommand,
+        ConfigUpdateCommand,
+        InvokeClaudeCodeCommand,
+        RefreshWorkspaceAuthCommand,
+        WriteFilesCommand,
+    )
+
+    _adapter: TypeAdapter[AgentCommand] = TypeAdapter(
+        Annotated[
+            CreateWorkspaceCommand
+            | WriteFilesCommand
+            | RefreshWorkspaceAuthCommand
+            | InvokeClaudeCodeCommand
+            | CleanupWorkspaceCommand
+            | ConfigUpdateCommand,
+            Field(discriminator="kind"),
+        ]
+    )
+    return _adapter.validate_python(row.payload)  # type: ignore[attr-defined]
 
 
-async def claim_next(
+async def claim_batch(
     agent_id: UUID,
     *,
+    lifecycle: str,
+    new_workspaces: int,
+    workspace_ids: list[UUID],
     wait_seconds: int,
-    lifecycle: str = "unconfigured",
-    active_workspace_ids: list[UUID] | tuple[UUID, ...] | None = None,
-) -> AgentCommand | None:
-    """Pop the next eligible command for the agent, or wait up to `wait_seconds`.
+    session: AsyncSession,
+) -> list[AgentCommand]:
+    """Claim a capacity-bounded batch of commands for the agent.
 
     Lifecycle gate:
-    - unconfigured → return ConfigUpdateCommand immediately (no queue pop).
-      The workspace command queue is left untouched so commands accumulate
-      while the agent bootstraps.
-    - configured → return the first eligible command from the queue.
-      Eligible: ConfigUpdateCommand, CreateWorkspaceCommand (always), or
-      any workspace command whose workspace_id ∈ active_workspace_ids.
-      Ineligible commands remain at their queue position.
+    - `unconfigured` → return a single ConfigUpdateCommand (no DB claim).
+      The pending queue is untouched so commands accumulate while the agent
+      bootstraps.
+    - `configured` → run two FOR UPDATE SKIP LOCKED selects:
+        1. Up to `new_workspaces` unassigned CreateWorkspace rows (status=pending,
+           workspace_id NULL, command_kind=CreateWorkspace).
+        2. One pending row per named workspace_id in `workspace_ids`.
+      Both selects FIFO by UUIDv7 id. Stamps `agent_id`, `status=claimed`,
+      `claimed_at=now`.
 
-    `wait_seconds=0` is a non-blocking peek — useful in tests.
+    `wait_seconds=0` → non-blocking peek (returns immediately if nothing claimable).
+    Non-zero wait_seconds → short-interval re-SELECT loop (no Redis pub/sub needed
+    for POC; the reaper tick is the long-term wakeup path).
     """
     if lifecycle == "unconfigured":
-        # Always deliver a config update — the agent is not ready for work.
-        return _build_config_update()
+        return [_build_config_update()]
 
-    active_set: frozenset[UUID] = frozenset(active_workspace_ids or [])
-    queue = get_agent_queues().queues[agent_id]
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-    def _pop_eligible() -> AgentCommand | None:
-        """Scan the queue for the first eligible command. Ineligible commands
-        stay in the queue at their original positions."""
-        for i, cmd in enumerate(queue):
-            if _is_eligible(cmd, active_set):
-                del queue[i]
-                return cmd
-        return None
+    now = datetime.now(UTC)
+    claimed_rows: list[object] = []
 
-    result = _pop_eligible()
-    if result is not None:
-        return result
-    if wait_seconds <= 0:
-        return None
-    cond = await _get_condition(agent_id)
-    async with cond:
-        try:
-            await asyncio.wait_for(
-                cond.wait_for(lambda: any(_is_eligible(c, active_set) for c in queue)),
-                timeout=wait_seconds,
+    # 1. Unassigned CreateWorkspace rows (org-scoped; no agent pre-assigned).
+    if new_workspaces > 0:
+        create_rows = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.CREATE_WORKSPACE,
+                        AgentCommandRow.agent_id.is_(None),
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(new_workspaces)
+                    .with_for_update(skip_locked=True)
+                )
             )
-        except TimeoutError:
-            return None
-    return _pop_eligible()
+            .scalars()
+            .all()
+        )
+        claimed_rows.extend(create_rows)
+
+    # 2. One pending row per workspace in workspace_ids (pinned to this agent).
+    for ws_id in workspace_ids:
+        ws_rows = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.workspace_id == ws_id,
+                        AgentCommandRow.agent_id == agent_id,
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        claimed_rows.extend(ws_rows)
+
+    if not claimed_rows:
+        if wait_seconds <= 0:
+            return []
+        # Short-interval poll — re-check once after a short sleep.
+        import asyncio  # noqa: PLC0415
+
+        await asyncio.sleep(min(wait_seconds, 2))
+        return await claim_batch(
+            agent_id=agent_id,
+            lifecycle=lifecycle,
+            new_workspaces=new_workspaces,
+            workspace_ids=workspace_ids,
+            wait_seconds=0,
+            session=session,
+        )
+
+    # Stamp agent_id + claimed_at on all selected rows.
+    for row in claimed_rows:
+        row.agent_id = agent_id  # type: ignore[attr-defined]
+        row.status = "claimed"  # type: ignore[attr-defined]
+        row.claimed_at = now  # type: ignore[attr-defined]
+    await session.flush()
+
+    return [_row_to_command(r) for r in claimed_rows]
+
+
+async def acknowledge_command_received(
+    command_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Flip a claimed command to `delivered` on receipt of a `received` event.
+
+    Cancels the 30-second lease requeue. Idempotent: if the row is already
+    `delivered` this is a no-op.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    await session.execute(
+        update(AgentCommandRow)
+        .where(
+            AgentCommandRow.id == command_id,
+            AgentCommandRow.status == "claimed",
+        )
+        .values(status="delivered")
+    )
+    await session.flush()
+
+
+async def retire_command(
+    command_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Retire a command to `done` status on terminal event."""
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    await session.execute(
+        update(AgentCommandRow).where(AgentCommandRow.id == command_id).values(status="done")
+    )
+    await session.flush()
+
+
+async def requeue_stale_claimed(
+    *,
+    session: AsyncSession,
+) -> int:
+    """Requeue commands that were claimed but no `received` event arrived within
+    `LEASE_SECONDS`. Called each reaper tick from `core/workspace.cleanup_loop`.
+
+    For each stale `claimed` row:
+    - If `attempt < MAX_ATTEMPT`: flip back to `pending`, clear `agent_id` +
+      `claimed_at`, increment `attempt`.
+    - If `attempt >= MAX_ATTEMPT`: retire to `done` (loud terminal failure).
+
+    Returns the count of rows requeued (not counting `done` retirements).
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=LEASE_SECONDS)
+    stale = (
+        (
+            await session.execute(
+                select(AgentCommandRow).where(
+                    AgentCommandRow.status == "claimed",
+                    AgentCommandRow.claimed_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    requeued = 0
+    for row in stale:
+        if row.attempt >= MAX_ATTEMPT - 1:
+            # Hit the cap — retire permanently.
+            row.status = "done"
+            row.attempt = MAX_ATTEMPT
+            log.error(
+                "agent_gateway.command_attempt_cap",
+                command_id=str(row.id),
+                org_id=str(row.org_id),
+                attempt=row.attempt,
+            )
+        else:
+            row.status = "pending"
+            row.agent_id = None
+            row.claimed_at = None
+            row.attempt = row.attempt + 1
+            requeued += 1
+            log.info(
+                "agent_gateway.command_requeued",
+                command_id=str(row.id),
+                org_id=str(row.org_id),
+                attempt=row.attempt,
+            )
+    if stale:
+        await session.flush()
+    return requeued
 
 
 # ── Heartbeat / reconciliation ─────────────────────────────────────────
@@ -284,11 +428,26 @@ async def record_agent_event(
     event is terminal — enqueue `workflow.handle_agent_event` via the
     outbox in the same transaction.
 
+    A `received` non-terminal event flips the command row from
+    `claimed` to `delivered`, cancelling the lease requeue.
+
     Raises `StaleClaimError` when the workspace's `current_command_id`
     no longer matches; the endpoint maps this to `410 Gone`.
 
     Required `session`; caller commits.
     """
+    from app.core.agent_gateway.types import AgentEventKind  # noqa: PLC0415
+
+    # Handle `received` before the stale-claim guard — the guard looks at
+    # the workspace, but `received` only updates the command row lease.
+    if event.kind == AgentEventKind.RECEIVED:
+        await acknowledge_command_received(event.command_id, session=session)
+        log.info(
+            "agent.event.received",
+            command_id=str(event.command_id),
+        )
+        return
+
     # Look up the workspace holding this command. The single-flight claim
     # writes `current_command_id` + `current_holder_workflow_id` on the
     # workspace; delegates to the registered sink so workspace-state access
@@ -302,9 +461,7 @@ async def record_agent_event(
         # Non-terminal events (progress) skip workflow-engine resumption —
         # only `completed_*` events resume the workflow state machine.
         # Republish to the org-scoped workspace-activity channel so the SPA's
-        # SSE live-tail picks them up. The WebSocket batch handler and this
-        # HTTP path both write to the same `publish_workspace_activity` surface
-        # so the SPA subscriber sees events regardless of the transport.
+        # SSE live-tail picks them up.
         log.info(
             "agent.event.progress",
             command_id=str(event.command_id),
@@ -319,9 +476,9 @@ async def record_agent_event(
         )
         return
 
-    # Terminal — enqueue the workflow handler. The outbox row goes in the
-    # caller's session so the workflow advance is atomic with whatever the
-    # endpoint commits.
+    # Terminal — retire the command row and enqueue the workflow handler.
+    await retire_command(event.command_id, session=session)
+
     from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
     await enqueue(
@@ -479,47 +636,6 @@ async def get_agent_info(
         "state": row.state,
         "last_heartbeat_at": row.last_heartbeat_at,
     }
-
-
-async def pick_agent_for_org(
-    org_id: UUID,
-    *,
-    session: AsyncSession,
-) -> AgentRef | None:
-    """Pick the least-loaded reachable agent for `org_id`.
-
-    Selects reachable pods (heartbeat within 90 s) and returns the one with the
-    smallest in-process queue depth; ties break on most-recent heartbeat so a
-    fresh pod beats a stale one when both are idle.
-
-    Returns `None` when no reachable pod exists for the org.
-    """
-    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
-
-    cutoff = datetime.now(UTC) - timedelta(seconds=90)
-    rows = (
-        (
-            await session.execute(
-                select(WorkspaceAgentRow)
-                .where(
-                    WorkspaceAgentRow.org_id == org_id,
-                    WorkspaceAgentRow.state == "reachable",
-                    WorkspaceAgentRow.last_heartbeat_at.is_not(None),
-                    WorkspaceAgentRow.last_heartbeat_at >= cutoff,
-                )
-                .order_by(WorkspaceAgentRow.last_heartbeat_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return None
-    best = min(
-        rows,
-        key=lambda r: (queue_depth(r.id), -(r.last_heartbeat_at.timestamp() if r.last_heartbeat_at else 0)),
-    )
-    return AgentRef(agent_id=best.id, instance_id=best.instance_id)
 
 
 async def has_any_reachable_agent(

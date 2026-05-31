@@ -426,7 +426,7 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 ## ContextVar-bound registries — test isolation model
 
-The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) and the process singletons (`RedisPubsub`, `AgentQueues`, `SubscriberRegistry`, email inbox) are all held in `ContextVar`s. Production never calls `bind_*()` — each module holds a module-level default that captures import-time `bootstrap()` registrations. Test isolation is structural: bind a fresh copy per test, no restore needed.
+The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) and the process singletons (`RedisPubsub`, `SubscriberRegistry`, email inbox) are all held in `ContextVar`s. Production never calls `bind_*()` — each module holds a module-level default that captures import-time `bootstrap()` registrations. Test isolation is structural: bind a fresh copy per test, no restore needed.
 
 Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): imports the three plugin packages (triggering import-time bootstrap), optionally wraps with stubs, then snapshots the bound registries via `.copy()`. Runs once per session.
 

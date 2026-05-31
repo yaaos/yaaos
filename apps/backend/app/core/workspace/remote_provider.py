@@ -3,25 +3,24 @@ WorkspaceAgent via `core/agent_gateway`.
 
 This provider does **not** spawn anything in-process. Each operation
 (`provision`, `run_coding_agent_cli`, `destroy`, etc.) enqueues an
-AgentCommand onto the target agent's FIFO via
-`core/agent_gateway.enqueue_command`. The workflow engine's Workspace
-branch parks in `awaiting_agent` after dispatch; the terminal AgentEvent
-arrives at `/api/v1/commands/{id}/events` and the engine's
-`handle_agent_event` resumes the workflow.
+AgentCommand durably in `agent_commands` via `core/agent_gateway.enqueue_command`.
+The workflow engine's Workspace branch parks in `awaiting_agent` after dispatch;
+the terminal AgentEvent arrives at `/api/v1/commands/{id}/events` and the
+engine's `handle_agent_event` resumes the workflow.
 
 Exposes:
 - Provider registration under id `remote_agent`.
-- `dispatch_to_agent(workspace_id, command, *, session)` helper that
-  picks the destination agent (least-loaded reachable for the workspace's
-  org) and enqueues the command.
+- `dispatch_create_workspace(org_id, workspace_id, *, ..., session)` helper
+  that enqueues a CreateWorkspace command durably inside the caller's transaction.
+- `dispatch_cleanup_workspace(workspace_id, *, org_id, agent_id, traceparent, session)`
+  that enqueues a CleanupWorkspace command pinned to the owning agent.
 - `provision()` / `destroy()` that hand control to the agent via
   `CreateWorkspace` / `CleanupWorkspace` AgentCommands.
 
 The synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
 returning a `CodingAgentCliResult`) don't fit the async event-driven
 model — the reviewer commands enqueue AgentCommands that the engine's
-`handle_agent_event` consumes instead. Provisioning policy is "first
-reachable agent".
+`handle_agent_event` consumes instead.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from app.core.agent_gateway import (
     RepoRef,
     enqueue_command,
     has_any_reachable_agent,
-    pick_agent_for_org,
+    pin_command_to_agent,
 )
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
@@ -60,8 +59,8 @@ class RemoteAgentWorkspaceProvider:
 
     The Protocol shape was designed for in-process providers — its
     `provision/run/destroy` methods read like a synchronous call/return
-    cycle. For the remote path the methods enqueue AgentCommands and the
-    workflow engine handles awaits via the `handle_agent_event` flow.
+    cycle. For the remote path the methods enqueue AgentCommands durably
+    and the workflow engine handles awaits via the `handle_agent_event` flow.
     The dispatch entry points enqueue commands; the reviewer workflows
     drive the full integration through their command bodies."""
 
@@ -151,15 +150,13 @@ class RemoteAgentWorkspaceProvider:
 class CreateWorkspaceDispatch(BaseModel):
     """Result of `dispatch_create_workspace`.
 
-    Carries both the new `command_id` (for `current_command_id`) and the
-    `agent_id` of the pod chosen to own the workspace (for `WorkspaceRow.agent_id`).
-    The caller persists both atomically with the single-flight claim so the
-    workspace is hard-tied to its owning pod from the moment it's created.
+    Carries the new `command_id` for `current_command_id`. The workspace
+    is not pre-assigned to an agent — the durable queue lets any reachable
+    agent claim it via `claim_batch`.
     """
 
     model_config = ConfigDict(frozen=True)
     command_id: UUID
-    agent_id: UUID
 
 
 async def dispatch_create_workspace(
@@ -173,24 +170,19 @@ async def dispatch_create_workspace(
     ttl_seconds: int = 600,
     max_idle_seconds: int = 600,
     session: AsyncSession,
-) -> CreateWorkspaceDispatch | None:
-    """Pick an agent for `org_id` and enqueue a `CreateWorkspace` command.
+) -> CreateWorkspaceDispatch:
+    """Enqueue a `CreateWorkspace` command durably inside the caller's transaction.
 
-    Returns a `CreateWorkspaceDispatch` (the new `command_id` plus the chosen
-    owning `agent_id`) so the caller can persist `current_command_id` +
-    `WorkspaceRow.agent_id` together, or None when no agent is reachable.
+    Returns a `CreateWorkspaceDispatch` (the new `command_id`) so the caller
+    can persist `current_command_id` atomically with the `try_claim` gate.
 
-    The command is enqueued under the agent's `agent_id` (= `WorkspaceAgentRow.id`)
-    — the same key `claim_next` reads — so a dispatched command is claimable
-    by the agent it was dispatched to.
+    Unlike the old path there is no agent pre-assignment here — the durable
+    queue lets whichever reachable agent has capacity claim it via `claim_batch`.
 
     Caller is responsible for calling `core/workspace.try_claim` to gate
     the dispatch through the single-flight machinery; this helper does NOT
-    write to the workspace row itself."""
-    agent = await pick_agent_for_org(org_id, session=session)
-    if agent is None:
-        log.warning("remote_provider.no_reachable_agent", org_id=str(org_id))
-        return None
+    write to the workspace row itself.
+    """
     command_id = uuid4()
     cmd = CreateWorkspaceCommand(
         command_id=command_id,
@@ -202,27 +194,34 @@ async def dispatch_create_workspace(
         ttl_seconds=ttl_seconds,
         max_idle_seconds=max_idle_seconds,
     )
-    await enqueue_command(agent.agent_id, cmd)
-    return CreateWorkspaceDispatch(command_id=command_id, agent_id=agent.agent_id)
+    await enqueue_command(org_id=org_id, command=cmd, session=session)
+    return CreateWorkspaceDispatch(command_id=command_id)
 
 
 async def dispatch_cleanup_workspace(
     workspace_id: UUID,
     *,
+    org_id: UUID,
     agent_id: UUID,
     traceparent: str,
-) -> UUID | None:
-    """Enqueue a `CleanupWorkspace` against the agent that owns the workspace.
+    session: AsyncSession,
+) -> UUID:
+    """Enqueue a `CleanupWorkspace` command pinned to the owning agent.
 
     `agent_id` is the workspace's stored owning agent (`WorkspaceRow.agent_id`)
     — the pod that ran `CreateWorkspace`. Post-create commands MUST go to that
     same agent; re-picking would route to a pod that has no such workspace.
-    Returns the new `command_id`."""
+    The command row is pre-stamped with `agent_id` so `claim_batch` can
+    find it in the workspace_ids sweep.
+    Returns the new `command_id`.
+    """
     command_id = uuid4()
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
         traceparent=traceparent,
     )
-    await enqueue_command(agent_id, cmd)
+    await enqueue_command(org_id=org_id, command=cmd, session=session)
+    # Pre-assign the agent so claim_batch's workspace_ids sweep finds it.
+    await pin_command_to_agent(command_id, agent_id, session=session)
     return command_id

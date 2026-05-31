@@ -47,10 +47,21 @@
 |---|---|---|
 | `POST` | `/api/v1/agent/identity` | Unauthenticated bootstrap |
 | `POST` | `/api/v1/agent/heartbeat` | Bearer-gated; no agent ID in URL |
-| `POST` | `/api/v1/agent/commands/claim` | Bearer-gated; no agent ID in URL |
+| `POST` | `/api/v1/agent/commands/claim` | Bearer-gated; capacity-pull body |
 | `POST` | `/api/v1/commands/{id}/events` | Per-command ID retained |
 | `POST` | `/api/v1/workspaces/{id}/events` | Per-workspace ID retained |
 | `WSS` | `/api/v1/agent/activity` | Bearer-gated; no agent ID in URL |
+
+## Claim body (capacity-pull)
+
+`ClaimRequest` carries:
+- `lifecycle` — `"unconfigured"` (delivers only `ConfigUpdate`) or `"configured"`.
+- `new_workspaces` — `max_workspaces − active count`; the backend returns up to this many unassigned `CreateWorkspace` rows.
+- `workspace_ids` — idle Active workspaces; the backend returns one pending command per named workspace.
+
+## `received` EventKind
+
+After claiming a command the supervisor posts `kind=received` as the first event. This cancels the backend's 30-second lease requeue (`claimed → delivered`). Best-effort: a POST failure is logged but does not prevent dispatch.
 
 ## Identity wire format
 

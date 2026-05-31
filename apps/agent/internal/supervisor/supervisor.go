@@ -595,8 +595,9 @@ func (s *Supervisor) diskSweepLoop(ctx context.Context) {
 }
 
 // claimLoop runs one long-poll worker. On a successful claim it decodes the
-// raw bytes into a typed Command and dispatches via routeCommand. On
-// ErrNoCommand (204) it re-arms; on ctx cancellation it exits.
+// raw bytes into a typed Command, emits a `received` event to cancel the
+// lease requeue, and dispatches via routeCommand. On ErrNoCommand (204) it
+// re-arms; on ctx cancellation it exits.
 func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 	for {
 		if ctx.Err() != nil {
@@ -630,7 +631,36 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		}
 		s.claimBackoff.Reset()
 		observability.Metrics().CommandsClaimed.Add(ctx, 1, observability.StandardAttrs())
+
+		// Emit a `received` event to cancel the 30-second lease requeue
+		// on the backend. Best-effort: a failure here is logged but does not
+		// prevent dispatch — at worst the command gets re-queued to pending
+		// and re-delivered (at-least-once).
+		s.postReceivedEvent(ctx, cmd.Header())
+
 		s.routeCommand(ctx, cmd)
+	}
+}
+
+// postReceivedEvent posts a `received` non-terminal event to the backend.
+// This cancels the 30-second lease requeue on the command row
+// (claimed → delivered). Best-effort: errors are logged but never prevent
+// dispatch. ConfigUpdate commands carry no workspace_id and are agent-scoped;
+// they still have a command_id that the backend tracks for the lease.
+func (s *Supervisor) postReceivedEvent(ctx context.Context, header protocol.CommandHeader) {
+	ev := protocol.AgentEvent{
+		CommandID:   header.CommandID,
+		Kind:        protocol.EventReceived,
+		ReportedAt:  time.Now().UTC(),
+		Traceparent: header.Traceparent,
+	}
+	if err := s.client.PostCommandEvent(ctx, header.CommandID, ev); err != nil {
+		if err != protocol.ErrStaleClaim {
+			s.log.Warn("supervisor.received_event_failed",
+				"command_id", header.CommandID,
+				"err", err.Error(),
+			)
+		}
 	}
 }
 
@@ -871,17 +901,37 @@ func (s *Supervisor) routeWorkspaceCmd(ctx context.Context, c command.WorkspaceC
 }
 
 // buildClaimRequest constructs the ClaimRequest the claim-loop POSTs to the
-// backend. Lifecycle is derived from the config pointer; active_workspace_ids
-// is the current set of Active registry records.
+// backend. Lifecycle is derived from the config pointer.
+//
+// Capacity-pull fields:
+//   - new_workspaces = max_workspaces − active count (how many new workspaces
+//     the agent can accept); 0 when unconfigured.
+//   - workspace_ids = idle Active workspaces (Active workspaces with no current
+//     command in-flight) awaiting a pending command; empty when unconfigured.
 func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
-	lifecycle := "unconfigured"
-	if s.config.Load() != nil {
-		lifecycle = "configured"
+	cfg := s.config.Load()
+	if cfg == nil {
+		return protocol.ClaimRequest{
+			WaitSeconds:   s.cfg.ClaimWaitSeconds,
+			Lifecycle:     "unconfigured",
+			NewWorkspaces: 0,
+			WorkspaceIDs:  nil,
+		}
 	}
+	activeIDs := s.pool.ActiveIDs()
+	activeCount := len(activeIDs)
+	newWorkspaces := cfg.MaxWorkspaces - activeCount
+	if newWorkspaces < 0 {
+		newWorkspaces = 0
+	}
+	// workspace_ids = Active workspaces that have no in-flight command
+	// (i.e. idle and ready for the next command).
+	idleIDs := s.pool.IdleIDs()
 	return protocol.ClaimRequest{
-		WaitSeconds:        s.cfg.ClaimWaitSeconds,
-		Lifecycle:          lifecycle,
-		ActiveWorkspaceIDs: s.pool.ActiveIDs(),
+		WaitSeconds:   s.cfg.ClaimWaitSeconds,
+		Lifecycle:     "configured",
+		NewWorkspaces: newWorkspaces,
+		WorkspaceIDs:  idleIDs,
 	}
 }
 

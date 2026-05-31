@@ -32,18 +32,6 @@ async def pubsub_isolation() -> None:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def agent_queues_isolation() -> None:
-    """Bind a fresh AgentQueues instance for each test.
-
-    Autouse so every test gets an isolated, empty dispatch-queue registry
-    without importing or calling anything.
-    """
-    from app.core.agent_gateway import AgentQueues, bind_agent_queues  # noqa: PLC0415
-
-    bind_agent_queues(AgentQueues())
-
-
-@pytest_asyncio.fixture(autouse=True)
 async def subscriber_registry_isolation() -> None:
     """Bind a fresh SubscriberRegistry instance for each test.
 
@@ -185,7 +173,6 @@ def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
 
 
 __all__ = [
-    "agent_queues_isolation",
     "email_inbox_isolation",
     "plugin_registries_isolation",
     "pubsub_isolation",

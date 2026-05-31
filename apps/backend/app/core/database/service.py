@@ -172,6 +172,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("036_workspaces_agent_id", "workspaces_agent_id"),
     ("037_drop_provider_columns", "drop_provider_columns"),
     ("038_agent_identity_exchange_schema", "agent_identity_exchange_schema"),
+    ("039_create_agent_commands", "create_agent_commands"),
 )
 
 
@@ -1212,6 +1213,21 @@ async def migrate() -> None:
             await lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
 
 
+async def _apply_create_agent_commands(conn) -> None:  # type: ignore[no-untyped-def]
+    """Durable `agent_commands` queue table + two indexes.
+
+    Commands flow pending → claimed → delivered → done. Enqueued atomically
+    with the workspace single-flight claim; the agent claims a capacity-bounded
+    batch via `FOR UPDATE SKIP LOCKED` (FIFO via UUIDv7 PK). Backend restarts
+    lose no commands. Idempotent.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.agent_gateway.models")
+    new_tables = [Base.metadata.tables["agent_commands"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_pending() -> None:
     """Body of `migrate()`, called while holding the advisory lock.
 
@@ -1301,6 +1317,8 @@ async def _apply_pending() -> None:
                 await _apply_drop_provider_columns(conn)
             elif kind == "agent_identity_exchange_schema":
                 await _apply_agent_identity_exchange_schema(conn)
+            elif kind == "create_agent_commands":
+                await _apply_create_agent_commands(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

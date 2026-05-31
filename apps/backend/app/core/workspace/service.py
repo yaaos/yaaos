@@ -563,6 +563,12 @@ async def _reaper_sweep_once() -> None:
         if newly_offline:
             await _failsafe_agent_loss(s, set(newly_offline))
 
+        # 1d. Command-lease reaper — requeue claimed commands whose 30-second
+        # receipt deadline has passed without a `received` event from the agent.
+        from app.core.agent_gateway import requeue_stale_claimed  # noqa: PLC0415
+
+        await requeue_stale_claimed(session=s)
+
         # 2. Find rows to destroy.
         rows = (
             (

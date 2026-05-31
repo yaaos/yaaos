@@ -30,19 +30,21 @@ A fresh agent (or any restarted pod) enters the `unconfigured` lifecycle.
 **Transition:** `ConfigUpdateCommand.Execute` stores the config atomically. The agent's lifecycle immediately becomes `configured`.
 
 **Configured:**
-- Claim requests carry `lifecycle="configured"` + `active_workspace_ids` (the IDs of currently running workspaces).
-- The control plane returns the first *eligible* queued command.
+- Claim requests carry `lifecycle="configured"`, `new_workspaces` (capacity for new workspaces), and `workspace_ids` (idle Active workspaces awaiting a command).
+- The backend draws a batch from `agent_commands`: up to `new_workspaces` unassigned `CreateWorkspace` rows + one pending row per named `workspace_id`.
 - A process restart returns to `unconfigured` (the atomic pointer is not persisted).
 
-## Claim routing — `active_workspace_ids`
+## Claim routing — capacity-pull
 
-Eligibility on a configured claim:
-- `ConfigUpdateCommand` — always eligible.
-- `CreateWorkspaceCommand` — always eligible (creates a new workspace).
-- Other workspace commands — eligible only when `workspace_id ∈ active_workspace_ids`.
-- Ineligible commands stay in the queue; the next eligible command is returned instead.
+The `ClaimRequest` body:
+- `new_workspaces = max_workspaces − active count` — capacity for new workspaces. The backend returns up to this many unassigned `CreateWorkspace` rows.
+- `workspace_ids` — idle Active workspaces (Active registry records with no in-flight command). The backend returns one pending command per named workspace.
 
-This prevents the agent from receiving a command for a workspace it no longer holds in its registry.
+The backend draws commands from the durable `agent_commands` queue — capacity-pull means the agent declares what it can accept, and the backend selects matching rows.
+
+## Command lease + `received` event
+
+After the claim succeeds and the command is decoded, the agent posts `kind=received` to `/api/v1/commands/{id}/events`. This flips the backend row from `claimed → delivered`, cancelling the 30-second lease requeue. Without a `received` event the backend requeues the row to `pending` on the next `cleanup_loop` tick (up to `MAX_ATTEMPT=5` times before permanent retirement to `done`).
 
 ## Bearer auth + renewal
 
@@ -74,7 +76,7 @@ The `X-Yaaos-Audience` header inside the signed `payload` must match the backend
 
 ## Ordering + idempotency
 
-- Commands are FIFO per agent. Eligible commands are dequeued in order; ineligible commands hold their position.
+- Commands are FIFO within the durable `agent_commands` queue, ordered by UUIDv7 PK.
 - Each command carries a `command_id` (UUID). The stale-claim guard on the backend matches the posted event's `command_id` against the workspace's current claim; a mismatch returns `410 Gone`.
 
 ## At-least-once delivery + dedup

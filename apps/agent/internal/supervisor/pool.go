@@ -353,6 +353,21 @@ func (p *Pool) ActiveIDs() []string {
 	return out
 }
 
+// IdleIDs returns the workspace IDs of Active records that have no
+// in-flight command (currentCommandID == ""). These are workspaces
+// ready to accept the next command from the durable queue.
+func (p *Pool) IdleIDs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for id, rec := range p.registry {
+		if rec.state == StateActive && rec.currentCommandID == "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // ── Dispatch ────────────────────────────────────────────────────────────────
 
 // Dispatch routes one WorkspaceCommand to the right runner and returns the

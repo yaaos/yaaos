@@ -12,6 +12,10 @@ success. `token_hash` is sha256 of the plaintext; plaintext is returned to the
 caller exactly once and is never persisted or logged. Revocation flips
 `revoked_at` to non-null. Authentication on every other gateway call hashes
 the incoming bearer and looks it up here.
+
+`agent_commands` — durable command queue. Enqueued atomically with the workspace
+single-flight claim; the agent claims a capacity-bounded batch via lease
+(pending→claimed→delivered→done). Backend restarts lose no commands.
 """
 
 from __future__ import annotations
@@ -24,13 +28,14 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     LargeBinary,
     String,
     UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -110,4 +115,48 @@ class BearerTokenRow(Base):
     __table_args__ = (
         Index("ix_bearer_tokens_org_issued", "org_id", "issued_at"),
         Index("ix_bearer_tokens_issued_iam_arn", "issued_iam_arn"),
+    )
+
+
+class AgentCommandRow(Base):
+    """Durable command queue. One row per dispatched AgentCommand.
+
+    Commands flow: pending → claimed → delivered → done.
+    The lease window is 30 s: if no `received` event arrives within 30 s of
+    `claimed_at`, the reaper flips `claimed` back to `pending` for re-delivery.
+    `attempt` increments on each requeue; when it hits the cap the command is
+    marked done with a terminal-failure outcome.
+
+    `org_id` and `workspace_id` are informational indexes — `workspace_id` is
+    NULL for org-scoped commands (e.g. ConfigUpdate, CreateWorkspace before an
+    agent is assigned). `agent_id` is stamped at claim time, not enqueue time.
+    """
+
+    __tablename__ = "agent_commands"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    # workspace_id is NULL for org-scoped commands (ConfigUpdate, CreateWorkspace).
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # command_kind discriminates CreateWorkspace (org-scoped) from workspace-pinned commands.
+    command_kind: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # status lifecycle: pending → claimed → delivered → done
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    # agent_id is stamped at claim time. NULL until claimed.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # attempt counts re-queues; capped to prevent infinite retry.
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Fast lookup for the agent's capacity-pull claim (FIFO via UUIDv7 id).
+        Index("ix_agent_commands_agent_status_id", "agent_id", "status", "id"),
+        # Fast lookup for unassigned CreateWorkspace commands (org-scoped claim).
+        Index("ix_agent_commands_status_kind_id", "status", "command_kind", "id"),
     )

@@ -32,7 +32,6 @@ from app.core import audit_log, workspace  # noqa: F401, E402
 from app.core import workflow as _core_workflow  # noqa: F401, E402
 from app.core import agent_gateway as _core_agent_gateway  # noqa: E402
 
-_core_agent_gateway.bind_agent_queues(_core_agent_gateway.AgentQueues())
 _core_agent_gateway.bind_subscriber_registry(_core_agent_gateway.SubscriberRegistry())
 
 # 4b. Identity + tenancy + auth middleware. Must be imported before

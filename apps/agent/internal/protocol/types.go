@@ -100,6 +100,7 @@ type EventKind string
 
 const (
 	EventProgress         EventKind = "progress"
+	EventReceived         EventKind = "received"
 	EventCompletedSuccess EventKind = "completed_success"
 	EventCompletedFailure EventKind = "completed_failure"
 	EventCompletedSkipped EventKind = "completed_skipped"
@@ -166,9 +167,10 @@ type HeartbeatResponse struct {
 }
 
 type ClaimRequest struct {
-	WaitSeconds        int      `json:"wait_seconds"`
-	Lifecycle          string   `json:"lifecycle"`            // "unconfigured" | "configured"
-	ActiveWorkspaceIDs []string `json:"active_workspace_ids"` // IDs of Active-state workspaces
+	WaitSeconds   int      `json:"wait_seconds"`
+	Lifecycle     string   `json:"lifecycle"`      // "unconfigured" | "configured"
+	NewWorkspaces int      `json:"new_workspaces"` // capacity for new CreateWorkspace commands
+	WorkspaceIDs  []string `json:"workspace_ids"`  // idle Active workspaces awaiting a command
 }
 
 // AgentConfigWire is the raw JSON wire shape of the runtime configuration

@@ -266,6 +266,7 @@ func TestOpenAPIDrift_AgentEventKindsMatchSpecEnum(t *testing.T) {
 	}
 	goKinds := map[string]struct{}{
 		string(EventProgress):         {},
+		string(EventReceived):         {},
 		string(EventCompletedSuccess): {},
 		string(EventCompletedFailure): {},
 		string(EventCompletedSkipped): {},

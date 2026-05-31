@@ -143,6 +143,7 @@ AgentCommand = Annotated[
 
 class AgentEventKind(StrEnum):
     PROGRESS = "progress"
+    RECEIVED = "received"
     COMPLETED_SUCCESS = "completed_success"
     COMPLETED_FAILURE = "completed_failure"
     COMPLETED_SKIPPED = "completed_skipped"
@@ -250,19 +251,21 @@ class ClaimRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
     wait_seconds: int = Field(ge=0, le=55)
     lifecycle: Literal["unconfigured", "configured"] = "unconfigured"
-    active_workspace_ids: tuple[UUID, ...] = ()
+    # new_workspaces: capacity for new CreateWorkspace commands (max_workspaces - active count).
+    new_workspaces: int = Field(ge=0, default=0)
+    # workspace_ids: idle workspaces awaiting a command (subset of Active workspaces).
+    workspace_ids: tuple[UUID, ...] = ()
 
 
 # ── Agent reference ───────────────────────────────────────────────────
 
 
 class AgentRef(BaseModel):
-    """Minimal agent-pod reference returned by `pick_agent_for_org`.
+    """Minimal agent-pod reference for an agent pod.
 
     `agent_id` is the row PK used when the caller needs to address the row
-    directly (e.g. queue-depth checks, claim routing). `instance_id` is the
-    role-session-name derived from the STS ARN — the backend-assigned stable
-    pod identifier.
+    directly (e.g. claim routing). `instance_id` is the role-session-name
+    derived from the STS ARN — the backend-assigned stable pod identifier.
     """
 
     model_config = ConfigDict(frozen=True)

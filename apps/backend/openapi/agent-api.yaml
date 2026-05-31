@@ -351,15 +351,23 @@ components:
             `configured` means the agent is ready for workspace commands; the
             backend returns the first eligible queued command.
           default: unconfigured
-        active_workspace_ids:
+        new_workspaces:
+          type: integer
+          minimum: 0
+          default: 0
+          description: |
+            Capacity for new CreateWorkspace commands: max_workspaces − current
+            active count. The backend returns up to this many unassigned
+            CreateWorkspace rows.
+        workspace_ids:
           type: array
           items:
             type: string
             format: uuid
           description: |
-            IDs of the agent's Active-state workspaces (registry records the
-            agent has running). Used to filter eligibility: non-create workspace
-            commands are only returned when their workspace_id appears here.
+            IDs of idle Active workspaces awaiting a command (a subset of the
+            agent's running workspaces). The backend returns one pending command
+            per named workspace_id.
 
     AgentCommand:
       oneOf:
@@ -611,12 +619,17 @@ components:
           type: string
           enum:
             - progress
+            - received
             - completed_success
             - completed_failure
             - completed_skipped
           description: |
-            Progress is non-terminal. `completed_*` is terminal — the
-            backend then resolves the event-to-workflow lookup chain
+            `progress` is non-terminal (streaming updates).
+            `received` is non-terminal: the agent posts this as its first
+            event for a claimed command to cancel the 30-second lease requeue
+            (flips `claimed → delivered` on the command row).
+            `completed_*` is terminal — the backend resolves the
+            event-to-workflow lookup chain
             (`command_id → workspace → current_holder_workflow_id`) and
             enqueues `core/workflow.handle_agent_event`.
         outcome_label:
