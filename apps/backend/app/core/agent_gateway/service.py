@@ -18,9 +18,11 @@ the row to `done`.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 from uuid import UUID
 
 import structlog
+from pydantic import Field, TypeAdapter
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +35,16 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AgentConfig,
     AgentEvent,
+    CleanupWorkspaceCommand,
     ConfigUpdateCommand,
     CreateWorkspaceCommand,
     HeartbeatRequest,
     HeartbeatResponse,
+    InvokeClaudeCodeCommand,
+    RefreshWorkspaceAuthCommand,
     StaleClaimError,
     WorkspaceEvent,
+    WriteFilesCommand,
 )
 from app.core.tasks import enqueue
 
@@ -56,6 +62,20 @@ LEASE_SECONDS: int = 30
 # Maximum requeue attempts before a command is retired to `done` as a terminal
 # failure. Prevents infinite retry of a structurally bad command.
 MAX_ATTEMPT: int = 5
+
+# Discriminated-union adapter that deserializes a persisted command payload back
+# to a typed AgentCommand. Built once at import time — `claim_next` is a hot path.
+_COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
+    Annotated[
+        CreateWorkspaceCommand
+        | WriteFilesCommand
+        | RefreshWorkspaceAuthCommand
+        | InvokeClaudeCodeCommand
+        | CleanupWorkspaceCommand
+        | ConfigUpdateCommand,
+        Field(discriminator="kind"),
+    ]
+)
 
 
 # ── Durable command queue ───────────────────────────────────────────────
@@ -136,30 +156,7 @@ def _build_config_update() -> ConfigUpdateCommand:
 
 def _row_to_command(row: object) -> AgentCommand:
     """Deserialize an AgentCommandRow payload back to a typed AgentCommand."""
-    from typing import Annotated  # noqa: PLC0415
-
-    from pydantic import Field, TypeAdapter  # noqa: PLC0415
-
-    from app.core.agent_gateway.types import (  # noqa: PLC0415
-        CleanupWorkspaceCommand,
-        ConfigUpdateCommand,
-        InvokeClaudeCodeCommand,
-        RefreshWorkspaceAuthCommand,
-        WriteFilesCommand,
-    )
-
-    _adapter: TypeAdapter[AgentCommand] = TypeAdapter(
-        Annotated[
-            CreateWorkspaceCommand
-            | WriteFilesCommand
-            | RefreshWorkspaceAuthCommand
-            | InvokeClaudeCodeCommand
-            | CleanupWorkspaceCommand
-            | ConfigUpdateCommand,
-            Field(discriminator="kind"),
-        ]
-    )
-    return _adapter.validate_python(row.payload)  # type: ignore[attr-defined]
+    return _COMMAND_ADAPTER.validate_python(row.payload)  # type: ignore[attr-defined]
 
 
 async def claim_next(

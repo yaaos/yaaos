@@ -17,6 +17,10 @@ from dataclasses import dataclass
 
 from app.core.redis import sliding_window_hit
 
+# Redis key prefix owned by this module for all identity-exchange rate-limit
+# windows. Cross-module test machinery consumes it (never re-typing the literal).
+KEY_PREFIX = "rl:identity_exchange:"
+
 PER_IP_LIMIT = 10
 PER_IP_WINDOW_SECONDS = 60
 PER_POD_LIMIT = 100
@@ -53,27 +57,13 @@ async def check_identity_exchange(*, source_ip: str | None, agent_pod_id: str | 
     in that case the IP axis is skipped. Same for `agent_pod_id`.
     """
     if source_ip:
-        await _hit(f"rl:identity_exchange:ip:{source_ip}", PER_IP_LIMIT, PER_IP_WINDOW_SECONDS)
+        await _hit(f"{KEY_PREFIX}ip:{source_ip}", PER_IP_LIMIT, PER_IP_WINDOW_SECONDS)
     if agent_pod_id:
-        await _hit(f"rl:identity_exchange:pod:{agent_pod_id}", PER_POD_LIMIT, PER_POD_WINDOW_SECONDS)
-
-
-async def reset_rate_limit_for_tests() -> None:
-    """Test hook: flush all identity-exchange rate-limit keys.
-
-    Called by the test fixture in `test/test_identity_exchange.py` between
-    tests so consecutive tests using the same source IP don't bleed into
-    each other's windows. Never called from production code.
-    """
-    from app.core.redis import delete_keys_matching  # noqa: PLC0415
-
-    try:
-        await delete_keys_matching("rl:identity_exchange:*")
-    except Exception:
-        pass
+        await _hit(f"{KEY_PREFIX}pod:{agent_pod_id}", PER_POD_LIMIT, PER_POD_WINDOW_SECONDS)
 
 
 __all__ = [
+    "KEY_PREFIX",
     "PER_IP_LIMIT",
     "PER_IP_WINDOW_SECONDS",
     "PER_POD_LIMIT",

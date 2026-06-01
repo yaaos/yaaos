@@ -54,8 +54,15 @@ class _StubPlugin:
         return HealthStatus(healthy=True, message="ok", checked_at=datetime.now(UTC))
 
 
-def test_register_and_get_plugin() -> None:
+@pytest.fixture(autouse=True)
+def _fresh_registry():
+    """Bind a clean CodingAgentRegistry before each test so registrations don't
+    bleed across tests."""
     bind_coding_agent_registry(CodingAgentRegistry())
+    yield
+
+
+def test_register_and_get_plugin() -> None:
     plugin = _StubPlugin()
     register_plugin(plugin)
     assert get_plugin("stub") is plugin
@@ -63,14 +70,12 @@ def test_register_and_get_plugin() -> None:
 
 
 def test_register_duplicate_raises() -> None:
-    bind_coding_agent_registry(CodingAgentRegistry())
     register_plugin(_StubPlugin())
     with pytest.raises(ValueError, match="already registered"):
         register_plugin(_StubPlugin())
 
 
 def test_get_unknown_plugin_raises() -> None:
-    bind_coding_agent_registry(CodingAgentRegistry())
     with pytest.raises(PluginNotFoundError):
         get_plugin("nope")
 
@@ -79,7 +84,6 @@ def test_get_unknown_plugin_raises() -> None:
 async def test_review_dispatch() -> None:
     from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
 
-    bind_coding_agent_registry(CodingAgentRegistry())
     register_plugin(_StubPlugin())
 
     pr = VCSPullRequest(
@@ -114,7 +118,6 @@ async def test_review_dispatch() -> None:
 
 @pytest.mark.asyncio
 async def test_validate_config_dispatch() -> None:
-    bind_coding_agent_registry(CodingAgentRegistry())
     register_plugin(_StubPlugin())
     res = await validate_config("stub", {})
     assert res.valid is True
@@ -134,7 +137,6 @@ async def test_health_check_all_handles_plugin_exception() -> None:
         async def health_check(self) -> HealthStatus:
             raise RuntimeError("boom")
 
-    bind_coding_agent_registry(CodingAgentRegistry())
     register_plugin(_Broken())
     out = await health_check_all()
     assert out["broken"].healthy is False
@@ -142,7 +144,6 @@ async def test_health_check_all_handles_plugin_exception() -> None:
 
 
 def test_register_plugin_adds_and_is_retrievable() -> None:
-    bind_coding_agent_registry(CodingAgentRegistry())
     plugin = _StubPlugin()
     register_plugin(plugin)
     assert get_plugin("stub") is plugin
@@ -156,7 +157,6 @@ def test_list_registered_plugins_returns_insertion_order() -> None:
     class _B:
         meta = PluginMeta(id="bbb", type="coding_agent", display_name="B")
 
-    bind_coding_agent_registry(CodingAgentRegistry())
     register_plugin(_A())
     register_plugin(_B())
     result = list_registered_plugins()

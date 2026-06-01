@@ -85,12 +85,36 @@ func TestAWSSTSProvider_SignClaim_EnvelopeShape(t *testing.T) {
 	}
 }
 
-// TestNewProvider_ReturnsAWSSTSProvider verifies the factory returns the expected kind.
-func TestNewProvider_ReturnsAWSSTSProvider(t *testing.T) {
+// TestNewProvider_DefaultIsAWSSTS verifies that an unset YAAOS_IDENTITY_PROVIDER
+// selects the aws-sts provider.
+func TestNewProvider_DefaultIsAWSSTS(t *testing.T) {
+	t.Setenv(providerEnvVar, "")
 	p := NewProvider()
-	if p.Kind() != "aws-sts" {
-		t.Errorf("NewProvider().Kind(): want %q, got %q", "aws-sts", p.Kind())
+	if p.Kind() != kindAWSSTS {
+		t.Errorf("NewProvider().Kind(): want %q, got %q", kindAWSSTS, p.Kind())
 	}
+}
+
+// TestNewProvider_ExplicitAWSSTS verifies that YAAOS_IDENTITY_PROVIDER=aws-sts
+// selects the aws-sts provider.
+func TestNewProvider_ExplicitAWSSTS(t *testing.T) {
+	t.Setenv(providerEnvVar, kindAWSSTS)
+	p := NewProvider()
+	if p.Kind() != kindAWSSTS {
+		t.Errorf("NewProvider().Kind(): want %q, got %q", kindAWSSTS, p.Kind())
+	}
+}
+
+// TestNewProvider_UnknownPanics verifies that an unknown YAAOS_IDENTITY_PROVIDER
+// value panics at startup.
+func TestNewProvider_UnknownPanics(t *testing.T) {
+	t.Setenv(providerEnvVar, "made-up-provider")
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("NewProvider() with unknown provider: want panic, got none")
+		}
+	}()
+	_ = NewProvider()
 }
 
 // TestSignedEnvelopeJSON_BodyField verifies the stsAPIBody constant matches the

@@ -65,7 +65,7 @@ def _reset_verifier():
 async def _reset_rate_limit():
     """Clear the identity-exchange rate-limit Redis keys before each test so tests
     don't bleed into each other via the per-IP sliding window."""
-    from app.core.agent_gateway.rate_limit import reset_rate_limit_for_tests  # noqa: PLC0415
+    from app.testing.rate_limit_reset import reset_rate_limit_for_tests  # noqa: PLC0415
 
     await reset_rate_limit_for_tests()
     yield

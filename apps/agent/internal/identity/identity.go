@@ -16,7 +16,15 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 )
+
+// providerEnvVar selects the Provider implementation. Default: "aws-sts".
+const providerEnvVar = "YAAOS_IDENTITY_PROVIDER"
+
+// kindAWSSTS is the only Provider kind defined today.
+const kindAWSSTS = "aws-sts"
 
 // Credentials holds the result of a successful identity exchange as stamped
 // by the supervisor from the backend's response. The Provider never fills
@@ -71,5 +79,14 @@ type Provider interface {
 //	aws-sts: AWS_EC2_METADATA_SERVICE_ENDPOINT (IMDS URL, default auto-detected)
 //	         AWS_REGION (optional; the signed URL carries the region instead)
 func NewProvider() Provider {
-	return newAWSSTSProvider()
+	kind := os.Getenv(providerEnvVar)
+	if kind == "" {
+		kind = kindAWSSTS
+	}
+	switch kind {
+	case kindAWSSTS:
+		return newAWSSTSProvider()
+	default:
+		panic(fmt.Sprintf("identity: unknown %s=%q (known: %q)", providerEnvVar, kind, kindAWSSTS))
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -467,24 +468,14 @@ func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityEx
 }
 
 // hostFromURL extracts the host (and optional port) from a URL string.
-// Used to derive the audience for the signed STS claim.
+// Used to derive the audience for the signed STS claim. On a parse error the
+// raw input is returned unchanged so the caller still has a non-empty audience.
 func hostFromURL(rawURL string) string {
-	// Simple extraction: strip scheme and path.
-	s := rawURL
-	if i := len("https://"); len(s) > i && s[:i] == "https://" {
-		s = s[i:]
-	} else if i := len("http://"); len(s) > i && s[:i] == "http://" {
-		s = s[i:]
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
 	}
-	// Strip path.
-	if j := len(s); j > 0 {
-		for k, c := range s {
-			if c == '/' {
-				return s[:k]
-			}
-		}
-	}
-	return s
+	return u.Host
 }
 
 // gatherAgentMetadata collects static OS metadata for the identity exchange.

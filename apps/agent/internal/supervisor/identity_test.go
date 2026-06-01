@@ -168,3 +168,26 @@ func buildSupervisorForIdentityTest(cfg Config, prov identity.Provider, agentID,
 func dummySpawn(_ context.Context, _ string) (WorkspaceRunner, error) {
 	return nil, nil
 }
+
+// TestHostFromURL covers host extraction across URL shapes, including the
+// edge cases the hand-rolled parser used to get wrong.
+func TestHostFromURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"https_with_path", "https://api.yaaos.dev/api/v1", "api.yaaos.dev"},
+		{"https_with_port", "https://api.yaaos.dev:8443/api", "api.yaaos.dev:8443"},
+		{"ipv6_literal", "http://[::1]:8080/api", "[::1]:8080"},
+		{"embedded_credentials", "http://user@host/", "host"},
+		{"no_trailing_slash", "http://host", "host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hostFromURL(tc.in); got != tc.want {
+				t.Errorf("hostFromURL(%q): want %q, got %q", tc.in, tc.want, got)
+			}
+		})
+	}
+}
