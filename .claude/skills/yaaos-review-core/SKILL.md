@@ -98,7 +98,7 @@ For each candidate pair, judge "same underlying defect" or "different":
 
 - **Default = different.** Merge ONLY on explicit "same underlying defect" — not "related" or "adjacent symptoms".
 - When judging, cite both rationales in your reasoning trace.
-- **On merge**: keep the higher severity (then higher confidence). Concatenate both rationales (e.g., `"<rationale A> | also: <rationale B>"`). Keep the higher-severity finding's `suggested_fix`.
+- **On merge**: keep the higher severity (then higher confidence). Concatenate both rationales (e.g., `"<rationale A> | also: <rationale B>"`). Keep the higher-severity finding's `suggested_fix`. Keep the higher-severity finding's `rule_violated` and `rule_source` (do not concatenate — a finding cites exactly one rule).
 
 ### 5.4 Filter Speculative
 

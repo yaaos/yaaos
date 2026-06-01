@@ -43,7 +43,7 @@ JSON Schema at [schema.json](schema.json). Final output wrapper at [review-outpu
   - `"Transaction atomicity — side-effects that depend on a write must enqueue inside the same transaction"` (named principle + clause)
 
   If no standard naturally names the rule, lead with a short Title-Case noun phrase that does (e.g., `"Existing-pattern reuse"`, `"Lock-step migration"`). Avoid bare sentences without a leading name. **Reviewers populate this; nothing downstream paraphrases it.**
-- `rule_source` — either the literal string `"generic"` (universal principle like OWASP, dependency direction, transaction atomicity) or a citation of the form `"path/to/doc.md:LINE"` copied verbatim from the pattern-finder conventions digest. Tells a reader whether the rule is repo-local or universal.
+- `rule_source` — either the literal string `"generic"` (universal principle like OWASP, dependency direction, transaction atomicity) or a citation of the form `"path/to/doc.md:LINE"` copied verbatim from the pattern-finder conventions digest. Structural metadata used by downstream tooling and audits to distinguish repo-local from universal rule citations. Not surfaced in the rendered finding.
 - `suggested_fix` — concrete next action; terse and actionable when written by the reviewer. The Wave 4 restate pass rewrites this in place into plain peer-engineer language alongside `rationale`.
 
 ## Severity rubric
@@ -107,7 +107,7 @@ Weak ground; adversary raised meaningful counter-evidence the reviewer could not
 
 1. **Specific file:line reference** — beyond the structured `file`/`line` fields, restate inline so the rationale stands alone.
 2. **A quoted snippet** of the relevant code (one line or a short block, copied from source).
-3. **Which rule, principle, or pattern the finding violates** — name the standard, do not just say "this is wrong". Populate the standalone `rule_violated` field with the same name, and set `rule_source` accordingly (see below).
+3. **Which rule, principle, or pattern the finding violates** — populated in the standalone `rule_violated` field, with `rule_source` set accordingly (see below). Not required in the rationale prose. Reviewers MAY also name the rule inline in `rationale` if it helps the narrative, but the Wave 4 restate pass will strip such redundant sentences (the renderer surfaces `rule_violated` on its own line).
 
 **Reviewers that cannot cite concrete evidence MUST NOT emit the finding.** This is the single biggest calibration improvement available — verbalized confidence becomes reliable only when forced through an evidence requirement.
 

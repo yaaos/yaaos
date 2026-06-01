@@ -34,7 +34,8 @@ The template is shown below inside a **four-backtick fence** so the inner triple
 ````
 **yaaos-<category>**
 
-**[<severity> · <category> · <confidence>] <id> — <headline>**
+**<id> [<severity> · <category> · <confidence>]**
+<headline>
 
 ### Problem
 <problem-body>

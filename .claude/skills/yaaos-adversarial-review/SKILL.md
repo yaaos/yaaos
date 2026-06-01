@@ -85,7 +85,7 @@ If the finding includes a `suggested_fix`, sanity-check it: is it syntactically 
 For each finding in the input, apply one of these verdicts:
 
 - **KEEP** — write the finding to your output file unchanged. Confidence may already be `verified`.
-- **REVISE** — write the finding to your output file with adjusted fields (rationale clarified, `suggested_fix` rewritten, or both). Keep the same severity/confidence unless calibration also changed.
+- **REVISE** — write the finding to your output file with adjusted fields (rationale clarified, `suggested_fix` rewritten, or both). Keep the same severity/confidence unless calibration also changed. Never modify `rule_violated` or `rule_source` — if the reviewer cited the wrong rule, REFUTE instead (see the pass-through rule under the output contract).
 - **DOWNGRADE-SEVERITY** — write with `severity` lowered (Blocker → Should-fix, Should-fix → Nit). Confidence may stay the same.
 - **DOWNGRADE-CONFIDENCE** — write with `confidence` lowered (verified → plausible, plausible → speculative). The orchestrator filters Speculative out of the final output, so downgrading to speculative is effectively a soft refute.
 - **REFUTE** — **do not write this finding to your output file at all.** Absence is the signal. No marker, no field. The Wave 2 → Wave 3 file-size delta tells the orchestrator how many were refuted.
