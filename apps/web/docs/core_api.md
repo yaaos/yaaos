@@ -4,7 +4,7 @@
 
 ## Purpose
 
-A small, hand-maintained layer between the FastAPI backend and the UI. Owns the typed `openapi-fetch` client, a generic `apiFetch<T>` helper, TypeScript shapes for every API resource, and one TanStack Query hook per endpoint.
+A thin layer between the FastAPI backend and the UI. Owns the typed `openapi-fetch` client, a generic `apiFetch<T>` helper, TypeScript shapes for every API resource, and one TanStack Query hook per endpoint.
 
 ## Public interface
 
@@ -15,7 +15,7 @@ Re-exports from `@core/api`: client helpers (`apiClient`, `apiFetch`, `getCurren
 ### Two clients, one helper
 
 `client.ts` exposes two surfaces:
-- `apiClient` — `openapi-fetch` typed client. `Paths` hand-declared (covers `/api/health`); remaining endpoints typed via `useSuspenseQuery<T>` or `apiFetch<T>` with the hand-declared resource types.
+- `apiClient` — `openapi-fetch` typed client backed by the generated `paths` type from `generated/schema.d.ts`. Covers all endpoints in the schema; `/api/health` now carries a fully typed response.
 - `apiFetch<T>(path, init?)` — generic fetch wrapper. On 401, lazy-imports `handleAuthFailure` (breaks load-path cycle) which hard-navigates to `/login?reason=...&next=<current-path>`. Non-2xx throws `${status} ${path}: ${body}`. 204 → `undefined`.
 
 ### Generated types
@@ -24,7 +24,8 @@ Re-exports from `@core/api`: client helpers (`apiClient`, `apiFetch`, `getCurren
 
 - Only `core/api` may import from `generated/` — the boundary is enforced by `.dependency-cruiser.cjs`.
 - The generated dir is excluded from Biome lint/format (`biome.json`).
-- The backend spec returns `unknown` for some notification and popover endpoints; those stay hand-typed in `queries.ts` until the spec is annotated.
+- `client.ts` re-exports generated types under consumer-facing names (`HealthResponse`, `Lesson`, `AuditEntry`). A type alias keeps `ReviewJob` typed with a concrete `activity_log: ReviewJobActivityEvent[]` overlay (the JSONB column is `unknown[]` in the spec).
+- The backend spec returns `unknown` for the notification and popover endpoints; those stay hand-typed in `queries.ts` until the spec is annotated.
 
 ### Central 401 handler
 
@@ -37,13 +38,18 @@ Re-exports from `@core/api`: client helpers (`apiClient`, `apiFetch`, `getCurren
 
 ### Resource types
 
-Type aliases in `client.ts` mirror backend Pydantic models. Non-obvious fields:
-- `Ticket` — `pr_number`, `author_login`, `is_draft` enriched from the linked PR at read-time.
-- `Finding` — `severity: "must-fix" | "nit" | "suggestion" | "info"`; optional `rationale`, `snippet: FindingSnippetLine[]`, `applied_lesson_ids`, `source_agent`.
-- `ReviewJob` — one row per (PR × review run); includes `activity_log` (persisted coding-agent stream events).
-- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used in `ReviewJob.activity_log` and as the SSE payload for `/api/sse/workspace_activity/{id}`.
-- `PluginMeta` — from `/api/settings/plugins`; drives the Settings UI plugin list.
+`client.ts` owns the type surface. Types sourced from the generated schema:
+- `HealthResponse` — alias of `components["schemas"]["HealthResponse"]`.
+- `Lesson` — alias of `components["schemas"]["Lesson"]`.
+- `AuditEntry` — alias of `components["schemas"]["AuditEntryView"]`.
+- `ReviewJob` — generated base with `activity_log` overridden to `ReviewJobActivityEvent[]` (JSONB column is untyped in spec).
+
+Hand-typed (no generated equivalent — backend endpoints return `unknown`):
+- `Ticket` — `pr_number`, `author_login`, `is_draft` enriched from the linked PR at read-time. Needs `response_model` on the tickets endpoints.
+- `Finding` — `severity: "must-fix" | "nit" | "suggestion" | "info"`; optional `rationale`, `snippet: FindingSnippetLine[]`, `applied_lesson_ids`, `source_agent`. Needs `response_model` on the findings endpoint.
+- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used in `ReviewJob.activity_log` and as the SSE payload for `/api/sse/workspace_activity/{id}`. JSONB column, no spec annotation.
 - `Notification` / `NotificationsPopover` — hand-typed in `queries.ts`; backend spec returns `unknown` for these endpoints.
+- `PluginMeta` — from `/api/settings/plugins`; drives the Settings UI plugin list.
 
 ### Query hooks
 

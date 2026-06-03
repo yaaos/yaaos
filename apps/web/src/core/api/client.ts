@@ -1,18 +1,61 @@
 /**
  * Typed API client.
  *
- * : types are hand-declared inline rather than generated, because the
- * surface is small and adding the openapi codegen pipeline is polish.
+ * Hand-declared types are kept only for endpoints whose OpenAPI schema is
+ * `unknown` or where the generated shape is too loose to serve the UI safely
+ * (see individual type comments). Everything else is re-exported from
+ * `core/api/generated/schema.d.ts`.
  */
 
 import createClient from "openapi-fetch";
+import type { components, paths } from "./generated/schema";
 import { getCurrentOrgSlug } from "./org-context";
 
-export type HealthResponse = {
-  status: "ok" | "degraded";
-  db_ok: boolean;
-  version: string;
+// ── Generated type aliases ─────────────────────────────────────────────────
+// Simpler names for consumer import. Provenance: generated/schema.d.ts.
+
+export type HealthResponse = components["schemas"]["HealthResponse"];
+
+/** Lesson from backend schema. */
+export type Lesson = components["schemas"]["Lesson"];
+
+/** AuditEntry projected from `AuditEntryView` in backend schema. */
+export type AuditEntry = components["schemas"]["AuditEntryView"];
+
+// ── ReviewJob — generated base with typed activity_log overlay ─────────────
+// The backend schema types `activity_log` as `{[key: string]: unknown}[]`
+// because the field is a raw JSONB column with no Pydantic model. The UI
+// needs a typed overlay so ActivityEventRow and the stream-merge logic
+// compile safely. We keep `ReviewJobActivityEvent` as a client-side type and
+// overlay it here.
+
+/**
+ * Pre-rendered activity event captured from the coding-agent stream.
+ *
+ * `message` is rendered by the backend so the FE doesn't interpret raw
+ * Claude shapes; `detail` carries kind-specific extras for expanded views.
+ */
+export type ReviewJobActivityEvent = {
+  ts: string;
+  kind: string;
+  message: string;
+  detail?: Record<string, unknown> | null;
 };
+
+type _GeneratedReviewJob = components["schemas"]["ReviewJob"];
+
+/** ReviewJob with a typed `activity_log`. */
+export type ReviewJob = Omit<_GeneratedReviewJob, "activity_log"> & {
+  // The backend emits ReviewJobActivityEvent objects; JSONB means the spec
+  // only knows the column as arbitrary object arrays. Overlay the concrete
+  // type here so UI code doesn't cast at every call site.
+  activity_log: ReviewJobActivityEvent[];
+};
+
+// ── Hand-typed shapes — no generated equivalent ───────────────────────────
+// Endpoints below return `{[key: string]: unknown}` in the spec because the
+// backend has no `response_model`. The hand types stay until the backend adds
+// one; each has a comment pointing at the missing spec annotation.
 
 export type Ticket = {
   id: string;
@@ -59,21 +102,6 @@ export type Ticket = {
   };
 };
 
-export type Lesson = {
-  id: string;
-  org_id: string;
-  plugin_id: string;
-  repo_external_id: string;
-  title: string;
-  body: string;
-  source_pr_url: string | null;
-  /** UUID of the user who created the lesson; null for system/reviewer-created
-   * rows (workspace agent, pre-backfills). */
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 /** Per-finding snippet line — agent emits these to render a structured diff under the body. */
 export type FindingSnippetLine = {
   line_number: number;
@@ -81,6 +109,9 @@ export type FindingSnippetLine = {
   text: string;
 };
 
+// TODO(backend): `GET /api/reviewer/findings/by-ticket/{ticket_id}` returns
+// `{[key: string]: unknown}` — needs `response_model=list[FindingView]` in
+// backend/app/domain/reviewer/web.py before this type can be generated.
 export type Finding = {
   file: string | null;
   line_start: number | null;
@@ -95,66 +126,11 @@ export type Finding = {
   source_agent: string | null;
 };
 
-/**
- * Pre-rendered activity event captured from the coding-agent stream.
- *
- * `message` is rendered by the backend so the FE doesn't interpret raw
- * Claude shapes; `detail` carries kind-specific extras for expanded views.
- */
-export type ReviewJobActivityEvent = {
-  ts: string;
-  kind: string;
-  message: string;
-  detail?: Record<string, unknown> | null;
-};
-
-export type ReviewJob = {
-  id: string;
-  pr_id: string;
-  status: string;
-  skip_reason: string | null;
-  scheduled_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  last_heartbeat_at: string | null;
-  current_step: string | null;
-  prompt_hash: string | null;
-  lessons_applied: string[] | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  error_message: string | null;
-  duration_s: number | null;
-  review_external_id: string | null;
-  findings: Finding[] | null;
-  // Chronological events captured from the coding-agent stream. Empty array
-  // for rows from before migration 006 or runs that didn't emit anything.
-  activity_log: ReviewJobActivityEvent[];
-  // CLI model alias requested at kickoff (e.g. "opus"). On completion this is
-  // updated to the resolved name the CLI reported (e.g. "claude-opus-4-7-...").
-  model: string | null;
-  effort: string | null;
-};
-
-export type AuditEntry = {
-  id: string;
-  org_id: string;
-  entity_kind: string;
-  entity_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  actor: { kind: string; login: string | null; agent_id: string | null };
-  created_at: string;
-};
-
-type Paths = {
-  "/api/health": {
-    get: { responses: { 200: { content: { "application/json": HealthResponse } } } };
-  };
-};
+// ── openapi-fetch client ──────────────────────────────────────────────────
 
 const baseUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
-export const apiClient = createClient<Paths>({ baseUrl });
+export const apiClient = createClient<paths>({ baseUrl });
 
 function _readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
