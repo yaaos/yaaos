@@ -4,7 +4,42 @@
  */
 
 export interface paths {
-    "/api/v1/agent/identity": {
+    "/api/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Providers */
+        get: operations["list_providers_api_api_keys_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/api-keys/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Key */
+        post: operations["set_key_api_api_keys__provider__post"];
+        /** Clear Key */
+        delete: operations["clear_key_api_api_keys__provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/api-keys/{provider}/validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -14,139 +49,27 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Exchange Identity
-         * @description Vault AWS-auth pattern: agent supplies a sigv4-signed STS
-         *     GetCallerIdentity in `payload`; control plane replays it against AWS,
-         *     canonicalizes the returned ARN, matches against `orgs.registered_iam_arn`,
-         *     checks the signed URL's region against `orgs.aws_region`, derives
-         *     `instance_id` from the role-session-name, persists/updates a
-         *     `workspace_agents` row keyed on `(org_id, instance_id)`, and issues a
-         *     1-hour bearer via `core.agent_gateway.bearers`.
-         *
-         *     The `X-Yaaos-Audience` header embedded in the sigv4 envelope must be
-         *     present and match `YAAOS_PUBLIC_HOSTNAME`. This binds the signed
-         *     request to a specific backend deployment and prevents replay against a
-         *     different yaaos instance.
-         *
-         *     Rotation: calling this endpoint again with a valid payload issues a new
-         *     bearer without revoking the old one. The old bearer remains valid until
-         *     its own `expires_at`. The agent atomically swaps the bearer in its HTTP
-         *     client after the rotation response arrives.
-         *
-         *     Failure modes:
-         *     - empty `payload` → 401 `unauthorized`, no audit row
-         *     - unsupported `kind` → 401 `unauthorized`
-         *     - audience mismatch → 401 `audience_mismatch`
-         *     - verifier failure (parse / shape / endpoint / body / replay /
-         *       aws-rejected / clock-skew) → 401, structlog warning categorized
-         *       by `FailureCategory`
-         *     - canonical ARN doesn't match any registered org → 403
-         *       `forbidden_unregistered_arn`
-         *     - signed URL's region != `orgs.aws_region` → 401
-         *       `sts_verification_failed` with category `region_mismatch`
+         * Validate Key
+         * @description Calls the plugin-supplied validator from the registry. Stamps
+         *     `last_validated_at` on success. Provider-specific HTTP lives in the
+         *     plugin, not here.
          */
-        post: operations["exchange_identity_api_v1_agent_identity_post"];
-        /**
-         * Deregister Identity
-         * @description Graceful-shutdown "going away" signal.
-         *
-         *     The agent sends this as the last action of its SIGTERM/SIGINT handler,
-         *     after stopping its heartbeat + claim loops and draining the WS. The
-         *     control plane eagerly:
-         *
-         *     1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-         *     2. Revokes the bearer so subsequent calls 401 immediately.
-         *     3. Expires any workspaces owned by this agent and synthesizes terminal
-         *        failure events for in-flight commands so their WorkflowExecutions resume.
-         *     4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
-         *        offline without waiting for the sweeper's next tick.
-         *
-         *     Returns 204. Idempotent — calling on an already-offline/revoked agent is
-         *     harmless (bearer verify fails → 401 before this handler runs).
-         */
-        delete: operations["deregister_identity_api_v1_agent_identity_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/agent/heartbeat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Heartbeat */
-        post: operations["heartbeat_api_v1_agent_heartbeat_post"];
+        post: operations["validate_key_api_api_keys__provider__validate_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/agent/commands/claim": {
+    "/api/audit": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Claim Command */
-        post: operations["claim_command_api_v1_agent_commands_claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/{workspace_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Workspace Event */
-        post: operations["post_workspace_event_api_v1_workspaces__workspace_id__events_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/commands/{command_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Command Event */
-        post: operations["post_command_event_api_v1_commands__command_id__events_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Login */
-        get: operations["login_api_auth_login_get"];
+        /** List Audit */
+        get: operations["list_audit_api_audit_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -164,6 +87,23 @@ export interface paths {
         };
         /** Callback */
         get: operations["callback_api_auth_callback__provider__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Login */
+        get: operations["login_api_auth_login_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -260,29 +200,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/auth/totp/enroll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Totp Enroll
-         * @description Mint a fresh (unverified) TOTP secret for the cookie-bearer. Returns
-         *     `{seed, otpauth_uri}`. The SPA renders the URI as a QR code; users on
-         *     devices without a camera type the seed. Verify must be called with a
-         *     current code before `verified_at` flips.
-         */
-        post: operations["totp_enroll_api_auth_totp_enroll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/auth/totp/challenge": {
         parameters: {
             query?: never;
@@ -300,6 +217,29 @@ export interface paths {
          *     `next` path.
          */
         post: operations["totp_challenge_api_auth_totp_challenge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/totp/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Totp Enroll
+         * @description Mint a fresh (unverified) TOTP secret for the cookie-bearer. Returns
+         *     `{seed, otpauth_uri}`. The SPA renders the URI as a QR code; users on
+         *     devices without a camera type the seed. Verify must be called with a
+         *     current code before `verified_at` flips.
+         */
+        post: operations["totp_enroll_api_auth_totp_enroll_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -328,25 +268,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/user/emails": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Emails */
-        get: operations["list_emails_api_user_emails_get"];
-        put?: never;
-        /** Add Email */
-        post: operations["add_email_api_user_emails_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user/emails/{email_id}": {
+    "/api/claude_code/api_key": {
         parameters: {
             query?: never;
             header?: never;
@@ -355,15 +277,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
-        /** Remove Email */
-        delete: operations["remove_email_api_user_emails__email_id__delete"];
+        /** Set Api Key */
+        post: operations["set_api_key_api_claude_code_api_key_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/user/me": {
+    "/api/claude_code/defaults": {
         parameters: {
             query?: never;
             header?: never;
@@ -371,33 +293,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * User Me
-         * @description Profile payload for the User > Details page.
+         * Defaults Endpoint
+         * @description Code defaults for the orchestrator + sub-agents, plus the model /
+         *     version / effort dropdown enums. Imported at request time so a code
+         *     change to `defaults.py` surfaces on the next request — never cached.
          */
-        get: operations["user_me_api_user_me_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Patch User Me
-         * @description Update profile fields. `display_name` accepted as plain text; the
-         *     `github_username` denorm is owned by the login flow and is never written
-         *     here. `clear_github_username=true` removes the verified value.
-         */
-        patch: operations["patch_user_me_api_user_me_patch"];
-        trace?: never;
-    };
-    "/api/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Audit */
-        get: operations["list_audit_api_audit_get"];
+        get: operations["defaults_endpoint_api_claude_code_defaults_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -406,930 +307,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sso/discover": {
+    "/api/claude_code/health": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Sso Discover
-         * @description Find the SSO IdP (if any) matching the email's domain.
-         *
-         *     Drives the Login page's provider-button rendering:
-         *     `{provider: "github" | "saml", saml_org_slug?: str}`.
-         *
-         *     Looks up `sso_configs.email_domains` (JSONB array) for a row whose
-         *     `enabled = true` claims the address's domain. First match wins.
-         *     No SAML match → `{provider: "github"}` so GitHub-only orgs keep working.
-         *
-         *     `email` is required but only the format is validated — we never
-         *     confirm or deny that a given address belongs to a user.
-         */
-        get: operations["sso_discover_api_sso_discover_get"];
+        /** Health */
+        get: operations["health_api_claude_code_health_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sso/{slug}/metadata": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Sp Metadata
-         * @description Public endpoint — operators hand this URL to the IdP.
-         */
-        get: operations["sp_metadata_api_sso__slug__metadata_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sso/{slug}/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Sso Login Start
-         * @description SP-initiated login. In POC test env we redirect to the test stub IdP
-         *     page (which the test then POSTs back via `/acs`). Production builds the
-         *     AuthnRequest XML via `plugins/saml`.
-         */
-        get: operations["sso_login_start_api_sso__slug__login_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sso/{slug}/acs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sso Acs
-         * @description Assertion Consumer Service. Verifies the SAML response (real or stub),
-         *     matches the user by verified email, optionally JIT-creates a membership,
-         *     marks the session SSO-satisfied for this org.
-         */
-        post: operations["sso_acs_api_sso__slug__acs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sso/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Org Sso Config */
-        get: operations["get_org_sso_config_api_sso_config_get"];
-        /**
-         * Upsert Org Sso Config
-         * @description Upsert per-org SSO config. The exempt-Owner picker requires the
-         *     candidate to have a verified TOTP secret — otherwise reject with
-         *     `exempt_owner_no_totp`. Writes a `sso_config_changed` audit row + an
-         *     `exempt_owner_set` row when the exempt-Owner pointer changed.
-         */
-        put: operations["upsert_org_sso_config_api_sso_config_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/memberships": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Members */
-        get: operations["list_members_api_memberships_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/memberships/invite": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Invite Member */
-        post: operations["invite_member_api_memberships_invite_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/memberships/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Accept Invitation
-         * @description Public-allowlist endpoint — session cookie identifies the acceptor.
-         */
-        post: operations["accept_invitation_api_memberships_accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/memberships/{target_user_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove Member */
-        delete: operations["remove_member_api_memberships__target_user_id__delete"];
-        options?: never;
-        head?: never;
-        /** Change Role */
-        patch: operations["change_role_api_memberships__target_user_id__patch"];
-        trace?: never;
-    };
-    "/api/memberships/me/{org_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Patch Own Membership Handle
-         * @description Self-update one's `@handle` in the org named by the path param.
-         *     Enforces `UNIQUE(org_id, handle)` via the existing partial index —
-         *     duplicate handles surface as 409. The path `org_id` may differ from
-         *     `X-Org-Slug` (which the middleware still requires for the prefix gate).
-         */
-        patch: operations["patch_own_membership_handle_api_memberships_me__org_id__patch"];
-        trace?: never;
-    };
-    "/api/lessons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List
-         * @description list: q + repo multi + created_by + date range + sort.
-         *
-         *     All filters are AND'd. `sort` accepts `created_desc` / `created_asc`
-         *     / `updated_desc`; anything else falls back to `created_desc` in
-         *     `LessonFilter`.
-         */
-        get: operations["list__api_lessons_get"];
-        put?: never;
-        /** Create Lesson */
-        post: operations["create_lesson_api_lessons_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/lessons/{lesson_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Lesson */
-        get: operations["get_lesson_api_lessons__lesson_id__get"];
-        /** Update Lesson */
-        put: operations["update_lesson_api_lessons__lesson_id__put"];
-        post?: never;
-        /** Delete Lesson */
-        delete: operations["delete_lesson_api_lessons__lesson_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notifications": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List */
-        get: operations["list__api_notifications_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notifications/{notification_id}/read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark Read */
-        post: operations["mark_read_api_notifications__notification_id__read_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notifications/mark-read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark All Read */
-        post: operations["mark_all_read_api_notifications_mark_read_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notifications/popover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Popover */
-        get: operations["popover_api_notifications_popover_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/dashboard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Dashboard
-         * @description Single-query Dashboard projection per E2a.3.
-         *
-         *     Response shape:
-         *     `{stats: {in_flight, hitl_pending, completed_today, failed_today},
-         *        in_flight: [TicketRow ≤10],
-         *        needs_attention: [TicketRow ≤5]}`.
-         *
-         *     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
-         *     polling loop. `t.status` is the 5-state vocab post-collapse
-         *     (running / hitl / done / failed / cancelled); precise hitl/failed
-         *     counts depend on the workflow-state projection landing on every
-         *     transition.
-         */
-        get: operations["dashboard_api_tickets_dashboard_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List
-         * @description List tickets per the contract.
-         *
-         *     Returns `{items, next_cursor}` instead of a bare array so the SPA can
-         *     drive Load-more pagination. `next_cursor` is null today — POC uses
-         *     naive limit pagination; opaque-cursor support lands when the result
-         *     sets grow.
-         */
-        get: operations["list__api_tickets_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/respond": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Hitl Respond
-         * @description Submit a HITL response. Resolves the open `PendingHumanDecisionRow`
-         *     for the ticket's most recent awaiting-human workflow execution and
-         *     re-enqueues the routing step via `core.workflow.resume_hitl`.
-         *
-         *     Request body: opaque dict — passes through to the workflow engine's
-         *     `resume_hitl(response=...)`. The SPA's HITL renderer shapes this
-         *     per the prompt's discriminated-union schema (E2a.4).
-         *
-         *     Returns `{stage, next_state}` where `next_state` is the workflow
-         *     state immediately after the resume.
-         */
-        post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Hitl History
-         * @description List past HITL exchanges (prompt + response + timestamps) for the
-         *     ticket per E2a.4 HITL tab "History" subsection.
-         *
-         *     Joins `pending_human_decisions` against the ticket's
-         *     `workflow_executions` rows. Newest exchange first.
-         */
-        get: operations["hitl_history_api_tickets__ticket_id__hitl_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Detail
-         * @description Per-ticket detail with the enrichment: `stages[]` (projected from
-         *     `workflow_executions`) + `builder` (the trigger identity).
-         *
-         *     Returns the Ticket pydantic fields plus:
-         *     - `stages: [{name, state, attempt_count, current_attempt, started_at,
-         *        completed_at, workflow_execution_id}]` — one entry per workflow run
-         *        on the ticket, newest first.
-         *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
-         *        when the ticket's PR has an `author_login`; `kind="system"` when
-         *        yaaos triggered the run with no human attribution.
-         */
-        get: operations["detail_api_tickets__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Audit
-         * @description Aggregated timeline: ticket events + PR events for the ticket's PR.
-         */
-        get: operations["audit_api_tickets__ticket_id__audit_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/rereview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rereview Ticket
-         * @description Re-review a ticket — drives `pr_review_v1` via the workflow engine.
-         *
-         *     The SPA's only contract with this endpoint is the `scheduled_count`
-         *     field; the response carries `workflow_execution_id` so the caller can
-         *     poll workflow state if desired.
-         */
-        post: operations["rereview_ticket_api_reviewer_rereview_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cancel Jobs
-         * @description Cancel any non-terminal workflow_executions for this ticket.
-         */
-        post: operations["cancel_jobs_api_reviewer_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/ack": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ack Finding
-         * @description : SPA "Ack" button. Marks the finding as `intentional` —
-         *     Builder sees this and accepts it for future reviews.
-         */
-        post: operations["ack_finding_api_reviewer_findings__finding_id__ack_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/push-back": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Push Back Finding
-         * @description : SPA "Push back" button. Marks the finding as `wontfix` and
-         *     records the Builder's reason in the audit trail.
-         */
-        post: operations["push_back_finding_api_reviewer_findings__finding_id__push_back_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Jobs By Ticket
-         * @description Per-ticket review history.
-         */
-        get: operations["jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Metrics
-         * @description Aggregate review counters.
-         */
-        get: operations["metrics_api_reviewer_metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Findings By Ticket
-         * @description List open + acknowledged findings for the ticket's PR.
-         */
-        get: operations["findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/conversations/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Conversations By Ticket
-         * @description All-Conversations cross-cut for the ticket's PR.
-         */
-        get: operations["conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/reviews/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Reviews By Ticket
-         * @description Per-review timeline metadata.
-         */
-        get: operations["reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/thread": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Thread By Finding
-         * @description Thread messages + ack banner for one finding.
-         */
-        get: operations["thread_by_finding_api_reviewer_findings__finding_id__thread_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/intake/{type}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Intake */
-        post: operations["post_intake_api_intake__type__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/plugins/available": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Available Endpoint
-         * @description Enumerate registered plugins of the requested type. The settings UI
-         *     consumes this for the VCS + Coding Agents pickers — no plugin id is
-         *     hardcoded in the frontend.
-         */
-        get: operations["list_available_endpoint_api_plugins_available_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/api-keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Providers */
-        get: operations["list_providers_api_api_keys_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/api-keys/{provider}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Key */
-        post: operations["set_key_api_api_keys__provider__post"];
-        /** Clear Key */
-        delete: operations["clear_key_api_api_keys__provider__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/api-keys/{provider}/validate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Validate Key
-         * @description Calls the plugin-supplied validator from the registry. Stamps
-         *     `last_validated_at` on success. Provider-specific HTTP lives in the
-         *     plugin, not here.
-         */
-        post: operations["validate_key_api_api_keys__provider__validate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/broken-summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Broken Summary
-         * @description Return per-org broken-credential counts for the cookie-bearer.
-         *
-         *     Response: `{ orgs: [{ org_id, broken_integrations: [{ provider }] }] }`.
-         *     Only Owners + Admins receive non-empty `broken_integrations` lists; Builder-role
-         *     memberships always yield an empty list. 401 when there is no valid session.
-         */
-        get: operations["broken_summary_api_integrations_broken_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp-proxy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Integrations
-         * @description Returns one row per registered provider so the UI can render the full
-         *     picker even before anything is connected. Unconnected providers come
-         *     back as `status="not_set"`.
-         */
-        get: operations["list_integrations_api_mcp_proxy_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp-proxy/{provider}/connect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Connect Start
-         * @description Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to
-         *     the provider's authorize URL. The callback verifies the signature + uses
-         *     the embedded org_id (since the upstream doesn't know our X-Org-Slug).
-         */
-        get: operations["connect_start_api_mcp_proxy__provider__connect_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp-proxy/{provider}/callback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Connect Callback
-         * @description OAuth redirect target. Validates the signed state, exchanges the code,
-         *     persists the credential, redirects the operator back to the Integrations
-         *     settings page.
-         */
-        get: operations["connect_callback_api_mcp_proxy__provider__callback_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp-proxy/{provider}/validate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Validate Endpoint */
-        post: operations["validate_endpoint_api_mcp_proxy__provider__validate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp-proxy/{provider}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Clear Endpoint */
-        delete: operations["clear_endpoint_api_mcp_proxy__provider__delete"];
-        options?: never;
-        head?: never;
-        /** Patch Integration */
-        patch: operations["patch_integration_api_mcp_proxy__provider__patch"];
-        trace?: never;
-    };
-    "/api/mcp/{review_id}/{server}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dispatch
-         * @description The single proxy entry point. Bearer in `Authorization: Bearer ...`.
-         */
-        post: operations["dispatch_api_mcp__review_id___server__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1370,298 +358,6 @@ export interface paths {
         head?: never;
         /** Update Settings Endpoint */
         patch: operations["update_settings_endpoint_api_coding_agents__plugin_id__patch"];
-        trace?: never;
-    };
-    "/api/orgs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Org Settings
-         * @description Return the current org's top-level settings. Lets the SPA's Settings
-         *     page show what's actually set before the user edits.
-         */
-        get: operations["get_org_settings_api_orgs_get"];
-        put?: never;
-        /**
-         * Create Org
-         * @description create an org from the picker page (E2a.19).
-         *
-         *     The caller becomes Admin of the new org. Slug must be lowercase
-         *     a-z / 0-9 / hyphens and unique. Returns 409 `slug_taken` if the slug
-         *     is in use; 422 `invalid_slug` on bad characters; 401 on missing
-         *     session.
-         */
-        post: operations["create_org_api_orgs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Patch Org Settings
-         * @description Update top-level org settings. Body is a JSON object; only the keys
-         *     actually present are touched. Supports `session_timeout_override`
-         *     (null clears it, positive int sets minutes), `registered_iam_arn`, and
-         *     `aws_region`. A duplicate ARN already registered to another org returns
-         *     422 `arn_already_registered` — the app-layer check fires before the DB
-         *     write.
-         */
-        patch: operations["patch_org_settings_api_orgs_patch"];
-        trace?: never;
-    };
-    "/api/orgs/mine": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Mine
-         * @description Cross-org list of the user's memberships. Powers the org switcher and `/orgs` picker.
-         */
-        get: operations["list_mine_api_orgs_mine_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orgs/config-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Config Status
-         * @description Aggregated readiness for the "not configured" gate.
-         */
-        get: operations["config_status_api_orgs_config_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orgs/{slug}/agents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Org Agents
-         * @description List workspace agents within the 1-hour UI-retention window for `slug`.
-         *
-         *     Visible to all org members (ORG_READ). Returns agents whose last heartbeat
-         *     is within the past hour; excludes older rows so the dashboard stays clean.
-         */
-        get: operations["list_org_agents_api_orgs__slug__agents_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workspaces/connection_status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Connection Status */
-        get: operations["get_connection_status_api_workspaces_connection_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/vcs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Vcs Endpoint */
-        get: operations["get_vcs_endpoint_api_vcs_get"];
-        put?: never;
-        /** Set Vcs Endpoint */
-        post: operations["set_vcs_endpoint_api_vcs_post"];
-        /** Clear Vcs Endpoint */
-        delete: operations["clear_vcs_endpoint_api_vcs_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sse/general": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream General
-         * @description Subscribe an SSE client to the general org-scoped event stream.
-         *
-         *     Returns `text/event-stream`; closes when the client disconnects. Each
-         *     frame is `data: <json>\n\n` carrying a `GeneralEventKind`-typed payload.
-         *     Only events published to the caller's resolved org reach this stream —
-         *     cross-org isolation is enforced by the per-org Redis channel shape.
-         */
-        get: operations["stream_general_api_sse_general_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sse/workspace_activity/{workflow_execution_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Workspace Activity
-         * @description Subscribe an SSE client to the per-workflow activity event stream.
-         *
-         *     Cross-org isolation is the channel key: subscribers attach to
-         *     `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
-         *     different org subscribes to a channel nobody publishes to and yields an
-         *     empty stream.
-         */
-        get: operations["stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude_code/api_key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Api Key */
-        post: operations["set_api_key_api_claude_code_api_key_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude_code/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health */
-        get: operations["health_api_claude_code_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude_code/defaults": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Defaults Endpoint
-         * @description Code defaults for the orchestrator + sub-agents, plus the model /
-         *     version / effort dropdown enums. Imported at request time so a code
-         *     change to `defaults.py` surfaces on the next request — never cached.
-         */
-        get: operations["defaults_endpoint_api_claude_code_defaults_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/github/installation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Installation
-         * @description Two-state response driving the Settings UI:
-         *     1. app_configured=False → platform GitHub App not provisioned (env vars blank).
-         *     2. installed=False → show "Install yaaos on GitHub" button.
-         *     3. installed=True → show "Manage on GitHub" + account info.
-         */
-        get: operations["installation_api_github_installation_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/github/repositories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Repositories
-         * @description Live list of repos the App can see, fetched from GitHub via the
-         *     installation token. No yaaos-side allowlist — GitHub's install picker IS
-         *     the authority. Used by the Settings GitHub card's "Repositories" section.
-         *
-         *     Returns `{repositories: [{full_name, html_url, private}], total_count}`
-         *     when the App is installed; an empty list when it isn't.
-         */
-        get: operations["repositories_api_github_repositories_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/github/health": {
@@ -1735,144 +431,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/testing/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reset */
-        post: operations["reset_api_testing_reset_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/github_install": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Seed Github Install
-         * @description Seed an active `github_app_installations` row + Claude Code settings.
-         *     The platform GitHub App credentials come from env vars, so there's no
-         *     per-org credential seed.
-         */
-        post: operations["seed_github_install_api_testing_seed_github_install_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/lesson": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Seed Lesson */
-        post: operations["seed_lesson_api_testing_seed_lesson_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/broken_integration": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Seed Broken Integration
-         * @description Seed an `mcp_credentials` row with `last_refresh_status="failed"` so the
-         *     broken-creds banner + Integrations settings badge surface in e2e specs.
-         */
-        post: operations["seed_broken_integration_api_testing_seed_broken_integration_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/bootstrap_owner": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Seed Bootstrap Owner
-         * @description Mint a first user + org + Owner membership for an e2e test.
-         */
-        post: operations["seed_bootstrap_owner_api_testing_seed_bootstrap_owner_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/user_with_session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Seed User With Session
-         * @description Create a user + a session backed by `session_cookie` as the raw token.
-         */
-        post: operations["seed_user_with_session_api_testing_seed_user_with_session_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/oauth_test/stage_profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Oauth Test Stage Profile
-         * @description Stage the profile the `oauth_test` provider returns on next callback.
-         */
-        post: operations["oauth_test_stage_profile_api_testing_oauth_test_stage_profile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/email_inbox": {
+    "/api/github/installation": {
         parameters: {
             query?: never;
             header?: never;
@@ -1880,10 +439,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Email Inbox
-         * @description Return + clear the in-memory test-env email inbox.
+         * Installation
+         * @description Two-state response driving the Settings UI:
+         *     1. app_configured=False → platform GitHub App not provisioned (env vars blank).
+         *     2. installed=False → show "Install yaaos on GitHub" button.
+         *     3. installed=True → show "Manage on GitHub" + account info.
          */
-        get: operations["email_inbox_api_testing_email_inbox_get"];
+        get: operations["installation_api_github_installation_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1892,51 +454,218 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/testing/saml/sign": {
+    "/api/github/repositories": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Saml Sign
-         * @description Test-only: sign a stub SAML assertion the `/api/sso/<slug>/acs`
-         *     handler will accept. Drives the SSO Playwright spec.
-         */
-        post: operations["saml_sign_api_testing_saml_sign_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/testing/seed/workspace_agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Seed Workspace Agent
-         * @description Seed a reachable workspace-agent row for the given org slug.
+         * Repositories
+         * @description Live list of repos the App can see, fetched from GitHub via the
+         *     installation token. No yaaos-side allowlist — GitHub's install picker IS
+         *     the authority. Used by the Settings GitHub card's "Repositories" section.
          *
-         *     Returns ``{"id": "<uuid>", "instance_id": "<string>"}`` so e2e specs can
-         *     assert the card appears on the dashboard without knowing the PK in advance.
+         *     Returns `{repositories: [{full_name, html_url, private}], total_count}`
+         *     when the App is installed; an empty list when it isn't.
          */
-        post: operations["seed_workspace_agent_api_testing_seed_workspace_agent_post"];
+        get: operations["repositories_api_github_repositories_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/testing/seed/deregister_workspace_agent": {
+    "/api/intake/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Intake */
+        post: operations["post_intake_api_intake__type__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/broken-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Broken Summary
+         * @description Return per-org broken-credential counts for the cookie-bearer.
+         *
+         *     Response: `{ orgs: [{ org_id, broken_integrations: [{ provider }] }] }`.
+         *     Only Owners + Admins receive non-empty `broken_integrations` lists; Builder-role
+         *     memberships always yield an empty list. 401 when there is no valid session.
+         */
+        get: operations["broken_summary_api_integrations_broken_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List
+         * @description list: q + repo multi + created_by + date range + sort.
+         *
+         *     All filters are AND'd. `sort` accepts `created_desc` / `created_asc`
+         *     / `updated_desc`; anything else falls back to `created_desc` in
+         *     `LessonFilter`.
+         */
+        get: operations["list__api_lessons_get"];
+        put?: never;
+        /** Create Lesson */
+        post: operations["create_lesson_api_lessons_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lessons/{lesson_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Lesson */
+        get: operations["get_lesson_api_lessons__lesson_id__get"];
+        /** Update Lesson */
+        put: operations["update_lesson_api_lessons__lesson_id__put"];
+        post?: never;
+        /** Delete Lesson */
+        delete: operations["delete_lesson_api_lessons__lesson_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-proxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Integrations
+         * @description Returns one row per registered provider so the UI can render the full
+         *     picker even before anything is connected. Unconnected providers come
+         *     back as `status="not_set"`.
+         */
+        get: operations["list_integrations_api_mcp_proxy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-proxy/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Clear Endpoint */
+        delete: operations["clear_endpoint_api_mcp_proxy__provider__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Integration */
+        patch: operations["patch_integration_api_mcp_proxy__provider__patch"];
+        trace?: never;
+    };
+    "/api/mcp-proxy/{provider}/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connect Callback
+         * @description OAuth redirect target. Validates the signed state, exchanges the code,
+         *     persists the credential, redirects the operator back to the Integrations
+         *     settings page.
+         */
+        get: operations["connect_callback_api_mcp_proxy__provider__callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-proxy/{provider}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connect Start
+         * @description Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to
+         *     the provider's authorize URL. The callback verifies the signature + uses
+         *     the embedded org_id (since the upstream doesn't know our X-Org-Slug).
+         */
+        get: operations["connect_start_api_mcp_proxy__provider__connect_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-proxy/{provider}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Endpoint */
+        post: operations["validate_endpoint_api_mcp_proxy__provider__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/{review_id}/{server}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1946,29 +675,1058 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Deregister Workspace Agent
-         * @description Simulate an agent's graceful-shutdown signal for the given canonical id.
-         *
-         *     Marks the agent offline + publishes ``agent_liveness_changed`` so the
-         *     dashboard flips the card without a running container. Drives the
-         *     graceful-shutdown Playwright spec.
+         * Dispatch
+         * @description The single proxy entry point. Bearer in `Authorization: Bearer ...`.
          */
-        post: operations["deregister_workspace_agent_api_testing_seed_deregister_workspace_agent_post"];
+        post: operations["dispatch_api_mcp__review_id___server__post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/health": {
+    "/api/memberships": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Health */
-        get: operations["get_health_api_health_get"];
+        /** List Members */
+        get: operations["list_members_api_memberships_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memberships/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invitation
+         * @description Public-allowlist endpoint — session cookie identifies the acceptor.
+         */
+        post: operations["accept_invitation_api_memberships_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memberships/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Invite Member */
+        post: operations["invite_member_api_memberships_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memberships/me/{org_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Own Membership Handle
+         * @description Self-update one's `@handle` in the org named by the path param.
+         *     Enforces `UNIQUE(org_id, handle)` via the existing partial index —
+         *     duplicate handles surface as 409. The path `org_id` may differ from
+         *     `X-Org-Slug` (which the middleware still requires for the prefix gate).
+         */
+        patch: operations["patch_own_membership_handle_api_memberships_me__org_id__patch"];
+        trace?: never;
+    };
+    "/api/memberships/{target_user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Member */
+        delete: operations["remove_member_api_memberships__target_user_id__delete"];
+        options?: never;
+        head?: never;
+        /** Change Role */
+        patch: operations["change_role_api_memberships__target_user_id__patch"];
+        trace?: never;
+    };
+    "/api/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List */
+        get: operations["list__api_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/mark-read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark All Read */
+        post: operations["mark_all_read_api_notifications_mark_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/popover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Popover */
+        get: operations["popover_api_notifications_popover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/{notification_id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Read */
+        post: operations["mark_read_api_notifications__notification_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Org Settings
+         * @description Return the current org's top-level settings. Lets the SPA's Settings
+         *     page show what's actually set before the user edits.
+         */
+        get: operations["get_org_settings_api_orgs_get"];
+        put?: never;
+        /**
+         * Create Org
+         * @description create an org from the picker page (E2a.19).
+         *
+         *     The caller becomes Admin of the new org. Slug must be lowercase
+         *     a-z / 0-9 / hyphens and unique. Returns 409 `slug_taken` if the slug
+         *     is in use; 422 `invalid_slug` on bad characters; 401 on missing
+         *     session.
+         */
+        post: operations["create_org_api_orgs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Org Settings
+         * @description Update top-level org settings. Body is a JSON object; only the keys
+         *     actually present are touched. Supports `session_timeout_override`
+         *     (null clears it, positive int sets minutes), `registered_iam_arn`, and
+         *     `aws_region`. A duplicate ARN already registered to another org returns
+         *     422 `arn_already_registered` — the app-layer check fires before the DB
+         *     write.
+         */
+        patch: operations["patch_org_settings_api_orgs_patch"];
+        trace?: never;
+    };
+    "/api/orgs/config-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Config Status
+         * @description Aggregated readiness for the "not configured" gate.
+         */
+        get: operations["config_status_api_orgs_config_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/mine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mine
+         * @description Cross-org list of the user's memberships. Powers the org switcher and `/orgs` picker.
+         */
+        get: operations["list_mine_api_orgs_mine_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Org Agents
+         * @description List workspace agents within the 1-hour UI-retention window for `slug`.
+         *
+         *     Visible to all org members (ORG_READ). Returns agents whose last heartbeat
+         *     is within the past hour; excludes older rows so the dashboard stays clean.
+         */
+        get: operations["list_org_agents_api_orgs__slug__agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plugins/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Available Endpoint
+         * @description Enumerate registered plugins of the requested type. The settings UI
+         *     consumes this for the VCS + Coding Agents pickers — no plugin id is
+         *     hardcoded in the frontend.
+         */
+        get: operations["list_available_endpoint_api_plugins_available_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Jobs
+         * @description Cancel any non-terminal workflow_executions for this ticket.
+         */
+        post: operations["cancel_jobs_api_reviewer_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/conversations/by-ticket/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversations By Ticket
+         * @description All-Conversations cross-cut for the ticket's PR.
+         */
+        get: operations["conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/findings/by-ticket/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Findings By Ticket
+         * @description List open + acknowledged findings for the ticket's PR.
+         */
+        get: operations["findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/findings/{finding_id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ack Finding
+         * @description : SPA "Ack" button. Marks the finding as `intentional` —
+         *     Builder sees this and accepts it for future reviews.
+         */
+        post: operations["ack_finding_api_reviewer_findings__finding_id__ack_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/findings/{finding_id}/push-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Back Finding
+         * @description : SPA "Push back" button. Marks the finding as `wontfix` and
+         *     records the Builder's reason in the audit trail.
+         */
+        post: operations["push_back_finding_api_reviewer_findings__finding_id__push_back_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/findings/{finding_id}/thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Thread By Finding
+         * @description Thread messages + ack banner for one finding.
+         */
+        get: operations["thread_by_finding_api_reviewer_findings__finding_id__thread_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Jobs By Ticket
+         * @description Per-ticket review history.
+         */
+        get: operations["jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metrics
+         * @description Aggregate review counters.
+         */
+        get: operations["metrics_api_reviewer_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/rereview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rereview Ticket
+         * @description Re-review a ticket — drives `pr_review_v1` via the workflow engine.
+         *
+         *     The SPA's only contract with this endpoint is the `scheduled_count`
+         *     field; the response carries `workflow_execution_id` so the caller can
+         *     poll workflow state if desired.
+         */
+        post: operations["rereview_ticket_api_reviewer_rereview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviewer/reviews/by-ticket/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reviews By Ticket
+         * @description Per-review timeline metadata.
+         */
+        get: operations["reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sse/general": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream General
+         * @description Subscribe an SSE client to the general org-scoped event stream.
+         *
+         *     Returns `text/event-stream`; closes when the client disconnects. Each
+         *     frame is `data: <json>\n\n` carrying a `GeneralEventKind`-typed payload.
+         *     Only events published to the caller's resolved org reach this stream —
+         *     cross-org isolation is enforced by the per-org Redis channel shape.
+         */
+        get: operations["stream_general_api_sse_general_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sse/workspace_activity/{workflow_execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Workspace Activity
+         * @description Subscribe an SSE client to the per-workflow activity event stream.
+         *
+         *     Cross-org isolation is the channel key: subscribers attach to
+         *     `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+         *     different org subscribes to a channel nobody publishes to and yields an
+         *     empty stream.
+         */
+        get: operations["stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sso/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Org Sso Config */
+        get: operations["get_org_sso_config_api_sso_config_get"];
+        /**
+         * Upsert Org Sso Config
+         * @description Upsert per-org SSO config. The exempt-Owner picker requires the
+         *     candidate to have a verified TOTP secret — otherwise reject with
+         *     `exempt_owner_no_totp`. Writes a `sso_config_changed` audit row + an
+         *     `exempt_owner_set` row when the exempt-Owner pointer changed.
+         */
+        put: operations["upsert_org_sso_config_api_sso_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sso/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sso Discover
+         * @description Find the SSO IdP (if any) matching the email's domain.
+         *
+         *     Drives the Login page's provider-button rendering:
+         *     `{provider: "github" | "saml", saml_org_slug?: str}`.
+         *
+         *     Looks up `sso_configs.email_domains` (JSONB array) for a row whose
+         *     `enabled = true` claims the address's domain. First match wins.
+         *     No SAML match → `{provider: "github"}` so GitHub-only orgs keep working.
+         *
+         *     `email` is required but only the format is validated — we never
+         *     confirm or deny that a given address belongs to a user.
+         */
+        get: operations["sso_discover_api_sso_discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sso/{slug}/acs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sso Acs
+         * @description Assertion Consumer Service. Verifies the SAML response (real or stub),
+         *     matches the user by verified email, optionally JIT-creates a membership,
+         *     marks the session SSO-satisfied for this org.
+         */
+        post: operations["sso_acs_api_sso__slug__acs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sso/{slug}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sso Login Start
+         * @description SP-initiated login. In POC test env we redirect to the test stub IdP
+         *     page (which the test then POSTs back via `/acs`). Production builds the
+         *     AuthnRequest XML via `plugins/saml`.
+         */
+        get: operations["sso_login_start_api_sso__slug__login_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sso/{slug}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sp Metadata
+         * @description Public endpoint — operators hand this URL to the IdP.
+         */
+        get: operations["sp_metadata_api_sso__slug__metadata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List
+         * @description List tickets per the contract.
+         *
+         *     Returns `{items, next_cursor}` instead of a bare array so the SPA can
+         *     drive Load-more pagination. `next_cursor` is null today — POC uses
+         *     naive limit pagination; opaque-cursor support lands when the result
+         *     sets grow.
+         */
+        get: operations["list__api_tickets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard
+         * @description Single-query Dashboard projection per E2a.3.
+         *
+         *     Response shape:
+         *     `{stats: {in_flight, hitl_pending, completed_today, failed_today},
+         *        in_flight: [TicketRow ≤10],
+         *        needs_attention: [TicketRow ≤5]}`.
+         *
+         *     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
+         *     polling loop. `t.status` is the 5-state vocab post-collapse
+         *     (running / hitl / done / failed / cancelled); precise hitl/failed
+         *     counts depend on the workflow-state projection landing on every
+         *     transition.
+         */
+        get: operations["dashboard_api_tickets_dashboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Detail
+         * @description Per-ticket detail with the enrichment: `stages[]` (projected from
+         *     `workflow_executions`) + `builder` (the trigger identity).
+         *
+         *     Returns the Ticket pydantic fields plus:
+         *     - `stages: [{name, state, attempt_count, current_attempt, started_at,
+         *        completed_at, workflow_execution_id}]` — one entry per workflow run
+         *        on the ticket, newest first.
+         *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
+         *        when the ticket's PR has an `author_login`; `kind="system"` when
+         *        yaaos triggered the run with no human attribution.
+         */
+        get: operations["detail_api_tickets__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit
+         * @description Aggregated timeline: ticket events + PR events for the ticket's PR.
+         */
+        get: operations["audit_api_tickets__ticket_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/hitl/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hitl History
+         * @description List past HITL exchanges (prompt + response + timestamps) for the
+         *     ticket per E2a.4 HITL tab "History" subsection.
+         *
+         *     Joins `pending_human_decisions` against the ticket's
+         *     `workflow_executions` rows. Newest exchange first.
+         */
+        get: operations["hitl_history_api_tickets__ticket_id__hitl_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/hitl/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hitl Respond
+         * @description Submit a HITL response. Resolves the open `PendingHumanDecisionRow`
+         *     for the ticket's most recent awaiting-human workflow execution and
+         *     re-enqueues the routing step via `core.workflow.resume_hitl`.
+         *
+         *     Request body: opaque dict — passes through to the workflow engine's
+         *     `resume_hitl(response=...)`. The SPA's HITL renderer shapes this
+         *     per the prompt's discriminated-union schema (E2a.4).
+         *
+         *     Returns `{stage, next_state}` where `next_state` is the workflow
+         *     state immediately after the resume.
+         */
+        post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/emails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Emails */
+        get: operations["list_emails_api_user_emails_get"];
+        put?: never;
+        /** Add Email */
+        post: operations["add_email_api_user_emails_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/emails/{email_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Email */
+        delete: operations["remove_email_api_user_emails__email_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User Me
+         * @description Profile payload for the User > Details page.
+         */
+        get: operations["user_me_api_user_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch User Me
+         * @description Update profile fields. `display_name` accepted as plain text; the
+         *     `github_username` denorm is owned by the login flow and is never written
+         *     here. `clear_github_username=true` removes the verified value.
+         */
+        patch: operations["patch_user_me_api_user_me_patch"];
+        trace?: never;
+    };
+    "/api/v1/agent/commands/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Command */
+        post: operations["claim_command_api_v1_agent_commands_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Heartbeat */
+        post: operations["heartbeat_api_v1_agent_heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Identity
+         * @description Vault AWS-auth pattern: agent supplies a sigv4-signed STS
+         *     GetCallerIdentity in `payload`; control plane replays it against AWS,
+         *     canonicalizes the returned ARN, matches against `orgs.registered_iam_arn`,
+         *     checks the signed URL's region against `orgs.aws_region`, derives
+         *     `instance_id` from the role-session-name, persists/updates a
+         *     `workspace_agents` row keyed on `(org_id, instance_id)`, and issues a
+         *     1-hour bearer via `core.agent_gateway.bearers`.
+         *
+         *     The `X-Yaaos-Audience` header embedded in the sigv4 envelope must be
+         *     present and match `YAAOS_PUBLIC_HOSTNAME`. This binds the signed
+         *     request to a specific backend deployment and prevents replay against a
+         *     different yaaos instance.
+         *
+         *     Rotation: calling this endpoint again with a valid payload issues a new
+         *     bearer without revoking the old one. The old bearer remains valid until
+         *     its own `expires_at`. The agent atomically swaps the bearer in its HTTP
+         *     client after the rotation response arrives.
+         *
+         *     Failure modes:
+         *     - empty `payload` → 401 `unauthorized`, no audit row
+         *     - unsupported `kind` → 401 `unauthorized`
+         *     - audience mismatch → 401 `audience_mismatch`
+         *     - verifier failure (parse / shape / endpoint / body / replay /
+         *       aws-rejected / clock-skew) → 401, structlog warning categorized
+         *       by `FailureCategory`
+         *     - canonical ARN doesn't match any registered org → 403
+         *       `forbidden_unregistered_arn`
+         *     - signed URL's region != `orgs.aws_region` → 401
+         *       `sts_verification_failed` with category `region_mismatch`
+         */
+        post: operations["exchange_identity_api_v1_agent_identity_post"];
+        /**
+         * Deregister Identity
+         * @description Graceful-shutdown "going away" signal.
+         *
+         *     The agent sends this as the last action of its SIGTERM/SIGINT handler,
+         *     after stopping its heartbeat + claim loops and draining the WS. The
+         *     control plane eagerly:
+         *
+         *     1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
+         *     2. Revokes the bearer so subsequent calls 401 immediately.
+         *     3. Expires any workspaces owned by this agent and synthesizes terminal
+         *        failure events for in-flight commands so their WorkflowExecutions resume.
+         *     4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
+         *        offline without waiting for the sweeper's next tick.
+         *
+         *     Returns 204. Idempotent — calling on an already-offline/revoked agent is
+         *     harmless (bearer verify fails → 401 before this handler runs).
+         */
+        delete: operations["deregister_identity_api_v1_agent_identity_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/commands/{command_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Command Event */
+        post: operations["post_command_event_api_v1_commands__command_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Workspace Event */
+        post: operations["post_workspace_event_api_v1_workspaces__workspace_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/vcs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Vcs Endpoint */
+        get: operations["get_vcs_endpoint_api_vcs_get"];
+        put?: never;
+        /** Set Vcs Endpoint */
+        post: operations["set_vcs_endpoint_api_vcs_post"];
+        /** Clear Vcs Endpoint */
+        delete: operations["clear_vcs_endpoint_api_vcs_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/connection_status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Connection Status */
+        get: operations["get_connection_status_api_workspaces_connection_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1989,10 +1747,17 @@ export interface components {
         /** AgentEvent */
         AgentEvent: {
             /**
+             * Attempt
+             * @default 0
+             */
+            attempt: number;
+            /**
              * Command Id
              * Format: uuid
              */
             command_id: string;
+            /** Failure Reason */
+            failure_reason?: string | null;
             kind: components["schemas"]["AgentEventKind"];
             /** Outcome Label */
             outcome_label?: string | null;
@@ -2000,13 +1765,6 @@ export interface components {
             outputs?: {
                 [key: string]: unknown;
             };
-            /** Failure Reason */
-            failure_reason?: string | null;
-            /**
-             * Attempt
-             * @default 0
-             */
-            attempt: number;
             /**
              * Reported At
              * Format: date-time
@@ -2026,15 +1784,19 @@ export interface components {
          *     agents that cannot determine a value omit it.
          */
         AgentMetadata: {
-            /** Os */
-            os?: string | null;
             /** Cpu Count */
             cpu_count?: number | null;
             /** Memory Bytes */
             memory_bytes?: number | null;
+            /** Os */
+            os?: string | null;
         };
         /** AgentView */
         AgentView: {
+            /** Claimed Workspace Count */
+            claimed_workspace_count: number;
+            /** Cpu Count */
+            cpu_count: number | null;
             /**
              * Id
              * Format: uuid
@@ -2042,49 +1804,45 @@ export interface components {
             id: string;
             /** Instance Id */
             instance_id: string;
-            /** State */
-            state: string;
             /** Last Heartbeat At */
             last_heartbeat_at: string | null;
-            /** Os */
-            os: string | null;
-            /** Cpu Count */
-            cpu_count: number | null;
             /** Memory Bytes */
             memory_bytes: number | null;
-            /** Claimed Workspace Count */
-            claimed_workspace_count: number;
+            /** Os */
+            os: string | null;
+            /** State */
+            state: string;
             /** Version */
             version: string | null;
         };
         /** AuditEntryView */
         AuditEntryView: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Entity Kind */
-            entity_kind: string;
+            /** Actor Kind */
+            actor_kind: string;
+            /** Actor Login */
+            actor_login: string | null;
+            /** Actor User Id */
+            actor_user_id: string | null;
+            /** Created At */
+            created_at: string;
             /**
              * Entity Id
              * Format: uuid
              */
             entity_id: string;
+            /** Entity Kind */
+            entity_kind: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Kind */
             kind: string;
             /** Payload */
             payload: {
                 [key: string]: unknown;
             };
-            /** Actor Kind */
-            actor_kind: string;
-            /** Actor User Id */
-            actor_user_id: string | null;
-            /** Actor Login */
-            actor_login: string | null;
-            /** Created At */
-            created_at: string;
         };
         /** ChangeRoleRequest */
         ChangeRoleRequest: {
@@ -2092,8 +1850,6 @@ export interface components {
         };
         /** ClaimRequest */
         ClaimRequest: {
-            /** Wait Seconds */
-            wait_seconds: number;
             /**
              * Lifecycle
              * @default unconfigured
@@ -2105,6 +1861,8 @@ export interface components {
              * @default 0
              */
             new_workspaces: number;
+            /** Wait Seconds */
+            wait_seconds: number;
             /**
              * Workspace Ids
              * @default []
@@ -2113,17 +1871,17 @@ export interface components {
         };
         /** CodingAgentView */
         CodingAgentView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Plugin Id */
             plugin_id: string;
             /** Settings */
             settings: {
                 [key: string]: unknown;
             };
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Updated At
              * Format: date-time
@@ -2132,50 +1890,50 @@ export interface components {
         };
         /** ConfigStatusAdmin */
         ConfigStatusAdmin: {
+            /** Display Name */
+            display_name: string;
+            /** Primary Email */
+            primary_email: string | null;
             /**
              * User Id
              * Format: uuid
              */
             user_id: string;
-            /** Display Name */
-            display_name: string;
-            /** Primary Email */
-            primary_email: string | null;
         };
         /** ConfigStatusResponse */
         ConfigStatusResponse: {
+            /** Admins */
+            admins: components["schemas"]["ConfigStatusAdmin"][];
             /** Configured */
             configured: boolean;
             /** Missing */
             missing: string[];
-            /** Admins */
-            admins: components["schemas"]["ConfigStatusAdmin"][];
         };
         /** CreateLessonRequest */
         CreateLessonRequest: {
-            /** Repo External Id */
-            repo_external_id: string;
-            /** Title */
-            title: string;
             /** Body */
             body: string;
-            /** Source Pr Url */
-            source_pr_url?: string | null;
             /**
              * Plugin Id
              * @default github
              */
             plugin_id: string;
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Source Pr Url */
+            source_pr_url?: string | null;
+            /** Title */
+            title: string;
         };
         /** EmailView */
         EmailView: {
+            /** Email */
+            email: string;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Email */
-            email: string;
             /** Is Primary */
             is_primary: boolean;
             /** Verified */
@@ -2185,17 +1943,6 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
-        };
-        /** HealthResponse */
-        HealthResponse: {
-            /** Status */
-            status: string;
-            /** Db Ok */
-            db_ok: boolean;
-            /** Redis Ok */
-            redis_ok: boolean;
-            /** Version */
-            version: string;
         };
         /** HeartbeatRequest */
         HeartbeatRequest: {
@@ -2213,30 +1960,30 @@ export interface components {
         /** HeartbeatResponse */
         HeartbeatResponse: {
             /**
-             * Reconciled At
-             * Format: date-time
-             */
-            reconciled_at: string;
-            /**
              * Forgotten Workspaces
              * @default []
              */
             forgotten_workspaces: string[];
+            /**
+             * Reconciled At
+             * Format: date-time
+             */
+            reconciled_at: string;
         };
         /** HeartbeatWorkspaceEntry */
         HeartbeatWorkspaceEntry: {
-            /**
-             * Workspace Id
-             * Format: uuid
-             */
-            workspace_id: string;
+            /** Current Command Id */
+            current_command_id?: string | null;
             /**
              * Status
              * @enum {string}
              */
             status: "running" | "exited" | "unknown";
-            /** Current Command Id */
-            current_command_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /**
          * IdentityExchangeRequest
@@ -2247,17 +1994,22 @@ export interface components {
          *     `agent_metadata` carries static OS attributes (os, cpu_count, memory_bytes).
          */
         IdentityExchangeRequest: {
-            /** Kind */
-            kind: string;
-            /** Agent Version */
-            agent_version?: string | null;
             /** @default {} */
             agent_metadata: components["schemas"]["AgentMetadata"];
+            /** Agent Version */
+            agent_version?: string | null;
+            /** Kind */
+            kind: string;
             /** Payload */
             payload: string;
         };
         /** IdentityExchangeResponse */
         IdentityExchangeResponse: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
             /** Bearer */
             bearer: string;
             /**
@@ -2265,16 +2017,6 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
-            /**
-             * Renewal After
-             * Format: date-time
-             */
-            renewal_after: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
             /** Instance Id */
             instance_id: string;
             /**
@@ -2282,6 +2024,11 @@ export interface components {
              * Format: uuid
              */
             org_id: string;
+            /**
+             * Renewal After
+             * Format: date-time
+             */
+            renewal_after: string;
         };
         /** InstallRequest */
         InstallRequest: {
@@ -2302,40 +2049,40 @@ export interface components {
         };
         /** InstallationResponse */
         InstallationResponse: {
-            /** App Configured */
-            app_configured: boolean;
-            /** Installed */
-            installed: boolean;
-            /** Slug */
-            slug?: string | null;
             /** Account Login */
             account_login?: string | null;
+            /** App Configured */
+            app_configured: boolean;
             /** Install External Id */
             install_external_id?: string | null;
-            /** Installed At */
-            installed_at?: string | null;
             /** Installations Url */
             installations_url?: string | null;
+            /** Installed */
+            installed: boolean;
+            /** Installed At */
+            installed_at?: string | null;
+            /** Slug */
+            slug?: string | null;
         };
         /** IntegrationStatus */
         IntegrationStatus: {
-            /** Provider */
-            provider: string;
-            /** Status */
-            status: string;
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Upstream Identity */
-            upstream_identity?: string | null;
-            /** Last Validated At */
-            last_validated_at?: string | null;
-            /** Last Refresh Failed At */
-            last_refresh_failed_at?: string | null;
             /**
              * Allowed Tools
              * @default []
              */
             allowed_tools: string[];
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Last Refresh Failed At */
+            last_refresh_failed_at?: string | null;
+            /** Last Validated At */
+            last_validated_at?: string | null;
+            /** Provider */
+            provider: string;
+            /** Status */
+            status: string;
+            /** Upstream Identity */
+            upstream_identity?: string | null;
         };
         /** InviteRequest */
         InviteRequest: {
@@ -2345,19 +2092,28 @@ export interface components {
         };
         /** InviteResponse */
         InviteResponse: {
+            /** Email */
+            email: string;
+            /** Expires At */
+            expires_at: string;
             /**
              * Invitation Id
              * Format: uuid
              */
             invitation_id: string;
-            /** Email */
-            email: string;
             role: components["schemas"]["Role"];
-            /** Expires At */
-            expires_at: string;
         };
         /** Lesson */
         Lesson: {
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
             /**
              * Id
              * Format: uuid
@@ -2372,19 +2128,10 @@ export interface components {
             plugin_id: string;
             /** Repo External Id */
             repo_external_id: string;
-            /** Title */
-            title: string;
-            /** Body */
-            body: string;
             /** Source Pr Url */
             source_pr_url: string | null;
-            /** Created By */
-            created_by?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
+            /** Title */
+            title: string;
             /**
              * Updated At
              * Format: date-time
@@ -2398,39 +2145,39 @@ export interface components {
         };
         /** MemberView */
         MemberView: {
+            /** Display Name */
+            display_name: string;
+            /** Handle */
+            handle: string;
+            /** Primary Email */
+            primary_email: string | null;
+            role: components["schemas"]["Role"];
             /**
              * User Id
              * Format: uuid
              */
             user_id: string;
-            /** Handle */
-            handle: string;
-            role: components["schemas"]["Role"];
-            /** Display Name */
-            display_name: string;
-            /** Primary Email */
-            primary_email: string | null;
         };
         /** Membership */
         Membership: {
             /**
-             * User Id
-             * Format: uuid
+             * Created At
+             * Format: date-time
              */
-            user_id: string;
+            created_at: string;
+            /** Handle */
+            handle: string;
             /**
              * Org Id
              * Format: uuid
              */
             org_id: string;
             role: components["schemas"]["Role"];
-            /** Handle */
-            handle: string;
             /**
-             * Created At
-             * Format: date-time
+             * User Id
+             * Format: uuid
              */
-            created_at: string;
+            user_id: string;
         };
         /** PatchIntegrationRequest */
         PatchIntegrationRequest: {
@@ -2441,27 +2188,27 @@ export interface components {
         };
         /** PluginMetaPayload */
         PluginMetaPayload: {
+            /** Description */
+            description?: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Docs Url */
+            docs_url?: string | null;
             /** Id */
             id: string;
             /** Type */
             type: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description?: string | null;
-            /** Docs Url */
-            docs_url?: string | null;
         };
         /** ProviderStatus */
         ProviderStatus: {
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Last Validated At */
+            last_validated_at: string | null;
             /** Provider */
             provider: string;
             /** Status */
             status: string;
-            /** Last Validated At */
-            last_validated_at: string | null;
-            /** Last Used At */
-            last_used_at: string | null;
             /** Updated At */
             updated_at: string | null;
         };
@@ -2482,11 +2229,37 @@ export interface components {
          *     shape — `workflow_executions` rows are the canonical job record.
          */
         ReviewJob: {
+            /** Activity Log */
+            activity_log: {
+                [key: string]: unknown;
+            }[];
+            /** Completed At */
+            completed_at: string | null;
+            /** Current Step */
+            current_step: string | null;
+            /** Destination */
+            destination: string;
+            /** Duration S */
+            duration_s: number | null;
+            /** Effort */
+            effort: string | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Findings */
+            findings: {
+                [key: string]: unknown;
+            }[] | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Last Heartbeat At */
+            last_heartbeat_at: string | null;
+            /** Lessons Applied */
+            lessons_applied: string[] | null;
+            /** Model */
+            model: string | null;
             /**
              * Org Id
              * Format: uuid
@@ -2497,53 +2270,27 @@ export interface components {
              * Format: uuid
              */
             pr_id: string;
-            /** Status */
-            status: string;
-            /** Trigger Reason */
-            trigger_reason: string;
-            /** Destination */
-            destination: string;
-            /** Skip Reason */
-            skip_reason: string | null;
+            /** Prompt Hash */
+            prompt_hash: string | null;
+            /** Review External Id */
+            review_external_id: string | null;
             /**
              * Scheduled At
              * Format: date-time
              */
             scheduled_at: string;
+            /** Skip Reason */
+            skip_reason: string | null;
             /** Started At */
             started_at: string | null;
-            /** Completed At */
-            completed_at: string | null;
-            /** Last Heartbeat At */
-            last_heartbeat_at: string | null;
-            /** Current Step */
-            current_step: string | null;
-            /** Prompt Hash */
-            prompt_hash: string | null;
-            /** Lessons Applied */
-            lessons_applied: string[] | null;
+            /** Status */
+            status: string;
             /** Tokens In */
             tokens_in: number | null;
             /** Tokens Out */
             tokens_out: number | null;
-            /** Duration S */
-            duration_s: number | null;
-            /** Error Message */
-            error_message: string | null;
-            /** Review External Id */
-            review_external_id: string | null;
-            /** Findings */
-            findings: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Activity Log */
-            activity_log: {
-                [key: string]: unknown;
-            }[];
-            /** Model */
-            model: string | null;
-            /** Effort */
-            effort: string | null;
+            /** Trigger Reason */
+            trigger_reason: string;
         };
         /**
          * Role
@@ -2586,18 +2333,18 @@ export interface components {
          *     the SPA should navigate to (when the plugin requires an out-of-band install).
          */
         SetVcsResponse: {
-            state?: components["schemas"]["VcsStateResponse"] | null;
             /** Install Url */
             install_url?: string | null;
+            state?: components["schemas"]["VcsStateResponse"] | null;
         };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
-            /** Title */
-            title?: string | null;
             /** Body */
             body?: string | null;
             /** Source Pr Url */
             source_pr_url?: string | null;
+            /** Title */
+            title?: string | null;
         };
         /** UpdateSettingsRequest */
         UpdateSettingsRequest: {
@@ -2608,16 +2355,16 @@ export interface components {
         };
         /** ValidationError */
         ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
             /** Location */
             loc: (string | number)[];
             /** Message */
             msg: string;
             /** Error Type */
             type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
         };
         /** VcsStateResponse */
         VcsStateResponse: {
@@ -2631,11 +2378,6 @@ export interface components {
         /** WorkspaceEvent */
         WorkspaceEvent: {
             /**
-             * Workspace Id
-             * Format: uuid
-             */
-            workspace_id: string;
-            /**
              * Command Id
              * Format: uuid
              */
@@ -2648,6 +2390,11 @@ export interface components {
              * Format: date-time
              */
             reported_at: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /**
          * WorkspaceEventKind
@@ -2666,17 +2413,17 @@ export interface components {
         };
         /** _BootstrapOwnerRequest */
         _BootstrapOwnerRequest: {
+            /**
+             * Display Name
+             * @default Owner
+             */
+            display_name: string;
             /** Email */
             email: string;
             /** Github Id */
             github_id: string;
             /** Org Slug */
             org_slug: string;
-            /**
-             * Display Name
-             * @default Owner
-             */
-            display_name: string;
             /**
              * Provider
              * @default github
@@ -2720,32 +2467,32 @@ export interface components {
         };
         /** _LessonRequest */
         _LessonRequest: {
+            /** Body */
+            body: string;
             /** Repo External Id */
             repo_external_id: string;
             /** Title */
             title: string;
-            /** Body */
-            body: string;
         };
         /** _MarkReadFilter */
         _MarkReadFilter: {
-            /** Read State */
-            read_state?: string | null;
             /** Org Id */
             org_id?: string | null;
+            /** Read State */
+            read_state?: string | null;
             /** Types */
             types?: string[] | null;
         };
         /** _OrgSettingsResponse */
         _OrgSettingsResponse: {
-            /** Slug */
-            slug: string;
-            /** Session Timeout Override */
-            session_timeout_override: number | null;
-            /** Registered Iam Arn */
-            registered_iam_arn?: string | null;
             /** Aws Region */
             aws_region?: string | null;
+            /** Registered Iam Arn */
+            registered_iam_arn?: string | null;
+            /** Session Timeout Override */
+            session_timeout_override: number | null;
+            /** Slug */
+            slug: string;
         };
         /** _PatchOwnHandleRequest */
         _PatchOwnHandleRequest: {
@@ -2754,13 +2501,13 @@ export interface components {
         };
         /** _PatchUserRequest */
         _PatchUserRequest: {
-            /** Display Name */
-            display_name?: string | null;
             /**
              * Clear Github Username
              * @default false
              */
             clear_github_username: boolean;
+            /** Display Name */
+            display_name?: string | null;
         };
         /** _PushBackRequest */
         _PushBackRequest: {
@@ -2779,13 +2526,11 @@ export interface components {
         };
         /** _SsoConfigBody */
         _SsoConfigBody: {
-            /** Idp Metadata Xml */
-            idp_metadata_xml: string;
             /**
-             * Jit Enabled
-             * @default false
+             * Email Domains
+             * @default []
              */
-            jit_enabled: boolean;
+            email_domains: string[];
             /**
              * Enabled
              * @default false
@@ -2793,28 +2538,30 @@ export interface components {
             enabled: boolean;
             /** Exempt Owner User Id */
             exempt_owner_user_id?: string | null;
+            /** Idp Metadata Xml */
+            idp_metadata_xml: string;
             /**
-             * Email Domains
-             * @default []
+             * Jit Enabled
+             * @default false
              */
-            email_domains: string[];
+            jit_enabled: boolean;
         };
         /** _StageProfileRequest */
         _StageProfileRequest: {
-            /** External Subject */
-            external_subject: string;
-            /** Primary Email */
-            primary_email: string;
-            /**
-             * Email Verified
-             * @default true
-             */
-            email_verified: boolean;
             /**
              * Display Name
              * @default
              */
             display_name: string;
+            /**
+             * Email Verified
+             * @default true
+             */
+            email_verified: boolean;
+            /** External Subject */
+            external_subject: string;
+            /** Primary Email */
+            primary_email: string;
         };
         /** _TotpVerifyRequest */
         _TotpVerifyRequest: {
@@ -2823,21 +2570,21 @@ export interface components {
         };
         /** _UserMeResponse */
         _UserMeResponse: {
+            /** Display Name */
+            display_name: string;
+            /** Emails */
+            emails: components["schemas"]["EmailView"][];
+            /** Github Username */
+            github_username: string | null;
+            /** Memberships */
+            memberships: {
+                [key: string]: unknown;
+            }[];
             /**
              * User Id
              * Format: uuid
              */
             user_id: string;
-            /** Display Name */
-            display_name: string;
-            /** Github Username */
-            github_username: string | null;
-            /** Emails */
-            emails: components["schemas"]["EmailView"][];
-            /** Memberships */
-            memberships: {
-                [key: string]: unknown;
-            }[];
         };
         /** _UserWithSessionRequest */
         _UserWithSessionRequest: {
@@ -2860,47 +2607,16 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    exchange_identity_api_v1_agent_identity_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["IdentityExchangeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IdentityExchangeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    deregister_identity_api_v1_agent_identity_delete: {
+    list_providers_api_api_keys_get: {
         parameters: {
             query?: never;
             header?: {
-                authorization?: string | null;
+                "X-Org-Slug"?: string | null;
             };
             path?: never;
-            cookie?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
         };
         requestBody?: never;
         responses: {
@@ -2910,7 +2626,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProviderStatus"][];
                 };
             };
             /** @description Validation Error */
@@ -2924,90 +2640,22 @@ export interface operations {
             };
         };
     };
-    heartbeat_api_v1_agent_heartbeat_post: {
+    set_key_api_api_keys__provider__post: {
         parameters: {
             query?: never;
             header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HeartbeatRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeartbeatResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    claim_command_api_v1_agent_commands_claim_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaimRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_workspace_event_api_v1_workspaces__workspace_id__events_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
+                "X-Org-Slug"?: string | null;
             };
             path: {
-                workspace_id: string;
+                provider: string;
             };
-            cookie?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkspaceEvent"];
+                "application/json": components["schemas"]["SetKeyRequest"];
             };
         };
         responses: {
@@ -3017,7 +2665,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -3031,22 +2681,132 @@ export interface operations {
             };
         };
     };
-    post_command_event_api_v1_commands__command_id__events_post: {
+    clear_key_api_api_keys__provider__delete: {
         parameters: {
             query?: never;
             header?: {
-                authorization?: string | null;
+                "X-Org-Slug"?: string | null;
             };
             path: {
-                command_id: string;
+                provider: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_key_api_api_keys__provider__validate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                provider: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_audit_api_audit_get: {
+        parameters: {
+            query?: {
+                actor_kind?: string[] | null;
+                action?: string[] | null;
+                before_ts?: string | null;
+                after_ts?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEntryView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    callback_api_auth_callback__provider__get: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path: {
+                provider: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentEvent"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -3076,40 +2836,6 @@ export interface operations {
             };
             header?: never;
             path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    callback_api_auth_callback__provider__get: {
-        parameters: {
-            query: {
-                code: string;
-                state: string;
-            };
-            header?: never;
-            path: {
-                provider: string;
-            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3249,16 +2975,20 @@ export interface operations {
             };
         };
     };
-    totp_enroll_api_auth_totp_enroll_post: {
+    totp_challenge_api_auth_totp_challenge_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: {
-                yaaos_session?: string | null;
+                yaaos_totp_challenge?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_TotpVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3280,20 +3010,16 @@ export interface operations {
             };
         };
     };
-    totp_challenge_api_auth_totp_challenge_post: {
+    totp_enroll_api_auth_totp_enroll_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: {
-                yaaos_totp_challenge?: string | null;
+                yaaos_session?: string | null;
             };
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_TotpVerifyRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -3350,85 +3076,18 @@ export interface operations {
             };
         };
     };
-    list_emails_api_user_emails_get: {
+    set_api_key_api_claude_code_api_key_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EmailView"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_email_api_user_emails_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                yaaos_csrf?: string | null;
-                yaaos_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["_AddEmailRequest"];
+                "application/json": components["schemas"]["SetApiKeyRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EmailView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_email_api_user_emails__email_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                email_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -3452,245 +3111,7 @@ export interface operations {
             };
         };
     };
-    user_me_api_user_me_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["_UserMeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_user_me_api_user_me_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                yaaos_csrf?: string | null;
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_PatchUserRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["_UserMeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_audit_api_audit_get: {
-        parameters: {
-            query?: {
-                actor_kind?: string[] | null;
-                action?: string[] | null;
-                before_ts?: string | null;
-                after_ts?: string | null;
-                limit?: number;
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditEntryView"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sso_discover_api_sso_discover_get: {
-        parameters: {
-            query: {
-                email: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sp_metadata_api_sso__slug__metadata_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sso_login_start_api_sso__slug__login_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sso_acs_api_sso__slug__acs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_AssertionBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_org_sso_config_api_sso_config_get: {
+    defaults_endpoint_api_claude_code_defaults_get: {
         parameters: {
             query?: never;
             header?: {
@@ -3725,7 +3146,62 @@ export interface operations {
             };
         };
     };
-    upsert_org_sso_config_api_sso_config_put: {
+    health_api_claude_code_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    list_endpoint_api_coding_agents_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingAgentView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_endpoint_api_coding_agents_post: {
         parameters: {
             query?: never;
             header?: {
@@ -3738,9 +3214,226 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["_SsoConfigBody"];
+                "application/json": components["schemas"]["InstallRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingAgentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_endpoint_api_coding_agents__plugin_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                plugin_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_settings_endpoint_api_coding_agents__plugin_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                plugin_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodingAgentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    health_api_github_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    github_install_start_api_github_install_start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_install_callback_api_github_install_callback_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    installation_api_github_installation_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repositories_api_github_repositories_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -3764,16 +3457,14 @@ export interface operations {
             };
         };
     };
-    list_members_api_memberships_get: {
+    post_intake_api_intake__type__post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
+            header?: never;
+            path: {
+                type: string;
             };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -3783,7 +3474,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemberView"][];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -3797,44 +3488,7 @@ export interface operations {
             };
         };
     };
-    invite_member_api_memberships_invite_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InviteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InviteResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_invitation_api_memberships_accept_post: {
+    broken_summary_api_integrations_broken_summary_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3843,45 +3497,6 @@ export interface operations {
                 yaaos_session?: string | null;
             };
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AcceptRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Membership"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_member_api_memberships__target_user_id__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                target_user_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
@@ -3890,87 +3505,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    change_role_api_memberships__target_user_id__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                target_user_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChangeRoleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Membership"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_own_membership_handle_api_memberships_me__org_id__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                org_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_PatchOwnHandleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Membership"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -4173,16 +3708,158 @@ export interface operations {
             };
         };
     };
-    list__api_notifications_get: {
+    list_integrations_api_mcp_proxy_get: {
         parameters: {
-            query?: {
-                read_state?: string;
-                org_id?: string | null;
-                types?: string[] | null;
-                limit?: number;
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationStatus"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_endpoint_api_mcp_proxy__provider__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                provider: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_integration_api_mcp_proxy__provider__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                provider: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchIntegrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_callback_api_mcp_proxy__provider__callback_get: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
             };
             header?: never;
-            path?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_start_api_mcp_proxy__provider__connect_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                provider: string;
+            };
             cookie?: {
                 yaaos_session?: string | null;
             };
@@ -4209,13 +3886,305 @@ export interface operations {
             };
         };
     };
-    mark_read_api_notifications__notification_id__read_post: {
+    validate_endpoint_api_mcp_proxy__provider__validate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                provider: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_api_mcp__review_id___server__post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                notification_id: string;
+                review_id: string;
+                server: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_members_api_memberships_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invitation_api_memberships_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Membership"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invite_member_api_memberships_invite_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_own_membership_handle_api_memberships_me__org_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_PatchOwnHandleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Membership"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_member_api_memberships__target_user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                target_user_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_role_api_memberships__target_user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                target_user_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Membership"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list__api_notifications_get: {
+        parameters: {
+            query?: {
+                read_state?: string;
+                org_id?: string | null;
+                types?: string[] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
             cookie?: {
                 yaaos_session?: string | null;
             };
@@ -4308,902 +4277,12 @@ export interface operations {
             };
         };
     };
-    dashboard_api_tickets_dashboard_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list__api_tickets_get: {
-        parameters: {
-            query?: {
-                repo_external_id?: string[] | null;
-                status?: string[] | null;
-                q?: string | null;
-                sort?: string;
-                cursor?: string | null;
-                created_after?: string | null;
-                created_before?: string | null;
-                limit?: number;
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_respond_api_tickets__ticket_id__hitl_respond_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_history_api_tickets__ticket_id__hitl_history_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    detail_api_tickets__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    audit_api_tickets__ticket_id__audit_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rereview_ticket_api_reviewer_rereview_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RereviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cancel_jobs_api_reviewer_cancel_post: {
-        parameters: {
-            query: {
-                ticket_id: string;
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    ack_finding_api_reviewer_findings__finding_id__ack_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    push_back_finding_api_reviewer_findings__finding_id__push_back_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_PushBackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewJob"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    metrics_api_reviewer_metrics_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: {
-                include_terminal?: boolean;
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    thread_by_finding_api_reviewer_findings__finding_id__thread_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_intake_api_intake__type__post: {
+    mark_read_api_notifications__notification_id__read_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                type: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_available_endpoint_api_plugins_available_get: {
-        parameters: {
-            query: {
-                /** @description Plugin type to enumerate */
-                type: "vcs" | "coding_agent";
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListAvailableResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_providers_api_api_keys_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProviderStatus"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_key_api_api_keys__provider__post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetKeyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_key_api_api_keys__provider__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    validate_key_api_api_keys__provider__validate_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    broken_summary_api_integrations_broken_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_integrations_api_mcp_proxy_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IntegrationStatus"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    connect_start_api_mcp_proxy__provider__connect_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
+                notification_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;
@@ -5218,331 +4297,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    connect_callback_api_mcp_proxy__provider__callback_get: {
-        parameters: {
-            query: {
-                code: string;
-                state: string;
-            };
-            header?: never;
-            path: {
-                provider: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    validate_endpoint_api_mcp_proxy__provider__validate_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_endpoint_api_mcp_proxy__provider__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_integration_api_mcp_proxy__provider__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                provider: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PatchIntegrationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IntegrationStatus"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dispatch_api_mcp__review_id___server__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                review_id: string;
-                server: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_endpoint_api_coding_agents_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodingAgentView"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    install_endpoint_api_coding_agents_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InstallRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodingAgentView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    uninstall_endpoint_api_coding_agents__plugin_id__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                plugin_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_settings_endpoint_api_coding_agents__plugin_id__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                plugin_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateSettingsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodingAgentView"];
                 };
             };
             /** @description Validation Error */
@@ -5663,37 +4417,6 @@ export interface operations {
             };
         };
     };
-    list_mine_api_orgs_mine_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     config_status_api_orgs_config_status_get: {
         parameters: {
             query?: never;
@@ -5714,6 +4437,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mine_api_orgs_mine_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -5762,7 +4516,306 @@ export interface operations {
             };
         };
     };
-    get_connection_status_api_workspaces_connection_status_get: {
+    list_available_endpoint_api_plugins_available_get: {
+        parameters: {
+            query: {
+                /** @description Plugin type to enumerate */
+                type: "vcs" | "coding_agent";
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAvailableResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_jobs_api_reviewer_cancel_post: {
+        parameters: {
+            query: {
+                ticket_id: string;
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get: {
+        parameters: {
+            query?: {
+                include_terminal?: boolean;
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ack_finding_api_reviewer_findings__finding_id__ack_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_back_finding_api_reviewer_findings__finding_id__push_back_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_PushBackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    thread_by_finding_api_reviewer_findings__finding_id__thread_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewJob"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metrics_api_reviewer_metrics_get: {
         parameters: {
             query?: never;
             header?: {
@@ -5784,6 +4837,968 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rereview_ticket_api_reviewer_rereview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RereviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_general_api_sse_general_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                workflow_execution_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_org_sso_config_api_sso_config_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_org_sso_config_api_sso_config_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_SsoConfigBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sso_discover_api_sso_discover_get: {
+        parameters: {
+            query: {
+                email: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sso_acs_api_sso__slug__acs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_AssertionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sso_login_start_api_sso__slug__login_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sp_metadata_api_sso__slug__metadata_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list__api_tickets_get: {
+        parameters: {
+            query?: {
+                repo_external_id?: string[] | null;
+                status?: string[] | null;
+                q?: string | null;
+                sort?: string;
+                cursor?: string | null;
+                created_after?: string | null;
+                created_before?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_api_tickets_dashboard_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detail_api_tickets__ticket_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_api_tickets__ticket_id__audit_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hitl_history_api_tickets__ticket_id__hitl_history_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hitl_respond_api_tickets__ticket_id__hitl_respond_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_emails_api_user_emails_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_email_api_user_emails_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_csrf?: string | null;
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_AddEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_email_api_user_emails__email_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_me_api_user_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_UserMeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_user_me_api_user_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_csrf?: string | null;
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_PatchUserRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_UserMeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_command_api_v1_agent_commands_claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heartbeat_api_v1_agent_heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeartbeatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeartbeatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    exchange_identity_api_v1_agent_identity_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityExchangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityExchangeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deregister_identity_api_v1_agent_identity_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_command_event_api_v1_commands__command_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentEvent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_workspace_event_api_v1_workspaces__workspace_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceEvent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -5900,132 +5915,7 @@ export interface operations {
             };
         };
     };
-    stream_general_api_sse_general_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                workflow_execution_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_api_key_api_claude_code_api_key_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetApiKeyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    health_api_claude_code_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    defaults_endpoint_api_claude_code_defaults_get: {
+    get_connection_status_api_workspaces_connection_status_get: {
         parameters: {
             query?: never;
             header?: {
@@ -6056,530 +5946,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    installation_api_github_installation_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstallationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    repositories_api_github_repositories_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    health_api_github_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    github_install_start_api_github_install_start_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstallStartResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    github_install_callback_api_github_install_callback_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    reset_api_testing_reset_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-        };
-    };
-    seed_github_install_api_testing_seed_github_install_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["_GithubInstallRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_lesson_api_testing_seed_lesson_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_LessonRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_broken_integration_api_testing_seed_broken_integration_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_BrokenIntegrationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_bootstrap_owner_api_testing_seed_bootstrap_owner_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_BootstrapOwnerRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_user_with_session_api_testing_seed_user_with_session_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_UserWithSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    oauth_test_stage_profile_api_testing_oauth_test_stage_profile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_StageProfileRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    email_inbox_api_testing_email_inbox_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: {
-                            [key: string]: string;
-                        }[];
-                    };
-                };
-            };
-        };
-    };
-    saml_sign_api_testing_saml_sign_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_SamlSignRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    seed_workspace_agent_api_testing_seed_workspace_agent_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_WorkspaceAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    deregister_workspace_agent_api_testing_seed_deregister_workspace_agent_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_DeregisterWorkspaceAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_health_api_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

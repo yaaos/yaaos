@@ -87,6 +87,7 @@ Target: WCAG 2.2 AA on all shipped pages.
 | Concern | Tool |
 |---|---|
 | Lint + format | Biome (`apps/web/biome.json`) |
+| API type drift | `bin/gen-api-types --check` — regenerate from `apps/backend/openapi/web-api.json` + `git diff --exit-code`; gating stage before `tsc` |
 | Type check | `tsc --noEmit` |
 | Unit/integration tests | Vitest + RTL + MSW |
 | Boundary lint | dependency-cruiser (`apps/web/.dependency-cruiser.cjs`, error — fails `bin/ci`) |
@@ -94,7 +95,7 @@ Target: WCAG 2.2 AA on all shipped pages.
 | Build | Vite |
 | Bundle report | rollup-plugin-visualizer → `tmp/bundle-stats.html` after every build (non-gating) |
 
-`apps/web/bin/ci` runs all steps. Bundle report is informational — CI does not fail on chunk size. A `use-*.tsx` glob check enforces that logic hooks are always `.ts` not `.tsx`.
+`apps/web/bin/ci` runs all steps. Bundle report is informational — CI does not fail on chunk size. A `use-*.tsx` glob check enforces that logic hooks are always `.ts` not `.tsx`. Generated types come from the committed backend artifact — no running backend needed for CI.
 
 ## Module documentation
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Generate TypeScript types from the backend's OpenAPI spec.
+# Generate TypeScript types from the committed backend OpenAPI spec.
 #
 # Usage:
-#   bin/gen-api-types            — regenerate (backend must be running on :8080)
+#   bin/gen-api-types            — regenerate from apps/backend/openapi/web-api.json
 #   bin/gen-api-types --check    — drift check: regenerate then fail if git diff
+#
+# Source: apps/backend/openapi/web-api.json (relative: ../backend/openapi/web-api.json from apps/web/; committed; /api/testing/* paths excluded).
+# Set OPENAPI_URL to override the source with a live server URL (local dev only).
 #
 # The generated file is committed. Callers import types via
 # `apps/web/src/core/api/generated/schema.d.ts`; never import it
@@ -14,7 +17,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-SPEC_URL="${OPENAPI_URL:-http://localhost:8080/openapi.json}"
+COMMITTED_SPEC="../backend/openapi/web-api.json"
 OUT="src/core/api/generated/schema.d.ts"
 CHECK_MODE=false
 
@@ -24,14 +27,20 @@ for arg in "$@"; do
   fi
 done
 
-echo "==> Fetching OpenAPI spec from $SPEC_URL"
-TMP=$(mktemp /tmp/openapi.XXXXXX.json)
-trap 'rm -f "$TMP"' EXIT
-curl -sf "$SPEC_URL" -o "$TMP"
+if [[ -n "${OPENAPI_URL:-}" ]]; then
+  echo "==> Fetching OpenAPI spec from $OPENAPI_URL"
+  TMP=$(mktemp /tmp/openapi.XXXXXX.json)
+  trap 'rm -f "$TMP"' EXIT
+  curl -sf "$OPENAPI_URL" -o "$TMP"
+  SPEC_SOURCE="$TMP"
+else
+  echo "==> Using committed spec $COMMITTED_SPEC"
+  SPEC_SOURCE="$COMMITTED_SPEC"
+fi
 
 echo "==> Generating $OUT"
 mkdir -p "$(dirname "$OUT")"
-pnpm exec openapi-typescript "$TMP" --output "$OUT"
+pnpm exec openapi-typescript "$SPEC_SOURCE" --output "$OUT"
 
 if $CHECK_MODE; then
   echo "==> Checking for drift"

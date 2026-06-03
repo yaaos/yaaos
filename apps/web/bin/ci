@@ -12,6 +12,9 @@ cd "$(dirname "$0")/.."
 echo "==> biome check"
 pnpm exec biome check src
 
+echo "==> gen-api-types --check (schema drift)"
+bin/gen-api-types --check
+
 echo "==> tsc --noEmit"
 pnpm exec tsc --noEmit
 
