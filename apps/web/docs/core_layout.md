@@ -27,6 +27,8 @@ Two-column flex: fixed-width sidebar + flex-grow `<main>`. Only `<main>` scrolls
 
 `STANDALONE_PATHS` (`/login`, `/user`, `/orgs`) render `<Outlet>` without the shell.
 
+**Sidebar Suspense boundary:** `<Sidebar>` is wrapped in `<Suspense fallback={<SidebarSkeleton />}>`. `UserCard` and `RequireMembership` both call `useSuspenseQuery` (`["auth","me"]`); without this boundary a cold cache on a deep-link would let the thrown promise bubble to the root error boundary and flash "Something went wrong" instead of a skeleton. `SidebarSkeleton` (defined in `app-shell.tsx`, `data-testid="sidebar-loading"`) renders the rail-width column placeholder while the query resolves.
+
 **Focus reset:** a `useEffect` keyed on `pathname` (from `useRouterState`) moves keyboard focus to the first `<h1>` inside `<main>` (or to `<main>` itself when none exists) on every route change. `<main>` carries `tabIndex={-1}` + `outline-none` so programmatic focus works without entering the natural tab order. Screen-reader users hear the new page's title immediately; keyboard users land at the content start. See [core_routing.md § Focus reset](core_routing.md#focus-reset-on-navigation).
 
 ### Theme system
@@ -48,4 +50,4 @@ None — `BrokenIntegrationsBanner` reads from a query hook; `theme.ts` reads/wr
 
 ## How it's tested
 
-Rendered on every e2e test — shell breakage shows up as page-navigation failures. Sidebar unit tests in `core/sidebar/test/`. Focus-reset behavior has unit/integration tests in `core/layout/test/app-shell-focus-reset.test.tsx` and e2e coverage in `apps/e2e/tests/focus-reset.spec.ts`.
+Rendered on every e2e test — shell breakage shows up as page-navigation failures. Sidebar unit tests in `core/sidebar/test/`. Focus-reset behavior has unit/integration tests in `core/layout/test/app-shell-focus-reset.test.tsx` and e2e coverage in `apps/e2e/tests/focus-reset.spec.ts`. Sidebar Suspense boundary regression tested in `core/layout/test/app-shell-sidebar-suspense.test.tsx`.

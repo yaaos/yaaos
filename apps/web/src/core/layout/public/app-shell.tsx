@@ -1,9 +1,35 @@
 import { useOtelIdentitySync } from "@core/observability/public/use-otel-identity-sync";
 import { Sidebar } from "@core/sidebar/public/sidebar";
 import { useServerEvents } from "@core/sse/public/subscriber";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { BrokenIntegrationsBanner } from "../broken-integrations-banner";
+
+/** Sidebar-shaped skeleton shown while UserCard/RequireMembership suspense resolves. */
+function SidebarSkeleton() {
+  return (
+    <aside
+      className="flex flex-col bg-card border-r border-border shrink-0 w-[56px]"
+      data-testid="sidebar-loading"
+    >
+      <div className="flex justify-center items-center h-[56px] border-b border-border">
+        <Skeleton className="h-7 w-7 rounded" />
+      </div>
+      <div className="px-1.5 py-2 border-b border-border">
+        <Skeleton className="h-7 w-full rounded" />
+      </div>
+      <div className="flex flex-col gap-1.5 px-1.5 py-2 flex-1">
+        <Skeleton className="h-7 w-full rounded" />
+        <Skeleton className="h-7 w-full rounded" />
+        <Skeleton className="h-7 w-full rounded" />
+      </div>
+      <div className="px-1.5 py-2 border-t border-border">
+        <Skeleton className="h-7 w-full rounded" />
+      </div>
+    </aside>
+  );
+}
 
 // Two routes render outside the shell: `/login` (anonymous, no nav) and
 // `/orgs` (the picker — explicit "no org selected" surface). Every other
@@ -75,7 +101,9 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <Sidebar />
+      <Suspense fallback={<SidebarSkeleton />}>
+        <Sidebar />
+      </Suspense>
       <div className="flex flex-col flex-1 min-w-0">
         <BrokenIntegrationsBanner />
         {/* tabIndex={-1} makes <main> programmatically focusable for focus-reset
