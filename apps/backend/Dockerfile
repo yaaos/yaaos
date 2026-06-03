@@ -3,7 +3,7 @@
 # ────────────────────────────────────────────────────────────────────────
 # Stage 1: build the SPA
 # ────────────────────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS web-builder
+FROM node:24-bookworm-slim AS web-builder
 
 WORKDIR /build
 
@@ -35,7 +35,7 @@ FROM python:3.14-slim-bookworm AS backend
 #     Docker workspaces carries the CLI with them and drops this layer.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl gnupg tini \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
     && apt-get install -y --no-install-recommends libxmlsec1-dev xmlsec1 pkg-config libxml2-dev libxslt1-dev \
