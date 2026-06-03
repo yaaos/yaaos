@@ -83,6 +83,12 @@ def _reset_verifier():
     reset_nonce_cache_for_tests()
 
 
+_AUDIENCE = "app.yaaos.cloud"
+_SIGNED_PAYLOAD = (
+    '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.cloud"},"body":""}'
+)
+
+
 async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> None:
     """Valid payload → verifier returns canonical ARN with assumed-role raw ARN →
     ARN matches a registered org → region matches → workspace_agents row
@@ -111,7 +117,7 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
                 "kind": "aws-sts",
                 "agent_version": "1.2.3",
                 "agent_metadata": {"os": "linux", "cpu_count": 2, "memory_bytes": 8192},
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     assert resp.status_code == 200, resp.text
@@ -175,7 +181,7 @@ async def test_identity_exchange_bearer_ttl_is_one_hour(db_session) -> None:
             json={
                 "kind": "aws-sts",
                 "agent_version": "1.0.0",
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     after = datetime.now(UTC)
@@ -217,7 +223,7 @@ async def test_identity_exchange_rotation_non_revoking(db_session) -> None:
     payload = {
         "kind": "aws-sts",
         "agent_version": "1.0.0",
-        "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+        "payload": _SIGNED_PAYLOAD,
     }
 
     async with _client() as c:
@@ -256,7 +262,7 @@ async def test_identity_exchange_unregistered_arn_returns_403(db_session) -> Non
             json={
                 "kind": "aws-sts",
                 "agent_version": "0.0.1",
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     assert resp.status_code == 403
@@ -291,7 +297,7 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
             json={
                 "kind": "aws-sts",
                 "agent_version": "0.0.1",
-                "payload": '{"url":"https://sts.eu-west-1.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     assert resp.status_code == 401
@@ -318,7 +324,7 @@ async def test_identity_exchange_invalid_signature_returns_401(db_session) -> No
             json={
                 "kind": "aws-sts",
                 "agent_version": "0.0.1",
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     assert resp.status_code == 401
@@ -373,7 +379,7 @@ async def test_identity_exchange_response_includes_org_id(db_session) -> None:
             json={
                 "kind": "aws-sts",
                 "agent_version": "1.0.0",
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _SIGNED_PAYLOAD,
             },
         )
     assert resp.status_code == 200, resp.text

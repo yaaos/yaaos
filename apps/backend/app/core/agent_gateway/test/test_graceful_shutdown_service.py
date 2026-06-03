@@ -320,6 +320,10 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
 
     set_verify_identity_override(_stub)
 
+    _signed_payload = (
+        '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.cloud"},"body":""}'
+    )
+
     async with _agent_client() as c:
         resp = await c.post(
             "/api/v1/agent/identity",
@@ -327,7 +331,7 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
                 "kind": "aws-sts",
                 "agent_version": "1.0.0",
                 "agent_metadata": {},
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _signed_payload,
             },
         )
     assert resp.status_code == 401
@@ -354,6 +358,10 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
 
     set_verify_identity_override(_stub)
 
+    _signed_payload = (
+        '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.cloud"},"body":""}'
+    )
+
     async with _agent_client() as c:
         resp = await c.post(
             "/api/v1/agent/identity",
@@ -361,7 +369,7 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
                 "kind": "aws-sts",
                 "agent_version": "1.0.0",
                 "agent_metadata": {},
-                "payload": '{"url":"https://sts.amazonaws.com/","headers":{},"body":""}',
+                "payload": _signed_payload,
             },
         )
     # No org → 403 (unregistered ARN)

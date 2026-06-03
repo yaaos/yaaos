@@ -76,7 +76,7 @@ The backend derives `workspace_agents.claimed_workspace_count` from `len(workspa
 
 Response: `bearer`, `expires_at`, `renewal_after`, `agent_id`, `instance_id` (backend-derived from role-session-name), `org_id`.
 
-The `X-Yaaos-Audience` header inside the signed `payload` must be present and match `YAAOS_PUBLIC_HOSTNAME` (the backend's configured canonical hostname). See [`apps/backend/docs/core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md) for the full identity exchange contract.
+The `X-Yaaos-Audience` header inside the signed `payload` must be present and match `YAAOS_PUBLIC_HOSTNAME` (the backend's required canonical hostname; boot fails without it). Missing or mismatched → 401 `audience_mismatch`. See [`apps/backend/docs/core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md) for the full identity exchange contract.
 
 ## Ordering + idempotency
 

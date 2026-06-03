@@ -28,6 +28,9 @@ os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")
 os.environ.setdefault("YAAOS_HEARTBEAT_INTERVAL_SECONDS", "1")
 os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
+# Required for agent identity-exchange audience binding.
+# Value matches what the identity-exchange tests sign as the audience.
+os.environ.setdefault("YAAOS_PUBLIC_HOSTNAME", "app.yaaos.cloud")
 
 # Re-export autouse isolation fixtures so pytest auto-discovers them. The import
 # is deferred until after env vars are set because app.testing.isolation triggers

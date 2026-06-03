@@ -51,7 +51,7 @@ Returns agents for the current org within the 1-hour UI-retention window. Fields
 
 Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity` as `payload`; the backend replays it, derives `instance_id` from the role-session-name, and issues a 1-hour bearer.
 
-- **Audience binding** — `X-Yaaos-Audience` in the signed envelope must be present and match `YAAOS_PUBLIC_HOSTNAME`. Missing or mismatched → 401 `audience_mismatch`. Binds the signed request to the specific backend deployment. The backend's canonical hostname must match `hostFromURL(YAAOS_BACKEND_URL)` on the agent side.
+- **Audience binding** — `X-Yaaos-Audience` in the signed envelope must be present and match `YAAOS_PUBLIC_HOSTNAME` (a required boot-time setting). Missing or mismatched → 401 `audience_mismatch`. Binds the signed request to the specific backend deployment. The backend's canonical hostname must match `hostFromURL(YAAOS_BACKEND_URL)` on the agent side.
 - **`instance_id` derivation** — extracted from the role-session-name of the assumed-role ARN (`arn:aws:sts::ACCT:assumed-role/ROLE/SESSION` → `SESSION`). The agent never supplies `instance_id`.
 - **Find-or-create keyed on `(org_id, instance_id)`.** The same ECS task restarting keeps the same row; each exchange updates `iam_arn`, `version`, and static OS metadata.
 - **1-hour TTL.** Response includes `renewal_after` (5 min before `expires_at`) as the suggested re-exchange time.

@@ -41,7 +41,7 @@
 
 Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_arn`). The agent in their ECS task assumes that role; `POST /api/v1/agent/identity` replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS, canonicalizes the assumed-role ARN, and matches it against the registered ARN. The trust chain is AWS STS signature verification — yaaos never trusts the agent's own ARN claim.
 
-**Audience binding** — the `X-Yaaos-Audience` header in the signed payload must be present and match `YAAOS_PUBLIC_HOSTNAME` (the backend's configured canonical hostname). This prevents a valid signature produced for one yaaos instance from being replayed against another.
+**Audience binding** — the `X-Yaaos-Audience` header in the signed payload must be present and match `YAAOS_PUBLIC_HOSTNAME` (the backend's required canonical hostname). Missing or mismatched → 401 `audience_mismatch`. This prevents a valid signature produced for one yaaos instance from being replayed against another. `YAAOS_PUBLIC_HOSTNAME` is a required boot-time setting; the backend refuses to start without it.
 
 **Host allowlist** — the STS endpoint URL in the signed request is validated against a regex allowlist of known AWS STS hostnames. In non-prod, `YAAOS_STS_HOST_OVERRIDE` extends the allowlist to admit a mock STS host; the process refuses to boot if `YAAOS_ENV=prod` and the override are set simultaneously.
 

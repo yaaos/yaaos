@@ -230,13 +230,10 @@ async def exchange_identity(
         audience_in_payload = ""
 
     # The expected audience is the server-side YAAOS_PUBLIC_HOSTNAME setting
-    # (not the client-supplied Host header). When the setting is unset the
-    # check is a dev/test bypass — prod must set this.
+    # (not the client-supplied Host header). Required — boot fails if unset.
     expected_audience = get_settings().yaaos_public_hostname
 
-    # Require a non-empty audience in the payload regardless of whether the
-    # setting is configured, UNLESS the setting itself is empty (dev/test bypass).
-    if expected_audience and not audience_in_payload:
+    if not audience_in_payload:
         log.warning(
             "identity_exchange.audience_missing",
             expected=expected_audience,
@@ -247,7 +244,7 @@ async def exchange_identity(
             detail={"error": "unauthorized", "detail": "audience_mismatch"},
         )
 
-    if audience_in_payload and expected_audience and audience_in_payload != expected_audience:
+    if audience_in_payload != expected_audience:
         log.warning(
             "identity_exchange.audience_mismatch",
             expected=expected_audience,

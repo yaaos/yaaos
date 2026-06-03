@@ -30,12 +30,12 @@ Full env-var reference: [`apps/backend/docs/core_config.md`](../apps/backend/doc
 | `YAAOS_GITHUB_APP_ID` / `_SLUG` / `_PRIVATE_KEY` / `_WEBHOOK_SECRET` | Platform GitHub App — per-org installs + webhook receiver. |
 | `YAAOS_GITHUB_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` | Platform GitHub OAuth App — "Sign in with GitHub" only. |
 | `YAAOS_APP_BASE_URL` | Public origin. Used in invitation + SAML ACS URLs. |
-| `YAAOS_PUBLIC_HOSTNAME` | Canonical hostname (e.g. `app.yaaos.cloud`) validated against `X-Yaaos-Audience` in agent identity exchange. Unset → audience check bypassed (dev/test). Production must set this. |
+| `YAAOS_PUBLIC_HOSTNAME` | **Required.** Canonical hostname (e.g. `app.yaaos.cloud`) validated against `X-Yaaos-Audience` in agent identity exchange. Boot fails if unset. Must match `hostFromURL(YAAOS_BACKEND_URL)` on the agent side. |
 | `SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` / `_USE_TLS` | Outbound mail. Dev → Mailpit (`localhost:1025`). |
 | `YAAOS_SESSION_LIFETIME_SECONDS` | Session cookie lifetime; default 14 days. |
 | `YAAOS_AUTH_CLEANUP_INTERVAL_SECONDS` | Cleanup loop tick; default 1h. Purges expired sessions + invitations + audit rows older than `AUDIT_LOG_RETENTION` (30d). |
 
-The backend refuses to start in `prod` with any required secret unset; dev/test boot with stub defaults.
+The backend refuses to start when any required field (`DATABASE_URL`, `YAAOS_ENCRYPTION_KEY`, `REDIS_URL`, `YAAOS_PUBLIC_HOSTNAME`) is unset. Optional secrets default to stub values in dev/test.
 
 ### Linear + Notion OAuth (optional)
 

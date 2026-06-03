@@ -41,13 +41,14 @@ _EXPECTED_SECRET_TYPES = {
 
 @pytest.fixture(autouse=True)
 def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Settings construction needs the three required fields populated."""
+    """Settings construction needs all required fields populated."""
     monkeypatch.setenv(
         "DATABASE_URL",
         os.environ.get("DATABASE_URL", "postgresql+asyncpg://yaaos:yaaos@localhost:5432/yaaos_test"),
     )
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "SUPER-SECRET-ENCRYPTION-KEY-DO-NOT-LEAK")
     monkeypatch.setenv("REDIS_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    monkeypatch.setenv("YAAOS_PUBLIC_HOSTNAME", "app.yaaos.cloud")
     monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "SUPER-SECRET-GH-OAUTH-SECRET")
     monkeypatch.setenv("YAAOS_GITHUB_APP_PRIVATE_KEY", "SUPER-SECRET-GH-PRIVATE-KEY")
     monkeypatch.setenv("YAAOS_GITHUB_APP_WEBHOOK_SECRET", "SUPER-SECRET-GH-WEBHOOK-SECRET")
@@ -120,3 +121,15 @@ def test_settings_class_lists_every_known_secret() -> None:
     field_names = set(Settings.model_fields.keys())
     missing = _EXPECTED_SECRET_TYPES - field_names
     assert not missing, f"Settings is missing fields this test expects: {sorted(missing)}"
+
+
+def test_settings_fails_fast_when_yaaos_public_hostname_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """YAAOS_PUBLIC_HOSTNAME is required — Settings construction must raise
+    when it is absent, not silently default to an empty string."""
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    monkeypatch.delenv("YAAOS_PUBLIC_HOSTNAME", raising=False)
+    get_settings.cache_clear()
+    with pytest.raises(ValidationError):
+        Settings()
+    get_settings.cache_clear()
