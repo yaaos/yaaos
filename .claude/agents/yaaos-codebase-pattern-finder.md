@@ -27,11 +27,11 @@ For the kinds of things the diff is doing, find pre-existing analogues in the co
 
 These entries take `source: "inferred-from-code"`.
 
-## Step 2 — Doc-stated rules (CLAUDE.md + one hop out)
+## Step 2 — Doc-stated rules (CLAUDE.md + two hops out)
 
-If a `CLAUDE.md` file exists at the repo root, read it. **Then for every markdown link it contains that points to a file inside the repo, read that linked file too — one hop only, no recursion.** This is your bounded crawl of the repo's stated rules. Do NOT read arbitrary files in `docs/` or anywhere else; the traversal is link-driven, not directory-driven, so it works for any repo layout.
+If a `CLAUDE.md` file exists at the repo root, read it. **Then for every in-repo markdown link it contains, read that linked file too, and for every in-repo markdown link inside those second-tier files, read the linked file too — two hops only, no further recursion.** This is your bounded crawl of the repo's stated rules. The two-hop cap exists because monorepos commonly have a root `CLAUDE.md` that links to per-app `CLAUDE.md` files, which in turn link to the real doc files; one hop misses that third layer. Do NOT read arbitrary files in `docs/` or anywhere else; the traversal is link-driven, not directory-driven, so it works for any repo layout.
 
-**Affirmative stop condition:** the set of files you may read for Step 2 is exactly `{CLAUDE.md} ∪ {files CLAUDE.md directly links to with an in-repo markdown link}`. Stop there. Do NOT follow links found inside those second-tier files — even if `docs/X.md` (linked from CLAUDE.md) links to `docs/Y.md`, `Y.md` is out of bounds. Cycles (e.g., `docs/X.md` linking back to `CLAUDE.md`) are handled by this cap implicitly — you never re-read a file you've already read.
+**Affirmative stop condition:** the set of files you may read for Step 2 is `{CLAUDE.md} ∪ {hop-1 files: files CLAUDE.md directly links to} ∪ {hop-2 files: files those hop-1 files directly link to}`. Stop there. Do NOT follow links found inside hop-2 files — even if a hop-2 file `docs/Y.md` links to `docs/Z.md`, `Z.md` is out of bounds. Cycles (e.g., `apps/backend/CLAUDE.md` linking back to root `CLAUDE.md`) are handled by this cap implicitly — you never re-read a file you've already read.
 
 Skip external URLs. Skip anchors (`#section`) on the same file. Skip non-markdown links (images, source files). If `CLAUDE.md` is absent, skip Step 2 entirely — emit zero doc-rule entries and proceed.
 
@@ -78,4 +78,4 @@ Return to the orchestrator: `{path: "<OUTPUT_PATH>", one_line_summary: "<summary
 - Code-inferred entries still need at least one `file:line` in `evidence`. Doc-rule entries may have an empty `evidence` array when the doc states the rule abstractly.
 - Identify the DOMINANT pattern when there is one. If patterns are inconsistent, list them under `inconsistencies`.
 - Do not emit findings, critiques, or recommendations.
-- Doc traversal is **one hop from `CLAUDE.md` only**. Never read a file that isn't either `CLAUDE.md` itself or directly linked from it.
+- Doc traversal is **two hops from `CLAUDE.md` maximum**. Never read a file outside `{CLAUDE.md} ∪ {hop-1} ∪ {hop-2}`.
