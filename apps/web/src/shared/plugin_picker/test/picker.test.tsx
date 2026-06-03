@@ -45,12 +45,8 @@ describe("PluginPicker", () => {
     expect(screen.getByTestId("plugin-picker-add-demo")).not.toBeDisabled();
   });
 
-  it("renders loading / error / empty states", () => {
-    const { rerender } = render(<PluginPicker plugins={[]} loading onPick={() => {}} />);
-    expect(screen.getByTestId("plugin-picker-loading")).toBeInTheDocument();
-    rerender(<PluginPicker plugins={[]} error={new Error("boom")} onPick={() => {}} />);
-    expect(screen.getByTestId("plugin-picker-error")).toHaveTextContent("boom");
-    rerender(<PluginPicker plugins={[]} onPick={() => {}} />);
+  it("renders empty state when plugins list is empty", () => {
+    render(<PluginPicker plugins={[]} onPick={() => {}} />);
     expect(screen.getByTestId("plugin-picker-empty")).toBeInTheDocument();
   });
 });

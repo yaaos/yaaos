@@ -1,16 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import type React from "react";
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@domain/auth", () => ({
-  useLogoutAll: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
-vi.mock("@core/api", () => ({
-  apiFetch: vi.fn(),
-}));
-
+import { describe, expect, it } from "vitest";
 import { SecurityPage } from "../SecurityPage";
 
 function wrap(node: React.ReactNode) {

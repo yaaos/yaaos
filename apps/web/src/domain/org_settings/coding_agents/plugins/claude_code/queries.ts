@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface AgentConfig {
   name: string;
@@ -23,7 +23,7 @@ export interface ClaudeCodeDefaults {
 }
 
 export function useClaudeCodeDefaults() {
-  return useQuery<ClaudeCodeDefaults>({
+  return useSuspenseQuery<ClaudeCodeDefaults>({
     queryKey: ["claude_code", "defaults"],
     queryFn: () => apiFetch<ClaudeCodeDefaults>("/api/claude_code/defaults"),
     staleTime: 60_000,
@@ -39,7 +39,7 @@ export interface ByokProviderStatus {
 }
 
 export function useByokAnthropicStatus() {
-  return useQuery<ByokProviderStatus | null>({
+  return useSuspenseQuery<ByokProviderStatus | null>({
     queryKey: ["byok", "anthropic"],
     queryFn: async () => {
       const rows = await apiFetch<ByokProviderStatus[]>("/api/api-keys");

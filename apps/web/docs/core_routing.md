@@ -23,8 +23,8 @@ The module declares the TanStack `Register` augmentation so `<Link to="/orgs/$sl
 | `/orgs` | `OrgPickerPage` | Standalone (no sidebar). Empty state when the user has zero memberships ("ask an admin to invite you"). |
 | `/orgs/$slug` | scope-only route | Parent for all org-scoped subtrees, including user-area pages. |
 | `/orgs/$slug/dashboard` | `DashboardPage` | |
-| `/orgs/$slug/tickets`, `…/$ticketId` | `TicketsPage`, `TicketDetailPage` | |
-| `/orgs/$slug/lessons` | `LessonsPage` | |
+| `/orgs/$slug/tickets`, `…/$ticketId` | `TicketsPage`, `TicketDetailPage` | `/tickets` validates `{q?, repo?, status?[], mine?}` via Zod |
+| `/orgs/$slug/lessons` | `LessonsPage` | `/lessons` validates `{q?, repo?, sort?}` via Zod |
 | `/orgs/$slug/settings` | redirect | 303 → `/orgs/$slug/settings/auth`. |
 | `/orgs/$slug/settings/{auth,members,audit,vcs,coding-agents,coding-agents/$pluginId,api-keys,mcp-proxy,workspaces}` | per-page `…SettingsPage` | Owner/Admin gates per page. |
 | `/orgs/$slug/user` | redirect | 303 → `…/user/details`. |

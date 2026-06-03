@@ -47,7 +47,8 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { ActivityEventRow } from "./ActivityEventRow";
 import { FindingRow } from "./FindingRow";
 import { HitlPanel } from "./HitlPanel";
@@ -90,34 +91,37 @@ const STATUS_META: Record<string, StatusMeta> = {
 };
 
 export function TicketDetailPage() {
+  return (
+    <div className="mx-auto max-w-[1100px] px-6 py-6">
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load this ticket." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div data-testid="ticket-detail-loading">
+              <Skeleton className="h-16 mb-4" />
+              <Skeleton className="h-8 mb-4 w-72" />
+              <Skeleton className="h-48" />
+            </div>
+          }
+        >
+          <TicketDetailContent />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
+
+function TicketDetailContent() {
   const { ticketId } = useParams({ from: "/orgs/$slug/tickets/$ticketId" });
-  const { data: ticket, isLoading, isError, error, refetch } = useTicket(ticketId);
+  const { data: ticket } = useTicket(ticketId);
   const [tab, setTab] = useState<Tab>("findings");
   const [showCancel, setShowCancel] = useState(false);
   const [showRerun, setShowRerun] = useState(false);
   const cancel = useCancelReviewerJobs();
   const rereview = useRereviewMutation();
-
-  if (isLoading || !ticket) {
-    return (
-      <div className="mx-auto max-w-[1100px] px-6 py-6" data-testid="ticket-detail-loading">
-        <Skeleton className="h-16 mb-4" />
-        <Skeleton className="h-8 mb-4 w-72" />
-        <Skeleton className="h-48" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="mx-auto max-w-[1100px] px-6 py-6">
-        <ErrorBanner
-          message={(error as Error)?.message || "Couldn't load this ticket."}
-          onRetry={() => refetch()}
-        />
-      </div>
-    );
-  }
 
   const status = ticket.status;
   const meta = STATUS_META[status] ?? DEFAULT_STATUS_META;
@@ -125,7 +129,7 @@ export function TicketDetailPage() {
   const isTerminal = status === "done" || status === "failed" || status === "cancelled";
 
   return (
-    <div className="mx-auto max-w-[1100px] px-6 py-6" data-testid="ticket-detail">
+    <div data-testid="ticket-detail">
       <Header
         ticket={ticket}
         status={status}
@@ -186,7 +190,7 @@ export function TicketDetailPage() {
 }
 
 /**
- * Heuristic token-spend estimate for the re-run modal. POC stand-in for
+ * Heuristic token-spend estimate for the re-run modal. Stand-in for
  * a real per-org / per-model integration with the BYOK provider — keeps
  * the spec promise ("cost-protective modal") while avoiding fake
  * precision. Scales with findings count since more findings → bigger
@@ -201,7 +205,7 @@ function estimateTokens(findingsCount: number): string {
 
 function estimateUsd(findingsCount: number): string {
   // Claude Sonnet input ≈ $3 / 1M tokens, output ≈ $15 / 1M. Blended
-  // POC midpoint: $5 / 1M.
+  // midpoint: $5 / 1M.
   const baseline = 15_000;
   const perFinding = 4_000;
   const tokens = baseline + Math.max(0, findingsCount) * perFinding;
@@ -336,10 +340,23 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
 }
 
 function FindingsTab({ ticketId }: { ticketId: string }) {
-  const { data: findings, isLoading } = useFindingsForTicket(ticketId, true);
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load findings." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense fallback={<Skeleton className="h-24" />}>
+        <FindingsTabContent ticketId={ticketId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function FindingsTabContent({ ticketId }: { ticketId: string }) {
+  const { data: findings } = useFindingsForTicket(ticketId, true);
   const ack = useAckFinding(ticketId);
   const pushBack = usePushBackFinding(ticketId);
-  if (isLoading) return <Skeleton className="h-24" />;
   if (!findings || findings.length === 0) {
     return (
       <EmptyState
@@ -365,7 +382,21 @@ function FindingsTab({ ticketId }: { ticketId: string }) {
 }
 
 function ActivityTab({ ticketId }: { ticketId: string }) {
-  const { data: jobs, isLoading } = useReviewJobsForTicket(ticketId);
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load activity." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense fallback={<Skeleton className="h-24" />}>
+        <ActivityTabContent ticketId={ticketId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function ActivityTabContent({ ticketId }: { ticketId: string }) {
+  const { data: jobs } = useReviewJobsForTicket(ticketId);
   const { data: ticket } = useTicket(ticketId);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const events = (jobs ?? []).flatMap((j) => j.activity_log ?? []);
@@ -398,7 +429,6 @@ function ActivityTab({ ticketId }: { ticketId: string }) {
     }
   }, [newestTs]);
 
-  if (isLoading) return <Skeleton className="h-24" />;
   if (ordered.length === 0) {
     return (
       <EmptyState
@@ -422,9 +452,22 @@ function ActivityTab({ ticketId }: { ticketId: string }) {
 }
 
 function HitlTab({ ticketId }: { ticketId: string }) {
-  const { data: history, isLoading } = useHitlHistory(ticketId);
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load HITL history." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense fallback={<Skeleton className="h-24" />}>
+        <HitlTabContent ticketId={ticketId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function HitlTabContent({ ticketId }: { ticketId: string }) {
+  const { data: history } = useHitlHistory(ticketId);
   const respond = useHitlRespond(ticketId);
-  if (isLoading) return <Skeleton className="h-24" />;
   const open = (history ?? []).find((h) => !h.resolved_at);
   const past = (history ?? []).filter((h) => h.resolved_at);
 

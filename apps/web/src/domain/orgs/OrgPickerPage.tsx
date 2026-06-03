@@ -1,5 +1,5 @@
 /**
- * Org picker — E2a.19.
+ * Org picker.
  *
  * Sparse landing for multi-org users: card per org with role badge, click
  * to enter, plus a "Create new organization" modal.
@@ -8,13 +8,12 @@
  *   - useMyOrgs()  → GET /api/orgs/mine (the cross-org list)
  *   - useCreateOrg() → POST /api/orgs (the picker's "Create" modal target)
  *
- * `last_used_at` is null today (Open Question 3 in api-changes.md); the
- * card omits the timestamp until the column lands. Alphabetical sort by
- * slug is the only reasonable order without it.
+ * `last_used_at` is null today; the card omits the timestamp.
+ * Alphabetical sort by slug is the only reasonable order without it.
  */
 
 import { type MineOrg, useCreateOrg, useMyOrgs } from "@core/api";
-import { EmptyState, PageHeader } from "@shared/components/layout";
+import { EmptyState, ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Button } from "@shared/components/ui/button";
 import {
   Dialog,
@@ -29,7 +28,8 @@ import { Skeleton } from "@shared/components/ui/skeleton";
 import { cn } from "@shared/utils/cn";
 import { Link } from "@tanstack/react-router";
 import { Building2, Plus } from "lucide-react";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 
 const ROLE_LABEL: Record<MineOrg["role"], { label: string; chip: string }> = {
   owner: { label: "Owner", chip: "bg-primary/10 text-primary border-primary/30" },
@@ -38,7 +38,6 @@ const ROLE_LABEL: Record<MineOrg["role"], { label: string; chip: string }> = {
 };
 
 export function OrgPickerPage() {
-  const { data: orgs, isLoading } = useMyOrgs();
   const [showCreate, setShowCreate] = useState(false);
 
   return (
@@ -54,56 +53,76 @@ export function OrgPickerPage() {
         }
       />
 
-      {isLoading ? (
-        <div className="flex flex-col gap-2">
-          {Array.from({ length: 3 }).map((_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: skeletons
-            <Skeleton key={i} className="h-14" />
-          ))}
-        </div>
-      ) : !orgs || orgs.length === 0 ? (
-        <EmptyState
-          icon={Building2}
-          headline="You don't belong to any organizations yet."
-          body="Ask an admin to invite your email, or create one yourself."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="w-3.5 h-3.5" />
-              Create your first org
-            </Button>
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load organizations." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: skeletons
+                <Skeleton key={i} className="h-14" />
+              ))}
+            </div>
           }
-        />
-      ) : (
-        <ul className="flex flex-col gap-2" data-testid="org-picker-list">
-          {orgs.map((o) => (
-            <li key={o.slug}>
-              <Link
-                to="/orgs/$slug/dashboard"
-                params={{ slug: o.slug }}
-                data-testid={`org-picker-row-${o.slug}`}
-                className="flex items-center gap-3 px-4 py-3 rounded-md border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate">{o.name || o.slug}</div>
-                  <div className="text-xs text-muted-foreground mono">{o.slug}</div>
-                </div>
-                <span
-                  className={cn(
-                    "inline-flex items-center px-1.5 h-5 rounded text-[10.5px] font-medium border",
-                    ROLE_LABEL[o.role].chip,
-                  )}
-                >
-                  {ROLE_LABEL[o.role].label}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+        >
+          <OrgList onCreateClick={() => setShowCreate(true)} />
+        </Suspense>
+      </ErrorBoundary>
 
       <CreateOrgModal open={showCreate} onOpenChange={setShowCreate} />
     </div>
+  );
+}
+
+function OrgList({ onCreateClick }: { onCreateClick: () => void }) {
+  const { data: orgs } = useMyOrgs();
+
+  if (orgs.length === 0) {
+    return (
+      <EmptyState
+        icon={Building2}
+        headline="You don't belong to any organizations yet."
+        body="Ask an admin to invite your email, or create one yourself."
+        action={
+          <Button onClick={onCreateClick}>
+            <Plus className="w-3.5 h-3.5" />
+            Create your first org
+          </Button>
+        }
+      />
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-2" data-testid="org-picker-list">
+      {orgs.map((o) => (
+        <li key={o.slug}>
+          <Link
+            to="/orgs/$slug/dashboard"
+            params={{ slug: o.slug }}
+            data-testid={`org-picker-row-${o.slug}`}
+            className="flex items-center gap-3 px-4 py-3 rounded-md border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate">{o.name || o.slug}</div>
+              <div className="text-xs text-muted-foreground mono">{o.slug}</div>
+            </div>
+            <span
+              className={cn(
+                "inline-flex items-center px-1.5 h-5 rounded text-[10.5px] font-medium border",
+                ROLE_LABEL[o.role].chip,
+              )}
+            >
+              {ROLE_LABEL[o.role].label}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 

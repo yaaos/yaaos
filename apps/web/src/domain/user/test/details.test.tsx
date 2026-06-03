@@ -1,17 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import type React from "react";
-import { describe, expect, it, vi } from "vitest";
-
-const userMeMock = vi.fn();
-
-vi.mock("../queries", () => ({
-  useUserMe: () => userMeMock(),
-  useUpdateDisplayName: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateOrgHandle: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
-  useClearGithubUsername: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
+import { beforeEach, describe, expect, it } from "vitest";
+import { server } from "../../../test/msw/server";
 import { DetailsPage } from "../DetailsPage";
 
 function wrap(node: React.ReactNode) {
@@ -19,7 +11,7 @@ function wrap(node: React.ReactNode) {
   return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
 }
 
-const baseData = {
+const BASE_USER = {
   user_id: "u1",
   display_name: "Jane Doe",
   github_username: null as string | null,
@@ -32,49 +24,46 @@ const baseData = {
       org_id: "00000000-0000-0000-0000-000000000001",
       slug: "acme",
       display_name: "Acme",
-      role: "owner" as const,
+      role: "owner",
       handle: "jane",
     },
     {
       org_id: "00000000-0000-0000-0000-000000000002",
       slug: "beta",
       display_name: "Beta",
-      role: "builder" as const,
+      role: "builder",
       handle: "jdoe",
     },
   ],
 };
 
-describe("DetailsPage", () => {
-  it("loading state when query pending", () => {
-    userMeMock.mockReturnValue({ data: null, isLoading: true });
-    render(wrap(<DetailsPage />));
-    expect(screen.getByText(/Loading/)).toBeInTheDocument();
+describe("DetailsPage (MSW)", () => {
+  beforeEach(() => {
+    server.use(http.get("/api/user/me", () => HttpResponse.json(BASE_USER)));
   });
 
-  it("renders display name, per-org handles, emails, GitHub connect CTA", () => {
-    userMeMock.mockReturnValue({ data: baseData, isLoading: false });
+  it("renders display name, per-org handles, emails, GitHub connect CTA", async () => {
     render(wrap(<DetailsPage />));
-    expect(screen.getByTestId("display-name-input")).toHaveValue("Jane Doe");
-    // Two handle rows, each editable + savable.
+    await waitFor(() => expect(screen.getByTestId("display-name-input")).toHaveValue("Jane Doe"));
     expect(screen.getByTestId("handle-input-acme")).toHaveValue("jane");
     expect(screen.getByTestId("handle-input-beta")).toHaveValue("jdoe");
     expect(screen.getByTestId("handles-table")).toBeInTheDocument();
-    // Emails listed (read-only).
     expect(screen.getByTestId("emails-list")).toBeInTheDocument();
     expect(screen.getByText("jane@x.test")).toBeInTheDocument();
     expect(screen.getByText("alt@x.test")).toBeInTheDocument();
-    // GitHub not yet connected → only the prompt copy (no Connect CTA — re-binding is "sign in again").
     expect(screen.queryByTestId("github-username")).toBeNull();
   });
 
-  it("renders verified GitHub state when username is set", () => {
-    userMeMock.mockReturnValue({
-      data: { ...baseData, github_username: "octocat" },
-      isLoading: false,
-    });
+  it("renders verified GitHub state when username is set", async () => {
+    server.use(
+      http.get("/api/user/me", () =>
+        HttpResponse.json({ ...BASE_USER, github_username: "octocat" }),
+      ),
+    );
     render(wrap(<DetailsPage />));
-    expect(screen.getByTestId("github-username")).toHaveTextContent("@octocat");
+    await waitFor(() =>
+      expect(screen.getByTestId("github-username")).toHaveTextContent("@octocat"),
+    );
     expect(screen.getByTestId("github-clear")).toBeInTheDocument();
   });
 });

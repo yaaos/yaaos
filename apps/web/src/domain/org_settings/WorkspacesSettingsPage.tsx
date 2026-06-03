@@ -15,11 +15,25 @@
  */
 
 import { getCurrentOrgSlug, useAgents } from "@core/api";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ErrorBanner } from "@shared/components/layout";
 import { ConfirmModal } from "@shared/components/layout/confirm-modal";
 import { Button } from "@shared/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@shared/components/ui/form";
 import { Input } from "@shared/components/ui/input";
-import { Label } from "@shared/components/ui/label";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import { useEffect, useState } from "react";
+import { Suspense } from "react";
+import { ErrorBoundary } from "react-error-boundary";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { OrgSettingsLayout } from "./OrgSettingsLayout";
 import { useOrgSettings, useUpdateOrgSettings } from "./queries";
 
@@ -43,78 +57,154 @@ const AWS_REGIONS = [
 
 const ARN_RE = /^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/;
 
+const workspacesSchema = z.object({
+  arn: z
+    .string()
+    .min(1, "IAM role ARN is required.")
+    .regex(ARN_RE, "Must match arn:aws:iam::ACCOUNT:role/NAME."),
+  region: z.string().min(1, "Region is required."),
+});
+
+type WorkspacesValues = z.infer<typeof workspacesSchema>;
+
 export function WorkspacesSettingsPage() {
-  const { data, isLoading } = useOrgSettings();
+  return (
+    <OrgSettingsLayout active="workspaces">
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load workspace settings." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div className="mx-auto max-w-[900px] p-6">
+              <Skeleton className="h-40 mb-4" />
+              <Skeleton className="h-32" />
+            </div>
+          }
+        >
+          <WorkspacesContent />
+        </Suspense>
+      </ErrorBoundary>
+    </OrgSettingsLayout>
+  );
+}
+
+function WorkspacesContent() {
+  const { data } = useOrgSettings();
   const update = useUpdateOrgSettings();
   const orgSlug = getCurrentOrgSlug() ?? "";
   const { data: agents } = useAgents(orgSlug);
-
-  const [arn, setArn] = useState("");
-  const [region, setRegion] = useState("us-east-1");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingValues, setPendingValues] = useState<WorkspacesValues | null>(null);
+
+  const form = useForm<WorkspacesValues>({
+    resolver: zodResolver(workspacesSchema),
+    defaultValues: { arn: "", region: "us-east-1" },
+  });
 
   useEffect(() => {
     if (!data) return;
-    setArn(data.registered_iam_arn ?? "");
-    setRegion(data.aws_region ?? "us-east-1");
-  }, [data]);
-
-  const arnValid = ARN_RE.test(arn);
-  const canSave = arnValid && region.length > 0;
+    form.reset({
+      arn: data.registered_iam_arn ?? "",
+      region: data.aws_region ?? "us-east-1",
+    });
+  }, [data, form]);
 
   // Count online + stale agents (those that would be disconnected on ARN change).
   const activeAgentCount = (agents ?? []).filter(
     (a) => a.state === "reachable" || a.state === "stale",
   ).length;
 
-  // ARN is changing (or being cleared) when saved value differs from current.
-  const arnChanging =
+  const arnChanging = (nextArn: string) =>
     data != null &&
-    (arn.toLowerCase() !== (data.registered_iam_arn ?? "").toLowerCase() ||
-      (data.registered_iam_arn != null && arn === ""));
+    (nextArn.toLowerCase() !== (data.registered_iam_arn ?? "").toLowerCase() ||
+      (data.registered_iam_arn != null && nextArn === ""));
 
-  const onSave = () => {
-    if (!canSave) return;
-    // Show confirmation when the ARN is changing and running agents exist.
-    if (arnChanging && activeAgentCount > 0) {
+  const doSave = (values: WorkspacesValues) => {
+    setConfirmOpen(false);
+    update.mutate({ registered_iam_arn: values.arn, aws_region: values.region });
+  };
+
+  const onSubmit = (values: WorkspacesValues) => {
+    if (arnChanging(values.arn) && activeAgentCount > 0) {
+      setPendingValues(values);
       setConfirmOpen(true);
       return;
     }
-    doSave();
+    doSave(values);
   };
-
-  const doSave = () => {
-    setConfirmOpen(false);
-    update.mutate({
-      registered_iam_arn: arn,
-      aws_region: region,
-    });
-  };
-
-  if (isLoading || !data) {
-    return (
-      <OrgSettingsLayout active="workspaces">
-        <div className="mx-auto max-w-[900px] p-6 text-muted-foreground">Loading…</div>
-      </OrgSettingsLayout>
-    );
-  }
 
   return (
-    <OrgSettingsLayout active="workspaces">
-      <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
-        <RemoteConfigCard
-          arn={arn}
-          setArn={setArn}
-          arnValid={arnValid}
-          region={region}
-          setRegion={setRegion}
-          canSave={canSave}
-          pending={update.isPending}
-          onSave={onSave}
-          error={update.isError ? String(update.error) : null}
-        />
-        <SetupChecklistCard region={region} />
-      </div>
+    <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+      <section className="rounded-lg border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">AWS configuration</h2>
+          <p className="text-muted-foreground text-xs mt-1">
+            Paste the IAM <strong>role</strong> ARN — not a session/assumed-role ARN. The verifier
+            canonicalizes assumed-role ARNs server-side, but the registered value must be the role
+            ARN itself.
+          </p>
+        </header>
+        <div className="px-4 py-4 flex flex-col gap-3">
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-3">
+              <FormField
+                control={form.control}
+                name="arn"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>IAM role ARN</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        id="iam-arn"
+                        data-testid="workspace-iam-arn"
+                        placeholder="arn:aws:iam::123456789012:role/yaaos-agent"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="region"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>AWS region</FormLabel>
+                    <FormControl>
+                      <select
+                        {...field}
+                        id="aws-region"
+                        data-testid="workspace-aws-region"
+                        className="rounded-md border border-border bg-background px-3 py-2 text-sm w-full"
+                      >
+                        {AWS_REGIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="flex items-center gap-2">
+                <Button type="submit" data-testid="workspace-save" disabled={update.isPending}>
+                  {update.isPending ? "Saving…" : "Save"}
+                </Button>
+                {update.isError && (
+                  <span className="text-destructive text-xs">{String(update.error)}</span>
+                )}
+              </div>
+            </form>
+          </Form>
+        </div>
+      </section>
+
+      <SetupChecklistCard region={form.watch("region")} />
 
       <ConfirmModal
         open={confirmOpen}
@@ -123,85 +213,10 @@ export function WorkspacesSettingsPage() {
         body={`This will disconnect ${activeAgentCount} running WorkspaceAgent${activeAgentCount === 1 ? "" : "s"} and fail their in-flight Workspaces. Continue?`}
         confirmLabel="Change ARN"
         tone="destructive"
-        onConfirm={doSave}
+        onConfirm={() => pendingValues && doSave(pendingValues)}
         pending={update.isPending}
       />
-    </OrgSettingsLayout>
-  );
-}
-
-function RemoteConfigCard({
-  arn,
-  setArn,
-  arnValid,
-  region,
-  setRegion,
-  canSave,
-  pending,
-  onSave,
-  error,
-}: {
-  arn: string;
-  setArn: (v: string) => void;
-  arnValid: boolean;
-  region: string;
-  setRegion: (v: string) => void;
-  canSave: boolean;
-  pending: boolean;
-  onSave: () => void;
-  error: string | null;
-}) {
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold">AWS configuration</h2>
-        <p className="text-muted-foreground text-xs mt-1">
-          Paste the IAM <strong>role</strong> ARN — not a session/assumed-role ARN. The verifier
-          canonicalizes assumed-role ARNs server-side, but the registered value must be the role ARN
-          itself.
-        </p>
-      </header>
-      <div className="px-4 py-4 flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="iam-arn">IAM role ARN</Label>
-          <Input
-            id="iam-arn"
-            data-testid="workspace-iam-arn"
-            value={arn}
-            onChange={(e) => setArn(e.target.value)}
-            placeholder="arn:aws:iam::123456789012:role/yaaos-agent"
-            aria-invalid={arn !== "" && !arnValid}
-          />
-          {arn !== "" && !arnValid && (
-            <p className="text-destructive text-xs">
-              Must match <code>arn:aws:iam::ACCOUNT:role/NAME</code>.
-            </p>
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="aws-region">AWS region</Label>
-          <select
-            id="aws-region"
-            data-testid="workspace-aws-region"
-            className="rounded-md border border-border bg-background px-3 py-2 text-sm"
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-          >
-            {AWS_REGIONS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button data-testid="workspace-save" disabled={!canSave || pending} onClick={onSave}>
-            {pending ? "Saving…" : "Save"}
-          </Button>
-          {error && <span className="text-destructive text-xs">{error}</span>}
-        </div>
-      </div>
-    </section>
+    </div>
   );
 }
 

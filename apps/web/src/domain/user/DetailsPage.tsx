@@ -1,8 +1,9 @@
-import { PageHeader } from "@shared/components/layout";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Input } from "@shared/components/ui/input";
 import { Label } from "@shared/components/ui/label";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -11,7 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "@shared/components/ui/table";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import {
   type UserMembership,
   useClearGithubUsername,
@@ -26,23 +28,28 @@ import {
  * GitHub" login flow; this page only displays it (and offers a Clear button).
  */
 export function DetailsPage() {
-  const { data, isLoading } = useUserMe();
-  if (isLoading) {
-    return <div className="p-6 text-muted-foreground text-sm">Loading…</div>;
-  }
-  if (!data) {
-    // A real 401 has already been intercepted by `apiFetch`'s central
-    // handler, which hard-navigates to /login — this code path is
-    // unreachable in that case. The branch only fires if the request
-    // failed for some other reason (network blip, 500, etc.); surface
-    // a neutral error instead of the misleading "Not signed in" message
-    // that masked a recent missing_org_slug bug.
-    return (
-      <div className="p-6 text-sm text-destructive">
-        Couldn't load your user profile. Refresh to try again.
-      </div>
-    );
-  }
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load your user profile." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense
+        fallback={
+          <div className="mx-auto flex max-w-[900px] flex-col gap-6 p-6">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-32" />
+          </div>
+        }
+      >
+        <DetailsContent />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function DetailsContent() {
+  const { data } = useUserMe();
 
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-6 p-6">

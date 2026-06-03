@@ -1,6 +1,7 @@
 import { useBrokenSummary, useCurrentOrgSlug } from "@core/api";
 import { useCurrentUser } from "@domain/auth";
-import { ConfirmModal } from "@shared/components/layout";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ConfirmModal, ErrorBanner } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import {
@@ -10,7 +11,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@shared/components/ui/dialog";
-import { useEffect, useState } from "react";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@shared/components/ui/form";
+import { Input } from "@shared/components/ui/input";
+import { Suspense, useEffect, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   type CodingAgentInstall,
   useCodingAgents,
@@ -40,15 +46,26 @@ import {
  *  - Save button — replaces the entire settings JSONB in one PATCH.
  */
 export function ClaudeCodeSettings({ pluginId }: { pluginId: string }) {
-  const installs = useCodingAgents();
-  const defaults = useClaudeCodeDefaults();
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load Claude Code settings." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense fallback={<p className="text-muted-foreground p-4 text-sm">Loading…</p>}>
+        <ClaudeCodeContent pluginId={pluginId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function ClaudeCodeContent({ pluginId }: { pluginId: string }) {
+  const { data: installs } = useCodingAgents();
+  const { data: defaults } = useClaudeCodeDefaults();
   const update = useUpdateCodingAgentSettings();
 
-  const install = (installs.data ?? []).find((i) => i.plugin_id === pluginId);
+  const install = installs.find((i) => i.plugin_id === pluginId);
 
-  if (installs.isLoading || defaults.isLoading) {
-    return <p className="text-muted-foreground p-4 text-sm">Loading…</p>;
-  }
   if (!install) {
     return (
       <section className="rounded-lg border border-border bg-card">
@@ -60,12 +77,41 @@ export function ClaudeCodeSettings({ pluginId }: { pluginId: string }) {
       </section>
     );
   }
-  if (!defaults.data) {
-    return <p className="text-muted-foreground p-4 text-sm">Could not load defaults.</p>;
-  }
 
-  return <Editor install={install} defaults={defaults.data} update={update} />;
+  return <Editor install={install} defaults={defaults} update={update} />;
 }
+
+// ── Zod schemas ──────────────────────────────────────────────────────────────
+
+const agentConfigSchema = z.object({
+  name: z.string().min(1, "Name is required.").max(64),
+  prompt: z.string(),
+  model: z.string().min(1),
+  version: z.string().min(1),
+  effort: z.string().min(1),
+  updated_at: z.string(),
+  use_default_system_prompt: z.boolean().optional(),
+  system_prompt: z.string().nullable().optional(),
+});
+
+const editorSchema = z.object({
+  orchestrator: agentConfigSchema,
+  agents: z
+    .array(agentConfigSchema)
+    .min(1, "At least one sub-agent is required.")
+    .max(8, "Maximum 8 sub-agents.")
+    .refine(
+      (agents) => {
+        const names = agents.map((a) => a.name.trim()).filter(Boolean);
+        return names.length === new Set(names).size;
+      },
+      { message: "Sub-agent names must be unique." },
+    ),
+});
+
+type EditorValues = z.infer<typeof editorSchema>;
+
+// ── Editor ───────────────────────────────────────────────────────────────────
 
 function Editor({
   install,
@@ -77,80 +123,223 @@ function Editor({
   update: ReturnType<typeof useUpdateCodingAgentSettings>;
 }) {
   const current = install.settings as { orchestrator?: AgentConfig; agents?: AgentConfig[] };
-  const [orchestrator, setOrchestrator] = useState<AgentConfig>(
-    current.orchestrator ?? defaults.orchestrator,
-  );
-  const [agents, setAgents] = useState<AgentConfig[]>(current.agents ?? defaults.agents);
 
-  const duplicateNames = (() => {
-    const names = agents.map((a) => a.name.trim());
-    return names.filter((n, i) => n !== "" && names.indexOf(n) !== i);
-  })();
-  const hasDuplicateNames = duplicateNames.length > 0;
-  const overCap = agents.length > 8;
-  const underCap = agents.length < 1;
-  const canSave = !hasDuplicateNames && !overCap && !underCap;
+  const form = useForm<EditorValues>({
+    resolver: zodResolver(editorSchema),
+    defaultValues: {
+      orchestrator: current.orchestrator ?? defaults.orchestrator,
+      agents: current.agents ?? defaults.agents,
+    },
+  });
 
-  const onSave = () => {
-    if (!canSave) return;
+  const orchestrator = form.watch("orchestrator");
+  const agents = form.watch("agents");
+
+  const onSave = (values: EditorValues) => {
     update.mutate({
       pluginId: install.plugin_id,
-      settings: { orchestrator, agents },
+      settings: { orchestrator: values.orchestrator, agents: values.agents },
+    });
+  };
+
+  const agentError = form.formState.errors.agents;
+  const duplicateErr =
+    agentError && typeof agentError === "object" && "message" in agentError
+      ? (agentError as { message?: string }).message
+      : null;
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSave)} className="flex flex-col gap-4">
+        <BrokenIntegrationsNotice />
+        <BuilderReadOnlyBanner />
+        <section className="rounded-lg border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="text-[16px] font-semibold">Claude Code</h2>
+          </header>
+          <div className="px-4 py-4">
+            <p className="text-muted-foreground text-sm">
+              Claude Code runs as an orchestrator Claude session that delegates work to sub-agents
+              via its Task tool. The orchestrator's prompt sets the overall task; each sub-agent's
+              prompt sets a focused review pass run as its own Claude session.
+            </p>
+          </div>
+        </section>
+
+        <AnthropicKeyCard />
+
+        <OrchestratorCard
+          orchestrator={orchestrator}
+          defaults={defaults}
+          onChange={(v) => form.setValue("orchestrator", v, { shouldValidate: true })}
+        />
+
+        <SubAgentsCard
+          agents={agents}
+          defaults={defaults}
+          onChange={(v) => form.setValue("agents", v, { shouldValidate: true })}
+        />
+
+        <div className="flex items-center gap-2">
+          <Button type="submit" data-testid="cc-save" disabled={update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+          {duplicateErr && (
+            <span className="text-xs text-destructive" data-testid="cc-duplicate-err">
+              {duplicateErr}
+            </span>
+          )}
+          {update.isError && (
+            <span className="text-xs text-destructive" data-testid="cc-save-err">
+              {(update.error as Error)?.message || "Save failed"}
+            </span>
+          )}
+          {update.isSuccess && (
+            <span className="text-xs text-emerald-600" data-testid="cc-save-ok">
+              Saved.
+            </span>
+          )}
+        </div>
+
+        <DangerZone pluginId={install.plugin_id} />
+      </form>
+    </Form>
+  );
+}
+
+// ── Anthropic key card ───────────────────────────────────────────────────────
+
+const anthropicKeySchema = z.object({
+  value: z.string().min(1, "API key is required."),
+});
+
+type AnthropicKeyValues = z.infer<typeof anthropicKeySchema>;
+
+function AnthropicKeyCard() {
+  const status = useByokAnthropicStatus();
+  const setKey = useSetByokAnthropic();
+  const validate = useValidateByokAnthropic();
+  const clear = useClearByokAnthropic();
+  const configured = status.data?.status === "configured";
+  const [editing, setEditing] = useState(!configured);
+
+  // Sync editing state when status finishes loading (initial render runs with
+  // configured=undefined → editing=true; once status arrives we close the
+  // input if a key is already set).
+  useEffect(() => {
+    if (status.data && configured) setEditing(false);
+  }, [status.data, configured]);
+
+  const keyForm = useForm<AnthropicKeyValues>({
+    resolver: zodResolver(anthropicKeySchema),
+    defaultValues: { value: "" },
+  });
+
+  const onSaveKey = (values: AnthropicKeyValues) => {
+    setKey.mutate(values.value, {
+      onSuccess: () => {
+        keyForm.reset();
+        setEditing(false);
+      },
     });
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <BrokenIntegrationsNotice />
-      <BuilderReadOnlyBanner />
-      <section className="rounded-lg border border-border bg-card">
-        <header className="border-b border-border px-4 py-3">
-          <h2 className="text-[16px] font-semibold">Claude Code</h2>
-        </header>
-        <div className="px-4 py-4">
-          <p className="text-muted-foreground text-sm">
-            Claude Code runs as an orchestrator Claude session that delegates work to sub-agents via
-            its Task tool. The orchestrator's prompt sets the overall task; each sub-agent's prompt
-            sets a focused review pass run as its own Claude session.
-          </p>
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[13.5px] font-semibold">Anthropic API key</h3>
+          {configured ? (
+            <Badge variant="default" data-testid="cc-key-configured">
+              configured
+            </Badge>
+          ) : (
+            <Badge variant="destructive" data-testid="cc-key-not-set">
+              not set
+            </Badge>
+          )}
         </div>
-      </section>
-
-      <AnthropicKeyCard />
-
-      <OrchestratorCard
-        orchestrator={orchestrator}
-        defaults={defaults}
-        onChange={setOrchestrator}
-      />
-
-      <SubAgentsCard agents={agents} defaults={defaults} onChange={setAgents} />
-
-      <div className="flex items-center gap-2">
-        <Button data-testid="cc-save" disabled={!canSave || update.isPending} onClick={onSave}>
-          {update.isPending ? "Saving…" : "Save"}
-        </Button>
-        {hasDuplicateNames && (
-          <span className="text-xs text-destructive" data-testid="cc-duplicate-err">
-            Duplicate sub-agent names: {duplicateNames.join(", ")}
-          </span>
+      </header>
+      <div className="px-4 py-4">
+        {!editing && configured && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground" data-testid="cc-key-summary">
+              Configured ✓ · last set{" "}
+              {status.data?.updated_at ? new Date(status.data.updated_at).toLocaleString() : "—"}
+            </span>
+            <Button
+              type="button"
+              data-testid="cc-key-test"
+              disabled={validate.isPending}
+              onClick={() => validate.mutate()}
+            >
+              {validate.isPending ? "Testing…" : "Test"}
+            </Button>
+            <Button type="button" data-testid="cc-key-rotate" onClick={() => setEditing(true)}>
+              Rotate
+            </Button>
+            <Button
+              type="button"
+              data-testid="cc-key-clear"
+              disabled={clear.isPending}
+              onClick={() => clear.mutate()}
+            >
+              Clear
+            </Button>
+          </div>
         )}
-        {update.isError && (
-          <span className="text-xs text-destructive" data-testid="cc-save-err">
-            {(update.error as Error)?.message || "Save failed"}
-          </span>
+        {editing && (
+          <Form {...keyForm}>
+            <form onSubmit={keyForm.handleSubmit(onSaveKey)} className="flex items-start gap-2">
+              <FormField
+                control={keyForm.control}
+                name="value"
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="password"
+                        placeholder={configured ? "Paste new API key to replace" : "sk-ant-..."}
+                        data-testid="cc-key-input"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" data-testid="cc-key-save" disabled={setKey.isPending}>
+                {setKey.isPending ? "Saving…" : "Save"}
+              </Button>
+              {configured && (
+                <Button
+                  type="button"
+                  data-testid="cc-key-rotate-cancel"
+                  onClick={() => {
+                    keyForm.reset();
+                    setEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
+            </form>
+          </Form>
         )}
-        {update.isSuccess && (
-          <span className="text-xs text-emerald-600" data-testid="cc-save-ok">
-            Saved.
-          </span>
+        {validate.data && (
+          <p
+            className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}
+            data-testid="cc-key-test-result"
+          >
+            {validate.data.valid ? "Key looks good." : "Key rejected."}
+          </p>
         )}
       </div>
-
-      <DangerZone pluginId={install.plugin_id} />
-    </div>
+    </section>
   );
 }
+
+// ── Sub-components (UI editors — unchanged) ──────────────────────────────────
 
 function DangerZone({ pluginId }: { pluginId: string }) {
   const uninstall = useUninstallCodingAgent();
@@ -168,6 +357,7 @@ function DangerZone({ pluginId }: { pluginId: string }) {
               PRs in this org won't be reviewed until a coding agent is reinstalled.
             </p>
             <Button
+              type="button"
               variant="ghost"
               onClick={() => setShowConfirm(true)}
               disabled={uninstall.isPending}
@@ -241,115 +431,6 @@ function BrokenIntegrationsNotice() {
   );
 }
 
-function AnthropicKeyCard() {
-  const status = useByokAnthropicStatus();
-  const setKey = useSetByokAnthropic();
-  const validate = useValidateByokAnthropic();
-  const clear = useClearByokAnthropic();
-  const [value, setValue] = useState("");
-  const configured = status.data?.status === "configured";
-  // Editing mode shows the input. Defaults to true when no key is set, or
-  // when the user clicks Rotate. Cleared back to false after a successful save.
-  const [editing, setEditing] = useState(!configured);
-  // Sync editing state when status finishes loading (initial render runs with
-  // configured=undefined → editing=true; once status arrives we close the
-  // input if a key is already set).
-  useEffect(() => {
-    if (status.data && configured) setEditing(false);
-  }, [status.data, configured]);
-
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-[13.5px] font-semibold">Anthropic API key</h3>
-          {configured ? (
-            <Badge variant="default" data-testid="cc-key-configured">
-              configured
-            </Badge>
-          ) : (
-            <Badge variant="destructive" data-testid="cc-key-not-set">
-              not set
-            </Badge>
-          )}
-        </div>
-      </header>
-      <div className="px-4 py-4">
-        {!editing && configured && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground" data-testid="cc-key-summary">
-              Configured ✓ · last set{" "}
-              {status.data?.updated_at ? new Date(status.data.updated_at).toLocaleString() : "—"}
-            </span>
-            <Button
-              data-testid="cc-key-test"
-              disabled={validate.isPending}
-              onClick={() => validate.mutate()}
-            >
-              {validate.isPending ? "Testing…" : "Test"}
-            </Button>
-            <Button data-testid="cc-key-rotate" onClick={() => setEditing(true)}>
-              Rotate
-            </Button>
-            <Button
-              data-testid="cc-key-clear"
-              disabled={clear.isPending}
-              onClick={() => clear.mutate()}
-            >
-              Clear
-            </Button>
-          </div>
-        )}
-        {editing && (
-          <div className="flex items-center gap-2">
-            <input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              type="password"
-              placeholder={configured ? "Paste new API key to replace" : "sk-ant-..."}
-              data-testid="cc-key-input"
-              className="flex-1 rounded border border-border bg-card px-2 py-1 text-sm"
-            />
-            <Button
-              data-testid="cc-key-save"
-              disabled={!value || setKey.isPending}
-              onClick={() =>
-                setKey.mutate(value, {
-                  onSuccess: () => {
-                    setValue("");
-                    setEditing(false);
-                  },
-                })
-              }
-            >
-              {setKey.isPending ? "Saving…" : "Save"}
-            </Button>
-            {configured && (
-              <Button
-                data-testid="cc-key-rotate-cancel"
-                onClick={() => {
-                  setValue("");
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </Button>
-            )}
-          </div>
-        )}
-        {validate.data && (
-          <p
-            className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}
-            data-testid="cc-key-test-result"
-          >
-            {validate.data.valid ? "Key looks good." : "Key rejected."}
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function OrchestratorCard({
   orchestrator,
   defaults,
@@ -418,7 +499,7 @@ function SubAgentsCard({
       <header className="border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <h3 className="text-[13.5px] font-semibold">Sub-agents ({agents.length}/8)</h3>
-          <Button data-testid="cc-add-agent" disabled={atCap} onClick={onAdd}>
+          <Button type="button" data-testid="cc-add-agent" disabled={atCap} onClick={onAdd}>
             Add sub-agent
           </Button>
         </div>
@@ -443,6 +524,7 @@ function SubAgentsCard({
                 />
                 <div className="mt-2 flex justify-end">
                   <Button
+                    type="button"
                     data-testid={`cc-remove-agent-${idx}`}
                     disabled={onLast}
                     onClick={() => onRemove(idx)}
@@ -511,7 +593,11 @@ function AgentEditor({
         {isOverridden("name") && nameEditable && (
           <>
             <Badge variant="outline">overridden</Badge>
-            <Button data-testid={`${testIdPrefix}-reset-name`} onClick={() => reset("name")}>
+            <Button
+              type="button"
+              data-testid={`${testIdPrefix}-reset-name`}
+              onClick={() => reset("name")}
+            >
               Reset
             </Button>
           </>
@@ -546,7 +632,11 @@ function AgentEditor({
         {isOverridden("prompt") && (
           <div className="flex flex-col gap-1">
             <Badge variant="outline">overridden</Badge>
-            <Button data-testid={`${testIdPrefix}-reset-prompt`} onClick={() => reset("prompt")}>
+            <Button
+              type="button"
+              data-testid={`${testIdPrefix}-reset-prompt`}
+              onClick={() => reset("prompt")}
+            >
               Reset
             </Button>
           </div>
@@ -719,7 +809,9 @@ function MaximizableTextarea({
             className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-mono"
           />
           <DialogFooter>
-            <Button onClick={() => setOpen(false)}>Done</Button>
+            <Button type="button" onClick={() => setOpen(false)}>
+              Done
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

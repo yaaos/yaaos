@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface MembershipSummary {
   org_id: string;
@@ -35,7 +35,7 @@ export interface CurrentUser {
 
 /** Fetches `/api/auth/me`. Returns `null` (not throws) when unauthenticated. */
 export function useCurrentUser() {
-  return useQuery<CurrentUser | null>({
+  return useSuspenseQuery<CurrentUser | null>({
     queryKey: ["auth", "me"],
     queryFn: async () => {
       try {
@@ -50,7 +50,7 @@ export function useCurrentUser() {
 }
 
 export function useProviders() {
-  return useQuery<{ providers: string[] }>({
+  return useSuspenseQuery<{ providers: string[] }>({
     queryKey: ["auth", "providers"],
     queryFn: () => apiFetch<{ providers: string[] }>("/api/auth/providers"),
     staleTime: 60_000,

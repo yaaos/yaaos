@@ -6,14 +6,14 @@ import type { PluginMeta } from "./types";
  * `plugins` list, an optional `installed` predicate for greying-out already-
  * installed entries, and an `onPick` click handler. Empty list renders an
  * informational placeholder rather than nothing so the caller doesn't have to.
+ * Loading and error states are handled by the surrounding `<Suspense>` +
+ * `<ErrorBoundary>` — callers never see an undefined `plugins`.
  */
 interface Props {
   plugins: PluginMeta[];
   onPick: (plugin: PluginMeta) => void;
   /** Optional: returns true for plugins already installed (rendered as grey + disabled Add). */
   isInstalled?: (plugin: PluginMeta) => boolean;
-  loading?: boolean;
-  error?: Error | null;
   /** Test-time hook so multiple pickers can coexist on the same DOM. */
   testIdPrefix?: string;
 }
@@ -22,24 +22,8 @@ export function PluginPicker({
   plugins,
   onPick,
   isInstalled,
-  loading,
-  error,
   testIdPrefix = "plugin-picker",
 }: Props) {
-  if (loading) {
-    return (
-      <p className="text-muted-foreground p-4 text-sm" data-testid={`${testIdPrefix}-loading`}>
-        Loading available plugins…
-      </p>
-    );
-  }
-  if (error) {
-    return (
-      <p className="p-4 text-sm text-destructive" data-testid={`${testIdPrefix}-error`}>
-        Failed to load plugins: {error.message}
-      </p>
-    );
-  }
   if (plugins.length === 0) {
     return (
       <p className="text-muted-foreground p-4 text-sm" data-testid={`${testIdPrefix}-empty`}>

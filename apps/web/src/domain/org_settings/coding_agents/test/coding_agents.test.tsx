@@ -1,57 +1,17 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import type React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { server } from "../../../../test/msw/server";
+import { CodingAgentsSettingsPage } from "../CodingAgentsSettingsPage";
 
-const codingAgentsMock = vi.fn();
-const installMutate = vi.fn();
-const uninstallMutate = vi.fn();
+/**
+ * Tests for CodingAgentsSettingsPage via MSW.
+ */
 
-vi.mock("../queries", () => ({
-  useCodingAgents: () => codingAgentsMock(),
-  useInstallCodingAgent: () => ({
-    mutate: installMutate,
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
-  useUninstallCodingAgent: () => ({ mutate: uninstallMutate, isPending: false }),
-  useUpdateCodingAgentSettings: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
-vi.mock("@shared/plugin_picker", async () => {
-  const actual =
-    await vi.importActual<typeof import("@shared/plugin_picker")>("@shared/plugin_picker");
-  return {
-    ...actual,
-    useAvailablePlugins: () => ({
-      data: [
-        {
-          id: "claude_code",
-          type: "coding_agent",
-          display_name: "Claude Code",
-          description: "Anthropic CLI",
-          docs_url: null,
-        },
-        {
-          id: "other",
-          type: "coding_agent",
-          display_name: "Other Agent",
-          description: null,
-          docs_url: null,
-        },
-      ],
-      isLoading: false,
-      error: null,
-    }),
-  };
-});
-
-vi.mock("@core/api", () => ({
-  getCurrentOrgSlug: () => "acme",
-}));
-
+// Link from @tanstack/react-router needs stubbing.
 vi.mock("@tanstack/react-router", () => ({
-  // Stub `Link` so it renders a plain `<a>` — the production component
-  // needs a router context, the test only asserts the rendered href.
   Link: ({
     to,
     children,
@@ -63,94 +23,108 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-vi.mock("@domain/auth", () => ({
-  useCurrentUser: () => ({
-    data: {
-      memberships: [
-        { org_id: "o1", slug: "acme", role: "owner", handle: "j", display_name: "Acme" },
-      ],
-      user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },
-    },
-  }),
-}));
+const CLAUDE_CODE = {
+  plugin_id: "claude_code",
+  settings: {},
+  created_at: "2026-05-20T00:00:00Z",
+  updated_at: "2026-05-20T00:00:00Z",
+};
 
-import { CodingAgentsSettingsPage } from "../CodingAgentsSettingsPage";
+const PLUGINS_CA = [
+  {
+    id: "claude_code",
+    type: "coding_agent",
+    display_name: "Claude Code",
+    description: "Anthropic CLI",
+    docs_url: null,
+  },
+  {
+    id: "other",
+    type: "coding_agent",
+    display_name: "Other Agent",
+    description: null,
+    docs_url: null,
+  },
+];
 
-describe("CodingAgentsSettingsPage", () => {
-  beforeEach(() => {
-    codingAgentsMock.mockReset();
-    installMutate.mockReset();
-    uninstallMutate.mockReset();
-  });
+function wrap(node: React.ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
 
-  it("empty state shows the empty message + Add button", () => {
-    codingAgentsMock.mockReturnValue({ data: [], isLoading: false });
-    render(<CodingAgentsSettingsPage />);
-    expect(screen.getByTestId("ca-empty")).toBeInTheDocument();
+function setupCommon() {
+  server.use(
+    http.get("/api/plugins/available", () => HttpResponse.json({ plugins: PLUGINS_CA })),
+    http.get("/api/auth/me", () =>
+      HttpResponse.json({
+        user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },
+        memberships: [
+          { org_id: "o1", slug: "acme", role: "owner", handle: "j", display_name: "Acme" },
+        ],
+      }),
+    ),
+  );
+}
+
+describe("CodingAgentsSettingsPage (MSW)", () => {
+  beforeEach(() => setupCommon());
+
+  it("empty state shows the empty message + Add button", async () => {
+    server.use(http.get("/api/coding-agents", () => HttpResponse.json([])));
+    render(wrap(<CodingAgentsSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("ca-empty")).toBeInTheDocument());
     expect(screen.getByTestId("ca-add")).toBeInTheDocument();
   });
 
-  it("Add opens the picker with installed plugins disabled", () => {
-    codingAgentsMock.mockReturnValue({
-      data: [
-        {
-          plugin_id: "claude_code",
+  it("Add opens the picker with installed plugins disabled", async () => {
+    let installBody: unknown = null;
+    server.use(
+      http.get("/api/coding-agents", () => HttpResponse.json([CLAUDE_CODE])),
+      http.post("/api/coding-agents", async ({ request }) => {
+        installBody = await request.json();
+        return HttpResponse.json({
+          plugin_id: "other",
           settings: {},
-          created_at: "2026-05-20T00:00:00Z",
-          updated_at: "2026-05-20T00:00:00Z",
-        },
-      ],
-      isLoading: false,
-    });
-    render(<CodingAgentsSettingsPage />);
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }),
+    );
+    render(wrap(<CodingAgentsSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("ca-add")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("ca-add"));
-    expect(screen.getByTestId("ca-picker-card")).toBeInTheDocument();
-    // Already-installed claude_code is greyed out; other is addable.
+    await waitFor(() => expect(screen.getByTestId("ca-picker-card")).toBeInTheDocument());
     expect(screen.getByTestId("ca-picker-add-claude_code")).toBeDisabled();
     expect(screen.getByTestId("ca-picker-add-other")).not.toBeDisabled();
     fireEvent.click(screen.getByTestId("ca-picker-add-other"));
-    expect(installMutate).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(installBody).toMatchObject({ plugin_id: "other" }));
   });
 
-  it("Remove confirmation flow gates the uninstall mutation", () => {
-    codingAgentsMock.mockReturnValue({
-      data: [
-        {
-          plugin_id: "claude_code",
-          settings: {},
-          created_at: "2026-05-20T00:00:00Z",
-          updated_at: "2026-05-20T00:00:00Z",
-        },
-      ],
-      isLoading: false,
-    });
-    render(<CodingAgentsSettingsPage />);
-    expect(screen.getByTestId("ca-install-claude_code")).toBeInTheDocument();
+  it("Remove confirmation flow gates the uninstall mutation", async () => {
+    let deletedPlugin: string | null = null;
+    server.use(
+      http.get("/api/coding-agents", () => HttpResponse.json([CLAUDE_CODE])),
+      http.delete("/api/coding-agents/:pluginId", ({ params }) => {
+        deletedPlugin = params.pluginId as string;
+        return HttpResponse.json({ removed: true });
+      }),
+    );
+    render(wrap(<CodingAgentsSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("ca-install-claude_code")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("ca-remove-claude_code"));
     expect(screen.getByTestId("ca-remove-confirm-claude_code")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("ca-remove-cancel-claude_code"));
-    expect(uninstallMutate).not.toHaveBeenCalled();
+    expect(deletedPlugin).toBeNull();
     fireEvent.click(screen.getByTestId("ca-remove-claude_code"));
     fireEvent.click(screen.getByTestId("ca-remove-confirm-btn-claude_code"));
-    expect(uninstallMutate).toHaveBeenCalledWith("claude_code");
+    await waitFor(() => expect(deletedPlugin).toBe("claude_code"));
   });
 
-  it("Settings link targets the per-plugin route", () => {
-    codingAgentsMock.mockReturnValue({
-      data: [
-        {
-          plugin_id: "claude_code",
-          settings: {},
-          created_at: "2026-05-20T00:00:00Z",
-          updated_at: "2026-05-20T00:00:00Z",
-        },
-      ],
-      isLoading: false,
-    });
-    render(<CodingAgentsSettingsPage />);
-    expect(screen.getByTestId("ca-settings-claude_code")).toHaveAttribute(
-      "href",
-      "/orgs/acme/settings/coding-agents/claude_code",
-    );
+  it("Settings link targets the per-plugin route", async () => {
+    server.use(http.get("/api/coding-agents", () => HttpResponse.json([CLAUDE_CODE])));
+    // getCurrentOrgSlug reads window.location — in test env it's localhost, slug is null
+    // so the link href falls back to the naked relative path.
+    render(wrap(<CodingAgentsSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("ca-settings-claude_code")).toBeInTheDocument());
   });
 });

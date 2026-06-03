@@ -1,8 +1,14 @@
-import { PageHeader } from "@shared/components/layout";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@shared/components/ui/form";
 import { Input } from "@shared/components/ui/input";
-import { useState } from "react";
+import { Skeleton } from "@shared/components/ui/skeleton";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import {
   type ByokProviderStatus,
@@ -23,7 +29,6 @@ import {
  * `/api/api-keys/{provider}`.
  */
 export function BYOKSettingsPage() {
-  const providers = useByokProviders();
   return (
     <OrgSettingsLayout active="byok">
       <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
@@ -31,27 +36,45 @@ export function BYOKSettingsPage() {
           title="API Keys"
           subtitle="Bring your own LLM-provider keys. Encrypted at rest; never returned in plaintext after save."
         />
-        {providers.isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
-        {providers.isError && (
-          <p className="text-sm text-destructive" data-testid="byok-load-err">
-            Failed to load providers: {(providers.error as Error)?.message}
-          </p>
-        )}
-        {(providers.data ?? []).length === 0 && !providers.isLoading && (
-          <p className="text-muted-foreground text-sm" data-testid="byok-empty">
-            No BYOK-capable providers registered. Install a provider plugin to surface one here.
-          </p>
-        )}
-        {(providers.data ?? []).map((p) => (
-          <ProviderCard key={p.provider} status={p} />
-        ))}
+        <ErrorBoundary
+          fallbackRender={({ resetErrorBoundary }) => (
+            <ErrorBanner message="Couldn't load API key providers." onRetry={resetErrorBoundary} />
+          )}
+        >
+          <Suspense fallback={<Skeleton className="h-24" />}>
+            <ByokProviderList />
+          </Suspense>
+        </ErrorBoundary>
       </div>
     </OrgSettingsLayout>
   );
 }
 
+function ByokProviderList() {
+  const { data: providers } = useByokProviders();
+  if (providers.length === 0) {
+    return (
+      <p className="text-muted-foreground text-sm" data-testid="byok-empty">
+        No BYOK-capable providers registered. Install a provider plugin to surface one here.
+      </p>
+    );
+  }
+  return (
+    <>
+      {providers.map((p) => (
+        <ProviderCard key={p.provider} status={p} />
+      ))}
+    </>
+  );
+}
+
+const byokKeySchema = z.object({
+  value: z.string().min(1, "API key is required."),
+});
+
+type ByokKeyValues = z.infer<typeof byokKeySchema>;
+
 function ProviderCard({ status }: { status: ByokProviderStatus }) {
-  const [value, setValue] = useState("");
   // Editing mode: shown when the key isn't set, or when the user clicks Rotate.
   const [editing, setEditing] = useState(status.status !== "configured");
   const setKey = useSetByok();
@@ -61,13 +84,17 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
   const configured = status.status === "configured";
   const provider = status.provider;
 
-  const onSave = () => {
-    if (!value) return;
+  const form = useForm<ByokKeyValues>({
+    resolver: zodResolver(byokKeySchema),
+    defaultValues: { value: "" },
+  });
+
+  const onSave = (values: ByokKeyValues) => {
     setKey.mutate(
-      { provider, value },
+      { provider, value: values.value },
       {
         onSuccess: () => {
-          setValue("");
+          form.reset();
           setEditing(false);
         },
       },
@@ -75,7 +102,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
   };
 
   const onCancelRotate = () => {
-    setValue("");
+    form.reset();
     setEditing(false);
   };
 
@@ -133,34 +160,46 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
           </div>
         )}
         {editing && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              type="password"
-              placeholder={configured ? "Paste new API key to replace" : "Paste API key"}
-              data-testid={`byok-input-${provider}`}
-              className="flex-1 min-w-[200px]"
-            />
-            <Button
-              size="sm"
-              data-testid={`byok-save-${provider}`}
-              disabled={!value || setKey.isPending}
-              onClick={onSave}
-            >
-              {setKey.isPending ? "Saving…" : "Save"}
-            </Button>
-            {configured && (
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSave)} className="flex flex-wrap items-start gap-2">
+              <FormField
+                control={form.control}
+                name="value"
+                render={({ field }) => (
+                  <FormItem className="flex-1 min-w-[200px]">
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="password"
+                        placeholder={configured ? "Paste new API key to replace" : "Paste API key"}
+                        data-testid={`byok-input-${provider}`}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <Button
-                variant="outline"
+                type="submit"
                 size="sm"
-                data-testid={`byok-rotate-cancel-${provider}`}
-                onClick={onCancelRotate}
+                data-testid={`byok-save-${provider}`}
+                disabled={!form.watch("value") || setKey.isPending}
               >
-                Cancel
+                {setKey.isPending ? "Saving…" : "Save"}
               </Button>
-            )}
-          </div>
+              {configured && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid={`byok-rotate-cancel-${provider}`}
+                  onClick={onCancelRotate}
+                >
+                  Cancel
+                </Button>
+              )}
+            </form>
+          </Form>
         )}
         {validate.data && validate.variables === provider && (
           <p

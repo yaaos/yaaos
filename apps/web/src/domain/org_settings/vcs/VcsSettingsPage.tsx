@@ -1,10 +1,12 @@
 import { useGithubInstallation, useGithubRepositories } from "@core/api";
-import { PageHeader } from "@shared/components/layout";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import { PluginPicker, useAvailablePlugins } from "@shared/plugin_picker";
 import type { PluginMeta } from "@shared/plugin_picker";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import { useClearVcs, useSetVcs, useStartGithubInstall, useVcsState } from "./queries";
 
@@ -18,18 +20,32 @@ import { useClearVcs, useSetVcs, useStartGithubInstall, useVcsState } from "./qu
  *    behind a confirmation modal. Today only the GitHub plugin ships.
  */
 export function VcsSettingsPage() {
-  const { data: state, isLoading } = useVcsState();
-  const { data: plugins, isLoading: pluginsLoading, error } = useAvailablePlugins("vcs");
+  return (
+    <OrgSettingsLayout active="vcs">
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load VCS settings." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div className="p-6 text-sm text-muted-foreground">
+              <Skeleton className="h-32" />
+            </div>
+          }
+        >
+          <VcsContent />
+        </Suspense>
+      </ErrorBoundary>
+    </OrgSettingsLayout>
+  );
+}
+
+function VcsContent() {
+  const { data: state } = useVcsState();
+  const { data: plugins } = useAvailablePlugins("vcs");
   const setVcs = useSetVcs();
   const startGithubInstall = useStartGithubInstall();
-
-  if (isLoading) {
-    return (
-      <OrgSettingsLayout active="vcs">
-        <div className="p-6 text-sm text-muted-foreground">Loading…</div>
-      </OrgSettingsLayout>
-    );
-  }
 
   const onPick = (p: PluginMeta) => {
     if (p.id === "github") {
@@ -47,37 +63,29 @@ export function VcsSettingsPage() {
   };
 
   return (
-    <OrgSettingsLayout active="vcs">
-      <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
-        <PageHeader title="VCS" subtitle="Where yaaos pushes review comments. One VCS per org." />
-        {state?.plugin_id ? (
-          <ConnectedCard plugin_id={state.plugin_id} settings={state.settings} />
-        ) : (
-          <section className="rounded-lg border border-border bg-card">
-            <header className="border-b border-border px-4 py-3">
-              <h3 className="text-sm font-semibold">Choose a VCS plugin</h3>
-              <p className="text-muted-foreground text-xs mt-1">
-                Pick a plugin to start sending pull requests through yaaos.
+    <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+      <PageHeader title="VCS" subtitle="Where yaaos pushes review comments. One VCS per org." />
+      {state.plugin_id ? (
+        <ConnectedCard plugin_id={state.plugin_id} settings={state.settings} />
+      ) : (
+        <section className="rounded-lg border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold">Choose a VCS plugin</h3>
+            <p className="text-muted-foreground text-xs mt-1">
+              Pick a plugin to start sending pull requests through yaaos.
+            </p>
+          </header>
+          <div className="px-4 py-4">
+            <PluginPicker plugins={plugins} onPick={onPick} testIdPrefix="vcs-picker" />
+            {setVcs.isError && (
+              <p className="mt-3 text-xs text-destructive" data-testid="vcs-set-err">
+                {(setVcs.error as Error)?.message || "Failed"}
               </p>
-            </header>
-            <div className="px-4 py-4">
-              <PluginPicker
-                plugins={plugins ?? []}
-                loading={pluginsLoading}
-                error={(error as Error) ?? null}
-                onPick={onPick}
-                testIdPrefix="vcs-picker"
-              />
-              {setVcs.isError && (
-                <p className="mt-3 text-xs text-destructive" data-testid="vcs-set-err">
-                  {(setVcs.error as Error)?.message || "Failed"}
-                </p>
-              )}
-            </div>
-          </section>
-        )}
-      </div>
-    </OrgSettingsLayout>
+            )}
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -174,22 +182,9 @@ function GithubCardBody({
   onRemove: () => void;
   removePending: boolean;
 }) {
-  const installation = useGithubInstallation();
-
-  if (installation.isLoading) {
-    return (
-      <>
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h3 className="text-sm font-semibold">github</h3>
-        </header>
-        <div className="px-4 py-4 text-xs text-muted-foreground">Loading installation…</div>
-      </>
-    );
-  }
-
-  const inst = installation.data;
-  const isHealthy = inst?.installed === true;
-  const appUnconfigured = inst?.app_configured === false;
+  const { data: inst } = useGithubInstallation();
+  const isHealthy = inst.installed === true;
+  const appUnconfigured = inst.app_configured === false;
 
   return (
     <>
@@ -239,7 +234,6 @@ function GithubHealthyDetails({
     installations_url: string | null;
   };
 }) {
-  const repos = useGithubRepositories();
   return (
     <div className="text-sm" data-testid="vcs-github-details">
       <p className="text-muted-foreground text-xs">
@@ -250,7 +244,19 @@ function GithubHealthyDetails({
 
       <div className="mt-4">
         <h4 className="text-xs font-semibold mb-2">Enabled repositories</h4>
-        <RepoList query={repos} />
+        <ErrorBoundary
+          fallbackRender={() => (
+            <p className="text-destructive text-xs" data-testid="vcs-repos-error">
+              Couldn't load repositories from GitHub.
+            </p>
+          )}
+        >
+          <Suspense
+            fallback={<p className="text-muted-foreground text-xs">Loading repositories…</p>}
+          >
+            <RepoList />
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       {inst.installations_url && (
@@ -322,18 +328,16 @@ function GithubIncompleteDetails({
   );
 }
 
-function RepoList({ query }: { query: ReturnType<typeof useGithubRepositories> }) {
-  if (query.isLoading) {
-    return <p className="text-muted-foreground text-xs">Loading repositories…</p>;
-  }
-  if (query.error || query.data?.error) {
+function RepoList() {
+  const { data } = useGithubRepositories();
+  if (data.error) {
     return (
       <p className="text-destructive text-xs" data-testid="vcs-repos-error">
         Couldn't load repositories from GitHub.
       </p>
     );
   }
-  const repos = query.data?.repositories ?? [];
+  const repos = data.repositories ?? [];
   if (repos.length === 0) {
     return (
       <p className="text-muted-foreground text-xs">

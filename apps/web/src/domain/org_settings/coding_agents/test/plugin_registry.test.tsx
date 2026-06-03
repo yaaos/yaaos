@@ -1,21 +1,5 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-
-vi.mock("@core/api", () => ({
-  getCurrentOrgSlug: () => "acme",
-}));
-vi.mock("@domain/auth", () => ({
-  useCurrentUser: () => ({
-    data: {
-      memberships: [
-        { org_id: "o1", slug: "acme", role: "owner", handle: "j", display_name: "Acme" },
-      ],
-      user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },
-    },
-  }),
-}));
-
-import { vi } from "vitest";
 import { CodingAgentSettingsPage } from "../CodingAgentSettingsPage";
 import { _resetRegistryForTests, registerPluginSettingsComponent } from "../plugin_registry";
 

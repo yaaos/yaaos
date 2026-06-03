@@ -1,11 +1,13 @@
 import { getCurrentOrgSlug } from "@core/api";
-import { PageHeader } from "@shared/components/layout";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import { PluginPicker, useAvailablePlugins } from "@shared/plugin_picker";
 import type { PluginMeta } from "@shared/plugin_picker";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import {
   type CodingAgentInstall,
@@ -19,88 +21,99 @@ import {
  * /orgs/$slug/settings/coding-agents/$pluginId (see plugin_registry.ts).
  */
 export function CodingAgentsSettingsPage() {
-  const installs = useCodingAgents();
-  const plugins = useAvailablePlugins("coding_agent");
+  return (
+    <OrgSettingsLayout active="coding-agents">
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load coding agents." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-24" />
+            </div>
+          }
+        >
+          <CodingAgentsContent />
+        </Suspense>
+      </ErrorBoundary>
+    </OrgSettingsLayout>
+  );
+}
+
+function CodingAgentsContent() {
+  const { data: installs } = useCodingAgents();
+  const { data: plugins } = useAvailablePlugins("coding_agent");
   const slug = getCurrentOrgSlug();
   const install = useInstallCodingAgent();
   const uninstall = useUninstallCodingAgent();
   const [picking, setPicking] = useState(false);
 
-  if (installs.isLoading) {
-    return (
-      <OrgSettingsLayout active="coding-agents">
-        <div className="text-muted-foreground p-6 text-sm">Loading…</div>
-      </OrgSettingsLayout>
-    );
-  }
-
-  const installedIds = new Set((installs.data ?? []).map((i) => i.plugin_id));
+  const installedIds = new Set(installs.map((i) => i.plugin_id));
 
   const onPick = (p: PluginMeta) => {
     install.mutate({ plugin_id: p.id, settings: {} }, { onSuccess: () => setPicking(false) });
   };
 
   return (
-    <OrgSettingsLayout active="coding-agents">
-      <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
-        <PageHeader
-          title="Coding Agents"
-          subtitle="Coding agents that pick up tickets routed to this org."
-          actions={
-            !picking ? (
-              <Button data-testid="ca-add" onClick={() => setPicking(true)}>
-                Add coding agent
-              </Button>
-            ) : null
-          }
-        />
-        {picking && (
-          <section className="rounded-lg border border-border bg-card" data-testid="ca-picker-card">
-            <header className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="text-sm font-semibold">Add a coding agent</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                data-testid="ca-picker-cancel"
-                onClick={() => setPicking(false)}
-              >
-                Cancel
-              </Button>
-            </header>
-            <div className="px-4 py-4">
-              <PluginPicker
-                plugins={plugins.data ?? []}
-                loading={plugins.isLoading}
-                error={(plugins.error as Error) ?? null}
-                isInstalled={(p) => installedIds.has(p.id)}
-                onPick={onPick}
-                testIdPrefix="ca-picker"
-              />
-              {install.isError && (
-                <p className="mt-3 text-xs text-destructive" data-testid="ca-install-err">
-                  {(install.error as Error)?.message || "Failed"}
-                </p>
-              )}
-            </div>
-          </section>
-        )}
-        {(installs.data ?? []).length === 0 ? (
-          <p className="text-muted-foreground text-sm" data-testid="ca-empty">
-            No coding agents installed yet.
-          </p>
-        ) : (
-          (installs.data ?? []).map((row) => (
-            <InstallCard
-              key={row.plugin_id}
-              row={row}
-              slug={slug}
-              onRemove={(pluginId) => uninstall.mutate(pluginId)}
-              removing={uninstall.isPending}
+    <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+      <PageHeader
+        title="Coding Agents"
+        subtitle="Coding agents that pick up tickets routed to this org."
+        actions={
+          !picking ? (
+            <Button data-testid="ca-add" onClick={() => setPicking(true)}>
+              Add coding agent
+            </Button>
+          ) : null
+        }
+      />
+      {picking && (
+        <section className="rounded-lg border border-border bg-card" data-testid="ca-picker-card">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold">Add a coding agent</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="ca-picker-cancel"
+              onClick={() => setPicking(false)}
+            >
+              Cancel
+            </Button>
+          </header>
+          <div className="px-4 py-4">
+            <PluginPicker
+              plugins={plugins}
+              isInstalled={(p) => installedIds.has(p.id)}
+              onPick={onPick}
+              testIdPrefix="ca-picker"
             />
-          ))
-        )}
-      </div>
-    </OrgSettingsLayout>
+            {install.isError && (
+              <p className="mt-3 text-xs text-destructive" data-testid="ca-install-err">
+                {(install.error as Error)?.message || "Failed"}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+      {installs.length === 0 ? (
+        <p className="text-muted-foreground text-sm" data-testid="ca-empty">
+          No coding agents installed yet.
+        </p>
+      ) : (
+        installs.map((row) => (
+          <InstallCard
+            key={row.plugin_id}
+            row={row}
+            slug={slug}
+            onRemove={(pluginId) => uninstall.mutate(pluginId)}
+            removing={uninstall.isPending}
+          />
+        ))
+      )}
+    </div>
   );
 }
 

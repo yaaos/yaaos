@@ -53,9 +53,9 @@ Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 
 ### Query hooks
 
-`queries.ts` — one hook per endpoint. Server-state hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. Polling intervals are used only for `useHealth`, `useConfigStatus`, `useNotifications`, and similar non-SSE queries. `useDashboard` and `useAgents` are pure-SSE — no polling. See [core_sse.md](core_sse.md) for the full invalidation map.
+`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useTickets`, `useTicket`, `useLessons`, `useNotifications`, `useDashboard`, `useAgents`, `useFindingsForTicket`, `useReviewJobsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). Polling-based utility hooks (`useHealth`, `useConfigStatus`) stay as regular `useQuery` — they power ambient chrome (connection banner, onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
 
-`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_liveness_changed` SSE. Enabled only when `orgSlug` is non-empty.
+`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_liveness_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
 
 ### Mutation hooks
 

@@ -1,5 +1,5 @@
 import { apiFetch, getCurrentOrgSlug } from "@core/api";
-import { PageHeader } from "@shared/components/layout";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Input } from "@shared/components/ui/input";
 import { Label } from "@shared/components/ui/label";
 import {
@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@shared/components/ui/select";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -17,8 +18,9 @@ import {
   TableHeader,
   TableRow,
 } from "@shared/components/ui/table";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 
 interface AuditRow {
   id: string;
@@ -37,10 +39,10 @@ function useAudit(filters: { actor_kind?: string; action?: string }) {
   const params = new URLSearchParams();
   if (filters.actor_kind) params.set("actor_kind", filters.actor_kind);
   if (filters.action) params.set("action", filters.action);
-  return useQuery<AuditRow[]>({
+  return useSuspenseQuery<AuditRow[]>({
     queryKey: ["audit", slug, filters],
-    queryFn: () => apiFetch<AuditRow[]>(`/api/audit?${params.toString()}`),
-    enabled: !!slug,
+    queryFn: () =>
+      slug ? apiFetch<AuditRow[]>(`/api/audit?${params.toString()}`) : Promise.resolve([]),
   });
 }
 
@@ -52,10 +54,6 @@ function useAudit(filters: { actor_kind?: string; action?: string }) {
 export function AuditPage() {
   const [actorKind, setActorKind] = useState("");
   const [action, setAction] = useState("");
-  const { data, isLoading, error } = useAudit({
-    actor_kind: actorKind || undefined,
-    action: action || undefined,
-  });
 
   return (
     <div className="mx-auto max-w-[1100px] flex flex-col gap-4 p-6">
@@ -96,43 +94,53 @@ export function AuditPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-card">
-        <div className="px-4 py-4">
-          {isLoading && <p className="text-muted-foreground text-xs">Loading…</p>}
-          {error && (
-            <p className="text-destructive text-xs">
-              {(error as Error).message ?? "Failed to load"}
-            </p>
-          )}
-          {data && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Entity</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-mono text-xs">{r.created_at}</TableCell>
-                    <TableCell>
-                      {r.actor_kind}
-                      {r.actor_login ? ` (${r.actor_login})` : ""}
-                    </TableCell>
-                    <TableCell className="font-mono">{r.kind}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {r.entity_kind}:{r.entity_id.slice(0, 8)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      </section>
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load audit log." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense fallback={<Skeleton className="h-48" />}>
+          <AuditTable
+            filters={{ actor_kind: actorKind || undefined, action: action || undefined }}
+          />
+        </Suspense>
+      </ErrorBoundary>
     </div>
+  );
+}
+
+function AuditTable({ filters }: { filters: { actor_kind?: string; action?: string } }) {
+  const { data } = useAudit(filters);
+
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-4">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Time</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Entity</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-mono text-xs">{r.created_at}</TableCell>
+                <TableCell>
+                  {r.actor_kind}
+                  {r.actor_login ? ` (${r.actor_login})` : ""}
+                </TableCell>
+                <TableCell className="font-mono">{r.kind}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {r.entity_kind}:{r.entity_id.slice(0, 8)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </section>
   );
 }

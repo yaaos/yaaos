@@ -18,40 +18,59 @@ import {
   useConfigStatus,
   useDashboard,
 } from "@core/api";
-import { EmptyState, NotConfiguredBanner, PageHeader } from "@shared/components/layout";
+import {
+  EmptyState,
+  ErrorBanner,
+  NotConfiguredBanner,
+  PageHeader,
+} from "@shared/components/layout";
 import { Skeleton } from "@shared/components/ui/skeleton";
 import { ago } from "@shared/utils/ago";
 import { cn } from "@shared/utils/cn";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, Bell, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { Suspense } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { AgentCard, AgentCardEmpty } from "./AgentCard";
 
 export function DashboardPage() {
-  const { data: dashboard, isLoading } = useDashboard();
+  return (
+    <div className="mx-auto max-w-[1200px] px-6 py-6">
+      <PageHeader title="Dashboard" subtitle="What yaaos is working on right now." />
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load dashboard." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense
+          fallback={
+            <div data-testid="dashboard-loading">
+              <div className="grid grid-cols-4 gap-3 mb-6">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: skeletons
+                  <Skeleton key={i} className="h-20" />
+                ))}
+              </div>
+              <Skeleton className="h-32 mb-4" />
+              <Skeleton className="h-32" />
+            </div>
+          }
+        >
+          <DashboardContent />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
+
+function DashboardContent() {
+  const { data: dashboard } = useDashboard();
   const { data: configStatus } = useConfigStatus();
   const orgSlug = getCurrentOrgSlug() ?? "";
   const { data: agents } = useAgents(orgSlug);
 
-  if (isLoading || !dashboard) {
-    return (
-      <div className="mx-auto max-w-[1200px] px-6 py-6" data-testid="dashboard-loading">
-        <PageHeader title="Dashboard" />
-        <div className="grid grid-cols-4 gap-3 mb-6">
-          {Array.from({ length: 4 }).map((_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: skeletons
-            <Skeleton key={i} className="h-20" />
-          ))}
-        </div>
-        <Skeleton className="h-32 mb-4" />
-        <Skeleton className="h-32" />
-      </div>
-    );
-  }
-
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-6" data-testid="dashboard-populated">
-      <PageHeader title="Dashboard" subtitle="What yaaos is working on right now." />
-
+    <div data-testid="dashboard-populated">
       {configStatus && !configStatus.configured && <NotConfiguredBanner className="mb-4" />}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">

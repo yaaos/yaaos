@@ -14,6 +14,10 @@
 - **Needs attention band** — up to 5 done tickets with ≥1 medium/high finding. Click → detail.
 - **`NotConfiguredBanner`** — mounts above cards when `configured: false`. Admins see missing-piece list; Builders see "Ask [admin] to finish setup." Bands still render so historical tickets remain visible.
 
+## Suspense / error boundary
+
+`DashboardPage` wraps `DashboardContent` in `<ErrorBoundary>` + `<Suspense>`. Both `useDashboard` and `useAgents` are `useSuspenseQuery` hooks — no `isLoading` branch in the render tree. The skeleton (`data-testid="dashboard-loading"`) shows until all data resolves; then `data-testid="dashboard-populated"` renders.
+
 ## `AgentCard`
 
 `AgentCard.tsx` — richer card per agent. Shows `instance_id` (display name), liveness state badge (reachable → green, stale → amber, offline → muted), OS/CPU/memory metadata, workspace count, and a client-ticking relative last-seen label (no refetch — updates via `setInterval` every 5 s). Liveness state transitions come from SSE invalidations, not polling.
@@ -24,4 +28,4 @@ Pure SSE — no polling. `agent_liveness_changed` events invalidate `["agents"]`
 
 ## Tests
 
-`test/dashboard.test.tsx` — loading skeleton smoke test. Populated state covered by PR-review e2e. Agent cards live behavior covered by the dashboard-agents e2e spec.
+`test/dashboard.test.tsx` — component/MSW: Suspense skeleton shows first, populated view renders after data resolves. Populated state (agent cards, in-flight band) covered by e2e.

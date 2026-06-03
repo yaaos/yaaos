@@ -78,7 +78,7 @@
 
 | File | Purpose |
 |---|---|
-| `use-mobile.tsx` | Returns `true` when the viewport is below the mobile breakpoint. Used by shadcn `sidebar`. |
+| `use-mobile.ts` | Returns `true` when the viewport is below the mobile breakpoint. Used by shadcn `sidebar`. |
 
 ## Adding a primitive
 

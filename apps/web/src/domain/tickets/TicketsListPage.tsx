@@ -6,8 +6,9 @@
  * single-select, free-text search over title, "My tickets" toggle. Load-more
  * pagination (no infinite scroll). Row click → Ticket detail.
  *
- * State patterns: skeleton on first load, EmptyState on zero-result,
- * filtered-empty when filters are applied, ErrorBanner on fetch failure.
+ * State patterns: Suspense skeleton on first load (ErrorBoundary catches
+ * fetch failures), EmptyState on zero-result, filtered-empty when filters
+ * are applied.
  *
  * The column source-of-truth is the backend's `/api/tickets` response
  * (`{items, next_cursor}`; cursor is null today — naive limit pagination).
@@ -40,9 +41,9 @@ import {
   Ticket as TicketIcon,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-
-type TicketStatus = "running" | "hitl" | "done" | "failed" | "cancelled";
+import { Suspense } from "react";
+import { ErrorBoundary } from "react-error-boundary";
+import { type TicketStatus, useTicketsFilters } from "./use-tickets-filters";
 
 // Solid semantic-color chips pass WCAG AA contrast against the matching
 // `*-foreground` pair. The previous /15-tinted variant failed axe scans
@@ -73,68 +74,61 @@ const STATUS_DISPLAY: Record<TicketStatus, { label: string; icon: typeof Loader2
     },
   };
 
-const ALL_STATUSES: TicketStatus[] = ["running", "hitl", "done", "failed", "cancelled"];
-
-const PAGE_SIZE = 50;
-
-function getTicketStatus(t: Ticket): TicketStatus {
-  return t.status;
-}
+const ALL_STATUSES_DISPLAY: TicketStatus[] = ["running", "hitl", "done", "failed", "cancelled"];
 
 export function TicketsListPage() {
-  const { data: ticketsResp, isLoading, isError, error, refetch } = useTickets();
-  const { data: repos } = useGithubRepositories();
-  const { data: user } = useCurrentUser();
-  const [activeStatuses, setActiveStatuses] = useState<Set<TicketStatus>>(new Set(ALL_STATUSES));
-  const [repo, setRepo] = useState<string>("all");
-  const [query, setQuery] = useState<string>("");
-  const [myOnly, setMyOnly] = useState(false);
-  const [visible, setVisible] = useState(PAGE_SIZE);
-
-  const repoOptions = useMemo(() => {
-    const fromInstall = new Set((repos?.repositories ?? []).map((r) => r.full_name));
-    const fromTickets = new Set((ticketsResp ?? []).map((t) => t.repo_external_id).filter(Boolean));
-    return Array.from(new Set([...fromInstall, ...fromTickets])).sort();
-  }, [repos, ticketsResp]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (ticketsResp ?? []).filter((t) => {
-      if (!activeStatuses.has(getTicketStatus(t))) return false;
-      if (repo !== "all" && t.repo_external_id !== repo) return false;
-      if (q && !t.title.toLowerCase().includes(q)) return false;
-      if (myOnly && user?.user.primary_email && t.author_login !== user.user.primary_email) {
-        return false;
-      }
-      return true;
-    });
-  }, [ticketsResp, activeStatuses, repo, query, myOnly, user]);
-
-  const totalLoaded = ticketsResp?.length ?? 0;
-  const pageRows = filtered.slice(0, visible);
-  const hasMore = filtered.length > pageRows.length;
-
-  const toggleStatus = (s: TicketStatus) => {
-    setActiveStatuses((prev) => {
-      const next = new Set(prev);
-      if (next.has(s)) next.delete(s);
-      else next.add(s);
-      return next;
-    });
-  };
-
-  const hasFilters =
-    activeStatuses.size !== ALL_STATUSES.length || repo !== "all" || query.length > 0 || myOnly;
-
   return (
     <div className="mx-auto max-w-[1280px] px-6 py-6">
-      <PageHeader
-        title="Tickets"
-        subtitle={`${totalLoaded} ${totalLoaded === 1 ? "ticket" : "tickets"} loaded.`}
-      />
+      <PageHeader title="Tickets" />
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner
+            message="Couldn't load tickets."
+            onRetry={resetErrorBoundary}
+            className="mb-4"
+          />
+        )}
+      >
+        <Suspense fallback={<TableSkeleton />}>
+          <TicketsList />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
 
+function TicketsList() {
+  const { data: tickets } = useTickets();
+  const { data: repos } = useGithubRepositories();
+  const { data: user } = useCurrentUser();
+
+  const myEmail = user?.user.primary_email;
+
+  const {
+    activeStatuses,
+    toggleStatus,
+    repo,
+    setRepo,
+    query,
+    setQuery,
+    myOnly,
+    setMyOnly,
+    repoOptions,
+    pageRows,
+    hasMore,
+    hasFilters,
+    loadMore,
+  } = useTicketsFilters({ tickets: tickets ?? [], repos, myEmail });
+
+  const totalLoaded = tickets?.length ?? 0;
+
+  return (
+    <>
+      <div className="mb-2 text-xs text-muted-foreground">
+        {`${totalLoaded} ${totalLoaded === 1 ? "ticket" : "tickets"} loaded.`}
+      </div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        {ALL_STATUSES.map((s) => {
+        {ALL_STATUSES_DISPLAY.map((s) => {
           const meta = STATUS_DISPLAY[s];
           const Icon = meta.icon;
           const active = activeStatuses.has(s);
@@ -207,17 +201,7 @@ export function TicketsListPage() {
         </button>
       </div>
 
-      {isError && (
-        <ErrorBanner
-          message={(error as Error).message || "Couldn't load tickets."}
-          onRetry={() => refetch()}
-          className="mb-4"
-        />
-      )}
-
-      {isLoading ? (
-        <TableSkeleton />
-      ) : pageRows.length === 0 ? (
+      {pageRows.length === 0 ? (
         hasFilters ? (
           <EmptyState
             icon={Search}
@@ -236,18 +220,14 @@ export function TicketsListPage() {
           <TicketsTable rows={pageRows} />
           {hasMore && (
             <div className="flex justify-center mt-4">
-              <Button
-                variant="outline"
-                onClick={() => setVisible((v) => v + PAGE_SIZE)}
-                data-testid="tickets-load-more"
-              >
+              <Button variant="outline" onClick={loadMore} data-testid="tickets-load-more">
                 Load more
               </Button>
             </div>
           )}
         </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -271,8 +251,8 @@ function TicketsTable({ rows }: { rows: Ticket[] }) {
 }
 
 function TicketRow({ ticket }: { ticket: Ticket }) {
-  const status = getTicketStatus(ticket);
-  const meta = STATUS_DISPLAY[status];
+  const status = ticket.status as TicketStatus;
+  const meta = STATUS_DISPLAY[status] ?? STATUS_DISPLAY.running;
   const Icon = meta.icon;
   const builderName = ticket.builder_display_name ?? ticket.author_login ?? "—";
   const severity = ticket.max_severity;

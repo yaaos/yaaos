@@ -118,7 +118,7 @@ Module-scoped arrays. Canonical keys:
 
 - `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`
 - `["reviewer", "jobs", ticket_id]`, `["reviewer", "metrics"]`, `["reviewer", "agents"]`
-- `["lessons", repo]`
+- `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`
 - `["plugin-health", pluginId]`
 - `["onboarding"]`, `["health"]`

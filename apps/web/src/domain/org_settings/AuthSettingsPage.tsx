@@ -1,7 +1,16 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@shared/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@shared/components/ui/form";
 import { Input } from "@shared/components/ui/input";
-import { Label } from "@shared/components/ui/label";
-import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { SsoConfigPage } from "../orgs/SsoConfigPage";
 import { OrgSettingsLayout } from "./OrgSettingsLayout";
 import { useUpdateOrgSettings } from "./queries";
@@ -21,13 +30,27 @@ export function AuthSettingsPage() {
   );
 }
 
+const sessionTimeoutSchema = z.object({
+  minutes: z
+    .string()
+    .refine(
+      (v) => v === "" || (Number.isFinite(Number(v)) && Number(v) > 0),
+      "Enter a positive number or leave blank for the system default.",
+    ),
+});
+
+type SessionTimeoutValues = z.infer<typeof sessionTimeoutSchema>;
+
 function SessionTimeoutCard() {
-  const [minutes, setMinutes] = useState<string>("");
   const update = useUpdateOrgSettings();
 
-  const onSave = () => {
-    const parsed = minutes.trim() === "" ? null : Number(minutes);
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) return;
+  const form = useForm<SessionTimeoutValues>({
+    resolver: zodResolver(sessionTimeoutSchema),
+    defaultValues: { minutes: "" },
+  });
+
+  const onSave = (values: SessionTimeoutValues) => {
+    const parsed = values.minutes === "" ? null : Number(values.minutes);
     update.mutate({ session_timeout_override: parsed as number | null });
   };
 
@@ -41,32 +64,44 @@ function SessionTimeoutCard() {
         </p>
       </header>
       <div className="px-4 py-4">
-        <div className="flex items-end gap-2">
-          <div className="flex-1 flex flex-col gap-1.5">
-            <Label htmlFor="session-timeout">Minutes (blank = default)</Label>
-            <Input
-              id="session-timeout"
-              value={minutes}
-              onChange={(e) => setMinutes(e.target.value)}
-              placeholder="e.g. 480"
-              data-testid="session-timeout-input"
-              inputMode="numeric"
-            />
-          </div>
-          <Button data-testid="session-timeout-save" disabled={update.isPending} onClick={onSave}>
-            {update.isPending ? "Saving…" : "Save"}
-          </Button>
-        </div>
-        {update.isError && (
-          <p className="text-xs text-destructive mt-2" data-testid="session-timeout-err">
-            {(update.error as Error)?.message || "Failed"}
-          </p>
-        )}
-        {update.isSuccess && (
-          <p className="text-xs text-emerald-600 mt-2" data-testid="session-timeout-ok">
-            Saved.
-          </p>
-        )}
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSave)}>
+            <div className="flex items-end gap-2">
+              <FormField
+                control={form.control}
+                name="minutes"
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormLabel>Minutes (blank = default)</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        id="session-timeout"
+                        placeholder="e.g. 480"
+                        data-testid="session-timeout-input"
+                        inputMode="numeric"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" data-testid="session-timeout-save" disabled={update.isPending}>
+                {update.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+            {update.isError && (
+              <p className="text-xs text-destructive mt-2" data-testid="session-timeout-err">
+                {(update.error as Error)?.message || "Failed"}
+              </p>
+            )}
+            {update.isSuccess && (
+              <p className="text-xs text-emerald-600 mt-2" data-testid="session-timeout-ok">
+                Saved.
+              </p>
+            )}
+          </form>
+        </Form>
       </div>
     </section>
   );

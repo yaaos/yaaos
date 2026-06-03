@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface IntegrationStatus {
   provider: string;
@@ -13,7 +13,7 @@ export interface IntegrationStatus {
 }
 
 export function useIntegrations() {
-  return useQuery<IntegrationStatus[]>({
+  return useSuspenseQuery<IntegrationStatus[]>({
     queryKey: ["integrations"],
     queryFn: () => apiFetch<IntegrationStatus[]>("/api/mcp-proxy"),
     staleTime: 10_000,

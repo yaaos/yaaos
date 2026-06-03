@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface ByokProviderStatus {
   provider: string;
@@ -10,7 +10,7 @@ export interface ByokProviderStatus {
 }
 
 export function useByokProviders() {
-  return useQuery<ByokProviderStatus[]>({
+  return useSuspenseQuery<ByokProviderStatus[]>({
     queryKey: ["byok"],
     queryFn: () => apiFetch<ByokProviderStatus[]>("/api/api-keys"),
     staleTime: 10_000,

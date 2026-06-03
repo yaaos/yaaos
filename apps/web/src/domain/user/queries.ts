@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface UserMembership {
   org_id: string;
@@ -29,7 +29,7 @@ export interface UserMe {
  * separate; chrome reads from `useCurrentUser`, this is the User
  * details/security page payload. */
 export function useUserMe() {
-  return useQuery<UserMe>({
+  return useSuspenseQuery<UserMe>({
     queryKey: ["user", "me"],
     queryFn: () => apiFetch<UserMe>("/api/user/me"),
     staleTime: 30_000,

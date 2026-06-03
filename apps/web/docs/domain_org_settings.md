@@ -10,16 +10,23 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 ## VCS page
 
+- **Loading** — `useVcsState` and `useAvailablePlugins` use `useSuspenseQuery`; page body renders under `<ErrorBoundary>` + `<Suspense>`.
 - **Empty state** — `PluginPicker`; GitHub selection fires `useStartGithubInstall()` (`POST /api/github/install/start`) then navigates to the returned state-signed github.com URL. Non-GitHub uses `useSetVcs` directly.
-- **Connected state** — reads `/api/github/installation`; two sub-states: not-installed-on-org (re-fires install handshake) and healthy (shows account + repos from `/api/github/repositories`).
+- **Connected state** — reads `/api/github/installation` (`useSuspenseQuery`); two sub-states: not-installed-on-org (re-fires install handshake) and healthy (shows account + repos from `/api/github/repositories` (`useSuspenseQuery`)).
 - **`app_configured: false`** — platform env vars unset; shows operator guidance, no install button.
 - "Manage on GitHub" links to `installations_url` — canonical for repo access changes. No yaaos-side reconnect.
 - "Remove" → `DELETE /api/vcs`; does not uninstall the GitHub App.
 - Install flow uses a backend POST (not `window.location`) because `X-Org-Slug` + CSRF can't ride a bare navigation.
 
+## Coding Agents list
+
+`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` and `useAvailablePlugins` (`useSuspenseQuery`). `PluginPicker` receives the resolved `plugins` array directly — loading and error states are handled by the surrounding Suspense boundary.
+
 ## Coding Agent detail
 
 `coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component via `coding_agents/plugin_registry.ts`. `claude_code` is the only registered plugin.
+
+`ClaudeCodeSettings` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` and `useClaudeCodeDefaults` (`useSuspenseQuery`).
 
 `ClaudeCodeSettings.tsx` composition (top → bottom):
 1. **`BrokenIntegrationsNotice`** — amber banner when any MCP credential has `last_refresh_status="failed"` (from `/api/auth/me`).
@@ -32,16 +39,25 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 `AgentEditor` fields: `name`, `prompt`, `model`, `version`, `effort`, `use_default_system_prompt` (checkbox; default true; toggling off reveals `system_prompt` textarea). Toggling back to default clears `system_prompt` so the wire payload stays clean.
 
+## Forms
+
+All input forms across the settings pages use `react-hook-form` + Zod (`zodResolver`). shadcn `form.tsx` primitives (`Form`, `FormField`, `FormItem`, `FormControl`, `FormMessage`) carry validation messages automatically. Affected pages: `AuthSettingsPage` (session-timeout), `WorkspacesSettingsPage` (ARN + region), `BYOKSettingsPage` (API key per provider card), `ClaudeCodeSettings` (Anthropic key card + agent-config Save), `IntegrationsSettingsPage` (allowlist add). Simple action buttons (toggle enabled, disconnect) are not wrapped in RHF forms.
+
 ## Workspaces page
 
-`WorkspacesSettingsPage.tsx` at `/orgs/$slug/settings/workspaces`. Admin-only. No mode selector — the system has exactly one provider (`remote_agent`). Renders:
-- **AWS configuration card** — IAM role ARN input + AWS region dropdown. Save calls `PATCH /api/orgs` with `registered_iam_arn` + `aws_region`. ARN validated client-side against `arn:aws:iam::\d{12}:role/[\w+=,.@-]+`; Save disabled until valid. Server lowercases before storing and returns 422 `arn_already_registered` if another org holds the same ARN.
+`WorkspacesSettingsPage.tsx` at `/orgs/$slug/settings/workspaces`. Admin-only. No mode selector — the system has exactly one provider (`remote_agent`). Renders under `<ErrorBoundary>` + `<Suspense>` (both `useOrgSettings` and `useAgents` are awaited before content renders). Renders:
+- **AWS configuration card** — IAM role ARN input + AWS region dropdown (RHF + Zod; ARN validated against `arn:aws:iam::\d{12}:role/[\w+=,.@-]+`). Save calls `PATCH /api/orgs` with `registered_iam_arn` + `aws_region`. Server lowercases before storing and returns 422 `arn_already_registered` if another org holds the same ARN.
   - **ARN-change confirmation** — when the saved ARN differs from the current value and one or more online/stale agents exist, a `ConfirmModal` appears before saving: "This will disconnect N running WorkspaceAgents and fail their in-flight Workspaces. Continue?" N comes from `GET /api/orgs/{slug}/agents` (online + stale count). Cancel aborts the save; confirm proceeds. The modal uses the `destructive` tone.
 - **Agent deployment card** — deploy snippet + backend URL + min version info.
 
 ## Tests
 
-- `coding_agents/test/` — list page + plugin registry dispatch.
-- `byok/test/`, `integrations/test/`, `vcs/test/` — per-page forms.
+All settings tests use MSW to intercept HTTP rather than `vi.mock("../queries")`.
+
+- `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add picker with installed plugins disabled, Remove confirmation, settings link.
+- `coding_agents/test/plugin_registry.test.tsx` — unit: dispatch to registered vs. unknown plugin.
+- `byok/test/byok.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
+- `integrations/test/integrations.test.tsx` — component/MSW: connect flow, allowlist, enabled toggle, disconnect.
+- `vcs/test/vcs.test.tsx` — component/MSW: picker, connected, needs-setup, unprovisioned states; remove confirmation.
 - `test/layout.test.tsx` — tab visibility per role.
-- Detail page is covered by the PR-review e2e, not a dedicated Vitest.
+- `shared/plugin_picker/test/picker.test.tsx` — unit: card rendering, Add click, installed predicate, empty state.

@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { PageHeader } from "@shared/components/layout";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Input } from "@shared/components/ui/input";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@shared/components/ui/select";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -19,9 +20,10 @@ import {
   TableHeader,
   TableRow,
 } from "@shared/components/ui/table";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 
 type Role = "owner" | "admin" | "builder";
 
@@ -36,13 +38,14 @@ interface Member {
 const ROLES: Role[] = ["owner", "admin", "builder"];
 
 function useMembers(orgSlug: string | null) {
-  return useQuery<Member[]>({
+  return useSuspenseQuery<Member[]>({
     queryKey: ["memberships", orgSlug],
     queryFn: () =>
-      apiFetch<Member[]>("/api/memberships", {
-        headers: orgSlug ? { "X-Org-Slug": orgSlug } : undefined,
-      }),
-    enabled: !!orgSlug,
+      orgSlug
+        ? apiFetch<Member[]>("/api/memberships", {
+            headers: { "X-Org-Slug": orgSlug },
+          })
+        : Promise.resolve([]),
   });
 }
 
@@ -96,13 +99,6 @@ export function MembersPage(props: { orgSlug?: string }) {
   const params = useParams({ strict: false }) as { slug?: string };
   const orgSlug =
     props.orgSlug ?? params.slug ?? new URLSearchParams(window.location.search).get("org");
-  const { data, isLoading, error } = useMembers(orgSlug);
-  const invite = useInvite(orgSlug);
-  const changeRole = useChangeRole(orgSlug);
-  const remove = useRemoveMember(orgSlug);
-
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("builder");
 
   if (!orgSlug) {
     return (
@@ -111,6 +107,35 @@ export function MembersPage(props: { orgSlug?: string }) {
       </div>
     );
   }
+
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load members." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense
+        fallback={
+          <div className="mx-auto max-w-[900px] flex flex-col gap-4 p-6">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-48" />
+          </div>
+        }
+      >
+        <MembersContent orgSlug={orgSlug} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function MembersContent({ orgSlug }: { orgSlug: string }) {
+  const { data } = useMembers(orgSlug);
+  const invite = useInvite(orgSlug);
+  const changeRole = useChangeRole(orgSlug);
+  const remove = useRemoveMember(orgSlug);
+
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("builder");
 
   return (
     <div className="mx-auto max-w-[900px] flex flex-col gap-4 p-6">
@@ -173,16 +198,8 @@ export function MembersPage(props: { orgSlug?: string }) {
           <h2 className="text-sm font-semibold">Roster</h2>
         </header>
         <div className="px-4 py-4">
-          {isLoading && <p className="text-muted-foreground text-xs">Loading…</p>}
-          {error && (
-            <p className="text-destructive text-xs">
-              {(error as Error).message ?? "Failed to load"}
-            </p>
-          )}
-          {data && data.length === 0 && (
-            <p className="text-muted-foreground text-xs">No members yet.</p>
-          )}
-          {data && data.length > 0 && (
+          {data.length === 0 && <p className="text-muted-foreground text-xs">No members yet.</p>}
+          {data.length > 0 && (
             <Table>
               <TableHeader>
                 <TableRow>

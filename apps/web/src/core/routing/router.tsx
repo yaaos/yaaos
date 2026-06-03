@@ -18,6 +18,22 @@ import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
 import { DetailsPage, SecurityPage } from "@domain/user";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { z } from "zod";
+
+/** Validated search schema for the /tickets list page. */
+const ticketsSearchSchema = z.object({
+  q: z.string().optional(),
+  repo: z.string().optional(),
+  status: z.array(z.string()).optional(),
+  mine: z.boolean().optional(),
+});
+
+/** Validated search schema for the /lessons list page. */
+const lessonsSearchSchema = z.object({
+  q: z.string().optional(),
+  repo: z.string().optional(),
+  sort: z.enum(["created_desc", "created_asc", "updated_desc"]).optional(),
+});
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -89,6 +105,7 @@ const orgTicketsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/tickets",
   component: TicketsPage,
+  validateSearch: ticketsSearchSchema,
 });
 
 const orgTicketDetailRoute = createRoute({
@@ -101,6 +118,7 @@ const orgLessonsRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/lessons",
   component: LessonsPage,
+  validateSearch: lessonsSearchSchema,
 });
 
 // : /orgs/$slug/settings → /orgs/$slug/settings/auth. The shell + per-tab

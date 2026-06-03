@@ -1,12 +1,15 @@
 import { apiFetch } from "@core/api";
+import { ErrorBanner } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Checkbox } from "@shared/components/ui/checkbox";
 import { Input } from "@shared/components/ui/input";
 import { Label } from "@shared/components/ui/label";
+import { Skeleton } from "@shared/components/ui/skeleton";
 import { Textarea } from "@shared/components/ui/textarea";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 
 interface SsoConfig {
   enabled: boolean;
@@ -17,7 +20,7 @@ interface SsoConfig {
 }
 
 function useSsoConfig() {
-  return useQuery<SsoConfig>({
+  return useSuspenseQuery<SsoConfig>({
     queryKey: ["sso", "config"],
     queryFn: () => apiFetch<SsoConfig>("/api/sso/config"),
   });
@@ -48,7 +51,21 @@ function useUpsertSsoConfig() {
  * URL to register yaaos as the SP.
  */
 export function SsoConfigPage() {
-  const { data, isLoading } = useSsoConfig();
+  return (
+    <ErrorBoundary
+      fallbackRender={({ resetErrorBoundary }) => (
+        <ErrorBanner message="Couldn't load SSO config." onRetry={resetErrorBoundary} />
+      )}
+    >
+      <Suspense fallback={<Skeleton className="h-32 m-6" />}>
+        <SsoConfigContent />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function SsoConfigContent() {
+  const { data } = useSsoConfig();
   const upsert = useUpsertSsoConfig();
 
   const [metadata, setMetadata] = useState("");
@@ -59,8 +76,6 @@ export function SsoConfigPage() {
   // on submit. Pre-populated from server state once it loads.
   const [domainsRaw, setDomainsRaw] = useState<string>((data?.email_domains ?? []).join(", "));
 
-  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
-
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-lg border border-border bg-card">
@@ -70,12 +85,12 @@ export function SsoConfigPage() {
         <div className="px-4 py-4">
           <div className="text-sm flex items-center gap-2">
             <span>Enabled:</span>
-            <Badge variant={data?.enabled ? "default" : "secondary"}>
-              {data?.enabled ? "on" : "off"}
+            <Badge variant={data.enabled ? "default" : "secondary"}>
+              {data.enabled ? "on" : "off"}
             </Badge>
             <span className="ml-4">JIT:</span>
-            <Badge variant={data?.jit_enabled ? "default" : "secondary"}>
-              {data?.jit_enabled ? "on" : "off"}
+            <Badge variant={data.jit_enabled ? "default" : "secondary"}>
+              {data.jit_enabled ? "on" : "off"}
             </Badge>
           </div>
           <p className="text-muted-foreground text-xs mt-2">

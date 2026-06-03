@@ -1,9 +1,15 @@
-import { PageHeader } from "@shared/components/layout";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Checkbox } from "@shared/components/ui/checkbox";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@shared/components/ui/form";
 import { Input } from "@shared/components/ui/input";
-import { useState } from "react";
+import { Skeleton } from "@shared/components/ui/skeleton";
+import { Suspense, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import {
   type IntegrationStatus,
@@ -23,7 +29,6 @@ import {
  * whenever `last_refresh_status="failed"` (status="broken").
  */
 export function IntegrationsSettingsPage() {
-  const { data, isLoading, error } = useIntegrations();
   return (
     <OrgSettingsLayout active="mcp-proxy">
       <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
@@ -31,17 +36,28 @@ export function IntegrationsSettingsPage() {
           title="MCP Proxy"
           subtitle="Connect Linear and Notion so the reviewer agent can pull issue and document context via MCP. Dedicate a bot user per provider so reviews never act as a human teammate."
         />
-        {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {error && (
-          <p className="text-sm text-destructive" data-testid="integrations-err">
-            {(error as Error).message}
-          </p>
-        )}
-        {(data ?? []).map((p) => (
-          <ProviderCard key={p.provider} provider={p} />
-        ))}
+        <ErrorBoundary
+          fallbackRender={({ resetErrorBoundary }) => (
+            <ErrorBanner message="Couldn't load integrations." onRetry={resetErrorBoundary} />
+          )}
+        >
+          <Suspense fallback={<Skeleton className="h-24" />}>
+            <IntegrationsList />
+          </Suspense>
+        </ErrorBoundary>
       </div>
     </OrgSettingsLayout>
+  );
+}
+
+function IntegrationsList() {
+  const { data } = useIntegrations();
+  return (
+    <>
+      {data.map((p) => (
+        <ProviderCard key={p.provider} provider={p} />
+      ))}
+    </>
   );
 }
 
@@ -237,6 +253,12 @@ function ConnectedState({
   );
 }
 
+const allowlistSchema = z.object({
+  tool: z.string().min(1, "Tool name is required."),
+});
+
+type AllowlistValues = z.infer<typeof allowlistSchema>;
+
 function AllowlistEditor({
   provider,
   patch,
@@ -245,7 +267,11 @@ function AllowlistEditor({
   patch: ReturnType<typeof usePatchIntegration>;
 }) {
   const allowed = provider.allowed_tools;
-  const [draft, setDraft] = useState("");
+
+  const form = useForm<AllowlistValues>({
+    resolver: zodResolver(allowlistSchema),
+    defaultValues: { tool: "" },
+  });
 
   const onRemove = (tool: string) => {
     patch.mutate({
@@ -253,14 +279,15 @@ function AllowlistEditor({
       body: { allowed_tools: allowed.filter((t) => t !== tool) },
     });
   };
-  const onAdd = () => {
-    const t = draft.trim();
-    if (!t || allowed.includes(t)) return;
+
+  const onAdd = (values: AllowlistValues) => {
+    const t = values.tool.trim();
+    if (allowed.includes(t)) return;
     patch.mutate({
       provider: provider.provider,
       body: { allowed_tools: [...allowed, t] },
     });
-    setDraft("");
+    form.reset();
   };
 
   return (
@@ -289,24 +316,36 @@ function AllowlistEditor({
           </span>
         ))}
       </div>
-      <div className="flex items-center gap-2">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="write_tool_name"
-          data-testid={`allow-input-${provider.provider}`}
-          className="h-8 flex-1"
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onAdd}
-          disabled={!draft.trim() || patch.isPending}
-          data-testid={`allow-add-${provider.provider}`}
-        >
-          Add
-        </Button>
-      </div>
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onAdd)} className="flex items-start gap-2">
+          <FormField
+            control={form.control}
+            name="tool"
+            render={({ field }) => (
+              <FormItem className="flex-1">
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder="write_tool_name"
+                    data-testid={`allow-input-${provider.provider}`}
+                    className="h-8"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={patch.isPending}
+            data-testid={`allow-add-${provider.provider}`}
+          >
+            Add
+          </Button>
+        </form>
+      </Form>
     </div>
   );
 }

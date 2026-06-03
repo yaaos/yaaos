@@ -80,7 +80,7 @@ export interface MineOrg {
 }
 
 export function useMyOrgs() {
-  return useQuery<MineOrg[]>({
+  return useSuspenseQuery<MineOrg[]>({
     queryKey: ["orgs", "mine"],
     queryFn: () => apiFetch<MineOrg[]>("/api/orgs/mine"),
   });
@@ -140,7 +140,7 @@ export interface DashboardResponse {
 }
 
 export function useDashboard() {
-  return useQuery<DashboardResponse>({
+  return useSuspenseQuery<DashboardResponse>({
     queryKey: ["tickets", "dashboard"],
     queryFn: () => apiFetch<DashboardResponse>("/api/tickets/dashboard"),
   });
@@ -161,10 +161,12 @@ export interface AgentRow {
 }
 
 export function useAgents(orgSlug: string) {
-  return useQuery<AgentRow[]>({
+  return useSuspenseQuery<AgentRow[]>({
     queryKey: ["agents"],
-    queryFn: () => apiFetch<AgentRow[]>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents`),
-    enabled: !!orgSlug,
+    queryFn: () =>
+      orgSlug
+        ? apiFetch<AgentRow[]>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents`)
+        : Promise.resolve([]),
   });
 }
 
@@ -233,7 +235,7 @@ interface TicketsListResponse {
 }
 
 export function useTickets() {
-  return useQuery<Ticket[]>({
+  return useSuspenseQuery<Ticket[]>({
     queryKey: ["tickets"],
     queryFn: async () => {
       const resp = await apiFetch<TicketsListResponse>("/api/tickets");
@@ -243,10 +245,9 @@ export function useTickets() {
 }
 
 export function useTicket(ticket_id: string) {
-  return useQuery<Ticket>({
+  return useSuspenseQuery<Ticket>({
     queryKey: ["tickets", ticket_id],
     queryFn: () => apiFetch<Ticket>(`/api/tickets/${ticket_id}`),
-    enabled: !!ticket_id,
   });
 }
 
@@ -260,10 +261,9 @@ export function useTicketAudit(ticket_id: string) {
 }
 
 export function useReviewJobsForTicket(ticket_id: string) {
-  return useQuery<ReviewJob[]>({
+  return useSuspenseQuery<ReviewJob[]>({
     queryKey: ["reviewer", "jobs", ticket_id],
     queryFn: () => apiFetch<ReviewJob[]>(`/api/reviewer/jobs/by-ticket/${ticket_id}`),
-    enabled: !!ticket_id,
     refetchInterval: 3_000,
   });
 }
@@ -289,7 +289,7 @@ export interface FindingRow {
 }
 
 export function useFindingsForTicket(ticket_id: string, includeTerminal = false) {
-  return useQuery<FindingRow[]>({
+  return useSuspenseQuery<FindingRow[]>({
     queryKey: ["reviewer", "findings", ticket_id, includeTerminal],
     queryFn: () =>
       apiFetch<FindingRow[]>(
@@ -297,7 +297,6 @@ export function useFindingsForTicket(ticket_id: string, includeTerminal = false)
           includeTerminal ? "?include_terminal=true" : ""
         }`,
       ),
-    enabled: !!ticket_id,
     refetchInterval: 5_000,
   });
 }
@@ -435,10 +434,9 @@ export interface HitlHistoryEntry {
 }
 
 export function useHitlHistory(ticket_id: string) {
-  return useQuery<HitlHistoryEntry[]>({
+  return useSuspenseQuery<HitlHistoryEntry[]>({
     queryKey: ["tickets", ticket_id, "hitl-history"],
     queryFn: () => apiFetch<HitlHistoryEntry[]>(`/api/tickets/${ticket_id}/hitl/history`),
-    enabled: !!ticket_id,
   });
 }
 
@@ -523,19 +521,22 @@ export interface LessonsFilter {
   limit?: number;
 }
 
-export function useLessons(filter: LessonsFilter | string = {}) {
-  // Back-compat: old callers passed `repo_external_id?: string`.
-  const f: LessonsFilter =
-    typeof filter === "string" ? { repos: filter ? [filter] : undefined } : filter;
+export function useLessons(filter: LessonsFilter = {}) {
   const params = new URLSearchParams();
-  for (const r of f.repos ?? []) params.append("repo_external_id", r);
-  if (f.q) params.set("q", f.q);
-  if (f.created_by) params.set("created_by", f.created_by);
-  if (f.sort) params.set("sort", f.sort);
-  if (f.limit) params.set("limit", String(f.limit));
+  for (const r of filter.repos ?? []) params.append("repo_external_id", r);
+  if (filter.q) params.set("q", filter.q);
+  if (filter.created_by) params.set("created_by", filter.created_by);
+  if (filter.sort) params.set("sort", filter.sort);
+  if (filter.limit) params.set("limit", String(filter.limit));
   const qs = params.toString();
-  return useQuery<Lesson[]>({
-    queryKey: ["lessons", f.repos ?? "all", f.q ?? "", f.created_by ?? "", f.sort ?? ""],
+  return useSuspenseQuery<Lesson[]>({
+    queryKey: [
+      "lessons",
+      filter.repos ?? "all",
+      filter.q ?? "",
+      filter.created_by ?? "",
+      filter.sort ?? "",
+    ],
     queryFn: () => apiFetch<Lesson[]>(`/api/lessons${qs ? `?${qs}` : ""}`),
   });
 }
@@ -632,17 +633,16 @@ export type GithubRepositoriesResponse = {
   error?: string;
 };
 
-export function useGithubRepositories(enabled = true) {
-  return useQuery<GithubRepositoriesResponse>({
+export function useGithubRepositories() {
+  return useSuspenseQuery<GithubRepositoriesResponse>({
     queryKey: ["github", "repositories"],
     queryFn: () => apiFetch<GithubRepositoriesResponse>("/api/github/repositories"),
-    enabled,
     refetchInterval: 30_000,
   });
 }
 
 export function useGithubInstallation() {
-  return useQuery<GithubInstallation>({
+  return useSuspenseQuery<GithubInstallation>({
     queryKey: ["github", "installation"],
     queryFn: () => apiFetch<GithubInstallation>("/api/github/installation"),
     refetchInterval: 10_000,

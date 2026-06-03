@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface CodingAgentInstall {
   plugin_id: string;
@@ -9,7 +9,7 @@ export interface CodingAgentInstall {
 }
 
 export function useCodingAgents() {
-  return useQuery<CodingAgentInstall[]>({
+  return useSuspenseQuery<CodingAgentInstall[]>({
     queryKey: ["coding-agents"],
     queryFn: () => apiFetch<CodingAgentInstall[]>("/api/coding-agents"),
     staleTime: 10_000,

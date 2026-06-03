@@ -1,5 +1,5 @@
 import { apiFetch } from "@core/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 export interface VcsStateResponse {
   plugin_id: string | null;
@@ -17,7 +17,7 @@ export interface SetVcsResponse {
 }
 
 export function useVcsState() {
-  return useQuery<VcsStateResponse>({
+  return useSuspenseQuery<VcsStateResponse>({
     queryKey: ["vcs", "state"],
     queryFn: () => apiFetch<VcsStateResponse>("/api/vcs"),
     staleTime: 10_000,
