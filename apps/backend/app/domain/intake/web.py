@@ -103,7 +103,6 @@ async def post_intake(request: Request, type: str = Path(...)) -> JSONResponse:
             workflow_name=prepared.workflow_name,
             ticket_id=str(ticket_id),
             traceparent=current_traceparent(),
-            workspace_provider="remote_agent",
             ticket_payload=dict(prepared.payload),
             session=s,
         )

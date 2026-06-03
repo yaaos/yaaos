@@ -83,8 +83,8 @@ async def test_mine_returns_user_memberships_sorted_by_slug(seeded) -> None:
 @pytest.mark.asyncio
 async def test_config_status_unconfigured_reports_missing_pieces(seeded) -> None:
     _reset_contributors_for_tests()
-    # Both contributors absent → both come back "missing"; workspace_provider
-    # null on the org row → also missing.
+    # Both contributors absent → both come back "missing"; workspace
+    # not configured (no registered_iam_arn) → also missing.
     sess = seeded["sess"]
     async with _client() as c:
         r = await c.get(

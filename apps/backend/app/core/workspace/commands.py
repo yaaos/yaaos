@@ -1,15 +1,15 @@
 """Workspace-lifecycle WorkflowCommands — `ProvisionWorkspace`,
 `CleanupWorkspace`, `RefreshWorkspaceAuth`.
 
-Each command is **Workspace** category — the engine parks the execution in
-`awaiting_agent` and dispatches an AgentCommand over the wire to the
-remote WorkspaceAgent.
+Each command is **Workspace** category — the engine always parks the
+execution in `awaiting_agent` and dispatches an AgentCommand over the wire
+to the single registered WorkspaceAgent. The `execute()` body is never
+called by the engine in production; it is callable directly in unit tests
+that want to exercise the body in isolation.
 
-`CleanupWorkspace` closes the workspace by id.
-`ProvisionWorkspace` is a workspace-category command; the engine parks the
-step in `awaiting_agent` and dispatches a `CreateWorkspace` AgentCommand —
-the `execute()` body is only reached on the stub in-process dispatch path
-used in tests.
+`ProvisionWorkspace` is the workspace-create step; the engine dispatches a
+`CreateWorkspace` AgentCommand and the agent returns the `workspace_id`.
+`CleanupWorkspace` closes the workspace by id (from prior step outputs).
 `RefreshWorkspaceAuth` is the recovery command bound to `auth_expired`
 failures; it issues a `RefreshWorkspaceAuth` AgentCommand so the Go agent
 can rotate its checkout's auth header before the retry.
@@ -46,13 +46,12 @@ class _LifecycleCommand:
 class ProvisionWorkspace(_LifecycleCommand):
     """Provision a workspace for a ticket.
 
-    The workflow engine's Workspace branch parks the execution in
+    The workflow engine's Workspace branch always parks the execution in
     `awaiting_agent` and dispatches a `CreateWorkspace` AgentCommand over
-    the wire for the `remote_agent` path; `execute()` is never called on
-    that path. On the in-process dispatch path (tests that register a stub
-    provider), `execute()` is called inline — it finds the first registered
-    provider, fetches ticket context via the `WorkflowContextProvider`, and
-    calls `create_workspace()` with it.
+    the wire; `execute()` is not called by the engine. It is callable
+    directly in unit tests that exercise the body in isolation — it finds
+    the single registered provider, fetches ticket context via the
+    `WorkflowContextProvider`, and calls `create_workspace()`.
 
     Falls back to `Outcome.failure` when:
     - no provider is registered
@@ -150,11 +149,10 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
     `core/workspace.register_recovery_policy`. The engine inserts this
     command before re-dispatching the originally-failing AgentCommand.
 
-    The workflow engine's Workspace branch dispatches a `RefreshWorkspaceAuth`
-    AgentCommand over the wire so the Go agent can rotate its checkout's
-    auth header before the retry. This `execute()` body is only reached on
-    the in-process dispatch path (stub tests); it returns success so the
-    step advances cleanly.
+    The engine dispatches a `RefreshWorkspaceAuth` AgentCommand over the
+    wire so the Go agent can rotate its checkout's auth header before the
+    retry. `execute()` is callable directly in unit tests; it returns
+    success so the step advances cleanly.
     """
 
     kind = "RefreshWorkspaceAuth"

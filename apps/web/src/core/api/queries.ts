@@ -57,7 +57,7 @@ export function useHealth() {
 /** Aggregated readiness for the "not configured" gate. */
 export interface ConfigStatus {
   configured: boolean;
-  missing: Array<"vcs" | "coding_agent" | "api_key" | "workspace_provider">;
+  missing: Array<"vcs" | "coding_agent" | "api_key" | "workspace">;
   admins: Array<{ user_id: string; display_name: string; primary_email: string | null }>;
 }
 
@@ -657,14 +657,11 @@ export function usePluginHealth(pluginId: string) {
   });
 }
 
-// ── Org settings (workspace_provider + registered_iam_arn) ──────────────
-
-export type WorkspaceProvider = "in_memory" | "remote_agent";
+// ── Org settings (registered_iam_arn + session timeout) ─────────────────
 
 export type OrgSettings = {
   slug: string;
   session_timeout_override: number | null;
-  workspace_provider: WorkspaceProvider | null;
   registered_iam_arn: string | null;
 };
 
@@ -676,7 +673,6 @@ export function useOrgSettings() {
 }
 
 export type UpdateOrgSettingsInput = {
-  workspace_provider?: WorkspaceProvider | null;
   registered_iam_arn?: string | null;
 };
 

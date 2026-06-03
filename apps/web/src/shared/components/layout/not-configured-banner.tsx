@@ -3,7 +3,7 @@
  *
  * Renders a non-intrusive banner on every org-scoped surface when the org
  * is missing a prerequisite (VCS plugin, ≥1 coding agent, valid API key,
- * or workspace provider). Builders see "ask your admin"; Admins see a
+ * or workspace agent IAM ARN). Builders see "ask your admin"; Admins see a
  * direct link to settings. Dashboard's "setup required" state subsumes
  * the banner there; everywhere else this is the affordance.
  *
@@ -19,7 +19,7 @@ const HUMAN_LABEL: Record<string, string> = {
   vcs: "Connect a VCS provider",
   coding_agent: "Configure a coding agent",
   api_key: "Add an API key",
-  workspace_provider: "Pick a workspace provider",
+  workspace: "Configure a workspace agent (IAM ARN + region)",
 };
 
 interface NotConfiguredBannerProps {

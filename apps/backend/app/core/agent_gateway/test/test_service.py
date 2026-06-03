@@ -25,6 +25,7 @@ from app.core.agent_gateway import (
     record_heartbeat,
     record_workspace_event,
 )
+from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
@@ -35,8 +36,34 @@ from app.core.workflow import (
     WorkflowState,
     get_execution_summary,
 )
+from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
+
+
+class _MinimalWorkspaceProvider:
+    """Stub WorkspaceProvider so `list_workspace_providers()` returns exactly
+    one entry when Workspace commands dispatch through the engine in tests."""
+
+    meta = PluginMeta(id="gw_test_stub", type="workspace", display_name="gw-test-stub")
+
+    async def provision(self, spec):  # type: ignore[no-untyped-def]
+        return {}
+
+    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+        return None
+
+    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+        return None
+
+    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+        return None
+
+    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+        return None
 
 
 def _make_create_command() -> CreateWorkspaceCommand:
@@ -136,10 +163,12 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             )
         )
 
+        bind_workspace_registry(WorkspaceRegistry())
+        register_workspace_provider(_MinimalWorkspaceProvider())
+
         exec_id = await eng.start(
             workflow_name="gw-terminal-test",
             ticket_id=str(uuid4()),
-            workspace_provider="remote_agent",
             session=db_session,
         )
         await db_session.commit()
@@ -231,10 +260,12 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             )
         )
 
+        bind_workspace_registry(WorkspaceRegistry())
+        register_workspace_provider(_MinimalWorkspaceProvider())
+
         exec_id = await eng.start(
             workflow_name="gw-progress-test",
             ticket_id=str(uuid4()),
-            workspace_provider="remote_agent",
             session=db_session,
         )
         await db_session.commit()

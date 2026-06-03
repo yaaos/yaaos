@@ -1,9 +1,9 @@
 """Smoke test: each of the 5 reviewer workflows reaches `done` end-to-end.
 
-Drives each workflow through the engine with spy Workspace commands
-that emit minimum-shape outputs. Local downstream steps either short-
-circuit (no pr_id link → success-no-op) or complete cleanly with the
-spy's outputs. Each workflow ends in `done`.
+Drives each workflow through the engine. All Workspace-category steps
+dispatch to the single registered stub provider and park in `awaiting_agent`;
+the test simulates each terminal AgentEvent via `_advance_pending_agent_event`.
+Local steps execute inline. Each workflow ends in `done`.
 
 This verifies workflow composition across all 5 workflows.
 Per-workflow side-effect verification (e.g. ResolveFinding
@@ -15,13 +15,14 @@ internals.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
 from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once
-from app.core.workflow import Outcome, WorkflowState, get_execution_summary
+from app.core.workflow import HANDLE_AGENT_EVENT, WorkflowState, get_execution_summary
 from app.core.workspace import (
     WorkspaceTicketContext,
     register_workflow_context_provider,
@@ -29,11 +30,7 @@ from app.core.workspace import (
 )
 from app.domain.reviewer.commands import (
     ALL_LOCAL_COMMANDS,
-    AnswerQuestion,
-    CodeReview,
-    IncrementalReview,
-    StaleCheck,
-    VerifyFix,
+    ALL_WORKSPACE_COMMANDS,
 )
 from app.domain.reviewer.workflows import (
     answer_question_v1,
@@ -95,41 +92,38 @@ async def _drain_workflow_outbox(db_session, *, max_iterations: int = 50) -> int
     return total
 
 
-# Spy subclasses — each emits the minimum shape the downstream Local step needs
-# to short-circuit success-no-op. None of these spies do real work.
+async def _advance_pending_agent_event(
+    db_session,
+    wfx_id: str,
+    outputs: dict[str, Any] | None = None,
+    *,
+    outcome_label: str = "success",
+) -> None:
+    """Simulate the agent's terminal event for a Workspace step. Reads
+    `pending_agent_command_id` and `otel_trace_context` from the execution
+    summary, enqueues `handle_agent_event` with the upstream traceparent so
+    span continuity holds, then drains."""
+    from app.core.tasks import enqueue  # noqa: PLC0415
 
-
-class _SpyCodeReview(CodeReview):
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del workspace, ticket_ctx, inputs, ctx
-        return Outcome.success(outputs={"draft_findings": []})  # PostFindings → no-op
-
-
-class _SpyIncrementalReview(IncrementalReview):
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del workspace, ticket_ctx, inputs, ctx
-        return Outcome.success(outputs={"draft_findings": []})
-
-
-class _SpyVerifyFix(VerifyFix):
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del workspace, ticket_ctx, inputs, ctx
-        # ResolveFinding handles None verdict → success-no-op.
-        return Outcome.success(outputs={"verdict": {}})
-
-
-class _SpyStaleCheck(StaleCheck):
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del workspace, ticket_ctx, inputs, ctx
-        # ArchiveStaleFindings with empty list → success-no-op.
-        return Outcome.success(outputs={"stale_finding_ids": []})
-
-
-class _SpyAnswerQuestion(AnswerQuestion):
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del workspace, ticket_ctx, inputs, ctx
-        # PostReply with empty reply_body → success-no-op.
-        return Outcome.success(outputs={"reply_body": ""})
+    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
+    assert wfx is not None
+    assert wfx.state == WorkflowState.AWAITING_AGENT.value, (
+        f"expected AWAITING_AGENT before agent event, got {wfx.state!r}"
+    )
+    assert wfx.pending_agent_command_id is not None
+    await enqueue(
+        HANDLE_AGENT_EVENT,
+        args={
+            "workflow_execution_id": wfx_id,
+            "agent_command_id": str(wfx.pending_agent_command_id),
+            "outcome_label": outcome_label,
+            "outputs": outputs or {},
+            "traceparent": wfx.otel_trace_context,
+        },
+        session=db_session,
+    )
+    await db_session.commit()
+    await _drain_workflow_outbox(db_session)
 
 
 @pytest.fixture
@@ -151,23 +145,46 @@ def _engine_with_stubs(workspace_providers_isolation, workflow_context_provider_
     with scoped_engine() as eng:
         for cmd in ALL_LIFECYCLE_COMMANDS:
             eng.register_command(cmd)
-        eng.register_command(_SpyCodeReview())
-        eng.register_command(_SpyIncrementalReview())
-        eng.register_command(_SpyVerifyFix())
-        eng.register_command(_SpyStaleCheck())
-        eng.register_command(_SpyAnswerQuestion())
-        for cmd in ALL_LOCAL_COMMANDS:
+        for cmd in (*ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
             eng.register_command(cmd)
         yield eng
 
 
 _OTHER_FOUR_WORKFLOWS = [incremental_review_v1, verify_fix_v1, stale_check_v1, answer_question_v1]
 
+# Minimum-shape agent-event outputs for each Workspace step per workflow,
+# in step-dispatch order. Downstream Local steps short-circuit on no-op
+# values (empty findings, empty verdict, etc.).
+_WORKSPACE_STEP_OUTPUTS: dict[str, list[dict[str, Any]]] = {
+    "incremental_review_v1": [
+        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
+        {"draft_findings": [], "summary_body": "", "state": "COMMENT"},  # IncrementalReview
+        {},  # CleanupWorkspace
+    ],
+    "verify_fix_v1": [
+        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
+        {"verdict": {}},  # VerifyFix
+        {},  # CleanupWorkspace
+    ],
+    "stale_check_v1": [
+        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
+        {"stale_finding_ids": []},  # StaleCheck
+        {},  # CleanupWorkspace
+    ],
+    "answer_question_v1": [
+        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
+        {"reply_body": ""},  # AnswerQuestion
+        {},  # CleanupWorkspace
+    ],
+}
+
 
 @pytest.mark.parametrize("workflow", _OTHER_FOUR_WORKFLOWS, ids=lambda w: w.name)
 async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -> None:  # type: ignore[no-untyped-def]
     """Each non-pr_review_v1 reviewer workflow walks to DONE end-to-end.
-    pr_review_v1 is covered separately by test_pr_review_v1_e2e_service."""
+    Workspace steps park at AWAITING_AGENT; the test simulates each agent
+    event with minimum-shape outputs. pr_review_v1 is covered separately
+    by test_pr_review_v1_e2e_service."""
     from app.domain.tickets import create as create_ticket  # noqa: PLC0415
 
     _engine_with_stubs.register_workflow(workflow)
@@ -200,7 +217,6 @@ async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -
     wfx_id = await _engine_with_stubs.start(
         workflow_name=workflow.name,
         ticket_id=str(ticket_id),
-        workspace_provider="in_memory",
         ticket_payload={
             "head_sha": "deadbeef",
             "base_sha": "babecafe",
@@ -211,7 +227,12 @@ async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -
         session=db_session,
     )
     await db_session.commit()
+    # Drain local steps; stops at first Workspace step (AWAITING_AGENT).
     await _drain_workflow_outbox(db_session)
+
+    # Advance each Workspace step via simulated agent events.
+    for outputs in _WORKSPACE_STEP_OUTPUTS[workflow.name]:
+        await _advance_pending_agent_event(db_session, wfx_id, outputs=outputs)
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value, (
@@ -220,10 +241,10 @@ async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -
     assert wfx.pending_agent_command_id is None
 
 
-# ── trace linkage parity across the 5 workflows ──────────────────────────
+# ── trace linkage parity across the 4 non-pr_review_v1 workflows ─────────
 
 
-_ALL_FIVE_WORKFLOWS = [
+_ALL_FOUR_WORKFLOWS = [
     answer_question_v1,
     incremental_review_v1,
     stale_check_v1,
@@ -253,21 +274,15 @@ def _in_memory_spans():
     processor.shutdown()
 
 
-@pytest.mark.parametrize("workflow", _ALL_FIVE_WORKFLOWS, ids=lambda w: w.name)
+@pytest.mark.parametrize("workflow", _ALL_FOUR_WORKFLOWS, ids=lambda w: w.name)
 async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped-def]
     db_session, _engine_with_stubs, _in_memory_spans, workflow
 ):
-    """**Provider-parity trace audit for the 4 non-pr_review_v1 reviewer
-    workflows.** Each workflow walks to DONE end-to-end and every emitted
-    workflow task-body span (`workflow.start_step` / `workflow.route_workflow`
-    / `workflow.handle_agent_event`) shares the upstream trace_id. The
-    fifth workflow (pr_review_v1) has its own trace audit in
-    `test_trace_linkage.py`; this parametrized test covers the other four.
-
-    Asserts one trace ID covers webhook → terminal outcome for all five
-    workflows against the in-memory provider. The Go-subprocess side
-    depends on env-passing of `TRACEPARENT`.
-    """
+    """Trace audit for the 4 non-pr_review_v1 reviewer workflows. Each
+    workflow walks to DONE and every emitted workflow task-body span
+    (`workflow.start_step` / `workflow.route_workflow` /
+    `workflow.handle_agent_event`) shares the upstream trace_id.
+    pr_review_v1 has its own trace audit in `test_trace_linkage.py`."""
     from opentelemetry import trace as _trace  # noqa: PLC0415
 
     from app.core.observability import current_traceparent  # noqa: PLC0415
@@ -303,7 +318,6 @@ async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped
         wfx_id = await _engine_with_stubs.start(
             workflow_name=workflow.name,
             ticket_id=str(ticket_id),
-            workspace_provider="in_memory",
             traceparent=current_traceparent(),
             ticket_payload={
                 "head_sha": "deadbeef",
@@ -316,7 +330,12 @@ async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped
         )
         await db_session.commit()
 
+    # Drain local steps; parks at first Workspace step (AWAITING_AGENT).
     await _drain_workflow_outbox(db_session)
+
+    # Advance each Workspace step — this emits handle_agent_event spans.
+    for outputs in _WORKSPACE_STEP_OUTPUTS[workflow.name]:
+        await _advance_pending_agent_event(db_session, wfx_id, outputs=outputs)
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value

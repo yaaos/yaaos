@@ -32,7 +32,6 @@ export {
   type UpdateOrgSettingsInput,
   type WorkspaceConnectionState,
   type WorkspaceConnectionStatus,
-  type WorkspaceProvider,
   useCancelReviewerJobs,
   useConversationsForTicket,
   useCreateLesson,

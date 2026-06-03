@@ -24,6 +24,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
@@ -35,6 +36,7 @@ from app.core.workflow import (
     get_engine,
 )
 from app.core.workflow.models import WorkflowExecutionRow
+from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 
 
 @pytest.fixture(autouse=True)
@@ -152,9 +154,33 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
 async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_session) -> None:  # type: ignore[no-untyped-def]
     """The `handle_agent_event` task body also nests under the upstream
     `traceparent` — the agent's terminal-event ingestion is part of the
-    same trace, not a new one. Drive a Workspace step on `remote_agent`
-    + inject the terminal event under the upstream span."""
+    same trace, not a new one. Drive a Workspace step and inject the
+    terminal event under the upstream span."""
     eng = get_engine()
+
+    class _MinimalProvider:
+        meta = PluginMeta(id="trace_test_stub", type="workspace", display_name="trace-stub")
+
+        async def provision(self, spec):  # type: ignore[no-untyped-def]
+            return {}
+
+        async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+            return None
+
+        async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+            return None
+
+        async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+        async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+            return None
+
+        async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+            return None
+
+    bind_workspace_registry(WorkspaceRegistry())
+    register_workspace_provider(_MinimalProvider())
 
     class _NoopWs:
         kind = "DoOnAgent"
@@ -186,7 +212,6 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
         wfx_id = await eng.start(
             workflow_name="trace-linkage-ws",
             ticket_id=str(uuid4()),
-            workspace_provider="remote_agent",
             traceparent=current_traceparent(),
             session=db_session,
         )

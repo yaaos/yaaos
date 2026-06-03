@@ -12,7 +12,7 @@
 
 - **Three tasks, not two** — Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; workers stay free during the wait; `handle_agent_event` fires when the terminal event arrives.
 - **Recovery fires at most once per step instance** — repeated `auth_expired` after recovery has run falls through to Tier-2 retry then Tier-3 transitions. Prevents infinite auth-refresh loops.
-- **`in_memory` provider runs the command inline** (no wire round-trip; `pending_agent_command_id` stays null). **`remote_agent` provider** dispatches the AgentCommand and parks the workflow in `awaiting_agent`.
+- **Workspace commands always dispatch to `awaiting_agent`** — the engine parks the execution and assigns `pending_agent_command_id`; the terminal AgentEvent resumes routing. Provider resolution errors surface in the workspace module's dispatch, not the engine. There is no inline/in-memory dispatch path.
 - **`$`-expression inputs** — `$<step_id>.<field>` reads a prior step's `outputs`; `$ticket.<field>` reads the payload stashed at `engine.start()` time. Absent fields return `None` rather than erroring.
 - **Cross-module callers use read projections**, not raw SQLAlchemy rows. See `WorkflowExecutionSummary`, `HitlHistoryEntry`, and the `list_*` / `get_*` ops in `__init__.py`.
 

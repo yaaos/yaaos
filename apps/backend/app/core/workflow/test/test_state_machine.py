@@ -24,6 +24,7 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
@@ -42,6 +43,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.recovery import _clear_recovery_policies_for_tests
+from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 
 # ── Test commands ───────────────────────────────────────────────────────
 
@@ -133,6 +135,31 @@ class _WorkspaceStub:
         return Outcome.success()
 
 
+class _MinimalWorkspaceProvider:
+    """Minimal WorkspaceProvider stub so `list_workspace_providers()` returns
+    exactly one entry when Workspace commands are dispatched in tests."""
+
+    meta = PluginMeta(id="test_stub", type="workspace", display_name="test-stub")
+
+    async def provision(self, spec):  # type: ignore[no-untyped-def]
+        return {}
+
+    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+        return None
+
+    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+        return None
+
+    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+        return None
+
+    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+        return None
+
+
 # ── Drain helper ────────────────────────────────────────────────────────
 
 
@@ -174,6 +201,16 @@ def _reset_engine():  # type: ignore[no-untyped-def]
     svc._engine = None
     yield
     svc._engine = prior
+
+
+@pytest.fixture
+def _with_stub_workspace_provider():
+    """Register exactly one workspace provider so Workspace-step dispatch
+    in `start_step` passes the single-provider guard."""
+    bind_workspace_registry(WorkspaceRegistry())
+    register_workspace_provider(_MinimalWorkspaceProvider())
+    yield
+    bind_workspace_registry(WorkspaceRegistry())
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:
@@ -344,7 +381,11 @@ async def test_append_steps_inserts_at_front(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_workspace_step_transitions_to_awaiting_agent(db_session) -> None:
+async def test_workspace_step_transitions_to_awaiting_agent(
+    db_session, _with_stub_workspace_provider
+) -> None:
+    """Workspace branch always dispatches over the wire to the single
+    registered provider and parks the workflow in awaiting_agent."""
     ws = _WorkspaceStub()
     wf = Workflow(
         name="ws-1",
@@ -353,12 +394,9 @@ async def test_workspace_step_transitions_to_awaiting_agent(db_session) -> None:
         entry_step_id="do",
     )
     eng = _engine_with(ws, workflow=wf)
-    # remote_agent provider: Workspace branch dispatches over the wire and
-    # parks the workflow in awaiting_agent until the terminal AgentEvent.
     exec_id = await eng.start(
         workflow_name="ws-1",
         ticket_id=_ticket_id(),
-        workspace_provider="remote_agent",
         session=db_session,
     )
     await db_session.commit()
@@ -371,40 +409,7 @@ async def test_workspace_step_transitions_to_awaiting_agent(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_memory_workspace_step_runs_inline_to_done(db_session) -> None:
-    """In-memory provider: the Workspace branch collapses into an inline
-    `execute()` call (no wire round-trip). Workflow advances straight to
-    the next step or terminal state without ever entering awaiting_agent."""
-    ws = _WorkspaceStub()
-    wf = Workflow(
-        name="ws-inline-1",
-        version=1,
-        steps=(
-            Step(
-                id="do",
-                command_kind="DoOnAgent",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="do",
-    )
-    eng = _engine_with(ws, workflow=wf)
-    exec_id = await eng.start(
-        workflow_name="ws-inline-1",
-        ticket_id=_ticket_id(),
-        workspace_provider="in_memory",
-        session=db_session,
-    )
-    await db_session.commit()
-    await _drain_workflow_outbox(db_session)
-
-    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
-    assert wfx.state == WorkflowState.DONE.value
-    assert wfx.pending_agent_command_id is None
-
-
-@pytest.mark.asyncio
-async def test_handle_agent_event_advances_workflow(db_session) -> None:
+async def test_handle_agent_event_advances_workflow(db_session, _with_stub_workspace_provider) -> None:
     ws = _WorkspaceStub()
     wf = Workflow(
         name="ws-then-done",
@@ -420,7 +425,6 @@ async def test_handle_agent_event_advances_workflow(db_session) -> None:
     exec_id = await eng.start(
         workflow_name="ws-then-done",
         ticket_id=_ticket_id(),
-        workspace_provider="remote_agent",
         session=db_session,
     )
     await db_session.commit()
@@ -454,7 +458,7 @@ async def test_handle_agent_event_advances_workflow(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_handle_agent_event_is_noop(db_session) -> None:
+async def test_stale_handle_agent_event_is_noop(db_session, _with_stub_workspace_provider) -> None:
     ws = _WorkspaceStub()
     wf = Workflow(
         name="ws-stale",
@@ -470,7 +474,6 @@ async def test_stale_handle_agent_event_is_noop(db_session) -> None:
     exec_id = await eng.start(
         workflow_name="ws-stale",
         ticket_id=_ticket_id(),
-        workspace_provider="remote_agent",
         session=db_session,
     )
     await db_session.commit()
@@ -567,7 +570,9 @@ async def test_hitl_pause_and_resume(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_cancel_during_awaiting_agent_then_event(db_session) -> None:
+async def test_request_cancel_during_awaiting_agent_then_event(
+    db_session, _with_stub_workspace_provider
+) -> None:
     ws = _WorkspaceStub()
     wf = Workflow(
         name="ws-cancel",
@@ -583,7 +588,6 @@ async def test_request_cancel_during_awaiting_agent_then_event(db_session) -> No
     exec_id = await eng.start(
         workflow_name="ws-cancel",
         ticket_id=_ticket_id(),
-        workspace_provider="remote_agent",
         session=db_session,
     )
     await db_session.commit()

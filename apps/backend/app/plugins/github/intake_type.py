@@ -372,7 +372,6 @@ class GithubIntakeType:
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_id),
             traceparent=current_traceparent(),
-            workspace_provider="remote_agent",
             ticket_payload=dict(ticket_payload),
             session=session,
         )

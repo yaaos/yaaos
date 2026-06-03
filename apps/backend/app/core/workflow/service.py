@@ -61,23 +61,8 @@ _APPEND_QUEUE_KEY = "__append_queue__"
 _APPENDED_POOL_KEY = "__appended_pool__"
 _AFTER_APPEND_KEY = "__after_append__"
 _ATTEMPTS_KEY = "__attempts__"
-_WORKSPACE_PROVIDER_KEY = "__workspace_provider__"
 _RECOVERED_STEPS_KEY = "__recovered_steps__"
 _TICKET_PAYLOAD_KEY = "__ticket_payload__"
-
-# Provider values stashed by `engine.start()`. The intake layer passes the
-# org's `workspace_provider` setting (or "in_memory" when unset). The Workspace
-# branch of `start_step` consults this to decide whether to dispatch over the
-# wire (`remote_agent`) or run the command inline (`in_memory`). Default is
-# `in_memory` for tests + legacy rows that predate this routing.
-_PROVIDER_IN_MEMORY = "in_memory"
-_PROVIDER_REMOTE_AGENT = "remote_agent"
-
-
-def _get_workspace_provider(wfx: WorkflowExecutionRow) -> str:
-    """Read the stashed workspace provider for this workflow. Falls back to
-    in_memory when unset (preserves behavior for legacy + test-stub rows)."""
-    return str(wfx.step_state.get(_WORKSPACE_PROVIDER_KEY) or _PROVIDER_IN_MEMORY)
 
 
 # ── The three taskiq task bodies ────────────────────────────────────────
@@ -188,39 +173,16 @@ async def _start_step_impl(
         wfx.current_step_id = step_id
 
         if command.category == CommandCategory.WORKSPACE:
-            provider = _get_workspace_provider(wfx)
-            if provider == _PROVIDER_IN_MEMORY:
-                # In-memory provider: no wire protocol to wait on. Run the
-                # command inline like a Local command — its body owns the
-                # workspace lifecycle calls (`core/workspace.create_workspace`
-                # / `close_workspace`) and any in-process subprocess work.
-                # This collapses the architecture's `awaiting_agent` round
-                # trip into an in-process function call. The remote_agent
-                # path below preserves the async wire-protocol behavior.
-                outcome = await _safe_execute(command, inputs, cmd_ctx)
-                _persist_attempt(wfx, step_id, attempt)
-                await enqueue(
-                    ROUTE_WORKFLOW,
-                    args={
-                        "workflow_execution_id": workflow_execution_id,
-                        "completed_step_id": step_id,
-                        "outcome_label": outcome.label,
-                        "outputs": _outcome_payload(outcome),
-                        "traceparent": traceparent,
-                    },
-                    session=s,
-                )
-                await s.commit()
-                return
-
-            # remote_agent: dispatch over the wire and wait for the
-            # terminal AgentEvent. This synthesizes the command id so the
-            # state-machine gate behaves end-to-end while real
-            # `core/workspace.dispatch()` is stubbed.
+            # Workspace commands always dispatch over the wire to the registered
+            # WorkspaceProvider. The engine parks the execution in `awaiting_agent`
+            # and assigns a `pending_agent_command_id`; the terminal AgentEvent
+            # arrives via `handle_agent_event` to resume routing. Provider
+            # resolution and "no provider" errors surface in the workspace
+            # module's actual dispatch path (not here) to preserve the module DAG.
             wfx.pending_agent_command_id = uuid4()
             wfx.state = WorkflowState.AWAITING_AGENT.value
             log.info(
-                "workflow.start_step.workspace_remote_dispatch_stub",
+                "workflow.start_step.workspace_dispatched",
                 workflow_execution_id=workflow_execution_id,
                 command_kind=step.command_kind,
             )
@@ -618,6 +580,10 @@ class WorkflowExecutionSummary:
     # this field rather than reaching into workflow_executions directly.
     pending_agent_command_id: UUID | None = None
     cancel_requested: bool = False
+    # The OTel traceparent stored at engine.start() time. Exposed so callers
+    # that simulate agent events (tests, agent_gateway) can propagate trace
+    # context into handle_agent_event without reaching into the row directly.
+    otel_trace_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -644,6 +610,7 @@ def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
         updated_at=row.updated_at,
         pending_agent_command_id=row.pending_agent_command_id,
         cancel_requested=row.cancel_requested,
+        otel_trace_context=row.otel_trace_context,
     )
 
 
@@ -1075,7 +1042,6 @@ class WorkflowEngine:
         ticket_id: str,
         version: int | None = None,
         traceparent: str | None = None,
-        workspace_provider: str | None = None,
         ticket_payload: dict[str, Any] | None = None,
         session: AsyncSession,
     ) -> str:
@@ -1084,26 +1050,22 @@ class WorkflowEngine:
         and return the new execution id. Required `session` — the caller
         commits and the outbox drain delivers the task post-commit.
 
-        `workspace_provider`: the org's workspace provider id (set on the
-        `orgs` row). When `in_memory` (or unset), Workspace
-        commands run inline in the engine. When `remote_agent`, they
-        dispatch over the wire and pause the workflow in `awaiting_agent`
-        until the terminal AgentEvent arrives. Callers that don't know the
-        org's setting can pass None — the engine defaults to in_memory.
-
         `ticket_payload`: the ticket's intake payload dict. Stashed on the
         execution row so workflow input expressions can reference
         `$ticket.<field>` (e.g. `$ticket.head_sha`) without each step
         re-fetching from the DB. Callers that have it in hand (intake
         layer) pass it; callers without can omit — the resolver returns
-        None for missing fields."""
+        None for missing fields.
+
+        Workspace commands always dispatch over the wire to the registered
+        WorkspaceProvider and park in `awaiting_agent`. Provider resolution
+        and errors surface in the workspace module's actual dispatch, not
+        here."""
         wf = self.get_workflow(workflow_name, version=version)
         for step in wf.steps:
             self.get_command(step.command_kind)
 
         initial_state: dict[str, Any] = {}
-        if workspace_provider is not None:
-            initial_state[_WORKSPACE_PROVIDER_KEY] = workspace_provider
         if ticket_payload is not None:
             initial_state[_TICKET_PAYLOAD_KEY] = dict(ticket_payload)
 
