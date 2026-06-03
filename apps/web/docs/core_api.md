@@ -53,7 +53,13 @@ Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 
 ### Query hooks
 
-`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useTickets`, `useTicket`, `useLessons`, `useNotifications`, `useDashboard`, `useAgents`, `useFindingsForTicket`, `useReviewJobsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). Polling-based utility hooks (`useHealth`, `useConfigStatus`) stay as regular `useQuery` — they power ambient chrome (connection banner, onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
+`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useLessons`, `useNotifications`, `useDashboard`, `useAgents`, `useFindingsForTicket`, `useReviewJobsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). Polling-based utility hooks (`useHealth`, `useConfigStatus`) stay as regular `useQuery` — they power ambient chrome (connection banner, onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
+
+Auth hooks live in `queries.ts` so all layers can call them without importing from `domain/auth`:
+- `useCurrentUser()` — `GET /api/auth/me`; returns `CurrentUser | null`.
+- `useLogout()` — mutation, single-session sign-out.
+- `useLogoutAll()` — mutation, all-sessions sign-out.
+`domain/auth/queries.ts` re-exports these for backward compatibility within the auth domain.
 
 `useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_liveness_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
 

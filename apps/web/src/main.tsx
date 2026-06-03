@@ -1,11 +1,11 @@
 import { ThemeProvider, applyStoredTheme } from "@core/layout";
 import { ErrorBoundary, configure } from "@core/observability";
-import { router } from "@core/routing/router";
 import { Toaster } from "@shared/components/ui/sonner";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { router } from "./router";
 import "./styles.css";
 
 applyStoredTheme();

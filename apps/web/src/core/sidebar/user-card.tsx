@@ -1,6 +1,5 @@
-import { useCurrentOrgSlug } from "@core/api";
-import { useCurrentUser, useLogout } from "@domain/auth";
-import { cn } from "@shared/utils/cn";
+import { useCurrentOrgSlug, useCurrentUser, useLogout } from "@core/api";
+import { cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import { ChevronUp, Lock, LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";

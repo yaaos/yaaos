@@ -11,7 +11,7 @@
  * renders nothing so callers can drop it in safely.
  */
 
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
 
 export interface TicketStage {

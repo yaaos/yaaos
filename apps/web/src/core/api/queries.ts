@@ -9,6 +9,65 @@ import {
   apiFetch,
 } from "./client";
 
+// ── Auth / session ────────────────────────────────────────────────────────────
+
+export interface EmailSummary {
+  email: string;
+  is_primary: boolean;
+  verified: boolean;
+}
+
+export interface MembershipSummary {
+  org_id: string;
+  slug: string;
+  display_name: string;
+  role: "owner" | "admin" | "builder";
+  handle: string;
+}
+
+/** Response of `GET /api/auth/me`. */
+export interface CurrentUser {
+  user: {
+    id: string;
+    display_name: string;
+    primary_email: string | null;
+    emails: EmailSummary[];
+  };
+  memberships: MembershipSummary[];
+}
+
+/** Fetches `/api/auth/me`. Returns `null` (not throws) when unauthenticated. */
+export function useCurrentUser() {
+  return useSuspenseQuery<CurrentUser | null>({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      try {
+        return await apiFetch<CurrentUser>("/api/auth/me");
+      } catch (err) {
+        if ((err as Error)?.message?.startsWith("401")) return null;
+        throw err;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch("/api/auth/logout", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
+  });
+}
+
+export function useLogoutAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch("/api/auth/logout-all", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
+  });
+}
+
 // ── Broken-creds summary ─────────────────────────────────────────────────────
 
 export interface BrokenIntegrationSummary {

@@ -7,8 +7,7 @@ import {
 import { EmptyState, ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Button } from "@shared/components/ui/button";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { ago } from "@shared/utils/ago";
-import { cn } from "@shared/utils/cn";
+import { ago, cn } from "@shared/utils";
 import { Bell } from "lucide-react";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";

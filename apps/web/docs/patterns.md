@@ -9,7 +9,7 @@ Cross-app conventions (UTC on the wire, audit-log shape) live in [`docs/system-a
 
 ## Imports
 
-Absolute only via path aliases (`@core/...`, `@domain/...`, `@shared/...`). Only what's exported from `index.ts(x)` — no deep imports across module boundaries (barrel-only). The architectural rules are authored in `apps/web/.dependency-cruiser.cjs` (non-failing; violations appear as `info`-level output).
+Absolute only via path aliases (`@core/...`, `@domain/...`, `@shared/...`). Only what's exported from `index.ts(x)` — no deep imports across module boundaries (barrel-only). The architectural rules are enforced in `bin/ci` via `apps/web/.dependency-cruiser.cjs` at `error` severity — violations fail the build.
 
 ## Hook placement and naming
 
@@ -19,7 +19,7 @@ Absolute only via path aliases (`@core/...`, `@domain/...`, `@shared/...`). Only
 | Module logic (derived state, callbacks, local state) | `domain/<module>/use-<thing>.ts` | `use-<thing>.ts` (kebab file, camel export) |
 | Shared cross-module | `shared/hooks/` | `use<Thing>` |
 
-- Logic hooks (`use-*.ts`) return data, state, and callbacks — **never JSX**. File extension is `.ts`, not `.tsx`.
+- Logic hooks (`use-*.ts`) return data, state, and callbacks — **never JSX**. File extension is `.ts`, not `.tsx`. A `find src -name "use-*.tsx"` glob in `bin/ci` enforces this.
 - Server hooks use `useSuspenseQuery` — callers never see `isLoading`. Loading handled by `<Suspense>` fallbacks.
 
 ## Suspense and error boundaries
@@ -87,11 +87,11 @@ Target: WCAG 2.2 AA on all shipped pages.
 | Lint + format | Biome (`apps/web/biome.json`) |
 | Type check | `tsc --noEmit` |
 | Unit/integration tests | Vitest + RTL + MSW |
-| Boundary lint | dependency-cruiser (`apps/web/.dependency-cruiser.cjs`, non-failing) |
+| Boundary lint | dependency-cruiser (`apps/web/.dependency-cruiser.cjs`, error — fails `bin/ci`) |
 | Build | Vite |
 | Bundle report | rollup-plugin-visualizer → `tmp/bundle-stats.html` after every build (non-gating) |
 
-`apps/web/bin/ci` runs all except dependency-cruiser (advisory only). Bundle report is informational — CI does not fail on chunk size.
+`apps/web/bin/ci` runs all steps. Bundle report is informational — CI does not fail on chunk size. A `use-*.tsx` glob check enforces that logic hooks are always `.ts` not `.tsx`.
 
 ## Module documentation
 

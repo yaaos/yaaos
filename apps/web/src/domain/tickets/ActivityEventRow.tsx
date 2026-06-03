@@ -20,8 +20,7 @@
  */
 
 import type { ReviewJobActivityEvent } from "@core/api";
-import { ago } from "@shared/utils/ago";
-import { cn } from "@shared/utils/cn";
+import { ago, cn } from "@shared/utils";
 import {
   CheckCircle2,
   Circle,

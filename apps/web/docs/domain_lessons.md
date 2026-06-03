@@ -13,7 +13,7 @@
 - **List** — `useLessons(filter)` with `useSuspenseQuery`; list section is wrapped in `<Suspense>` + `<ErrorBoundary>` (skeleton while loading, `ErrorBanner` on fetch failure). Filter state (q, repo, sort) is local to the `LessonsList` component.
 - **Cross-module entry** — `domain/tickets` Teach-yaaos modal pre-fills `useCreateLesson` with the finding body; on save invalidates `["lessons", repo]`.
 - No `refetchInterval` — lessons only change on operator action.
-- The `/lessons` route validates search params (`q`, `repo`, `sort`) via Zod in `core/routing/router.tsx`.
+- The `/lessons` route validates search params (`q`, `repo`, `sort`) via Zod in `core/routing/schemas.ts`.
 
 ## Tests
 

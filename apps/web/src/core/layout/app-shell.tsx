@@ -1,4 +1,4 @@
-import { useOtelIdentitySync } from "@core/observability/use-otel-identity-sync";
+import { useOtelIdentitySync } from "@core/observability";
 import { Sidebar } from "@core/sidebar";
 import { useServerEvents } from "@core/sse";
 import { Outlet, useRouterState } from "@tanstack/react-router";

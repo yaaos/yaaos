@@ -34,6 +34,22 @@ const s = fs.statSync(f).size;
 console.log('  bundle-stats.html written (' + (s / 1024).toFixed(1) + ' KB). Open for interactive treemap.');
 " || true
 
+echo "==> dependency-cruiser (layer/domain direction + barrel-only)"
+# Uses the programmatic API directly to support Node 23.x.
+# Rules live in .dependency-cruiser.cjs; see apps/web/docs/patterns.md.
+node bin/check-deps.mjs
+
+echo "==> use-*.tsx hook naming check"
+# Logic hooks must be .ts not .tsx — hooks never return JSX.
+# Any use-*.tsx file in src/ fails the build.
+illegal_hook_files=$(find src -name "use-*.tsx" 2>/dev/null | sort)
+if [ -n "$illegal_hook_files" ]; then
+  echo "  FAIL: found use-*.tsx files (hooks must be .ts, not .tsx):"
+  echo "$illegal_hook_files" | sed 's/^/    /'
+  exit 1
+fi
+echo "  use-*.tsx check: 0 files ✓"
+
 echo "==> semgrep (static security: p/typescript + p/react + p/owasp-top-ten)"
 semgrep scan \
     --config p/typescript \

@@ -16,8 +16,7 @@
 
 import { getCurrentOrgSlug, useAgents } from "@core/api";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ErrorBanner } from "@shared/components/layout";
-import { ConfirmModal } from "@shared/components/layout/confirm-modal";
+import { ConfirmModal, ErrorBanner } from "@shared/components/layout";
 import { Button } from "@shared/components/ui/button";
 import {
   Form,

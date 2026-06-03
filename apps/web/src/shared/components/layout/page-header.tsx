@@ -6,7 +6,7 @@
  * primary affordances (Save, Add, …).
  */
 
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import type { ReactNode } from "react";
 
 interface PageHeaderProps {

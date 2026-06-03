@@ -1,4 +1,5 @@
 export { getCurrentOrgSlug, useCurrentOrgSlug } from "./org-context";
+export type { AuthFailureReason } from "./auth-failure";
 export {
   apiClient,
   apiFetch,
@@ -11,6 +12,14 @@ export {
   type ReviewJobActivityEvent,
   type Ticket,
 } from "./client";
+export {
+  type CurrentUser,
+  type EmailSummary,
+  type MembershipSummary,
+  useCurrentUser,
+  useLogout,
+  useLogoutAll,
+} from "./queries";
 export {
   type AgentRow,
   type BrokenIntegrationSummary,

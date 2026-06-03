@@ -12,8 +12,7 @@
  * additional providers in dev/test only.
  */
 
-import { useSsoDiscover } from "@core/api";
-import type { AuthFailureReason } from "@core/api/auth-failure";
+import { type AuthFailureReason, useSsoDiscover } from "@core/api";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ErrorBanner } from "@shared/components/layout";
 import { Button } from "@shared/components/ui/button";

@@ -1,1 +1,1 @@
-export { router } from "./router";
+export { lessonsSearchSchema, ticketsSearchSchema } from "./schemas";

@@ -14,13 +14,13 @@ Three groupings under `apps/web/src/`:
 
 - Cross-domain imports are forbidden; any primitive two domains share moves to `shared/`.
 - `core` cannot import from `domain` (mirrors the backend's one-way dependency direction).
-- Boundaries are authored in `apps/web/.dependency-cruiser.cjs` at `severity: "info"` (non-failing). Only `core/api` may import from `core/api/generated/`.
+- Boundaries are enforced by `apps/web/.dependency-cruiser.cjs` at `severity: "error"` as a dedicated `bin/ci` step. Only `core/api` may import from `core/api/generated/`. `shared/components/ui/` is excluded (managed vendor layer).
 
 ## Cross-cutting wiring
 
 - **TanStack Query** — single `QueryClient` in `main.tsx`. Keys are module-scoped arrays; see [patterns.md § Query keys](patterns.md#query-keys). Hooks use `useSuspenseQuery`; callers wrap in `<Suspense>` + `<ErrorBoundary>` from `react-error-boundary`.
 - **SSE** — `useServerEvents()` (`core/sse`) runs in the root `AppShell`. One org-keyed `EventSource` (`?org=<slug>`, since `EventSource` can't send `X-Org-Slug`) → `ticket_status_changed` → `invalidateQueries(...)`. Domain modules consume queries, not events. See [core_sse.md](core_sse.md).
-- **Routing** — `core/routing` declares the full route tree centrally; domain modules export their page components. See [core_routing.md](core_routing.md).
+- **Routing** — `src/router.tsx` (composition root) declares the full route tree; `core/routing` owns the search schemas. Domain modules export their page components. See [core_routing.md](core_routing.md).
 - **Org slug** — derived from the URL on every read (`core/api/org-context.ts`). No module-global cache. `apiFetch` attaches `X-Org-Slug`; domain hooks stay org-agnostic at the call site.
 - **Generated types** — `src/core/api/generated/schema.d.ts` is generated from the backend's `/openapi.json` by `bin/gen-api-types` and committed. Regeneration + drift check: `bin/gen-api-types --check`. Only `core/api` imports the generated dir.
 - **MSW test infra** — `src/test/msw/` holds the Node.js MSW server and per-domain handlers. Global lifecycle in `src/test-setup.ts`. Domain tests use real `QueryClient` + real `apiFetch` + MSW HTTP interception. See [patterns.md § MSW testing strategy](patterns.md#msw-testing-strategy).

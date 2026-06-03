@@ -6,7 +6,7 @@
  * the user; "Couldn't …" not "You did something wrong".
  */
 
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
 interface ErrorBannerProps {

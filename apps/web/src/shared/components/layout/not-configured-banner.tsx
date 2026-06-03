@@ -10,9 +10,8 @@
  * Data source: `useConfigStatus()` → `/api/orgs/config-status`.
  */
 
-import { useConfigStatus, useCurrentOrgSlug } from "@core/api";
-import { useCurrentUser } from "@domain/auth";
-import { cn } from "@shared/utils/cn";
+import { useConfigStatus, useCurrentOrgSlug, useCurrentUser } from "@core/api";
+import { cn } from "@shared/utils";
 import { AlertTriangle } from "lucide-react";
 
 const HUMAN_LABEL: Record<string, string> = {

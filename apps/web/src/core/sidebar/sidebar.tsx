@@ -1,8 +1,7 @@
-import { useCurrentOrgSlug } from "@core/api";
-import { useCurrentUser } from "@domain/auth";
+import { useCurrentOrgSlug, useCurrentUser } from "@core/api";
 import { NotificationsBell, OrgSwitcher } from "@shared/components/chrome";
 import { Popover, PopoverContent, PopoverTrigger } from "@shared/components/ui/popover";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Brain,

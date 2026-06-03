@@ -14,7 +14,7 @@
 import { Button } from "@shared/components/ui/button";
 import { Input } from "@shared/components/ui/input";
 import { Textarea } from "@shared/components/ui/textarea";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { useState } from "react";
 
 export interface ChoicePrompt {

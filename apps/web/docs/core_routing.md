@@ -1,14 +1,19 @@
 # core/routing
 
-> TanStack Router config — URL → component mapping for the SPA.
+> TanStack Router search schemas — route-shape infrastructure for the SPA.
 
 ## Purpose
 
 Every authenticated page lives under `/orgs/$slug/...`. There is exactly one URL tree for authenticated work; the only routes that render outside it are `/login` and `/orgs` (the picker). User-account pages (`Details`, `Security`, `Notifications`) sit at `/orgs/$slug/user/*` — the slug is always part of the URL, which is the only source of truth for current org context.
 
+Route construction (page bindings) lives in `src/router.tsx` — the app composition root — so that file can import from both `@core/*` and `@domain/*` without violating layer/domain direction rules.
+
 ## Public interface
 
-- `router` — TanStack `Router` instance, consumed by `main.tsx`'s `<RouterProvider>`.
+- `ticketsSearchSchema` — Zod schema for the `/tickets` list search params.
+- `lessonsSearchSchema` — Zod schema for the `/lessons` list search params.
+
+The `router` instance and `Register` augmentation live in `src/router.tsx`, consumed by `main.tsx`'s `<RouterProvider>`.
 
 The module declares the TanStack `Register` augmentation so `<Link to="/orgs/$slug/...">` gets typed autocomplete.
 

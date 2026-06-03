@@ -15,8 +15,7 @@
  * See `useTickets()` in `apps/web/src/core/api/queries.ts`.
  */
 
-import { type Ticket, useGithubRepositories, useTickets } from "@core/api";
-import { useCurrentUser } from "@domain/auth";
+import { type Ticket, useCurrentUser, useGithubRepositories, useTickets } from "@core/api";
 import { EmptyState, ErrorBanner, PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
@@ -29,8 +28,7 @@ import {
   SelectValue,
 } from "@shared/components/ui/select";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { ago } from "@shared/utils/ago";
-import { cn } from "@shared/utils/cn";
+import { ago, cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import {
   CheckCircle2,

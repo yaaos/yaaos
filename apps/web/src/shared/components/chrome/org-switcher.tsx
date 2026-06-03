@@ -8,7 +8,7 @@
 
 import { useCurrentOrgSlug, useMyOrgs } from "@core/api";
 import { Popover, PopoverContent, PopoverTrigger } from "@shared/components/ui/popover";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import { Building2, Check, ChevronsUpDown } from "lucide-react";
 import { useState } from "react";

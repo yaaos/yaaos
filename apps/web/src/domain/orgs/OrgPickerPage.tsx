@@ -25,7 +25,7 @@ import {
 } from "@shared/components/ui/dialog";
 import { Input } from "@shared/components/ui/input";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import { Building2, Plus } from "lucide-react";
 import { Suspense, useState } from "react";

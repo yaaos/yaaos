@@ -1,5 +1,4 @@
-import { useBrokenSummary, useCurrentOrgSlug } from "@core/api";
-import { useCurrentUser } from "@domain/auth";
+import { useBrokenSummary, useCurrentOrgSlug, useCurrentUser } from "@core/api";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ConfirmModal, ErrorBanner } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";

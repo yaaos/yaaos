@@ -10,7 +10,7 @@
  */
 
 import type { AgentRow } from "@core/api";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import { Activity, Cpu, HardDrive, Monitor } from "lucide-react";
 import { useEffect, useState } from "react";

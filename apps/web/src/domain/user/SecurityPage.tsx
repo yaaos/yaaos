@@ -1,5 +1,4 @@
-import { apiFetch } from "@core/api";
-import { useLogoutAll } from "@domain/auth";
+import { apiFetch, useLogoutAll } from "@core/api";
 import { PageHeader } from "@shared/components/layout";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";

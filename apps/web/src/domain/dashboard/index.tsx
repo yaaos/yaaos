@@ -25,8 +25,7 @@ import {
   PageHeader,
 } from "@shared/components/layout";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { ago } from "@shared/utils/ago";
-import { cn } from "@shared/utils/cn";
+import { ago, cn } from "@shared/utils";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, Bell, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { Suspense } from "react";

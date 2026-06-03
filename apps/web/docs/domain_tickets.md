@@ -15,7 +15,7 @@ Consumes: `GET /api/tickets`, `GET /api/tickets/:id`, `POST /api/reviewer/cancel
 
 `useTicketsFilters` (`use-tickets-filters.ts`) — derives filter state (status chips, free-text `q`, repo picker, "My tickets" toggle), filtered/paginated rows, repo-options list, and `loadMore`. Takes `{tickets, repos, myEmail}`. Returns data + setters; no JSX. Tested at unit tier (`test/use-tickets-filters.test.ts`).
 
-The `/tickets` route validates search params (`q`, `repo`, `status`, `mine`) via Zod in `core/routing/router.tsx`.
+The `/tickets` route validates search params (`q`, `repo`, `status`, `mine`) via Zod in `core/routing/schemas.ts`.
 
 Live updates: `ticket_status_changed` SSE invalidates `["tickets"]` (200 ms debounce). See [core/sse](architecture.md).
 

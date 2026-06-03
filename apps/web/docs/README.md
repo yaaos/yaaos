@@ -40,7 +40,7 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 
 ## CI
 
-`apps/web/bin/ci` runs Biome, `tsc --noEmit`, Vitest, and the Vite build. Semgrep runs in a separate RWX task (`web-security`) via the `semgrep/semgrep` Docker image — kept out of `bin/ci` because the web-builder image is node-only. Local semgrep shortcut and full docker invocation documented inline in `apps/web/bin/ci`.
+`apps/web/bin/ci` runs, in order: Biome, `tsc --noEmit`, Vitest, Vite build, bundle report (non-gating), dependency-cruiser boundary check, `use-*.tsx` hook naming check, semgrep. All steps must pass. Semgrep requires `semgrep` on PATH (`pipx install semgrep` locally; pip-installed in RWX CI).
 
 ## Stack
 

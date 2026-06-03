@@ -9,7 +9,7 @@
  * - Primary action (optional).
  */
 
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 

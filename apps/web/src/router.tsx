@@ -1,4 +1,14 @@
+/**
+ * App router — composition root that wires domain pages into the route tree.
+ *
+ * This file lives at the src root (outside any layer) so it can import from
+ * both @core/* and @domain/* without violating the layer/domain direction rules.
+ * `core/routing` owns the route-shape infrastructure (search schemas, path
+ * constants); this file owns the page bindings.
+ */
+
 import { AppShell } from "@core/layout";
+import { lessonsSearchSchema, ticketsSearchSchema } from "@core/routing";
 import { LoginPage } from "@domain/auth";
 import { DashboardPage } from "@domain/dashboard";
 import { LessonsPage } from "@domain/lessons";
@@ -14,26 +24,10 @@ import {
   VcsSettingsPage,
   WorkspacesSettingsPage,
 } from "@domain/org_settings";
-import { OrgPickerPage } from "@domain/orgs/OrgPickerPage";
+import { OrgPickerPage } from "@domain/orgs";
 import { TicketDetailPage, TicketsPage } from "@domain/tickets";
 import { DetailsPage, SecurityPage } from "@domain/user";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
-import { z } from "zod";
-
-/** Validated search schema for the /tickets list page. */
-const ticketsSearchSchema = z.object({
-  q: z.string().optional(),
-  repo: z.string().optional(),
-  status: z.array(z.string()).optional(),
-  mine: z.boolean().optional(),
-});
-
-/** Validated search schema for the /lessons list page. */
-const lessonsSearchSchema = z.object({
-  q: z.string().optional(),
-  repo: z.string().optional(),
-  sort: z.enum(["created_desc", "created_asc", "updated_desc"]).optional(),
-});
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -121,7 +115,7 @@ const orgLessonsRoute = createRoute({
   validateSearch: lessonsSearchSchema,
 });
 
-// : /orgs/$slug/settings → /orgs/$slug/settings/auth. The shell + per-tab
+// /orgs/$slug/settings → /orgs/$slug/settings/auth. The shell + per-tab
 // pages live under /settings/{section}; the bare /settings path redirects so
 // older bookmarks don't 404 silently.
 const orgSettingsIndexRoute = createRoute({

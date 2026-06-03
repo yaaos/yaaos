@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@shared/components/ui/dialog";
-import { cn } from "@shared/utils/cn";
+import { cn } from "@shared/utils";
 import type { LucideIcon } from "lucide-react";
 
 export interface PickerOption {
