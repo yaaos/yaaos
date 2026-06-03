@@ -28,17 +28,13 @@ package supervisor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
 	"github.com/yaaos/agent/internal/command"
-	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
-	"github.com/yaaos/agent/internal/workspace"
 )
 
 // WorkspaceRunner represents one running workspace process. `Send` writes
@@ -534,125 +530,10 @@ func failureEvent(header protocol.CommandHeader, reason string) protocol.AgentEv
 	}
 }
 
-// ── In-process runner (test default) ────────────────────────────────────────
-
-// inProcessRunner wraps `workspace.Run` in a goroutine fed by io.Pipe pairs.
-// `Send` marshals the WorkspaceCommand's wire struct, writes it as a framed
-// message on the command pipe, and reads one framed AgentEvent off the event
-// pipe. Use this in tests so the dispatch frame is exercised end-to-end
-// without OS-process spawning.
-type inProcessRunner struct {
-	cmdW *io.PipeWriter
-	evR  *io.PipeReader
-
-	cmdR *io.PipeReader // kept so the goroutine sees EOF when we close
-	evW  *io.PipeWriter
-
-	enc *ipc.Encoder
-	dec *ipc.Decoder
-
-	runCancel context.CancelFunc // cancels the workspace.Run + its handler ctx
-	done      chan struct{}
-}
-
-// InProcessSpawn returns a SpawnFunc that runs `workspace.Run(ops)` in a
-// goroutine connected by io.Pipe pairs. The default ops is StubHandler —
-// tests can pass a custom command.WorkspaceOps.
-func InProcessSpawn(ops command.WorkspaceOps) SpawnFunc {
-	if ops == nil {
-		ops = workspace.StubHandler{}
-	}
-	return func(ctx context.Context, _ string) (WorkspaceRunner, error) {
-		cmdR, cmdW := io.Pipe()
-		evR, evW := io.Pipe()
-		runCtx, runCancel := context.WithCancel(ctx)
-		runner := &inProcessRunner{
-			cmdW:      cmdW,
-			evR:       evR,
-			cmdR:      cmdR,
-			evW:       evW,
-			enc:       ipc.NewEncoder(cmdW),
-			dec:       ipc.NewDecoder(evR),
-			runCancel: runCancel,
-			done:      make(chan struct{}),
-		}
-		go func() {
-			defer close(runner.done)
-			_ = workspace.Run(runCtx, cmdR, evW, ops, workspace.Options{})
-			_ = evW.Close() // signal EOF to the parent decoder
-		}()
-		return runner, nil
-	}
-}
-
-func (r *inProcessRunner) Send(ctx context.Context, cmd command.WorkspaceCommand, onProgress func(protocol.AgentEvent)) (protocol.AgentEvent, error) {
-	wireBytes, err := cmd.MarshalWire()
-	if err != nil {
-		return protocol.AgentEvent{}, fmt.Errorf("encode command: %w", err)
-	}
-	if err := r.enc.Write(json.RawMessage(wireBytes)); err != nil {
-		return protocol.AgentEvent{}, fmt.Errorf("write command: %w", err)
-	}
-	// Read events in a loop: progress events fire `onProgress` + the
-	// loop continues; the first non-progress event ends the loop and
-	// is returned to the caller. The supervisor's `routeCommand`
-	// expects the terminal event back from this function.
-	//
-	// ctx.Done is honoured by closing the read pipe — wakes a blocked
-	// Scan.
-	resultCh := make(chan readResult, 1)
-	go func() {
-		for {
-			var ev protocol.AgentEvent
-			if err := r.dec.Read(&ev); err != nil {
-				resultCh <- readResult{err: err}
-				return
-			}
-			if ev.Kind == protocol.EventProgress {
-				if onProgress != nil {
-					onProgress(ev)
-				}
-				continue
-			}
-			resultCh <- readResult{ev: ev}
-			return
-		}
-	}()
-	select {
-	case <-ctx.Done():
-		// Close the read end so the goroutine unblocks; surface ctx err.
-		_ = r.evR.CloseWithError(ctx.Err())
-		<-resultCh
-		return protocol.AgentEvent{}, ctx.Err()
-	case res := <-resultCh:
-		if res.err != nil {
-			return protocol.AgentEvent{}, fmt.Errorf("read event: %w", res.err)
-		}
-		return res.ev, nil
-	}
-}
-
+// readResult carries one event (or error) from a background read goroutine
+// back to Send's select loop. Used by both execRunner.Send and
+// inProcessRunner.Send (in supervisortest).
 type readResult struct {
 	ev  protocol.AgentEvent
 	err error
-}
-
-func (r *inProcessRunner) Close(_ context.Context) error {
-	// Two-step shutdown. Closing cmdW makes the workspace's Decoder.Read
-	// return ipc.ErrClosed if it's currently blocked there. Cancelling the
-	// run-ctx unblocks any handler that's parked on ctx.Done — without
-	// this, a hanging handler (e.g. a long-running Claude Code invocation)
-	// keeps the goroutine alive forever.
-	_ = r.cmdW.Close()
-	r.runCancel()
-	select {
-	case <-r.done:
-	case <-time.After(2 * time.Second):
-		// Belt + braces: forcibly tear down both pipe ends. Sufficient to
-		// unblock any remaining read/write inside workspace.Run.
-		_ = r.cmdR.Close()
-		_ = r.evW.Close()
-		<-r.done
-	}
-	return nil
 }

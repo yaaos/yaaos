@@ -12,6 +12,7 @@ import (
 
 	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 // fixedNow returns a deterministic timestamp for event-timestamp assertions.
@@ -79,7 +80,7 @@ func TestRun_HappyPath_EachKindEmitsSuccess(t *testing.T) {
 	}))
 
 	var out bytes.Buffer
-	err := Run(context.Background(), &in, &out, StubHandler{}, Options{Now: fixedNow})
+	err := Run(context.Background(), &in, &out, workspacetest.StubHandler{}, Options{Now: fixedNow})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestRun_HappyPath_EachKindEmitsSuccess(t *testing.T) {
 }
 
 // failingOps returns an error for RunClaude, success for the rest.
-type failingOps struct{ StubHandler }
+type failingOps struct{ workspacetest.StubHandler }
 
 func (failingOps) RunClaude(_ context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	return command.InvokeResult{}, errors.New("agent OOM at 5 minutes")
@@ -142,7 +143,7 @@ func TestRun_UnknownKindOnPipe_ReturnsDecodeError(t *testing.T) {
 	// this as a protocol fault and tears the workspace down.
 	in := strings.NewReader(`{"kind":"Phantom","command_id":"c-bad"}` + "\n")
 	var out bytes.Buffer
-	err := Run(context.Background(), in, &out, StubHandler{}, Options{Now: fixedNow})
+	err := Run(context.Background(), in, &out, workspacetest.StubHandler{}, Options{Now: fixedNow})
 	if err == nil {
 		t.Fatalf("want decode error, got nil")
 	}
@@ -155,7 +156,7 @@ func TestRun_UnknownKindOnPipe_ReturnsDecodeError(t *testing.T) {
 }
 
 func TestRun_EOFReturnsNil(t *testing.T) {
-	if err := Run(context.Background(), strings.NewReader(""), io.Discard, StubHandler{}, Options{}); err != nil {
+	if err := Run(context.Background(), strings.NewReader(""), io.Discard, workspacetest.StubHandler{}, Options{}); err != nil {
 		t.Fatalf("EOF should return nil, got %v", err)
 	}
 }
@@ -170,7 +171,7 @@ func TestRun_ContextCancelled_StopsBetweenCommands(t *testing.T) {
 	// Pre-cancel the context; Run should return ctx.Err() before reading.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Run(ctx, strings.NewReader(""), io.Discard, StubHandler{}, Options{Now: fixedNow})
+	err := Run(ctx, strings.NewReader(""), io.Discard, workspacetest.StubHandler{}, Options{Now: fixedNow})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
@@ -180,7 +181,7 @@ func TestStubHandler_OutputsCarryWorkspaceID(t *testing.T) {
 	cmd := &protocol.CreateWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{WorkspaceID: "ws-x"},
 	}
-	res, err := StubHandler{}.CloneWorkspace(context.Background(), cmd)
+	res, err := workspacetest.StubHandler{}.CloneWorkspace(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("CloneWorkspace: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestRun_NonWorkspaceKind_AgentCommandReturnsError(t *testing.T) {
 	// it lands on a workspace child's pipe.
 	in := strings.NewReader(`{"kind":"ConfigUpdate","command_id":"c-cfg","config":{"max_workspaces":1}}` + "\n")
 	var out bytes.Buffer
-	err := Run(context.Background(), in, &out, StubHandler{}, Options{Now: fixedNow})
+	err := Run(context.Background(), in, &out, workspacetest.StubHandler{}, Options{Now: fixedNow})
 	if err == nil {
 		t.Fatalf("want error on AgentCommand on workspace pipe, got nil")
 	}

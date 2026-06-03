@@ -86,6 +86,7 @@ linters:
             - github.com/yaaos/agent/internal/protocol
             - github.com/yaaos/agent/internal/secret
             - github.com/yaaos/agent/internal/tracing
+            - github.com/yaaos/agent/internal/workspace/workspacetest
 
         supervisor:
           list-mode: strict
@@ -106,6 +107,8 @@ linters:
             - github.com/yaaos/agent/internal/protocol
             - github.com/yaaos/agent/internal/tracing
             - github.com/yaaos/agent/internal/workspace
+            - github.com/yaaos/agent/internal/supervisor/supervisortest
+            - github.com/yaaos/agent/internal/workspace/workspacetest
 
         backoff:
           list-mode: strict
@@ -194,6 +197,53 @@ linters:
             - github.com/yaaos/agent/internal/protocol
             - github.com/yaaos/agent/internal/supervisor
             - github.com/yaaos/agent/internal/workspace
+
+        # ── Test-seam sub-packages ─────────────────────────────────────────
+        # Each rule has two parts:
+        #   1. A strict allow-list for files inside the sub-package itself.
+        #   2. A quarantine rule that denies non-_test.go files from importing
+        #      the sub-package agent-wide.
+
+        workspacetest:
+          list-mode: strict
+          files:
+            - "**/internal/workspace/workspacetest/**"
+          allow:
+            - $gostd
+            - github.com/yaaos/agent/internal/command
+            - github.com/yaaos/agent/internal/protocol
+
+        quarantine_workspacetest:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/workspace/workspacetest/**"
+          deny:
+            - pkg: github.com/yaaos/agent/internal/workspace/workspacetest
+              desc: "workspacetest is a test-only seam; import only from _test.go files"
+
+        supervisortest:
+          list-mode: strict
+          files:
+            - "**/internal/supervisor/supervisortest/**"
+          allow:
+            - $gostd
+            - github.com/yaaos/agent/internal/command
+            - github.com/yaaos/agent/internal/ipc
+            - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/supervisor
+            - github.com/yaaos/agent/internal/workspace
+            - github.com/yaaos/agent/internal/workspace/workspacetest
+
+        quarantine_supervisortest:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/supervisor/supervisortest/**"
+          deny:
+            - pkg: github.com/yaaos/agent/internal/supervisor/supervisortest
+              desc: "supervisortest is a test-only seam; import only from _test.go files"
+
   exclusions:
     rules:
       - path: _test\.go

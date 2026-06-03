@@ -15,7 +15,7 @@ import (
 	"github.com/yaaos/agent/internal/backoff"
 	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/protocol"
-	"github.com/yaaos/agent/internal/workspace"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ func newFakeEventServer(t *testing.T, failCount int, returnGone bool) *fakeEvent
 func buildSupervisorForRetryTest(t *testing.T, srv *fakeEventServer, spawnFn SpawnFunc) *Supervisor {
 	t.Helper()
 	if spawnFn == nil {
-		spawnFn = InProcessSpawn(workspace.StubHandler{})
+		spawnFn = inProcessSpawn(workspacetest.StubHandler{})
 	}
 	cfg := Config{
 		BaseURL:               srv.server.URL,
@@ -105,7 +105,7 @@ func buildSupervisorForRetryTest(t *testing.T, srv *fakeEventServer, spawnFn Spa
 // event without calling WorkspaceOps (no second spawn).
 func TestRouteCommand_DedupReplay(t *testing.T) {
 	var spawnCount int32
-	inner := InProcessSpawn(workspace.StubHandler{})
+	inner := inProcessSpawn(workspacetest.StubHandler{})
 	countingSpawn := func(ctx context.Context, id string) (WorkspaceRunner, error) {
 		atomic.AddInt32(&spawnCount, 1)
 		return inner(ctx, id)

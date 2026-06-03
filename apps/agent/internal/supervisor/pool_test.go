@@ -13,6 +13,7 @@ import (
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
 	"github.com/yaaos/agent/internal/workspace"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 func newCreateCmd(workspaceID, commandID string) command.WorkspaceCommand {
@@ -55,7 +56,7 @@ func newCleanupCmd(workspaceID, commandID string) command.WorkspaceCommand {
 }
 
 func TestPool_FirstCommandSpawnsRunner_SuccessEvent(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
@@ -71,7 +72,7 @@ func TestPool_FirstCommandSpawnsRunner_SuccessEvent(t *testing.T) {
 }
 
 func TestPool_NonCreateForUnknownWorkspace_Failure(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	ev := pool.Dispatch(context.Background(), newWriteCmd("ws-unknown", "c-1"), nil, 0)
@@ -87,7 +88,7 @@ func TestPool_MultipleCommandsReuseSameRunner(t *testing.T) {
 	// Count spawns by wrapping the underlying SpawnFunc.
 	var spawnCount int
 	var mu sync.Mutex
-	inner := InProcessSpawn(workspace.StubHandler{})
+	inner := inProcessSpawn(workspacetest.StubHandler{})
 	counter := func(ctx context.Context, id string) (WorkspaceRunner, error) {
 		mu.Lock()
 		spawnCount++
@@ -118,7 +119,7 @@ func TestPool_MultipleCommandsReuseSameRunner(t *testing.T) {
 // with -race to exercise the atomic reservation guard.
 func TestPool_ConcurrentSameIDCreate_SpawnsExactlyOneRunner(t *testing.T) {
 	var spawnCount atomic.Int64
-	inner := InProcessSpawn(workspace.StubHandler{})
+	inner := inProcessSpawn(workspacetest.StubHandler{})
 	counter := func(ctx context.Context, id string) (WorkspaceRunner, error) {
 		spawnCount.Add(1)
 		return inner(ctx, id)
@@ -150,7 +151,7 @@ func TestPool_ConcurrentSameIDCreate_SpawnsExactlyOneRunner(t *testing.T) {
 func TestPool_CleanupReapsRunner_RespawnOnNextCreate(t *testing.T) {
 	var spawnCount int
 	var mu sync.Mutex
-	inner := InProcessSpawn(workspace.StubHandler{})
+	inner := inProcessSpawn(workspacetest.StubHandler{})
 	counter := func(ctx context.Context, id string) (WorkspaceRunner, error) {
 		mu.Lock()
 		spawnCount++
@@ -176,7 +177,7 @@ func TestPool_CleanupReapsRunner_RespawnOnNextCreate(t *testing.T) {
 }
 
 func TestPool_ParallelDispatchAcrossWorkspaces(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	var wg sync.WaitGroup
@@ -225,7 +226,7 @@ func TestPool_SpawnFailure_EmitsFailure(t *testing.T) {
 
 // hangingOps blocks InvokeClaudeCode forever — used to test ctx cancellation
 // while a Send is in-flight.
-type hangingOps struct{ workspace.StubHandler }
+type hangingOps struct{ workspacetest.StubHandler }
 
 func (hangingOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	<-ctx.Done()
@@ -233,7 +234,7 @@ func (hangingOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCom
 }
 
 func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
-	pool := NewPool(InProcessSpawn(hangingOps{}), nil)
+	pool := NewPool(inProcessSpawn(hangingOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	// First spawn the workspace via a successful CreateWorkspace.
@@ -287,7 +288,7 @@ func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
 }
 
 func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
 	// A CreateWorkspaceCommand with no workspace_id.
 	cmd := &command.CreateWorkspaceCommand{
@@ -309,7 +310,7 @@ func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 // emittingInvokeOps emits 3 progress events from RunClaude then succeeds.
 // Used to test the supervisor.Pool → workspace.Run progress-forwarding
 // path end-to-end.
-type emittingInvokeOps struct{ workspace.StubHandler }
+type emittingInvokeOps struct{ workspacetest.StubHandler }
 
 func (emittingInvokeOps) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	e := workspace.EmitterFromContext(ctx)
@@ -320,7 +321,7 @@ func (emittingInvokeOps) RunClaude(ctx context.Context, cmd *protocol.InvokeClau
 }
 
 func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
-	pool := NewPool(InProcessSpawn(emittingInvokeOps{}), nil)
+	pool := NewPool(inProcessSpawn(emittingInvokeOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	// First spawn via CreateWorkspace.
@@ -365,7 +366,7 @@ func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
 }
 
 func TestPool_ProgressForwarderNilDoesntPanic(t *testing.T) {
-	pool := NewPool(InProcessSpawn(emittingInvokeOps{}), nil)
+	pool := NewPool(inProcessSpawn(emittingInvokeOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0)
@@ -400,7 +401,7 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 	// Backend-emitted traceparent: trace_id aabb..ff99, span_id 1122..eeff.
 	const backendParent = "00-aabbccddeeff00112233445566778899-1122334455667788-01"
 
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	// Simulate the supervisor's wrapping span around dispatch (what
@@ -499,7 +500,7 @@ func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	// so Dispatch returns quickly with a timeout-flavoured failure event.
 	// The slot should be dropped + the runner closed. Per-command Timeout()
 	// is the sole deadline source — the pool holds no timeout config.
-	pool := NewPool(InProcessSpawn(hangingForeverOps{}), nil)
+	pool := NewPool(inProcessSpawn(hangingForeverOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	cmd := &shortTimeoutCreateCmd{
@@ -557,7 +558,7 @@ func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 	// Create succeeds via StubHandler; then Invoke hangs and times out
 	// per Limits.WallclockSeconds=1 on the command (the wire limit sets
 	// InvokeClaudeCodeCommand.Timeout() to 1s).
-	pool := NewPool(InProcessSpawn(stubThenHangOps{}), nil)
+	pool := NewPool(inProcessSpawn(stubThenHangOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
@@ -589,7 +590,7 @@ func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 
 // stubThenHangOps accepts CreateWorkspace via StubHandler's default;
 // hangs on every InvokeClaudeCode until ctx cancels.
-type stubThenHangOps struct{ workspace.StubHandler }
+type stubThenHangOps struct{ workspacetest.StubHandler }
 
 func (stubThenHangOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	<-ctx.Done()
@@ -601,7 +602,7 @@ func TestPool_TimeoutDoesNotBlockOtherWorkspaces(t *testing.T) {
 	// so both should return well under 200ms. The per-workspace slot mutex
 	// only serializes Sends to the SAME workspace; different workspaces
 	// run in parallel.
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	done := make(chan time.Duration, 2)
@@ -628,7 +629,7 @@ func TestPool_TimeoutDoesNotBlockOtherWorkspaces(t *testing.T) {
 }
 
 func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0)
 	pool.Dispatch(context.Background(), newCreateCmd("ws-2", "c-2"), nil, 0)
 
@@ -653,7 +654,7 @@ func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
 	// hangingForeverOps (defined in this file) blocks all command bodies
 	// including CreateWorkspace until ctx cancels — simulates a workspace
 	// operation interrupted by supervisor shutdown (root ctx cancel).
-	pool := NewPool(InProcessSpawn(hangingForeverOps{}), nil)
+	pool := NewPool(inProcessSpawn(hangingForeverOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	const wsID = "ws-shutdown"
@@ -709,7 +710,7 @@ func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
 // that any non-create WorkspaceCommand for an unseen workspace_id yields a
 // completed_failure with reason containing "no workspace runner".
 func TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure(t *testing.T) {
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	kinds := []command.WorkspaceCommand{

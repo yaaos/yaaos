@@ -19,7 +19,7 @@ import (
 	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/protocol"
-	"github.com/yaaos/agent/internal/workspace"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 // ── Supervisor lifecycle gate ───────────────────────────────────────────────
@@ -35,7 +35,7 @@ func buildUnconfiguredSupervisor(t *testing.T) *Supervisor {
 		HeartbeatInterval:     30 * time.Second,
 		ClaimWaitSeconds:      30,
 		ActivityBatchInterval: 250 * time.Millisecond,
-		Spawn:                 InProcessSpawn(workspace.StubHandler{}),
+		Spawn:                 inProcessSpawn(workspacetest.StubHandler{}),
 	}
 	s := &Supervisor{
 		cfg:              cfg,
@@ -44,7 +44,7 @@ func buildUnconfiguredSupervisor(t *testing.T) *Supervisor {
 		agentID:          "agent-test",
 		orgID:            "org-test",
 		provider:         noopProvider{},
-		pool:             NewPool(InProcessSpawn(workspace.StubHandler{}), nil),
+		pool:             NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil),
 		stsBackoff:       backoff.New(),
 		claimBackoff:     backoff.New(),
 		heartbeatBackoff: backoff.New(),
@@ -123,7 +123,7 @@ func TestPool_ConcurrentCreateActive_CapAdmitsExactlyMaxWorkspaces(t *testing.T)
 	const maxWS = 3
 	const total = 10
 
-	pool := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
 	var admitted atomic.Int64
