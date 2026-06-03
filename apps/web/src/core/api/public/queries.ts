@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { type Lesson, type ReviewJob, type Ticket, apiFetch } from "./client";
 
 // ── Auth / session ────────────────────────────────────────────────────────────
@@ -28,20 +34,24 @@ export interface CurrentUser {
   memberships: MembershipSummary[];
 }
 
+/** Shared query options for `/api/auth/me`. Use `currentUserQueryOptions` to
+ *  read or subscribe to this cache entry without triggering an additional fetch. */
+export const currentUserQueryOptions = queryOptions<CurrentUser | null>({
+  queryKey: ["auth", "me"],
+  queryFn: async () => {
+    try {
+      return await apiFetch<CurrentUser>("/api/auth/me");
+    } catch (err) {
+      if ((err as Error)?.message?.startsWith("401")) return null;
+      throw err;
+    }
+  },
+  staleTime: 30_000,
+});
+
 /** Fetches `/api/auth/me`. Returns `null` (not throws) when unauthenticated. */
 export function useCurrentUser() {
-  return useSuspenseQuery<CurrentUser | null>({
-    queryKey: ["auth", "me"],
-    queryFn: async () => {
-      try {
-        return await apiFetch<CurrentUser>("/api/auth/me");
-      } catch (err) {
-        if ((err as Error)?.message?.startsWith("401")) return null;
-        throw err;
-      }
-    },
-    staleTime: 30_000,
-  });
+  return useSuspenseQuery(currentUserQueryOptions);
 }
 
 export function useLogout() {

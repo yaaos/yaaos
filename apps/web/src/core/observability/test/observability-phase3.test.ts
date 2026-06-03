@@ -1,16 +1,17 @@
 /**
  * Phase-3 hardening tests for core/observability:
- * - identity sync: clears identity ONLY on 401; leaves it intact + records error on non-401
+ * - identity sync: passive cache reader — correct identity from cache; null when
+ *   cache empty (no fetch, no navigation); null when orgSlug absent; updates on
+ *   orgSlug change.
  * - global error handlers: _resetObservabilityForTests removes only our handlers (prior handlers survive)
  * - traceparent propagation: propagateTraceHeaderCorsUrls pattern restricted to same-origin /api/
  */
 
-import { _resetAuthFailureForTests } from "@core/api/public/auth-failure";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { server } from "../../../test/msw/server";
-import { setIdentity } from "../identity";
+import { getIdentity, setIdentity } from "../identity";
 import { _resetObservabilityForTests, configure } from "../public/sdk";
 import { useOtelIdentitySync } from "../public/use-otel-identity-sync";
 
@@ -22,130 +23,99 @@ vi.mock("@core/api/public/org-context", () => ({
   getCurrentOrgSlug: () => _mockOrgSlug,
 }));
 
-// ── useOtelIdentitySync — 401 vs non-401 behaviour ───────────────────────────
+// Shared cache seed helpers
+const AUTHED_USER = {
+  user: { id: "u1", display_name: "Jane", primary_email: null, emails: [] },
+  memberships: [],
+};
 
-describe("useOtelIdentitySync — identity cleared only on 401", () => {
-  // Reset redirect mutex between tests
+function makeWrapper(queryClient: QueryClient) {
+  return ({ children }: { children: React.ReactNode }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+}
+
+// ── useOtelIdentitySync — passive cache reading ───────────────────────────────
+
+describe("useOtelIdentitySync — passive cache reader", () => {
   beforeEach(() => {
     _mockOrgSlug = "acme";
-    _resetAuthFailureForTests();
+    setIdentity(null);
   });
 
   afterEach(() => {
     _resetObservabilityForTests();
-    _resetAuthFailureForTests();
     vi.restoreAllMocks();
   });
 
-  it("records an error and does NOT clear identity on a 503 response", async () => {
-    setIdentity({ orgId: "acme", userId: "u1" });
+  it("sets identity from cache when orgSlug is present and cache holds a user", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["auth", "me"], AUTHED_USER);
 
-    const recordSpy = vi.spyOn(await import("../public/sdk"), "recordException");
-
-    server.use(
-      http.get("/api/auth/me", () => new HttpResponse("Service Unavailable", { status: 503 })),
-    );
-
-    const { unmount } = renderHook(() => useOtelIdentitySync());
+    renderHook(() => useOtelIdentitySync(), { wrapper: makeWrapper(queryClient) });
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 0));
     });
-    unmount();
 
-    // recordException should be called with the non-401 error
-    expect(recordSpy).toHaveBeenCalled();
+    expect(getIdentity()).toEqual({ orgId: "acme", userId: "u1" });
   });
 
-  it("records an error and does NOT clear identity on a network error", async () => {
-    setIdentity({ orgId: "acme", userId: "u1" });
+  it("identity is null when cache is empty (pre-auth / /login), NO fetch is issued, NO navigation", async () => {
+    const queryClient = new QueryClient();
+    // cache deliberately empty
 
-    const recordSpy = vi.spyOn(await import("../public/sdk"), "recordException");
-
-    server.use(http.get("/api/auth/me", () => HttpResponse.error()));
-
-    const { unmount } = renderHook(() => useOtelIdentitySync());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
-    });
-    unmount();
-
-    // recordException should be called for the network failure
-    expect(recordSpy).toHaveBeenCalled();
-  });
-
-  it("clears identity silently on a 401 and does NOT navigate", async () => {
-    // Regression guard: this probe runs on pre-auth pages (e.g. /login) where
-    // a 401 is expected. It must clear identity WITHOUT redirecting — routing
-    // through apiFetch's 401 handler would hard-redirect to /login and loop.
-    setIdentity({ orgId: "acme", userId: "u1" });
-
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     const assignSpy = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
       writable: true,
-      value: {
-        ...window.location,
-        assign: assignSpy,
-        pathname: "/login",
-        search: "",
-        hash: "",
-      },
+      value: { ...window.location, assign: assignSpy },
     });
 
-    const recordSpy = vi.spyOn(await import("../public/sdk"), "recordException");
-
-    server.use(
-      http.get("/api/auth/me", () =>
-        HttpResponse.json({ error: "unauthenticated" }, { status: 401 }),
-      ),
-    );
-
-    const { unmount } = renderHook(() => useOtelIdentitySync());
+    renderHook(() => useOtelIdentitySync(), { wrapper: makeWrapper(queryClient) });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-    unmount();
 
-    // No navigation triggered, and 401 is not treated as a recordable error.
+    expect(getIdentity()).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(assignSpy).not.toHaveBeenCalled();
-    expect(recordSpy).not.toHaveBeenCalled();
   });
 
-  it("re-runs the effect when org slug changes between renders", async () => {
-    // Verifies [orgSlug] dep: two separate mounts with different slugs each
-    // produce a fetch. This confirms the effect fires per-slug, not once globally.
-    // (A same-component rerender test would require React state to force the
-    // re-render; separate mounts are equivalent and simpler.)
-    let fetchCount = 0;
-    server.use(
-      http.get("/api/auth/me", () => {
-        fetchCount++;
-        return HttpResponse.json({
-          user: { id: "u1", display_name: "Jane", primary_email: null, emails: [] },
-          memberships: [],
-        });
-      }),
-    );
+  it("identity is null when orgSlug is null even if cache holds a user (URL-scoping guard)", async () => {
+    _mockOrgSlug = null;
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["auth", "me"], AUTHED_USER);
+
+    renderHook(() => useOtelIdentitySync(), { wrapper: makeWrapper(queryClient) });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(getIdentity()).toBeNull();
+  });
+
+  it("identity updates when orgSlug changes between mounts", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["auth", "me"], AUTHED_USER);
 
     // Mount with "acme"
     _mockOrgSlug = "acme";
-    const { unmount: u1 } = renderHook(() => useOtelIdentitySync());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
+    const { unmount: u1 } = renderHook(() => useOtelIdentitySync(), {
+      wrapper: makeWrapper(queryClient),
     });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(getIdentity()).toEqual({ orgId: "acme", userId: "u1" });
     u1();
-    const after1 = fetchCount;
-    expect(after1).toBeGreaterThan(0);
 
-    // Mount fresh with "neworg" — simulates org-slug navigation
+    // Mount with "neworg"
     _mockOrgSlug = "neworg";
-    const { unmount: u2 } = renderHook(() => useOtelIdentitySync());
+    renderHook(() => useOtelIdentitySync(), { wrapper: makeWrapper(queryClient) });
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 0));
     });
-    u2();
-
-    expect(fetchCount).toBeGreaterThan(after1);
+    expect(getIdentity()).toEqual({ orgId: "neworg", userId: "u1" });
   });
 });
 

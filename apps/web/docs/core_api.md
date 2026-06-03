@@ -59,7 +59,8 @@ Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 `queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useLessons`, `useNotifications`, `useDashboard`, `useAgents`, `useFindingsForTicket`, `useReviewJobsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`, `useAvailablePlugins`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). `useAvailablePlugins(type)` fetches `GET /api/plugins/available?type=...` and returns `PluginMeta[]`; consumed by the VCS and Coding Agents settings pages. The polling-based utility hook `useConfigStatus` stays a regular `useQuery` — it powers ambient chrome (the onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
 
 Auth hooks live in `queries.ts` so all layers can call them without importing from `domain/auth`:
-- `useCurrentUser()` — `GET /api/auth/me`; returns `CurrentUser | null`.
+- `currentUserQueryOptions` — exported `queryOptions` object for `["auth","me"]`; use this to subscribe to or seed the cache without triggering a fetch (e.g. `useQuery({ ...currentUserQueryOptions, enabled: false })` in `useOtelIdentitySync`).
+- `useCurrentUser()` — `GET /api/auth/me`; returns `CurrentUser | null`; delegates to `currentUserQueryOptions`.
 - `useLogout()` — mutation, single-session sign-out.
 - `useLogoutAll()` — mutation, all-sessions sign-out.
 `domain/auth/queries.ts` re-exports these for backward compatibility within the auth domain.
