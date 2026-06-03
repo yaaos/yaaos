@@ -117,6 +117,27 @@ func TestNewProvider_UnknownPanics(t *testing.T) {
 	_ = NewProvider()
 }
 
+// TestResolveSTSEndpoint_DefaultIsGlobal verifies that with no override env var,
+// the agent signs against the real AWS global STS endpoint.
+func TestResolveSTSEndpoint_DefaultIsGlobal(t *testing.T) {
+	t.Setenv(stsEndpointEnvVar, "")
+	if got := resolveSTSEndpoint(); got != stsGlobalEndpoint {
+		t.Errorf("resolveSTSEndpoint(): want %q, got %q", stsGlobalEndpoint, got)
+	}
+}
+
+// TestResolveSTSEndpoint_OverrideRespected verifies that YAAOS_STS_ENDPOINT_URL
+// replaces the default. SigV4 binds the host into the signature, so signing
+// target and the URL embedded in the envelope must match — both come from this
+// helper, so a single-source override is sufficient.
+func TestResolveSTSEndpoint_OverrideRespected(t *testing.T) {
+	const override = "http://mock-aws:4566/"
+	t.Setenv(stsEndpointEnvVar, override)
+	if got := resolveSTSEndpoint(); got != override {
+		t.Errorf("resolveSTSEndpoint(): want %q, got %q", override, got)
+	}
+}
+
 // TestSignedEnvelopeJSON_BodyField verifies the stsAPIBody constant matches the
 // exact string the backend's sts_verifier requires.
 func TestSignedEnvelopeJSON_BodyField(t *testing.T) {

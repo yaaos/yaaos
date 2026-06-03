@@ -74,8 +74,8 @@ RUN apt-get update \
 RUN groupadd --system --gid 65532 nonroot \
  && useradd --system --uid 65532 --gid nonroot --home-dir /home/nonroot \
             --create-home --shell /usr/sbin/nologin nonroot \
- && mkdir -p /var/agent/workspaces \
- && chown -R nonroot:nonroot /var/agent
+ && mkdir -p /var/agent/workspaces /var/log/yaaos-agent \
+ && chown -R nonroot:nonroot /var/agent /var/log/yaaos-agent
 USER 65532:65532
 WORKDIR /home/nonroot
 

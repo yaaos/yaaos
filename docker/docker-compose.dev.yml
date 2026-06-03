@@ -56,6 +56,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       YAAOS_ENV: dev
+      YAAOS_PUBLIC_HOSTNAME: ${YAAOS_PUBLIC_HOSTNAME:-localhost}
       YAAOS_PORT: "8080"
       # `service.name` is split per-role; observability.configure() picks the right field.
       # OTEL_EXPORTER_OTLP_ENDPOINT is intentionally unset — OTel disabled silently
@@ -86,7 +87,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
       # Redis backs taskiq workflow tasks + sse_pubsub fanout.
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_URL: ${REDIS_URL}
       # Non-prod: allow the STS verifier to accept the mock-aws host.
       YAAOS_STS_HOST_OVERRIDE: ${YAAOS_STS_HOST_OVERRIDE:-mock-aws:4566}
       # Org seed values — bootstrap reads these to set registered_iam_arn + aws_region
@@ -124,6 +125,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       YAAOS_ENV: dev
+      YAAOS_PUBLIC_HOSTNAME: ${YAAOS_PUBLIC_HOSTNAME:-localhost}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
       BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
@@ -140,7 +142,7 @@ services:
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_URL: ${REDIS_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,7 +175,7 @@ services:
     ports:
       - "4566:4566"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/latest/api/token -T 2 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/latest/meta-data/iam/security-credentials/ -T 2 || exit 1"]
       interval: 2s
       timeout: 3s
       retries: 15
@@ -188,6 +190,10 @@ services:
       YAAOS_AGENT_VERSION: dev
       # Direct the AWS SDK v2 IMDS client at mock-aws.
       AWS_EC2_METADATA_SERVICE_ENDPOINT: http://mock-aws:4566
+      # Sign GetCallerIdentity against mock-aws. SigV4 binds host into the
+      # signature, so the backend must replay against the same URL — its
+      # YAAOS_STS_HOST_OVERRIDE allowlists this host.
+      YAAOS_STS_ENDPOINT_URL: http://mock-aws:4566/
       # STS override: the backend's sts_verifier allows this host in non-prod.
       YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
     depends_on:

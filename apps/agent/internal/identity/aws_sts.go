@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,9 +17,16 @@ import (
 )
 
 const (
-	// stsGlobalEndpoint is the default STS endpoint. The backend uses the
-	// global endpoint for mock-aws compatibility in dev/test.
+	// stsGlobalEndpoint is the default STS endpoint. Used when
+	// YAAOS_STS_ENDPOINT_URL is unset.
 	stsGlobalEndpoint = "https://sts.amazonaws.com/"
+
+	// stsEndpointEnvVar overrides the STS endpoint URL the agent signs against
+	// and embeds in the signed envelope. Non-prod only — set to the mock-aws
+	// URL in dev/test compose so the backend replays against the same mock.
+	// SigV4 binds the host into the signature, so signing target and replay
+	// target must be the same URL.
+	stsEndpointEnvVar = "YAAOS_STS_ENDPOINT_URL"
 
 	// stsAPIBody is the exact request body required by GetCallerIdentity.
 	// The sts_verifier on the backend validates this value verbatim.
@@ -28,6 +36,16 @@ const (
 	// to the backend's canonical hostname. The backend checks this header.
 	audienceHeader = "X-Yaaos-Audience"
 )
+
+// resolveSTSEndpoint returns the URL the agent signs GetCallerIdentity against.
+// Defaults to the global STS endpoint; overridden by YAAOS_STS_ENDPOINT_URL
+// (dev/test only, points at mock-aws).
+func resolveSTSEndpoint() string {
+	if v := os.Getenv(stsEndpointEnvVar); v != "" {
+		return v
+	}
+	return stsGlobalEndpoint
+}
 
 // signedEnvelope is the JSON shape expected by sts_verifier.parse_signed_request.
 type signedEnvelope struct {
@@ -73,7 +91,8 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 
 	// Build the GetCallerIdentity HTTP request. Body must be exactly stsAPIBody.
 	body := stsAPIBody
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, stsGlobalEndpoint, bytes.NewBufferString(body))
+	endpoint := resolveSTSEndpoint()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, fmt.Errorf("identity: build sts request: %w", err)
 	}
@@ -100,7 +119,7 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 	}
 
 	envelope := signedEnvelope{
-		URL:     stsGlobalEndpoint,
+		URL:     endpoint,
 		Headers: headers,
 		Body:    body,
 	}

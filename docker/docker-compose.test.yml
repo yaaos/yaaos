@@ -78,6 +78,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       YAAOS_ENV: test
+      YAAOS_PUBLIC_HOSTNAME: localhost
       GITHUB_API_BASE_URL: http://fake-github:8080
       # Install-picker URL — the BROWSER follows this redirect, so it must
       # be the host-mapped fake-github URL, not the docker service name.
@@ -155,6 +156,7 @@ services:
       # rows the web wrote.
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       YAAOS_ENV: test
+      YAAOS_PUBLIC_HOSTNAME: localhost
       GITHUB_API_BASE_URL: http://fake-github:8080
       GITHUB_WEB_BASE_URL: http://localhost:58081
       YAAOS_GITHUB_APP_ID: "12345"
