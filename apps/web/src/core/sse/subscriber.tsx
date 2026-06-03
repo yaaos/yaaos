@@ -30,6 +30,10 @@ import type { ServerEvent } from "./types";
  * the stream opens asynchronously and auto-reconnects after a drop, and any
  * event published while it was not OPEN is lost (Redis pub/sub has no replay).
  *
+ * Connection + last-event state is exposed via a module-scope store
+ * (`subscribe`/`getSnapshot`) so React consumers can use
+ * `useSyncExternalStore` for tear-free, concurrent-safe reads.
+ *
  * Translation table (`kind` → which query prefixes to invalidate):
  * - `ticket_status_changed` → ["tickets"], ["tickets", ticket_id],
  *   ["tickets", ticket_id, "audit"], ["reviewer", "metrics"]
@@ -41,6 +45,29 @@ import type { ServerEvent } from "./types";
  * - `agent_liveness_changed` → ["agents"]
  */
 
+// ---------------------------------------------------------------------------
+// Connection status type
+// ---------------------------------------------------------------------------
+
+/** Connection state reported by the store snapshot. */
+export type ConnectionStatus = "idle" | "connecting" | "connected" | "disconnected";
+
+/** Immutable snapshot returned by `getSnapshot()`. */
+export interface SSESnapshot {
+  /** Current connection state. `idle` = no org in scope; `connecting` = stream
+   * opened but `onopen` not yet fired; `connected` = OPEN; `disconnected` =
+   * `onerror` fired (EventSource will auto-reconnect). */
+  readonly status: ConnectionStatus;
+  /** Last parsed `ServerEvent` received on the stream, or `null` before any
+   * event arrives. Updated once per debounce flush (same cadence as
+   * `invalidateQueries`). */
+  readonly lastEvent: ServerEvent | null;
+}
+
+// ---------------------------------------------------------------------------
+// Module-scope connection state (internal)
+// ---------------------------------------------------------------------------
+
 let _source: EventSource | null = null;
 let _client: QueryClient | null = null;
 let _slug: string | null = null;
@@ -49,6 +76,51 @@ let _connectedSlug: string | null = null;
 const _pendingKeys = new Map<string, readonly unknown[]>();
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 const COALESCE_MS = 200;
+
+// ---------------------------------------------------------------------------
+// Module-scope store (subscribe / getSnapshot)
+// ---------------------------------------------------------------------------
+
+// Snapshot is replaced (new object) whenever status or lastEvent changes.
+// Callers that hold a reference across renders get the stale object; React
+// detects the reference change via Object.is and re-renders only then.
+let _snapshot: SSESnapshot = { status: "idle", lastEvent: null };
+const _listeners = new Set<() => void>();
+
+function _notifyListeners(): void {
+  for (const l of _listeners) l();
+}
+
+function _setStatus(status: ConnectionStatus): void {
+  if (_snapshot.status === status) return;
+  _snapshot = { ..._snapshot, status };
+  _notifyListeners();
+}
+
+function _setLastEvent(evt: ServerEvent): void {
+  _snapshot = { ..._snapshot, lastEvent: evt };
+  _notifyListeners();
+}
+
+/** Subscribe to store changes. Returns an unsubscribe function.
+ * Used as the first argument to `useSyncExternalStore`. */
+export function subscribe(listener: () => void): () => void {
+  _listeners.add(listener);
+  return () => {
+    _listeners.delete(listener);
+  };
+}
+
+/** Returns the current store snapshot. Referentially stable while state has
+ * not changed — `useSyncExternalStore` uses `Object.is` to bail out of
+ * re-renders. */
+export function getSnapshot(): SSESnapshot {
+  return _snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// Invalidation helpers
+// ---------------------------------------------------------------------------
 
 function _scheduleInvalidate(queryKey: readonly unknown[]): void {
   if (_client === null) return;
@@ -101,7 +173,33 @@ function _handleEvent(evt: ServerEvent): void {
     default:
       break;
   }
+  // Store the last event; update fires after the debounce so the snapshot
+  // update is co-located with the query invalidation flush.
+  // We schedule the store notification on the same timer cadence by updating
+  // the snapshot inside a separate trailing call that piggybacks the flush.
+  _schedulePendingEvent(evt);
 }
+
+// Tracks the most-recent event waiting to commit to the snapshot. Updated
+// synchronously on each parsed event; committed (snapshot replaced + listeners
+// notified) when the debounce flush runs.
+let _pendingEvent: ServerEvent | null = null;
+let _eventFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _schedulePendingEvent(evt: ServerEvent): void {
+  _pendingEvent = evt;
+  if (_eventFlushTimer !== null) return;
+  _eventFlushTimer = setTimeout(() => {
+    _eventFlushTimer = null;
+    const e = _pendingEvent;
+    _pendingEvent = null;
+    if (e !== null) _setLastEvent(e);
+  }, COALESCE_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Connection lifecycle
+// ---------------------------------------------------------------------------
 
 /** Open/close the stream to match (`_client`, `_slug`). Idempotent: a no-op
  * when already connected to the right org, so StrictMode double-invokes and
@@ -116,6 +214,7 @@ function _syncConnection(): void {
       _source = null;
       _connectedSlug = null;
     }
+    _setStatus("idle");
     return;
   }
   // Already streaming the right org.
@@ -125,6 +224,7 @@ function _syncConnection(): void {
     _source.close();
     _source = null;
   }
+  _setStatus("connecting");
   const es = new EventSource(`/api/sse/general?org=${encodeURIComponent(_slug)}`, {
     withCredentials: true,
   });
@@ -135,6 +235,7 @@ function _syncConnection(): void {
   // is gone (Redis pub/sub has no replay). Refetching the list-level queries
   // on open recovers a ticket created in that window without a manual reload.
   es.onopen = () => {
+    _setStatus("connected");
     _scheduleInvalidate(["tickets"]);
     _scheduleInvalidate(["reviewer", "metrics"]);
     _scheduleInvalidate(["agents"]);
@@ -148,10 +249,17 @@ function _syncConnection(): void {
     }
     _handleEvent(evt);
   };
-  // Native EventSource auto-reconnects with backoff. No close on transient
-  // errors — only on tab teardown / org change, handled here.
-  es.onerror = () => {};
+  // Native EventSource auto-reconnects with backoff. Signal disconnected so
+  // consumers can render "reconnecting…" but do not close — the browser
+  // handles reconnection.
+  es.onerror = () => {
+    _setStatus("disconnected");
+  };
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /** Route invalidations into `qc` and (re)connect if an org is in scope. */
 export function attachQueryClient(qc: QueryClient): void {
@@ -184,6 +292,14 @@ export function _resetSSESubscriberForTests(): void {
     clearTimeout(_flushTimer);
     _flushTimer = null;
   }
+  _pendingEvent = null;
+  if (_eventFlushTimer !== null) {
+    clearTimeout(_eventFlushTimer);
+    _eventFlushTimer = null;
+  }
+  // Reset snapshot and listeners.
+  _snapshot = { status: "idle", lastEvent: null };
+  _listeners.clear();
 }
 
 /** Mounted once via the root `AppShell`. Attaches the current QueryClient and
