@@ -1,3 +1,4 @@
+import { useOtelIdentitySync } from "@core/observability/use-otel-identity-sync";
 import { Sidebar } from "@core/sidebar";
 import { useServerEvents } from "@core/sse";
 import { Outlet, useRouterState } from "@tanstack/react-router";
@@ -13,6 +14,9 @@ export function AppShell() {
   // active org as the route changes. Called unconditionally (before the
   // standalone-path early return) to respect the rules-of-hooks.
   useServerEvents();
+  // Syncs authenticated user identity into the OTel holder so spans carry
+  // yaaos.org_id / yaaos.user_id. Called unconditionally per rules-of-hooks.
+  useOtelIdentitySync();
 
   const { location } = useRouterState();
   const pathname = location.pathname;

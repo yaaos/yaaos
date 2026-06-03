@@ -15,7 +15,7 @@
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
 - Claude Code CLI baked into the image; spawned once per review inside the ticket's workspace. The parent reviewer dispatches `yaaos-*` subagents via the Task tool. Subagent definitions are markdown files installed into `~/.claude/agents/` at bootstrap. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
-- OTel collector optional; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
+- OTel collector optional; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is gated on `VITE_OTEL_COLLECTOR_ENDPOINT`.
 
 ## Inter-app flows
 
@@ -137,6 +137,13 @@ All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secret
 ### Persistence (new tables)
 
 `workflow_executions`, `pending_human_decisions`, `outbox_entries`, `workspace_agents`, `bearer_tokens`. Existing tables extended: `tickets` (type, idempotency_key, payload, current_workflow_execution_id), `workspaces` (current_command_id, current_holder_workflow_id, max_idle_seconds, agent_id), `orgs` (registered_iam_arn, aws_region). Activity events are never persisted — they exist only in flight from WebSocket → `core/sse` → SSE → UI.
+
+### Distributed tracing
+
+- Web SPA runs `@opentelemetry/sdk-trace-web`. `FetchInstrumentation` injects a W3C `traceparent` header on every `/api/*` fetch — browser spans become children of the backend trace automatically.
+- `FastAPIInstrumentor` on the backend extracts `traceparent` and continues the same trace. The backend stamps `yaaos.org_id`/`yaaos.user_id` on its spans authoritatively from session context.
+- **No baggage crosses the wire.** Identity is stamped independently on each side. `traceparent` is the only cross-wire trace context.
+- Export is endpoint-gated on both sides: backend via `OTEL_EXPORTER_OTLP_ENDPOINT`, web via `VITE_OTEL_COLLECTOR_ENDPOINT`.
 
 ### Dumb frontend
 

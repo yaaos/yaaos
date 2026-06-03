@@ -24,6 +24,7 @@ Three groupings under `apps/web/src/`:
 - **Org slug** — derived from the URL on every read (`core/api/org-context.ts`). No module-global cache. `apiFetch` attaches `X-Org-Slug`; domain hooks stay org-agnostic at the call site.
 - **Generated types** — `src/core/api/generated/schema.d.ts` is generated from the backend's `/openapi.json` by `bin/gen-api-types` and committed. Regeneration + drift check: `bin/gen-api-types --check`. Only `core/api` imports the generated dir.
 - **MSW test infra** — `src/test/msw/` holds the Node.js MSW server and per-domain handlers. Global lifecycle in `src/test-setup.ts`. Domain tests use real `QueryClient` + real `apiFetch` + MSW HTTP interception. See [patterns.md § MSW testing strategy](patterns.md#msw-testing-strategy).
+- **Observability** — `core/observability` initializes the OTel Web SDK at boot (`configure()` in `main.tsx`). `FetchInstrumentation` auto-injects `traceparent` on every fetch so browser spans continue as children of the backend trace. Render errors flow through `react-error-boundary` → `recordException` → span exception events (not console.error). See [core_observability.md](core_observability.md).
 
 ## Key flows
 
@@ -32,3 +33,6 @@ Three groupings under `apps/web/src/`:
 
 **Auth / tenancy gate** (crosses core/routing → core/api → shared):
 Route `beforeLoad` hits `/api/auth/me` → 401 triggers `handleAuthFailure` in `core/api` → hard-nav to `/login?reason=…&next=…`. On success, `/orgs/$slug/...` parent route writes slug to `org-context.ts`; `AppShell` renders sidebar + outlet only for non-standalone paths. Role gates (`RequireMembership`) are UI hints; backend `require(action)` is the authority.
+
+**Distributed trace join** (crosses core/observability → core/api → backend → agent):
+`UserInteractionInstrumentation` opens a span on click/submit → `FetchInstrumentation` injects `W3C traceparent` header on the `/api/*` fetch → backend's `FastAPIInstrumentor` continues the same trace as a child span, stamping its own `yaaos.org_id`/`yaaos.user_id` authoritatively → agent span appended to the same trace. Browser client exports its side via OTLP/HTTP (endpoint-gated). Render errors: `ErrorBoundary` calls `recordException` on the active user-interaction span (or opens a short-lived fallback span). `traceparent` is the only cross-wire trace context — no baggage header is ever emitted.

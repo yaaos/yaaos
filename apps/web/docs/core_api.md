@@ -16,7 +16,7 @@ Re-exports from `@core/api`: client helpers (`apiClient`, `apiFetch`, `getCurren
 
 `client.ts` exposes two surfaces:
 - `apiClient` — `openapi-fetch` typed client backed by the generated `paths` type from `generated/schema.d.ts`. Covers all endpoints in the schema; `/api/health` now carries a fully typed response.
-- `apiFetch<T>(path, init?)` — generic fetch wrapper. On 401, lazy-imports `handleAuthFailure` (breaks load-path cycle) which hard-navigates to `/login?reason=...&next=<current-path>`. Non-2xx throws `${status} ${path}: ${body}`. 204 → `undefined`.
+- `apiFetch<T>(path, init?)` — generic fetch wrapper. On 401, lazy-imports `handleAuthFailure` (breaks load-path cycle) which hard-navigates to `/login?reason=...&next=<current-path>`. Non-2xx throws `${status} ${path}: ${body}`. 204 → `undefined`. A W3C `traceparent` header is injected automatically by the OTel `FetchInstrumentation` registered in `core/observability` — no explicit header code in `client.ts`. The backend's `FastAPIInstrumentor` reads this header and continues the distributed trace.
 
 ### Generated types
 

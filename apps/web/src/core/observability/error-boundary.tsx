@@ -1,29 +1,36 @@
-import React from "react";
+/**
+ * Root error boundary for the yaaos SPA.
+ *
+ * Wraps the application tree; any unhandled render error calls recordException
+ * on the active OTel span (or opens a short-lived span) and renders a
+ * user-facing fallback. Uses react-error-boundary as the implementation so
+ * the component itself stays a simple function wrapper.
+ */
+
+import type React from "react";
+import { type FallbackProps, ErrorBoundary as ReactErrorBoundary } from "react-error-boundary";
+import { recordException } from "./sdk";
+
+function FallbackRender({ error }: FallbackProps): React.ReactElement {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    <div className="p-8 text-foreground">
+      <h1 className="mb-2 text-lg font-semibold">Something went wrong.</h1>
+      <p className="text-muted-foreground text-sm">{message}</p>
+    </div>
+  );
+}
+
+function handleError(error: unknown): void {
+  recordException(error);
+}
 
 type Props = { children: React.ReactNode };
-type State = { error: Error | null };
 
-export class ErrorBoundary extends React.Component<Props, State> {
-  override state: State = { error: null };
-
-  static getDerivedStateFromError(error: Error): State {
-    return { error };
-  }
-
-  override componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    // Structured client-side log. Real telemetry pipe lands when needed.
-    console.error("yaaos.client.error", { error, componentStack: info.componentStack });
-  }
-
-  override render(): React.ReactNode {
-    if (this.state.error) {
-      return (
-        <div className="p-8 text-foreground">
-          <h1 className="mb-2 text-lg font-semibold">Something went wrong.</h1>
-          <p className="text-muted-foreground text-sm">{this.state.error.message}</p>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
+export function ErrorBoundary({ children }: Props): React.ReactElement {
+  return (
+    <ReactErrorBoundary FallbackComponent={FallbackRender} onError={handleError}>
+      {children}
+    </ReactErrorBoundary>
+  );
 }

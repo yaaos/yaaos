@@ -14,6 +14,13 @@ export default defineConfig({
       "@shared": path.resolve(__dirname, "./src/shared"),
     },
   },
+  build: {
+    // Hidden source maps: emitted to the build output dir alongside the
+    // minified bundle but not referenced from the bundle. Uploaded to Dash0
+    // on deploy (keyed by release hash) for server-side symbolication of
+    // minified client error stacks. Never served to the browser.
+    sourcemap: "hidden",
+  },
   server: {
     port: 5173,
     strictPort: false,
