@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/yaaos/agent/internal/protocol"
-	"github.com/yaaos/agent/internal/workspace"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 // ── WorkspaceState machine ──────────────────────────────────────────────────
 
 func TestRegistry_CreateActive_SnapshotRunning(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
 	p.createActive("ws-1", nil)
 	snap := p.Snapshot()
@@ -31,7 +31,7 @@ func TestRegistry_CreateActive_SnapshotRunning(t *testing.T) {
 }
 
 func TestRegistry_SeedOrphan_SnapshotUnknown(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
 	p.seedOrphan("ws-orphan", "/tmp/ws-orphan")
 	snap := p.Snapshot()
@@ -44,7 +44,7 @@ func TestRegistry_SeedOrphan_SnapshotUnknown(t *testing.T) {
 }
 
 func TestRegistry_MarkDefunct_FlipsActiveToDefunct(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
 	p.createActive("ws-1", nil)
 	p.markDefunct("ws-1")
@@ -61,7 +61,7 @@ func TestRegistry_MarkDefunct_FlipsActiveToDefunct(t *testing.T) {
 func TestRegistry_MarkDefunct_MidIdle_StaysInKnownIDs(t *testing.T) {
 	// A Defunct workspace keeps its id in KnownIDs — the disk sweep
 	// must not remove its directory while it's still in the registry.
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
 	p.createActive("ws-1", nil)
 	p.markDefunct("ws-1")
@@ -73,7 +73,7 @@ func TestRegistry_MarkDefunct_MidIdle_StaysInKnownIDs(t *testing.T) {
 }
 
 func TestRegistry_SetPathRoundtrip(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-1", nil)
 	p.setPath("ws-1", "/workspace/ws-1")
 
@@ -84,7 +84,7 @@ func TestRegistry_SetPathRoundtrip(t *testing.T) {
 }
 
 func TestRegistry_Remove_DropsRecord(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-1", nil)
 	p.remove("ws-1")
 
@@ -99,7 +99,7 @@ func TestRegistry_Remove_DropsRecord(t *testing.T) {
 }
 
 func TestRegistry_SetCommandID_ReflectsInSnapshot(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-1", nil)
 	p.setCommandID("ws-1", "cmd-42")
 
@@ -114,7 +114,7 @@ func TestRegistry_SetCommandID_ReflectsInSnapshot(t *testing.T) {
 }
 
 func TestRegistry_ClearCommandID_EmptiesField(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-1", nil)
 	p.setCommandID("ws-1", "cmd-42")
 	p.clearCommandID("ws-1")
@@ -128,7 +128,7 @@ func TestRegistry_ClearCommandID_EmptiesField(t *testing.T) {
 // ── KnownIDs covers all states ──────────────────────────────────────────────
 
 func TestRegistry_KnownIDs_AllStates(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-active", nil)
 	p.seedOrphan("ws-orphan", "/tmp/orphan")
 	p.createActive("ws-defunct", nil)
@@ -148,7 +148,7 @@ func TestRegistry_KnownIDs_AllStates(t *testing.T) {
 // CreateWorkspace dispatch installs an Active record and sets the path from
 // CreateResult.
 func TestDispatch_Create_RegistryActiveAndPathSet(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
 
 	ev := p.Dispatch(context.Background(), newCreateCmd("ws-1", "cmd-1"), nil, 0)
@@ -177,7 +177,7 @@ func TestDispatch_Create_RegistryActiveAndPathSet(t *testing.T) {
 // non-create command for a workspace with no registry record yields
 // completed_failure.
 func TestDispatch_NonCreate_UnknownWorkspace_ErrUnknown(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
 
 	ev := p.Dispatch(context.Background(), newWriteCmd("ws-never", "cmd-1"), nil, 0)
@@ -189,7 +189,7 @@ func TestDispatch_NonCreate_UnknownWorkspace_ErrUnknown(t *testing.T) {
 // TestDispatch_Cleanup_RemovesRecord verifies that a successful CleanupWorkspace
 // dispatch removes the registry record.
 func TestDispatch_Cleanup_RemovesRecord(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
 
 	p.Dispatch(context.Background(), newCreateCmd("ws-1", "cmd-create"), nil, 0)
@@ -208,7 +208,7 @@ func TestDispatch_Cleanup_RemovesRecord(t *testing.T) {
 // TestRegistry_ActiveIDs_OnlyActive verifies that ActiveIDs returns only
 // Active-state workspace IDs.
 func TestRegistry_ActiveIDs_OnlyActive(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-active", nil)
 	p.createActive("ws-defunct", nil)
 	p.markDefunct("ws-defunct")
@@ -223,7 +223,7 @@ func TestRegistry_ActiveIDs_OnlyActive(t *testing.T) {
 // TestRegistry_Paths_AllStates verifies that Paths returns paths for records
 // that have a path set (both Active and Orphaned).
 func TestRegistry_Paths_AllStates(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.createActive("ws-active", nil)
 	p.setPath("ws-active", "/ws/active")
 	p.seedOrphan("ws-orphan", "/ws/orphan")
@@ -250,7 +250,7 @@ func TestSupervisor_IdleWorkspace_KnownAndHeartbeatedRunning(t *testing.T) {
 	root := t.TempDir()
 	plantWorkspace(t, root, "ws-a")
 
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
 
 	ev := p.Dispatch(context.Background(), newCreateCmd("ws-a", "cmd-1"), nil, 0)
@@ -292,7 +292,7 @@ func TestSupervisor_IdleWorkspace_KnownAndHeartbeatedRunning(t *testing.T) {
 // so the disk sweep leaves orphan directories alone (the backend decides
 // whether to forget them).
 func TestRegistry_SeedOrphan_KnownIDs(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	p.seedOrphan("ws-orphan", "/tmp/orphan")
 
 	known := p.KnownIDs()
@@ -304,7 +304,7 @@ func TestRegistry_SeedOrphan_KnownIDs(t *testing.T) {
 // TestDispatch_MarkDefunct_ChildExitWatcher verifies that after markDefunct
 // the id stays in KnownIDs and Snapshot reports status="exited".
 func TestDispatch_MarkDefunct_ChildExitWatcher(t *testing.T) {
-	p := NewPool(InProcessSpawn(workspace.StubHandler{}), nil)
+	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
 
 	if ev := p.Dispatch(context.Background(), newCreateCmd("ws-exit", "cmd-create"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {

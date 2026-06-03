@@ -5,8 +5,8 @@
 // children (a Claude Code subprocess that exec'd off the workspace) are
 // reaped too.
 //
-// Tests use `InProcessSpawn` in pool.go instead; this file is only
-// exercised in real deployments + the docker-compose E2E.
+// Tests use `supervisortest.InProcessSpawn` (package `internal/supervisor/supervisortest`)
+// instead; this file is only exercised in real deployments + the docker-compose E2E.
 package supervisor
 
 import (

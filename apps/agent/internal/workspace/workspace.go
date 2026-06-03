@@ -125,38 +125,6 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 	return base
 }
 
-// StubHandler satisfies command.WorkspaceOps with no-op success for every
-// command kind. Used in integration tests that exercise the dispatch loop
-// and pipe plumbing without standing up a real workspace.
-type StubHandler struct{}
-
-func (StubHandler) CloneWorkspace(_ context.Context, cmd *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
-	return command.CreateResult{
-		Path:   "/stub/" + cmd.WorkspaceID,
-		Repo:   cmd.Repo.ExternalID,
-		Reused: false,
-	}, nil
-}
-
-func (StubHandler) WriteFiles(_ context.Context, cmd *protocol.WriteFilesCommand) (command.WriteFilesResult, error) {
-	return command.WriteFilesResult{
-		WorkspaceID: cmd.WorkspaceID,
-		FilesCount:  len(cmd.Files),
-	}, nil
-}
-
-func (StubHandler) RefreshAuth(_ context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (command.RefreshResult, error) {
-	return command.RefreshResult{WorkspaceID: cmd.WorkspaceID, Refreshed: true}, nil
-}
-
-func (StubHandler) RunClaude(_ context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
-	return command.InvokeResult{WorkspaceID: cmd.WorkspaceID}, nil
-}
-
-func (StubHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
-	return command.CleanupResult{WorkspaceID: cmd.WorkspaceID, Destroyed: true}, nil
-}
-
 // MarshalEvent is a tiny helper exposed for symmetry with the protocol layer.
 // Not used by Run itself.
 func MarshalEvent(ev protocol.AgentEvent) ([]byte, error) {

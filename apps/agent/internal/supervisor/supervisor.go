@@ -110,7 +110,7 @@ type Config struct {
 
 	// Spawn creates a workspace runner. Defaults to `ExecSpawn(os.Args[0], 5s, log)`
 	// — fork+exec of the agent binary's `workspace` subcommand. Tests
-	// inject `InProcessSpawn(handler)` so they don't need an OS process.
+	// inject `supervisortest.InProcessSpawn(handler)` (package `internal/supervisor/supervisortest`) so they don't need an OS process.
 	Spawn SpawnFunc
 
 	// WorkspaceRoot is the parent directory the workspace process clones

@@ -4,11 +4,15 @@
 
 ## Layer boundary rule
 
-Imports flow downward only — `supervisor` → `{workspace, command, activity}` → `protocol` → leaves. The forbidden edges are CI-enforced by `depguard`; see `apps/agent/.golangci.yml` for the rule list and `apps/agent/docs/architecture.md` for the diagram. A compile error is the correct signal — don't add `nolint` comments.
+Imports flow downward only — `supervisor` → `{workspace, command, activity}` → `protocol` → leaves. Permitted edges are CI-enforced by `depguard`; see `apps/agent/.golangci.yml` for the rule list and `apps/agent/docs/architecture.md` for the diagram. A compile error is the correct signal — don't add `nolint` comments.
 
-## Module boundary rule
+## Module boundaries
 
-Test helpers must not cross package boundaries. A helper used only by a package's own tests stays private to that package. Cross-package test setup is not used here — the agent has no shared test-helper surface.
+- Each directory directly under `internal/` is one module. Each has its own depguard rule in `.golangci.yml`.
+- A module's public interface = the capitalized identifiers in its non-test `.go` files. No separate manifest.
+- Adding a new internal import requires extending the importer's `allow:` list in `.golangci.yml`. CI fails otherwise.
+- Cross-module test fixtures live in `<module>/<module>test/` sub-packages (e.g. `workspace/workspacetest/`). depguard forbids production `.go` files from importing them.
+- `_test.go` files are unreachable cross-package by Go itself; no extra rules needed.
 
 ## Adding a command kind
 
@@ -57,7 +61,7 @@ If adding a new enum value causes `exhaustive` to fail, add the matching `case` 
 
 ## Depguard layer rule
 
-The full rule set lives in `apps/agent/.golangci.yml`. When adding a new internal package, decide which layer it belongs to (leaf, `activity`/`command`/`workspace`, or `supervisor`) and add the corresponding deny rules. Running `golangci-lint run` after the addition confirms placement.
+The full rule set lives in `apps/agent/.golangci.yml`. When adding a new internal package, decide which layer it belongs to (leaf, `activity`/`command`/`workspace`, or `supervisor`) and add a `list-mode: strict` rule with the appropriate `allow:` list. See the **Module boundaries** section above. Running `golangci-lint run` after the addition confirms placement.
 
 ## Testing
 
@@ -65,7 +69,7 @@ The full rule set lives in `apps/agent/.golangci.yml`. When adding a new interna
 
 1. **Pure standard library.** `testing` package + hand-written `if got != want { t.Errorf }`. No testify, gomock, or moq.
 2. **Fakes at capability seams, never mocks.** Hand-written fakes at `WorkspaceOps`, `AgentOps`, `identity.Provider`, `CloneFunc`, `RunFunc` are the idiom. A fake is a working stand-in asserted on *state*; a mock records call-expectations on *behavior*. Mocks are not used.
-3. **Doubles by composition.** Embed `StubHandler`, override the one method under test.
+3. **Doubles by composition.** Embed `workspacetest.StubHandler`, override the one method under test.
 4. **Table-driven + `t.Run` subtests** when ≥ 3 cases exercise one behavior.
 5. **`httptest.Server` for transport.** A real in-process HTTP/WS server, not a stub, at HTTP and WebSocket boundaries.
 6. **`testing/synctest` for time.** Virtual-time bubble; never `time.Sleep` polling; never a hand-rolled clock interface.
@@ -80,7 +84,7 @@ The full rule set lives in `apps/agent/.golangci.yml`. When adding a new interna
 | Layer | Test | Double | Lives in |
 |---|---|---|---|
 | Command logic | decode round-trip + `Execute` | fake `WorkspaceOps` / `AgentOps` | `command/*_test.go` |
-| Registry / lifecycle / pool | concurrency invariants | in-process `Pool` + `StubHandler`, `-race` | `supervisor/*_test.go` |
+| Registry / lifecycle / pool | concurrency invariants | in-process `Pool` + `workspacetest.StubHandler` via `supervisortest.InProcessSpawn`, `-race` | `supervisor/*_test.go` |
 | Transport (client / identity / activity WS) | wire round-trip, auth, reconnect | `httptest.Server` | `protocol/`, `supervisor/`, `activity/` |
 | Child subprocess | orchestration + signal/pipe mechanics | fake `RunFunc` + `TestHelperProcess` | `workspace/` |
 | Timing loops | interval / expiry / backoff | `testing/synctest` bubble | `backoff/`, `activity/`, `supervisor/` |

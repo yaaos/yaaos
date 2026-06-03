@@ -11,6 +11,7 @@ import (
 	"github.com/yaaos/agent/internal/command"
 	"github.com/yaaos/agent/internal/ipc"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/workspace/workspacetest"
 )
 
 func TestContextWithEmitter_RoundTrip(t *testing.T) {
@@ -66,7 +67,7 @@ func TestEncoderEmitter_WritesProgressFrames(t *testing.T) {
 // emittingHandler emits 3 progress events then succeeds. Drives the
 // multi-event dispatch path end-to-end. Implements command.WorkspaceOps
 // by embedding StubHandler for all ops except RunClaude.
-type emittingHandler struct{ StubHandler }
+type emittingHandler struct{ workspacetest.StubHandler }
 
 func (emittingHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (command.InvokeResult, error) {
 	e := EmitterFromContext(ctx)

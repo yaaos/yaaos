@@ -26,14 +26,22 @@ The agent is **zero biz logic**. Every threshold, prompt, lesson, depth, and tim
 
 ## Layer graph
 
-Imports flow downward only. `depguard` in `apps/agent/.golangci.yml` enforces the forbidden edges at lint time.
+Imports flow downward only. `depguard` in `apps/agent/.golangci.yml` enforces permitted edges with `list-mode: strict` — every internal package has its own `allow:` rule, so anything not explicitly listed fails CI. Adding a new internal import requires extending the importer's `allow:` list in `.golangci.yml`.
 
 ```
-supervisor ──→ workspace, command, activity
-workspace  ──→ command, protocol
-command    ──→ protocol
+supervisor ──→ workspace, command, activity   (+ utilities)
+workspace  ──→ command, protocol              (+ ipc, secret, tracing)
+command    ──→ protocol                       (+ secret)
 activity   ──→ protocol
 protocol   (leaf — no internal imports)
+utilities  (all leaves: backoff, secret, ipc, logging, observability, identity, tracing)
+```
+
+Two test-seam sub-packages are quarantined — depguard forbids non-`_test.go` files from importing them:
+
+```
+workspacetest  (internal/workspace/workspacetest/) — leaf; test-only StubHandler
+supervisortest (internal/supervisor/supervisortest/) — may import workspace, workspacetest, command, protocol, ipc; test-only InProcessSpawn
 ```
 
 The key invariant: `protocol` does not import `command`. `ClaimCommand` returns `[]byte`; the supervisor calls `command.Decode` to get a typed `Command`. This keeps the arrow pointing down without a cycle.
@@ -50,7 +58,9 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `internal/protocol/` — wire types + HTTP client matching [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml); `openapi_drift_test.go` asserts every property name has a matching `json:` tag. See [protocol.md](protocol.md).
 - `internal/command/` — polymorphic `Command` interface, the 5 workspace command types + `ConfigUpdateCommand`, `WorkspaceOps`/`AgentOps` capability seams, typed result structs, and the `Decode` factory. See [command.md](command.md).
 - `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses. See [supervisor.md](supervisor.md).
-- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup; `StubHandler` for tests. See [workspace.md](workspace.md).
+- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup. See [workspace.md](workspace.md).
+- `internal/workspace/workspacetest/` — test-only `StubHandler`; satisfies `command.WorkspaceOps` with no-op success. Quarantined: depguard forbids non-`_test.go` files from importing it.
+- `internal/supervisor/supervisortest/` — test-only `InProcessSpawn`; runs `workspace.Run` in-process via `io.Pipe` pairs so supervisor tests need no OS process. Quarantined: depguard forbids non-`_test.go` files from importing it.
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
 - `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
 - `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`. See [activity.md](activity.md).
