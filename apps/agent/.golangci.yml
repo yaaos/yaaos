@@ -41,45 +41,159 @@ linters:
       default-signifies-exhaustive: true
     depguard:
       rules:
-        # protocol is the leaf: it must not import command (or any layer above it).
-        # See apps/agent/docs/architecture.md for the enforced layer graph.
-        no_protocol_importing_command:
+        # Per-module strict allow-lists. Each rule permits only $gostd, the
+        # third-party packages the module actually imports, and the internal
+        # packages the layer graph explicitly grants it. Everything else is
+        # blocked by list-mode: strict. See apps/agent/docs/architecture.md
+        # for the declared layer graph this enforces.
+
+        protocol:
+          list-mode: strict
           files:
             - "**/internal/protocol/**"
-          deny:
-            - pkg: "github.com/yaaos/agent/internal/command"
-              desc: "protocol is a leaf package; it must not import command"
-            - pkg: "github.com/yaaos/agent/internal/supervisor"
-              desc: "protocol is a leaf package; it must not import supervisor"
-            - pkg: "github.com/yaaos/agent/internal/workspace"
-              desc: "protocol is a leaf package; it must not import workspace"
-        # activity must not import command, supervisor, or workspace.
-        no_activity_importing_upper_layers:
-          files:
-            - "**/internal/activity/**"
-          deny:
-            - pkg: "github.com/yaaos/agent/internal/command"
-              desc: "activity must not import command — downward-only layer graph"
-            - pkg: "github.com/yaaos/agent/internal/supervisor"
-              desc: "activity must not import supervisor — downward-only layer graph"
-            - pkg: "github.com/yaaos/agent/internal/workspace"
-              desc: "activity must not import workspace — downward-only layer graph"
-        # workspace must not import supervisor (downward-only graph).
-        no_workspace_importing_supervisor:
-          files:
-            - "**/internal/workspace/**"
-          deny:
-            - pkg: "github.com/yaaos/agent/internal/supervisor"
-              desc: "workspace must not import supervisor — downward-only layer graph"
-        # command must not import supervisor or workspace (it is below both).
-        no_command_importing_upper_layers:
+          allow:
+            - $gostd
+            - gopkg.in/yaml.v3
+
+        command:
+          list-mode: strict
           files:
             - "**/internal/command/**"
-          deny:
-            - pkg: "github.com/yaaos/agent/internal/supervisor"
-              desc: "command must not import supervisor — downward-only layer graph"
-            - pkg: "github.com/yaaos/agent/internal/workspace"
-              desc: "command must not import workspace — downward-only layer graph"
+          allow:
+            - $gostd
+            - github.com/yaaos/agent/internal/command
+            - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/secret
+
+        activity:
+          list-mode: strict
+          files:
+            - "**/internal/activity/**"
+          allow:
+            - $gostd
+            - github.com/coder/websocket
+            - github.com/yaaos/agent/internal/protocol
+
+        workspace:
+          list-mode: strict
+          files:
+            - "**/internal/workspace/**"
+          allow:
+            - $gostd
+            - go.opentelemetry.io/otel/attribute
+            - github.com/yaaos/agent/internal/command
+            - github.com/yaaos/agent/internal/ipc
+            - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/secret
+            - github.com/yaaos/agent/internal/tracing
+
+        supervisor:
+          list-mode: strict
+          files:
+            - "**/internal/supervisor/**"
+          allow:
+            - $gostd
+            - github.com/coder/websocket
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/metric
+            - go.opentelemetry.io/otel/trace
+            - github.com/yaaos/agent/internal/activity
+            - github.com/yaaos/agent/internal/backoff
+            - github.com/yaaos/agent/internal/command
+            - github.com/yaaos/agent/internal/identity
+            - github.com/yaaos/agent/internal/ipc
+            - github.com/yaaos/agent/internal/observability
+            - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/tracing
+            - github.com/yaaos/agent/internal/workspace
+
+        backoff:
+          list-mode: strict
+          files:
+            - "**/internal/backoff/**"
+          allow:
+            - $gostd
+
+        secret:
+          list-mode: strict
+          files:
+            - "**/internal/secret/**"
+          allow:
+            - $gostd
+
+        ipc:
+          list-mode: strict
+          files:
+            - "**/internal/ipc/**"
+          allow:
+            - $gostd
+
+        logging:
+          list-mode: strict
+          files:
+            - "**/internal/logging/**"
+          allow:
+            - $gostd
+            - gopkg.in/natefinch/lumberjack.v2
+
+        observability:
+          list-mode: strict
+          files:
+            - "**/internal/observability/**"
+          allow:
+            - $gostd
+            - go.opentelemetry.io/contrib/bridges/otelslog
+            - go.opentelemetry.io/otel
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp
+            - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp
+            - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
+            - go.opentelemetry.io/otel/metric
+            - go.opentelemetry.io/otel/propagation
+            - go.opentelemetry.io/otel/sdk/log
+            - go.opentelemetry.io/otel/sdk/metric
+            - go.opentelemetry.io/otel/sdk/resource
+            - go.opentelemetry.io/otel/sdk/trace
+            - go.opentelemetry.io/otel/semconv/v1.40.0
+
+        identity:
+          list-mode: strict
+          files:
+            - "**/internal/identity/**"
+          allow:
+            - $gostd
+            - github.com/aws/aws-sdk-go-v2/aws/signer/v4
+            - github.com/aws/aws-sdk-go-v2/config
+            - github.com/aws/aws-sdk-go-v2/credentials/ec2rolecreds
+
+        tracing:
+          list-mode: strict
+          files:
+            - "**/internal/tracing/**"
+          allow:
+            - $gostd
+            - go.opentelemetry.io/otel
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/codes
+            - go.opentelemetry.io/otel/propagation
+            - go.opentelemetry.io/otel/sdk/trace
+            - go.opentelemetry.io/otel/sdk/trace/tracetest
+            - go.opentelemetry.io/otel/trace
+            - go.opentelemetry.io/otel/trace/noop
+
+        cmd_agent:
+          list-mode: strict
+          files:
+            - "**/cmd/agent/**"
+          allow:
+            - $gostd
+            - go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
+            - github.com/yaaos/agent/internal/identity
+            - github.com/yaaos/agent/internal/logging
+            - github.com/yaaos/agent/internal/observability
+            - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/supervisor
+            - github.com/yaaos/agent/internal/workspace
   exclusions:
     rules:
       - path: _test\.go
