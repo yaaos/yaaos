@@ -110,6 +110,13 @@ Two surfaces in `core/api/client.ts`: `apiClient` (typed `openapi-fetch`) and `a
 
 - Function components only. Hooks for shared logic; no HOCs unless forced by a library.
 - TanStack Query for server state — no `useEffect(() => fetch(...))`.
-- Tailwind only. Color tokens in `core/layout/theme.ts` (oklch).
+- Tailwind v4 only. CSS-first token definitions via `@theme` in `src/styles.css`; tokens are
+  referenced as Tailwind utilities (`bg-background`, `text-foreground`, etc.) without a JS
+  config file. The oklch semantic values live in `@layer base` custom properties.
+- Theming is one system: `core/layout/ThemeProvider` + `useThemeContext` back the `data-theme`
+  toggle and feed the Sonner toast's `theme` prop. No `next-themes`.
+- `cva` (class-variance-authority) + `cn` (tailwind-merge + clsx) for variant classes on
+  primitives. Container-query variants (`@container`, `@sm:`, `@lg:`) are available natively
+  in Tailwind v4 — prefer them over media queries for component-level breakpoints.
 - `tsc` strict — warnings are CI errors.
 - Forms: React state + manual validation. No `react-hook-form` / `zod`.

@@ -229,6 +229,7 @@ node_modules/
 apps/web/dist/
 apps/e2e/test-results/
 apps/e2e/playwright-report/
+.pnpm-store/
 
 # Generated OpenAPI types (regenerated from backend's /openapi.json)
 apps/web/src/core/api/generated/

@@ -82,4 +82,4 @@
 
 ## Adding a primitive
 
-`pnpm dlx shadcn@latest add <name> --yes`. If the CLI rewrites `tailwind.config.ts` or `src/styles.css`, reconcile against the existing token layer. Add a one-liner to this doc.
+`pnpm dlx shadcn@latest add <name> --yes`. If the CLI rewrites `src/styles.css` or attempts to add a `tailwind.config.ts`, discard the config file (Tailwind v4 is CSS-first; no JS config) and reconcile any token additions against the `@theme` + `@layer base` structure in `src/styles.css`. Add a one-liner to this doc.

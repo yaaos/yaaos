@@ -109,7 +109,15 @@ Target: WCAG 2.1 AA on critical flows.
 
 ## Design tokens
 
-Semantic CSS variables defined in [`src/styles.css`](../src/styles.css), aliased onto Tailwind utilities in [`tailwind.config.ts`](../tailwind.config.ts). Theme swaps via `[data-theme="light"|"dark"]` on `<html>`; `:root` defaults to dark.
+Three-tier model, all in [`src/styles.css`](../src/styles.css):
+
+1. **Primitive oklch values** — raw `oklch(...)` literals in `@layer base` custom properties (`:root/[data-theme="dark"]` and `[data-theme="light"]`).
+2. **Semantic roles** — the same custom properties (`--background`, `--foreground`, `--primary`, …) are the semantic names. One set of names; the values swap per theme.
+3. **Tailwind utilities** — the `@theme` block maps `--color-background: var(--background)`, `--color-primary: var(--primary)`, etc., making Tailwind utilities (`bg-background`, `text-primary`, `border-border`) resolve to the semantic values automatically. No `tailwind.config.ts` JS config file.
+
+Theme swaps via `[data-theme="light"|"dark"]` on `<html>`; `:root` defaults to dark. The `data-theme` toggle is driven by `core/layout/theme.ts`; React consumers use `useThemeContext()`.
+
+**Adding a token:** add to both `:root,[data-theme="dark"]` and `[data-theme="light"]` in `src/styles.css`, add a `--color-<name>` mapping in `@theme`, update the color table below.
 
 ### Color — semantic roles
 
@@ -153,11 +161,11 @@ Font family: Geist (sans + mono). Mono uses tabular-nums.
 
 ### Spacing + radius + motion
 
-Values are in `tailwind.config.ts` and `src/styles.css`. No arbitrary values (`p-[7px]`) — add a rung or fix the inconsistency.
+Values are in `src/styles.css` (`@theme` block for radius, shadow, and animation tokens). No arbitrary values (`p-[7px]`) — add a rung or fix the inconsistency.
 
 ### Adding a token
 
-Add to both `:root,[data-theme="dark"]` and `[data-theme="light"]` in `styles.css`, map in `tailwind.config.ts`, update the color table above.
+Add the oklch value to both `:root,[data-theme="dark"]` and `[data-theme="light"]` in `src/styles.css`, add a `--color-<name>: var(--<name>)` entry in `@theme`, update the color table above.
 
 ## Related docs
 

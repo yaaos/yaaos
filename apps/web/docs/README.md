@@ -45,16 +45,16 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 
 | Concern | Choice |
 |---|---|
-| Build / dev server | Vite |
-| UI framework | React 18 |
+| Build / dev server | Vite 8 |
+| UI framework | React 19 + React Compiler |
 | Routing | TanStack Router |
 | Server state | TanStack Query |
 | API client | `openapi-fetch` (typed) + hand-written `apiFetch` |
 | Real-time | Native `EventSource` (SSE) |
 | Forms | React state + manual validation |
-| Styling | Tailwind, oklch color tokens |
+| Styling | Tailwind v4, CSS-first `@theme`, oklch color tokens |
 | Component primitives | shadcn-style copies in `shared/components/ui/` (Radix-backed) + composites in `shared/components/{layout,chrome}/` |
 | Lint / format | Biome |
-| Unit tests | Vitest |
+| Unit tests | Vitest 4 |
 | Icons | lucide-react |
 | TypeScript | `strict: true`, path aliases (`@core/...`, `@domain/...`, `@shared/...`) |
