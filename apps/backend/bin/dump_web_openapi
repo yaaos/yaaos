@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Dump the backend's web-facing OpenAPI spec to a committed artifact.
+
+Writes `apps/backend/openapi/web-api.json`. Run this whenever you change
+the API shape (add/remove/rename routes, change response models, etc.) and
+commit the updated artifact. Backend CI fails if the artifact is stale.
+
+Usage (from anywhere in the repo, or from apps/backend/):
+    uv run python apps/backend/bin/dump_web_openapi
+    # or from apps/backend/:
+    uv run python bin/dump_web_openapi
+
+No DB, Redis, or network is required — the spec is built purely from the
+in-process FastAPI route registry.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Ensure apps/backend/ is on sys.path so `app.*` imports resolve whether the
+# script is invoked from the repo root or from apps/backend/.
+_BACKEND = Path(__file__).resolve().parent.parent
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+# Side-effect: registers every RouteSpec (including test-env ones when
+# YAAOS_ENV=test). The strip step below removes /api/testing/* paths.
+import app.web  # noqa: F401, E402
+
+from app.core.webserver.openapi_artifact import (  # noqa: E402
+    ARTIFACT_PATH,
+    build_stripped_spec,
+    serialise_spec,
+)
+
+
+def main() -> None:
+    spec = build_stripped_spec()
+    payload = serialise_spec(spec)
+    ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ARTIFACT_PATH.write_text(payload, encoding="utf-8")
+    path_count = len(spec.get("paths", {}))
+    print(f"wrote {ARTIFACT_PATH.relative_to(_BACKEND.parent.parent)} ({path_count} paths)")
+
+
+if __name__ == "__main__":
+    main()
