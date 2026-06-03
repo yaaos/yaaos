@@ -26,7 +26,7 @@ Private (non-`public/`): `generated/` (only `core/api` may import it).
 
 ### Generated types
 
-`src/core/api/generated/schema.d.ts` is auto-generated from the committed backend artifact `apps/backend/openapi/web-api.json` by `apps/web/bin/gen-api-types`. It is committed; `bin/gen-api-types --check` (regenerate + `git diff --exit-code`) runs as a gating stage in `bin/ci` — no running backend required.
+`src/core/api/generated/schema.d.ts` is auto-generated from the committed backend artifact `apps/backend/openapi/web-api.json` by `apps/web/bin/gen-api-types`. It is committed; `bin/gen-api-types --check` (regenerate + compare against the committed file) runs as a gating stage in `bin/ci` — no running backend required.
 
 - Only `core/api` may import from `generated/` — the boundary is enforced by `.dependency-cruiser.cjs`.
 - The generated dir is excluded from Biome lint/format (`biome.json`).

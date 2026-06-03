@@ -87,7 +87,7 @@ Target: WCAG 2.2 AA on all shipped pages.
 | Concern | Tool |
 |---|---|
 | Lint + format | Biome (`apps/web/biome.json`) |
-| API type drift | `bin/gen-api-types --check` — regenerate from `apps/backend/openapi/web-api.json` + `git diff --exit-code`; gating stage before `tsc` |
+| API type drift | `bin/gen-api-types --check` — regenerate from `apps/backend/openapi/web-api.json` + compare against the committed file; gating stage before `tsc` |
 | Type check | `tsc --noEmit` |
 | Unit/integration tests | Vitest + RTL + MSW |
 | Boundary lint | dependency-cruiser (`apps/web/.dependency-cruiser.cjs`, error — fails `bin/ci`) |
