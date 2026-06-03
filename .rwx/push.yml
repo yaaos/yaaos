@@ -124,6 +124,8 @@ tasks:
     tool-cache: ci-web-pnpm
     filter:
       - apps/web/**
+      # bin/ci runs gen-api-types --check against the committed spec.
+      - apps/backend/openapi/web-api.json
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
