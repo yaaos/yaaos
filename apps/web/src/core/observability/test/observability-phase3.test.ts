@@ -73,10 +73,12 @@ describe("useOtelIdentitySync — identity cleared only on 401", () => {
     expect(recordSpy).toHaveBeenCalled();
   });
 
-  it("clears identity on a 401 response (via AuthError from apiFetch)", async () => {
+  it("clears identity silently on a 401 and does NOT navigate", async () => {
+    // Regression guard: this probe runs on pre-auth pages (e.g. /login) where
+    // a 401 is expected. It must clear identity WITHOUT redirecting — routing
+    // through apiFetch's 401 handler would hard-redirect to /login and loop.
     setIdentity({ orgId: "acme", userId: "u1" });
 
-    // Stub window.location.assign so handleAuthFailure doesn't navigate away
     const assignSpy = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
@@ -84,11 +86,13 @@ describe("useOtelIdentitySync — identity cleared only on 401", () => {
       value: {
         ...window.location,
         assign: assignSpy,
-        pathname: "/orgs/acme/tickets",
+        pathname: "/login",
         search: "",
         hash: "",
       },
     });
+
+    const recordSpy = vi.spyOn(await import("../public/sdk"), "recordException");
 
     server.use(
       http.get("/api/auth/me", () =>
@@ -102,10 +106,9 @@ describe("useOtelIdentitySync — identity cleared only on 401", () => {
     });
     unmount();
 
-    // On 401 the effect clears identity (and apiFetch triggers the redirect)
-    // We can verify setIdentity(null) was called via the recordException NOT
-    // being called (it's the else branch) and assign being called (apiFetch path).
-    expect(assignSpy).toHaveBeenCalled();
+    // No navigation triggered, and 401 is not treated as a recordable error.
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(recordSpy).not.toHaveBeenCalled();
   });
 
   it("re-runs the effect when org slug changes between renders", async () => {
