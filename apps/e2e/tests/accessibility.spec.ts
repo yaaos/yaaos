@@ -10,38 +10,9 @@
  */
 
 import AxeBuilder from "@axe-core/playwright";
-import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 
-import { dispatchWebhook, prPayload, resetStack, seedGithubInstall } from "./_helpers";
-
-const BASE = process.env.YAAOS_BASE_URL ?? "http://localhost:58080";
-
-async function loginAsOwner(page: Page, request: APIRequestContext) {
-  await resetStack();
-  await request.post(`${BASE}/api/testing/seed/bootstrap_owner`, {
-    data: {
-      email: "owner@yaaos.test",
-      github_id: "1001",
-      org_slug: "acme",
-      display_name: "Owner",
-      provider: "test",
-    },
-  });
-  await request.post(`${BASE}/api/testing/oauth_test/stage_profile`, {
-    data: {
-      external_subject: "1001",
-      primary_email: "owner@yaaos.test",
-      email_verified: true,
-      display_name: "Owner",
-    },
-  });
-  // The Owner needs valid credentials + an installed Coding Agent so the
-  // Coding Agent settings detail page has something to render against.
-  await seedGithubInstall({ targetOrgSlug: "acme" });
-  await page.goto(`${BASE}/login`);
-  await page.getByTestId("login-test").click();
-  await page.waitForURL(/\/orgs\/acme\/dashboard$/);
-}
+import { YAAOS_URL, dispatchWebhook, loginAsOwner, prPayload } from "./_helpers";
 
 async function expectNoViolations(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page })
@@ -69,7 +40,7 @@ test.describe("a11y — anchor pages", () => {
         body: "Seeded so axe can scan a populated tickets table.",
       }),
     });
-    await page.goto(`${BASE}/orgs/acme/tickets`);
+    await page.goto(`${YAAOS_URL}/orgs/acme/tickets`);
     await expect(page.getByTestId("tickets-list")).toContainText("A11y fixture ticket", {
       timeout: 20_000,
     });
@@ -87,7 +58,7 @@ test.describe("a11y — anchor pages", () => {
         body: "Seeded so axe can scan the detail page composites.",
       }),
     });
-    await page.goto(`${BASE}/orgs/acme/tickets`);
+    await page.goto(`${YAAOS_URL}/orgs/acme/tickets`);
     await page.getByText("A11y detail fixture").click({ timeout: 20_000 });
     await expect(page.getByTestId("ticket-detail")).toBeVisible();
     await expectNoViolations(page);
@@ -95,7 +66,7 @@ test.describe("a11y — anchor pages", () => {
 
   test("Coding Agent detail has no WCAG AA violations", async ({ page, request }) => {
     await loginAsOwner(page, request);
-    await page.goto(`${BASE}/orgs/acme/settings/coding-agents/claude_code`);
+    await page.goto(`${YAAOS_URL}/orgs/acme/settings/coding-agents/claude_code`);
     // Wait for the AgentEditor's testid to confirm the bespoke UI mounted
     // (not the "not installed" placeholder).
     await expect(page.getByTestId("cc-save")).toBeVisible({ timeout: 10_000 });

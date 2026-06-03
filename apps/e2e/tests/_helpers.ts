@@ -13,6 +13,8 @@
  *     Used as `target_url` for webhook dispatch (fake-github → yaaos).
  */
 
+import type { APIRequestContext, Page } from "@playwright/test";
+
 export const YAAOS_URL = process.env.YAAOS_BASE_URL ?? "http://localhost:58080";
 export const FAKE_GITHUB_URL = process.env.FAKE_GITHUB_URL ?? "http://localhost:58081";
 export const YAAOS_INTERNAL_URL = process.env.YAAOS_INTERNAL_URL ?? "http://web:8080";
@@ -207,4 +209,40 @@ export async function seedCompareDiverged(beforeSha: string, afterSha: string): 
 export async function postedComments(): Promise<Array<Record<string, unknown>>> {
   const r = await fetch(`${FAKE_GITHUB_URL}/__test/posted_comments`);
   return (await r.json()) as Array<Record<string, unknown>>;
+}
+
+/**
+ * Log in as a freshly-seeded owner on the given org and land on the dashboard.
+ * Resets both stacks, seeds the owner profile, seeds a GitHub install, and
+ * completes the OAuth test flow.
+ *
+ * @param orgSlug defaults to "acme"; override when a test needs a different org.
+ */
+export async function loginAsOwner(
+  page: Page,
+  request: APIRequestContext,
+  orgSlug = "acme",
+): Promise<void> {
+  await resetStack();
+  await request.post(`${YAAOS_URL}/api/testing/seed/bootstrap_owner`, {
+    data: {
+      email: "owner@yaaos.test",
+      github_id: "1001",
+      org_slug: orgSlug,
+      display_name: "Owner",
+      provider: "test",
+    },
+  });
+  await request.post(`${YAAOS_URL}/api/testing/oauth_test/stage_profile`, {
+    data: {
+      external_subject: "1001",
+      primary_email: "owner@yaaos.test",
+      email_verified: true,
+      display_name: "Owner",
+    },
+  });
+  await seedGithubInstall({ targetOrgSlug: orgSlug });
+  await page.goto(`${YAAOS_URL}/login`);
+  await page.getByTestId("login-test").click();
+  await page.waitForURL(new RegExp(`/orgs/${orgSlug}/dashboard$`));
 }

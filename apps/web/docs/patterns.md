@@ -69,7 +69,7 @@ Target: WCAG 2.2 AA on all shipped pages.
 - **One `<h1>` per page.** Heading levels must be ordered (`h1 → h2 → h3`) — never skip a level.
 - **Landmarks.** Every page has `<main>`, `<nav>` (sidebar), and `<header>`/`<footer>` where appropriate.
 - **Focus-visible.** Global `*:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` in `src/styles.css`. Never suppress with `outline: none` unless immediately replaced by a visible custom style.
-- **Focus-reset on navigation.** `AppShell` moves focus to the first `<h1>` inside `<main>` (or to `<main>` itself when no `<h1>` is present) on every route change. `<main>` carries `tabIndex={-1}` and `outline-none` so programmatic focus works without adding to the tab order. See [core_layout.md](core_layout.md).
+- **Focus-reset on navigation.** `AppShell` moves focus to the first `<h1>` inside `<main>` (or to `<main>` itself when no `<h1>` is present) on every route change. `<main>` carries `tabIndex={-1}` and `outline-none` so programmatic focus works without adding to the tab order. When `<h1>` doesn't already carry a `tabindex` attribute, the shell injects `tabindex="-1"` at route-change time so the heading is programmatically focusable; the attribute persists across that route's lifetime (benign — `tabindex=-1` keeps headings out of the tab order while remaining reachable via `.focus()`). Page authors do not need to add `tabindex` themselves. See [core_layout.md](core_layout.md).
 - **Color is never the sole meaning carrier.** Status chips pair color with icon + label.
 - **Icons.** Decorative: `aria-hidden="true"`. Meaningful (icon-only buttons): `aria-label` or `title`.
 - **`aria-pressed` on toggle buttons.** Status filter chips carry `aria-pressed={active}`.
@@ -142,8 +142,9 @@ If a FE change could alter stored/posted/counted state without a corresponding A
 
 Module-scoped arrays. Canonical keys:
 
-- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`
-- `["reviewer", "jobs", ticket_id]`, `["reviewer", "metrics"]`, `["reviewer", "agents"]`
+- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["tickets", id, "hitl-history"]`
+- `["reviewer", "jobs", ticket_id]`, `["reviewer", "metrics"]`, `["reviewer", "agents"]`, `["reviewer", "findings", ticket_id, includeTerminal]`
+- `["agents", orgSlug]` — slug-scoped so different orgs don't share the entry
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`
 - `["plugin-health", pluginId]`

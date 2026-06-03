@@ -57,6 +57,10 @@ beforeEach(() => {
 // but accepts page content as children, so tests can control DOM structure
 // without fighting the Outlet mock.
 // ---------------------------------------------------------------------------
+// FocusResetHarness uses a synchronous useEffect calling .focus() directly for
+// determinism in jsdom. It deliberately elides the RAF polling loop that the
+// real AppShell uses (45-frame budget) — the RAF path is covered by the
+// AppShell integration tests in the first describe block below.
 function FocusResetHarness({
   pathname,
   children,

@@ -200,7 +200,7 @@ export interface AgentRow {
 
 export function useAgents(orgSlug: string) {
   return useSuspenseQuery<AgentRow[]>({
-    queryKey: ["agents"],
+    queryKey: ["agents", orgSlug],
     queryFn: () =>
       orgSlug
         ? apiFetch<AgentRow[]>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents`)
@@ -282,6 +282,9 @@ export function useTickets() {
   });
 }
 
+/**
+ * @param ticket_id must be non-empty; enforced by the required route URL param.
+ */
 export function useTicket(ticket_id: string) {
   return useSuspenseQuery<Ticket>({
     queryKey: ["tickets", ticket_id],
@@ -289,6 +292,9 @@ export function useTicket(ticket_id: string) {
   });
 }
 
+/**
+ * @param ticket_id must be non-empty; enforced by the required route URL param.
+ */
 export function useReviewJobsForTicket(ticket_id: string) {
   return useSuspenseQuery<ReviewJob[]>({
     queryKey: ["reviewer", "jobs", ticket_id],
@@ -317,6 +323,9 @@ export interface FindingRow {
   line_end: number;
 }
 
+/**
+ * @param ticket_id must be non-empty; enforced by the required route URL param.
+ */
 export function useFindingsForTicket(ticket_id: string, includeTerminal = false) {
   return useSuspenseQuery<FindingRow[]>({
     queryKey: ["reviewer", "findings", ticket_id, includeTerminal],
@@ -369,6 +378,9 @@ export interface HitlHistoryEntry {
   created_at: string;
 }
 
+/**
+ * @param ticket_id must be non-empty; enforced by the required route URL param.
+ */
 export function useHitlHistory(ticket_id: string) {
   return useSuspenseQuery<HitlHistoryEntry[]>({
     queryKey: ["tickets", ticket_id, "hitl-history"],

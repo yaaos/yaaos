@@ -7,8 +7,8 @@
  * and keyboard users land at the top of the new page.
  */
 
-import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
-import { YAAOS_URL, resetStack, seedGithubInstall } from "./_helpers";
+import { expect, test } from "@playwright/test";
+import { YAAOS_URL, loginAsOwner } from "./_helpers";
 
 // Runs in the browser: classifies where focus currently sits relative to
 // <main>. Returns "main", "h1" (a heading inside main), or "other:<tag>".
@@ -19,31 +19,6 @@ function focusPlacement(): string {
   if (el === main) return "main";
   if (el.tagName.toLowerCase() === "h1" && main?.contains(el)) return "h1";
   return `other:${el.tagName.toLowerCase()}`;
-}
-
-async function loginAsOwner(page: Page, request: APIRequestContext) {
-  await resetStack();
-  await request.post(`${YAAOS_URL}/api/testing/seed/bootstrap_owner`, {
-    data: {
-      email: "owner@yaaos.test",
-      github_id: "1001",
-      org_slug: "acme",
-      display_name: "Owner",
-      provider: "test",
-    },
-  });
-  await request.post(`${YAAOS_URL}/api/testing/oauth_test/stage_profile`, {
-    data: {
-      external_subject: "1001",
-      primary_email: "owner@yaaos.test",
-      email_verified: true,
-      display_name: "Owner",
-    },
-  });
-  await seedGithubInstall({ targetOrgSlug: "acme" });
-  await page.goto(`${YAAOS_URL}/login`);
-  await page.getByTestId("login-test").click();
-  await page.waitForURL(/\/orgs\/acme\/dashboard$/);
 }
 
 test.describe("focus-reset on route navigation", () => {
