@@ -489,9 +489,14 @@ func hostFromURL(rawURL string) string {
 // gatherAgentMetadata collects static OS metadata for the identity exchange.
 // Fields that cannot be determined are left at their zero values (omitted from
 // the wire payload by the json:",omitempty" tags in IdentityExchangeRequest).
+//
+// Containerized agents (ECS Fargate) report the cgroup memory limit, not the
+// host RAM — see internal/supervisor/sysinfo.go.
 func gatherAgentMetadata() protocol.AgentMetadata {
 	return protocol.AgentMetadata{
-		OS: goOS(),
+		OS:          goOS(),
+		CPUCount:    cpuCount(),
+		MemoryBytes: memoryBytes(),
 	}
 }
 
