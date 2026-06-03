@@ -25,6 +25,7 @@ Environment variables consumed by `agent supervisor`:
 | `YAAOS_BACKEND_URL` | `https://app.yaaos.cloud` | Control-plane base URL. |
 | `YAAOS_AGENT_VERSION` | `0.0.0-dev` | Reported during identity exchange. |
 | `AWS_EC2_METADATA_SERVICE_ENDPOINT` | auto (IMDS v2) | Override IMDS endpoint. Set to `http://mock-aws:4566` in dev/test compose to use mock-aws. |
+| `YAAOS_STS_ENDPOINT_URL` | `https://sts.amazonaws.com/` | URL the agent signs `GetCallerIdentity` against and embeds in the signed envelope. SigV4 binds the host into the signature, so the backend replays against the same URL. Set to `http://mock-aws:4566/` in dev/test compose. |
 | `YAAOS_STS_HOST_OVERRIDE` | (none) | Allow an additional STS host (e.g. `mock-aws:4566`). Non-prod only; the backend refuses to boot if set with `YAAOS_ENV=prod`. |
 
 ## Wire protocol
