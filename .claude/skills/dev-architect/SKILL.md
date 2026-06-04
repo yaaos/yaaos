@@ -56,6 +56,15 @@ Rules the template encodes:
 
 **Deliberately excluded:** rejected alternatives · risk register · effort/timeline · parallel current-state snapshot.
 
+## Architecture context — load first
+
+Before sketching any delta, read the system-wide and per-app architecture so the target fits existing boundaries and conventions:
+
+- `docs/system-architecture.md` — inter-app flows + cross-app conventions.
+- `apps/<app>/docs/architecture.md` for every app the change touches — the app's layer model, extension points, and *why*.
+
+This is reasoning-phase context: dev-architect designs before editing files, so the path-scoped `.claude/rules/` (which load on file-read during implementation) do NOT cover this stage. Read these explicitly.
+
 ## Iteration loop
 
 Architecture work is non-linear. Iterate between two axes until both are clean:
@@ -121,7 +130,7 @@ The clean-context verification sweep. For dev-architect the auditor IS the lock-
 ## Behavior
 
 - **Read `requirements.md § Notes for architecture` at startup** — the predecessor's forward bucket (ideas, leanings, watch-outs, questions). Treat as input to fold into the design, not as binding instructions.
-- **Read `CLAUDE.md` + `docs/` first** — root `CLAUDE.md`, any `apps/<app>/CLAUDE.md`, root `docs/`, per-app `apps/<app>/docs/`. All are hints. Code wins on conflict.
+- **Read `CLAUDE.md` + `docs/` first** — root `CLAUDE.md`, root `docs/`, per-app `apps/<app>/docs/` (esp. `architecture.md` + `system-architecture.md`, per § Architecture context). All are hints. Code wins on conflict.
 - **Spawn "serious" Explore subagents in parallel** — one per affected boundary, soft cap of 5 concurrent. Broader scope than `dev-requirements`'s Explore: services, module boundaries, entities/value objects, current interfaces. Each Explore returns a **current-state map with `file:line` anchors** for its boundary; the map feeds the four delta slots in `architecture.md` (Notes-column `was → is`, per-boundary Current anchor, before-half of sequence diagrams, inline Approach cites) — never a parallel current-state section. Filter results through this skill — never raw-dump.
 - **Pushback discipline** per "code is king".
 - **Incremental file writes** — sidebar-visible working draft, written only when meaningful new info accumulates.
