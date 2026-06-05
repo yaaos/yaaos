@@ -1,17 +1,1 @@
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "type": "command",
-        "command": "echo 'RULE: No cross-module test-helper exports. A core/domain/plugins __all__ must never expose a test-seam name (reset_*, clear_*, scoped_*, *_for_tests, _seed_*, set_*_override, set_test_*, get_test_*) with zero production importers. bin/sync_modules enforces this at CI. Cross-module test machinery lives in app/testing/. RULE: Before editing any file under apps/<app>/, read that app\\'s docs/architecture.md AND docs/patterns.md first.'"
-      }
-    ],
-    "PreToolUse": [
-      {
-        "type": "command",
-        "matcher": "Edit|Write|MultiEdit",
-        "command": "python3 -c \"\nimport json, sys, os, re\ntry:\n    data = json.load(sys.stdin)\nexcept Exception:\n    sys.exit(0)  # fail open on parse error\n\ntool_input = data.get('tool_input', {})\nfile_path = tool_input.get('file_path', '') or ''\ntranscript_path = data.get('transcript_path', '') or ''\n\n# Derive the app from the file path.\nm = re.search(r'/apps/([^/]+)/', file_path)\nif not m:\n    sys.exit(0)  # not under apps/<app>/ — no gate\napp_name = m.group(1)\n\n# fake-* apps and non-gated apps are exempt.\nif app_name.startswith('fake-') or app_name not in ('backend', 'web', 'agent', 'e2e'):\n    sys.exit(0)\n\n# Determine required doc paths.\nbase = file_path[:file_path.index('/apps/') + len('/apps/')]\narch_doc = f'apps/{app_name}/docs/architecture.md'\npatt_doc = f'apps/{app_name}/docs/patterns.md'\n\n# Read transcript and check which docs have been read this session.\ntranscript_text = ''\nif transcript_path:\n    try:\n        transcript_text = open(transcript_path).read()\n    except Exception:\n        sys.exit(0)  # fail open if transcript unreadable\n\nmissing = []\nfor doc in (arch_doc, patt_doc):\n    # Match either the full absolute path or the relative path appearing in the transcript.\n    doc_base = doc.split('/')[-1]  # e.g. 'architecture.md'\n    # Look for the doc path in any Read tool call result in the transcript.\n    if doc not in transcript_text and doc_base not in transcript_text:\n        missing.append(doc)\n\nif missing:\n    msg = 'BLOCKED: Read these docs before editing ' + app_name + ':\\n' + '\\n'.join('  ' + d for d in missing)\n    print(msg, file=sys.stderr)\n    sys.exit(1)  # block the edit\n\nsys.exit(0)\n\""
-      }
-    ]
-  }
-}
+{}
