@@ -37,9 +37,11 @@ Notes-column format: `new` rows write a one-line rationale; `changed` rows write
 
 ## Sequence diagrams
 
-<ASCII, one block per use case with non-trivial sequence. Each block carries today (top) and after (bottom), separated by a horizontal rule. Cite the current entry-point `path:line` above the "today" half. Mark entities. Embed inline AND save the combined block to diagrams/<uc-slug>.txt — one file per use case, both states inside.>
+<ASCII, embedded inline here, one block per use case with non-trivial sequence. Each block carries today (top) and after (bottom), separated by a horizontal rule. Cite the current entry-point `path:line` above the "today" half. Mark entities. Both states inside one block.>
 
-<If no sequence changes: write "No sequence changes." and omit the diagrams/ directory entirely.>
+<If no sequence changes: write "No sequence changes.">
+
+
 
 ## Use case walkthroughs
 
@@ -50,7 +52,7 @@ Notes-column format: `new` rows write a one-line rationale; `changed` rows write
 - **Trigger:** <what starts the flow>
 - **Path:** <step 1: entity / interface called> → <step 2> → <step 3> → ...
 - **Data crossing boundaries:** <payload shape names, not full schemas>
-- **Diagram:** <link to diagrams/<uc-slug>.txt, or "no sequence change">
+- **Diagram:** <link to the inline block under § Sequence diagrams, or "no sequence change">
 
 <repeat per use case — one walkthrough per use case in requirements.md>
 
