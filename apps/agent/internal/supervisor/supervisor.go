@@ -234,7 +234,9 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		// forever). Once bootstrapped, renewal failures use claimBackoff /
 		// heartbeatBackoff which are indefinite — a transient STS blip must
 		// not kill a running pod.
-		stsBackoff:       backoff.NewWithDeadline(1 * time.Hour),
+		// YAAOS_AGENT_STS_BACKOFF_SECONDS overrides the step list for test
+		// stacks that need fast re-auth; unset → the prod ramp.
+		stsBackoff:       parseStsBackoffEnv(),
 		claimBackoff:     backoff.New(),
 		heartbeatBackoff: backoff.New(),
 		wsBackoff:        backoff.New(),

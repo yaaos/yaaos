@@ -231,6 +231,9 @@ services:
       YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
       FAKE_CLAUDE_SCENARIOS_DIR: /opt/fake-claude/scenarios
       FAKE_CLAUDE_SCENARIO: happy
+      # Fast STS backoff so the test agent re-authenticates within seconds
+      # after the org-ARN seed completes. Prod leaves this unset → 1m/3m/… ramp.
+      YAAOS_AGENT_STS_BACKOFF_SECONDS: "2,2,2,2,2"
     volumes:
       - ../apps/fake-claude/claude:/usr/local/bin/claude:ro
       - ../apps/fake-claude/scenarios:/opt/fake-claude/scenarios:ro

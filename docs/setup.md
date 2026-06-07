@@ -162,6 +162,8 @@ bin/dev-rebuild                  # builds image + starts stack
 
 Self-contained: Postgres + `apps/fake-github` + backend with stubbed coding agent. Run `apps/e2e/bin/ci` for up → run → down. See [`apps/e2e/docs/README.md`](../apps/e2e/docs/README.md).
 
+The test stack sets `YAAOS_AGENT_STS_BACKOFF_SECONDS=2,2,2,2,2` on the agent container so the real Go agent re-authenticates within seconds of the org-ARN seed completing (rather than waiting on the production 1 m/3 m/… ramp). Unset in prod — zero behavioral change there.
+
 ## Claude Code Stop hook
 
 `.claude/settings.json` registers a Stop hook that runs the relevant `apps/<app>/bin/ci` before a Claude turn ends. Fires only for non-`.md` changes under `apps/backend/` or `apps/web/`. e2e intentionally excluded — expensive and Docker-dependent. The hook is a safety net; run `bin/ci` yourself during work.

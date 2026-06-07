@@ -65,7 +65,7 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
 - `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`. See [activity.md](activity.md).
 - `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap.
-- `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`).
+- `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`). `NewWithStepsAndDeadline` allows custom step lists with the same deadline ceiling (used for the env-tunable STS surface).
 - `internal/observability/` — OTel SDK bootstrap, metric instrument declarations, standard dimension helpers (`SetStandardDimensions`, `StandardAttrs`). See [observability.md](observability.md).
 
 ## Wire-protocol internals
@@ -130,6 +130,8 @@ The supervisor runs these goroutines concurrently after identity exchange:
 - **WS reconnect loop** (optional) — waits on `wsReadLoopDone`, sleeps on the WS backoff schedule, re-dials.
 
 No goroutine shares mutable state without a lock or atomic. The `Pool` guards all workspace-record mutations with a `sync.Mutex`. `Conductor.SubscriptionSet` and `WorkspaceMapping` each have their own independent locks. `observability.SetStandardDimensions` is guarded by `stdDimsMu`.
+
+**STS backoff is env-tunable.** `YAAOS_AGENT_STS_BACKOFF_SECONDS` (comma-separated positive integers, e.g. `2,2,2,2,2`) overrides the STS identity-exchange step list. Unset → the prod ramp (`1m/3m/5m/15m/60m`). A malformed value logs a WARN and falls back to the prod ramp. The 1 h deadline cap applies regardless of the step list. Only the `stsBackoff` surface is tunable; `claimBackoff`, `heartbeatBackoff`, and `wsBackoff` are always the prod ramp.
 
 ## Testing model
 
