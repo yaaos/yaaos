@@ -23,6 +23,7 @@ type WorkspaceOps interface {
 	RefreshAuth(ctx context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (RefreshResult, error)
 	RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (InvokeResult, error)
 	Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (CleanupResult, error)
+	EnumerateSkills(ctx context.Context, cmd *protocol.EnumerateSkillsCommand) (EnumerateSkillsResult, error)
 }
 
 // AgentOps is the capability seam a ConfigUpdateCommand calls. The supervisor

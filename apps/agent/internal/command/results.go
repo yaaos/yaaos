@@ -115,6 +115,47 @@ func (r CleanupResult) ToWire() map[string]any {
 	return m
 }
 
+// SkillManifestEntry is one element of the enumerated skills list returned by
+// the EnumerateSkills command. The backend persists this into
+// claude_code_repos.skills as JSONB.
+type SkillManifestEntry struct {
+	// Name is the invocation handle: the directory name for repo-local skills,
+	// or "<plugin>:<skill>" for plugin-sourced skills.
+	Name       string  `json:"name"`
+	Source     string  `json:"source"`      // "repo" | "plugin"
+	PluginName *string `json:"plugin_name"` // nil for source=="repo"
+}
+
+// EnumerateSkillsResult is the typed output of the EnumerateSkills command.
+type EnumerateSkillsResult struct {
+	WorkspaceID string
+	Skills      []SkillManifestEntry
+}
+
+// ToWire returns the map[string]any the backend expects from EnumerateSkills.
+// The backend's PersistSkillManifest step reads `outputs["skills"]` as a list
+// of plain maps. `plugin_name` is a string or nil (never a pointer) so the
+// backend can JSON-round-trip it cleanly.
+func (r EnumerateSkillsResult) ToWire() map[string]any {
+	skills := make([]map[string]any, 0, len(r.Skills))
+	for _, s := range r.Skills {
+		var pluginName any
+		if s.PluginName != nil {
+			pluginName = *s.PluginName
+		}
+		entry := map[string]any{
+			"name":        s.Name,
+			"source":      s.Source,
+			"plugin_name": pluginName,
+		}
+		skills = append(skills, entry)
+	}
+	return map[string]any{
+		"workspace_id": r.WorkspaceID,
+		"skills":       skills,
+	}
+}
+
 // ConfigUpdateResult is the typed output of ConfigUpdateCommand.Execute.
 // The backend doesn't read specific fields from a config-update's outputs;
 // an empty map is a valid success response, but we include the max_workspaces

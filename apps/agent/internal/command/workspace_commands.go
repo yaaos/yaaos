@@ -15,6 +15,7 @@ const (
 	defaultRefreshWorkspaceAuthTimeout = 30 * time.Second
 	defaultCleanupWorkspaceTimeout     = 30 * time.Second
 	defaultInvokeClaudeCodeTimeout     = 15 * time.Minute
+	defaultEnumerateSkillsTimeout      = 5 * time.Minute
 )
 
 // ── ProvisionWorkspaceCommand ─────────────────────────────────────────────────
@@ -165,3 +166,34 @@ func (c *CleanupWorkspaceCommand) MarshalWire() ([]byte, error) { return json.Ma
 
 // SetTraceparent implements Command.
 func (c *CleanupWorkspaceCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
+
+// ── EnumerateSkillsCommand ────────────────────────────────────────────────────
+
+// EnumerateSkillsCommand scans the cloned repo for skills and returns a
+// SkillManifestEntry list. Only repo-local skills are scanned; plugin skills
+// are a degraded-but-correct empty list (a finished enumeration with zero plugin
+// skills is a success, not a failure — the plugin/marketplace path lands later).
+type EnumerateSkillsCommand struct {
+	Proto protocol.EnumerateSkillsCommand
+}
+
+// Header implements Command.
+func (c *EnumerateSkillsCommand) Header() protocol.CommandHeader {
+	return c.Proto.CommandHeader
+}
+
+// Timeout implements Command.
+func (c *EnumerateSkillsCommand) Timeout() time.Duration {
+	return defaultEnumerateSkillsTimeout
+}
+
+// Execute calls ops.EnumerateSkills and returns an EnumerateSkillsResult.
+func (c *EnumerateSkillsCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
+	return ops.EnumerateSkills(ctx, &c.Proto)
+}
+
+// MarshalWire returns the flat JSON representation of this command.
+func (c *EnumerateSkillsCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
+
+// SetTraceparent implements Command.
+func (c *EnumerateSkillsCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }

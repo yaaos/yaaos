@@ -65,6 +65,7 @@ class GeneralEventKind(StrEnum):
     COMMENT_REPLY_RECEIVED = "comment_reply_received"
     AGENT_REPLY_POSTED = "agent_reply_posted"
     AGENT_LIVENESS_CHANGED = "agent_liveness_changed"
+    SKILLS_ENUMERATED = "skills_enumerated"
 
 
 # ---------------------------------------------------------------------------

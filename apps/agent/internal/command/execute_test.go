@@ -14,22 +14,25 @@ import (
 // fakeWorkspaceOps records which ops were called and returns configurable
 // results.
 type fakeWorkspaceOps struct {
-	provisionResult command.ProvisionResult
-	provisionErr    error
-	writeResult     command.WriteFilesResult
-	writeErr        error
-	refreshResult   command.RefreshResult
-	refreshErr      error
-	invokeResult    command.InvokeResult
-	invokeErr       error
-	cleanupResult   command.CleanupResult
-	cleanupErr      error
+	provisionResult       command.ProvisionResult
+	provisionErr          error
+	writeResult           command.WriteFilesResult
+	writeErr              error
+	refreshResult         command.RefreshResult
+	refreshErr            error
+	invokeResult          command.InvokeResult
+	invokeErr             error
+	cleanupResult         command.CleanupResult
+	cleanupErr            error
+	enumerateSkillsResult command.EnumerateSkillsResult
+	enumerateSkillsErr    error
 
-	provisionCalled bool
-	writeCalled     bool
-	refreshCalled   bool
-	invokeCalled    bool
-	cleanupCalled   bool
+	provisionCalled       bool
+	writeCalled           bool
+	refreshCalled         bool
+	invokeCalled          bool
+	cleanupCalled         bool
+	enumerateSkillsCalled bool
 }
 
 func (f *fakeWorkspaceOps) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
@@ -55,6 +58,11 @@ func (f *fakeWorkspaceOps) RunClaude(ctx context.Context, cmd *protocol.InvokeCl
 func (f *fakeWorkspaceOps) Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	f.cleanupCalled = true
 	return f.cleanupResult, f.cleanupErr
+}
+
+func (f *fakeWorkspaceOps) EnumerateSkills(ctx context.Context, cmd *protocol.EnumerateSkillsCommand) (command.EnumerateSkillsResult, error) {
+	f.enumerateSkillsCalled = true
+	return f.enumerateSkillsResult, f.enumerateSkillsErr
 }
 
 // fakeAgentOps records the config passed to ApplyConfig.
@@ -281,6 +289,61 @@ func TestCleanupWorkspaceCommand_Execute(t *testing.T) {
 		t.Errorf("wire[destroyed] = %v, want true", wire["destroyed"])
 	}
 	assertWireKey(t, wire, "path", "/tmp/ws-5")
+}
+
+// ── EnumerateSkillsCommand.Execute ───────────────────────────────────────────
+
+func TestEnumerateSkillsCommand_Execute(t *testing.T) {
+	plug := "myplugin"
+	ops := &fakeWorkspaceOps{
+		enumerateSkillsResult: command.EnumerateSkillsResult{
+			WorkspaceID: "ws-6",
+			Skills: []command.SkillManifestEntry{
+				{Name: "my-skill", Source: "repo", PluginName: nil},
+				{Name: "tool:helper", Source: "plugin", PluginName: &plug},
+			},
+		},
+	}
+	cmd := &command.EnumerateSkillsCommand{
+		Proto: protocol.EnumerateSkillsCommand{
+			CommandHeader: protocol.CommandHeader{
+				CommandID:   "cmd-es",
+				WorkspaceID: "ws-6",
+				Kind:        protocol.KindEnumerateSkills,
+			},
+		},
+	}
+	res, err := cmd.Execute(context.Background(), ops)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !ops.enumerateSkillsCalled {
+		t.Error("EnumerateSkills not called")
+	}
+	wire := res.ToWire()
+	assertWireKey(t, wire, "workspace_id", "ws-6")
+	skills, ok := wire["skills"].([]map[string]any)
+	if !ok {
+		t.Fatalf("wire[skills] type = %T, want []map[string]any", wire["skills"])
+	}
+	if len(skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2", len(skills))
+	}
+	if skills[0]["name"] != "my-skill" {
+		t.Errorf("skills[0].name = %v, want my-skill", skills[0]["name"])
+	}
+	if skills[0]["source"] != "repo" {
+		t.Errorf("skills[0].source = %v, want repo", skills[0]["source"])
+	}
+	if skills[0]["plugin_name"] != nil {
+		t.Errorf("skills[0].plugin_name = %v, want nil", skills[0]["plugin_name"])
+	}
+	if skills[1]["name"] != "tool:helper" {
+		t.Errorf("skills[1].name = %v, want tool:helper", skills[1]["name"])
+	}
+	if skills[1]["plugin_name"] != plug {
+		t.Errorf("skills[1].plugin_name = %v, want %q", skills[1]["plugin_name"], plug)
+	}
 }
 
 // ── ConfigUpdateCommand.Execute ───────────────────────────────────────────────

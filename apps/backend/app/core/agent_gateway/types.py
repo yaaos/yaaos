@@ -26,6 +26,7 @@ class AgentCommandKind(StrEnum):
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
+    ENUMERATE_SKILLS = "EnumerateSkills"
     CONFIG_UPDATE = "ConfigUpdate"
 
 
@@ -100,6 +101,14 @@ class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
 
 
+class EnumerateSkillsCommand(_CommandBase):
+    """Ask the agent to enumerate skills in the cloned workspace and return a
+    SkillManifestEntry list. Repo-local skills always return; plugin skills return
+    best-effort (a finished enumeration with zero plugin skills is a success)."""
+
+    kind: Literal[AgentCommandKind.ENUMERATE_SKILLS] = AgentCommandKind.ENUMERATE_SKILLS
+
+
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 
@@ -133,6 +142,7 @@ AgentCommand = Annotated[
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
     | CleanupWorkspaceCommand
+    | EnumerateSkillsCommand
     | ConfigUpdateCommand,
     Field(discriminator="kind"),
 ]

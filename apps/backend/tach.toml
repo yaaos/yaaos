@@ -139,7 +139,7 @@ depends_on = ["app.core.plugin_kit"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_kit", "app.core.sessions", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs"]
+depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.plugin_kit", "app.core.sessions", "app.core.sse", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -198,6 +198,7 @@ expose = [
   "ClaimRequest",
   "CleanupWorkspaceCommand",
   "ConfigUpdateCommand",
+  "EnumerateSkillsCommand",
   "GatewayError",
   "HeartbeatRequest",
   "HeartbeatResponse",

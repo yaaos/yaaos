@@ -324,6 +324,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/claude_code/repos/{repo_external_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Skills
+         * @description Return the cached skill manifest for a repo. Empty list if not yet enumerated.
+         */
+        get: operations["get_skills_api_claude_code_repos__repo_external_id__skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/claude_code/repos/{repo_external_id}/skills/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Skills
+         * @description Kick off skill enumeration for a repo. Creates a system ticket and starts
+         *     the `enumerate_skills_v1` workflow. Returns immediately — the manifest update
+         *     arrives via the `skills_enumerated` SSE event.
+         */
+        post: operations["refresh_skills_api_claude_code_repos__repo_external_id__skills_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/coding-agents": {
         parameters: {
             query?: never;
@@ -2337,6 +2379,13 @@ export interface components {
             install_url?: string | null;
             state?: components["schemas"]["VcsStateResponse"] | null;
         };
+        /** SkillRefreshResponse */
+        SkillRefreshResponse: {
+            /** Created */
+            created: boolean;
+            /** Ticket Id */
+            ticket_id: string;
+        };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
             /** Body */
@@ -3164,6 +3213,78 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_skills_api_claude_code_repos__repo_external_id__skills_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                repo_external_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_skills_api_claude_code_repos__repo_external_id__skills_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                repo_external_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRefreshResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

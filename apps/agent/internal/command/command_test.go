@@ -10,7 +10,7 @@ import (
 	"github.com/yaaos/agent/internal/protocol"
 )
 
-// TestDecodeRoundTrip verifies Decode accepts valid JSON for all 6 command
+// TestDecodeRoundTrip verifies Decode accepts valid JSON for all 7 command
 // kinds and returns the right concrete type with correct Header/Timeout values.
 func TestDecodeRoundTrip(t *testing.T) {
 	t.Run("ProvisionWorkspace", func(t *testing.T) {
@@ -146,6 +146,25 @@ func TestDecodeRoundTrip(t *testing.T) {
 		assertTimeout(t, cmd.Timeout(), 30*time.Second)
 		if _, ok := cmd.(*command.CleanupWorkspaceCommand); !ok {
 			t.Errorf("expected *command.CleanupWorkspaceCommand, got %T", cmd)
+		}
+	})
+
+	t.Run("EnumerateSkills", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-es",
+			"workspace_id": "ws-es",
+			"traceparent":  "tp-es",
+			"kind":         "EnumerateSkills",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		assertHeader(t, hdr, "cmd-es", "ws-es", "tp-es", protocol.KindEnumerateSkills)
+		assertTimeout(t, cmd.Timeout(), 5*time.Minute)
+		if _, ok := cmd.(*command.EnumerateSkillsCommand); !ok {
+			t.Errorf("expected *command.EnumerateSkillsCommand, got %T", cmd)
 		}
 	})
 
@@ -320,6 +339,7 @@ func TestSetTraceparent_AllKinds(t *testing.T) {
 		&command.RefreshWorkspaceAuthCommand{},
 		&command.InvokeClaudeCodeCommand{},
 		&command.CleanupWorkspaceCommand{},
+		&command.EnumerateSkillsCommand{},
 		&command.ConfigUpdateCommand{},
 	}
 	for _, c := range cmds {

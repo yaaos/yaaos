@@ -43,6 +43,7 @@ import type { ServerEvent } from "./types";
  *   `finding_state_changed` | `finding_acknowledged` |
  *   `finding_resolution_detected` | `finding_stale_detected` → ["tickets"], ["tickets", "dashboard"]
  * - `agent_liveness_changed` → ["agents"]
+ * - `skills_enumerated` → ["claude_code", "skills", repo_external_id]
  */
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,13 @@ function _handleEvent(evt: ServerEvent): void {
     case "agent_liveness_changed":
       _scheduleInvalidate(["agents"]);
       break;
+    case "skills_enumerated": {
+      const repoId = (evt as { repo_external_id?: unknown }).repo_external_id;
+      if (typeof repoId === "string") {
+        _scheduleInvalidate(["claude_code", "skills", repoId]);
+      }
+      break;
+    }
     default:
       break;
   }

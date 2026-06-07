@@ -176,6 +176,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("040_agent_commands_workflow_execution_id", "agent_commands_workflow_execution_id"),
     ("041_workflow_executions_failure_reason", "workflow_executions_failure_reason"),
     ("042_outbox_entries_pk_created_at", "outbox_entries_pk_created_at"),
+    ("043_create_claude_code_repos", "create_claude_code_repos"),
 )
 
 
@@ -1253,6 +1254,31 @@ async def _apply_workflow_executions_failure_reason(conn) -> None:  # type: igno
     await conn.execute(text("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS failure_reason TEXT"))
 
 
+async def _apply_create_claude_code_repos(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create the `claude_code_repos` table for per-repo skill manifests.
+
+    PK `(org_id, repo_external_id)` via a unique constraint. `skills` is JSONB
+    defaulting to `[]`; `enumerated_at` is null until the first enumeration.
+    Idempotent (CREATE TABLE IF NOT EXISTS).
+    """
+    await conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS claude_code_repos (
+                id UUID PRIMARY KEY DEFAULT uuidv7(),
+                org_id UUID NOT NULL,
+                repo_external_id TEXT NOT NULL,
+                skills JSONB NOT NULL DEFAULT '[]',
+                enumerated_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_claude_code_repos_org_repo UNIQUE (org_id, repo_external_id)
+            )
+            """
+        )
+    )
+
+
 async def _apply_outbox_entries_pk_created_at(conn) -> None:  # type: ignore[no-untyped-def]
     """Widen the `outbox_entries` primary key to `(id, created_at)`.
 
@@ -1380,6 +1406,8 @@ async def _apply_pending() -> None:
                 await _apply_workflow_executions_failure_reason(conn)
             elif kind == "outbox_entries_pk_created_at":
                 await _apply_outbox_entries_pk_created_at(conn)
+            elif kind == "create_claude_code_repos":
+                await _apply_create_claude_code_repos(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

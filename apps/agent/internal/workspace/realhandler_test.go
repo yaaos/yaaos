@@ -820,3 +820,132 @@ func TestRealHandler_ProvisionWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) 
 		t.Errorf("HEAD: want %s got %s", headSHA, strings.TrimSpace(string(gotSHA)))
 	}
 }
+
+// ── EnumerateSkills ─────────────────────────────────────────────────────────
+
+// TestScanRepoLocalSkills_ReturnsDirectoryHandles verifies that
+// scanRepoLocalSkills returns one entry per subdirectory that contains a
+// SKILL.md file. Uses a fake filesystem tree under t.TempDir() — no git, no
+// network.
+func TestScanRepoLocalSkills_ReturnsDirectoryHandles(t *testing.T) {
+	root := t.TempDir()
+
+	// Create two skill directories with SKILL.md files and one without.
+	for _, dir := range []string{"my-skill", "another-skill"} {
+		skillDir := filepath.Join(root, ".claude", "skills", dir)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", skillDir, err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# "+dir), 0o644); err != nil {
+			t.Fatalf("write SKILL.md: %v", err)
+		}
+	}
+	// A directory without SKILL.md — must be ignored.
+	noSkillDir := filepath.Join(root, ".claude", "skills", "no-skill-here")
+	if err := os.MkdirAll(noSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir no-skill-here: %v", err)
+	}
+
+	skills, err := scanRepoLocalSkills(root)
+	if err != nil {
+		t.Fatalf("scanRepoLocalSkills: %v", err)
+	}
+	if len(skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2", len(skills))
+	}
+	names := map[string]bool{}
+	for _, s := range skills {
+		names[s.Name] = true
+		if s.Source != "repo" {
+			t.Errorf("skill %q source = %q, want repo", s.Name, s.Source)
+		}
+		if s.PluginName != nil {
+			t.Errorf("skill %q plugin_name should be nil, got %v", s.Name, s.PluginName)
+		}
+	}
+	for _, want := range []string{"my-skill", "another-skill"} {
+		if !names[want] {
+			t.Errorf("skill %q missing from results", want)
+		}
+	}
+}
+
+// TestScanRepoLocalSkills_NoSkillsDir_ReturnsEmpty verifies that a repo with
+// no .claude/skills/ directory returns an empty list (not an error).
+func TestScanRepoLocalSkills_NoSkillsDir_ReturnsEmpty(t *testing.T) {
+	root := t.TempDir()
+	skills, err := scanRepoLocalSkills(root)
+	if err != nil {
+		t.Fatalf("scanRepoLocalSkills: %v", err)
+	}
+	if len(skills) != 0 {
+		t.Errorf("expected empty list, got %d skills", len(skills))
+	}
+}
+
+// TestRealHandler_EnumerateSkills_RepoLocalScan exercises the full
+// RealHandler.EnumerateSkills path: provision a workspace, plant skill
+// directories, enumerate, verify the result.
+func TestRealHandler_EnumerateSkills_RepoLocalScan(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	res, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-enum"))
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	// Plant two skill directories in the cloned workspace.
+	for _, name := range []string{"lint-helper", "doc-writer"} {
+		dir := filepath.Join(res.Path, ".claude", "skills", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# "+name), 0o644); err != nil {
+			t.Fatalf("write SKILL.md: %v", err)
+		}
+	}
+
+	enumRes, err := h.EnumerateSkills(context.Background(), &protocol.EnumerateSkillsCommand{
+		CommandHeader: protocol.CommandHeader{
+			CommandID:   "c-enum",
+			WorkspaceID: "ws-enum",
+			Kind:        protocol.KindEnumerateSkills,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EnumerateSkills: %v", err)
+	}
+	if enumRes.WorkspaceID != "ws-enum" {
+		t.Errorf("WorkspaceID = %q, want ws-enum", enumRes.WorkspaceID)
+	}
+	if len(enumRes.Skills) != 2 {
+		t.Fatalf("len(Skills) = %d, want 2", len(enumRes.Skills))
+	}
+	names := map[string]bool{}
+	for _, s := range enumRes.Skills {
+		names[s.Name] = true
+		if s.Source != "repo" {
+			t.Errorf("skill %q source = %q, want repo", s.Name, s.Source)
+		}
+	}
+	for _, want := range []string{"lint-helper", "doc-writer"} {
+		if !names[want] {
+			t.Errorf("skill %q missing", want)
+		}
+	}
+}
+
+// TestRealHandler_EnumerateSkills_UnknownWorkspace verifies that enumeration
+// on an unknown workspace returns ErrUnknownWorkspace.
+func TestRealHandler_EnumerateSkills_UnknownWorkspace(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	_, err := h.EnumerateSkills(context.Background(), &protocol.EnumerateSkillsCommand{
+		CommandHeader: protocol.CommandHeader{
+			CommandID:   "c-enum-miss",
+			WorkspaceID: "ws-missing",
+			Kind:        protocol.KindEnumerateSkills,
+		},
+	})
+	if !errors.Is(err, ErrUnknownWorkspace) {
+		t.Errorf("want ErrUnknownWorkspace, got %v", err)
+	}
+}

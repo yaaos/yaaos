@@ -1,6 +1,6 @@
 import { useMembership } from "@core/api/public/membership";
 import { useCurrentOrgSlug } from "@core/api/public/org-context";
-import { useBrokenSummary } from "@core/api/public/queries";
+import { useBrokenSummary, useGithubRepositories } from "@core/api/public/queries";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
@@ -31,6 +31,8 @@ import {
   useByokAnthropicStatus,
   useClaudeCodeDefaults,
   useClearByokAnthropic,
+  useRefreshRepoSkills,
+  useRepoSkills,
   useSetByokAnthropic,
   useValidateByokAnthropic,
 } from "./queries";
@@ -181,6 +183,8 @@ function Editor({
           defaults={defaults}
           onChange={(v) => form.setValue("agents", v, { shouldValidate: true })}
         />
+
+        <RepoSkillsSection />
 
         <div className="flex items-center gap-2">
           <Button type="submit" data-testid="cc-save" disabled={update.isPending}>
@@ -813,6 +817,101 @@ function MaximizableTextarea({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ── Repo skills section ──────────────────────────────────────────────────────
+
+/**
+ * Lists every GitHub repository the install has access to, with a Refresh
+ * button that triggers skill enumeration and a live skill count that updates
+ * after the `skills_enumerated` SSE event invalidates the query.
+ */
+function RepoSkillsSection() {
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <h3 className="text-[13.5px] font-semibold">Repo skills</h3>
+      </header>
+      <div className="px-4 py-3">
+        <p className="text-muted-foreground mb-3 text-xs">
+          Skill manifests are scanned from{" "}
+          <code className="font-mono">.claude/skills/*/SKILL.md</code> inside each repo. Refresh
+          enqueues an enumeration run — the count updates live when it completes.
+        </p>
+        <ErrorBoundary
+          fallbackRender={({ resetErrorBoundary }) => (
+            <ErrorBanner message="Couldn't load repositories." onRetry={resetErrorBoundary} />
+          )}
+        >
+          <Suspense fallback={<p className="text-muted-foreground text-xs">Loading repos…</p>}>
+            <RepoSkillsList />
+          </Suspense>
+        </ErrorBoundary>
+      </div>
+    </section>
+  );
+}
+
+function RepoSkillsList() {
+  const { data } = useGithubRepositories();
+  const repos = data?.repositories ?? [];
+  if (repos.length === 0) {
+    return (
+      <p className="text-muted-foreground text-xs" data-testid="repo-skills-empty">
+        No repositories found. Connect a GitHub installation in Org Settings → Integrations.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-1" data-testid="repo-skills-list">
+      {repos.map((repo) => (
+        <RepoSkillsRow key={repo.full_name} repoExternalId={repo.full_name} />
+      ))}
+    </ul>
+  );
+}
+
+function RepoSkillsRow({ repoExternalId }: { repoExternalId: string }) {
+  const refresh = useRefreshRepoSkills(repoExternalId);
+  return (
+    <li
+      className="flex items-center justify-between gap-4 rounded border border-border px-3 py-2"
+      data-testid={`repo-skills-row-${repoExternalId}`}
+    >
+      <span className="flex-1 truncate font-mono text-xs">{repoExternalId}</span>
+      <ErrorBoundary fallbackRender={() => null}>
+        <Suspense fallback={<SkillCountBadge count={null} />}>
+          <RepoSkillCount repoExternalId={repoExternalId} />
+        </Suspense>
+      </ErrorBoundary>
+      <Button
+        type="button"
+        data-testid={`repo-skills-refresh-${repoExternalId}`}
+        disabled={refresh.isPending}
+        onClick={() => refresh.mutate()}
+      >
+        {refresh.isPending ? "Queuing…" : "Refresh"}
+      </Button>
+    </li>
+  );
+}
+
+function RepoSkillCount({ repoExternalId }: { repoExternalId: string }) {
+  const { data: skills } = useRepoSkills(repoExternalId);
+  return <SkillCountBadge count={skills.length} />;
+}
+
+function SkillCountBadge({ count }: { count: number | null }) {
+  if (count === null) return null;
+  return (
+    <span
+      className="text-muted-foreground text-xs"
+      data-testid={`repo-skills-count-${count}`}
+      aria-label={`${count} skill${count !== 1 ? "s" : ""}`}
+    >
+      {count} {count !== 1 ? "skills" : "skill"}
+    </span>
   );
 }
 

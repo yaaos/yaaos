@@ -1536,6 +1536,24 @@
         "title": "SetVcsResponse",
         "type": "object"
       },
+      "SkillRefreshResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "ticket_id": {
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "created"
+        ],
+        "title": "SkillRefreshResponse",
+        "type": "object"
+      },
       "UpdateLessonRequest": {
         "properties": {
           "body": {
@@ -3251,6 +3269,161 @@
           }
         },
         "summary": "Health",
+        "tags": [
+          "claude_code"
+        ]
+      }
+    },
+    "/api/claude_code/repos/{repo_external_id}/skills": {
+      "get": {
+        "description": "Return the cached skill manifest for a repo. Empty list if not yet enumerated.",
+        "operationId": "get_skills_api_claude_code_repos__repo_external_id__skills_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repo_external_id",
+            "required": true,
+            "schema": {
+              "title": "Repo External Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Skills Api Claude Code Repos  Repo External Id  Skills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Skills",
+        "tags": [
+          "claude_code"
+        ]
+      }
+    },
+    "/api/claude_code/repos/{repo_external_id}/skills/refresh": {
+      "post": {
+        "description": "Kick off skill enumeration for a repo. Creates a system ticket and starts\nthe `enumerate_skills_v1` workflow. Returns immediately — the manifest update\narrives via the `skills_enumerated` SSE event.",
+        "operationId": "refresh_skills_api_claude_code_repos__repo_external_id__skills_refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repo_external_id",
+            "required": true,
+            "schema": {
+              "title": "Repo External Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Skills",
         "tags": [
           "claude_code"
         ]

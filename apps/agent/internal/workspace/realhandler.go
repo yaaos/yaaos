@@ -378,6 +378,62 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	}, nil
 }
 
+// EnumerateSkills scans the cloned workspace for repo-local skills at
+// .claude/skills/*/SKILL.md. The skill handle is the directory name; the
+// description field in SKILL.md frontmatter is display-only and not parsed here.
+// Plugin/marketplace skills return empty — a degraded-but-correct path; a
+// finished enumeration with zero plugin skills is a success.
+func (h *RealHandler) EnumerateSkills(_ context.Context, cmd *protocol.EnumerateSkillsCommand) (command.EnumerateSkillsResult, error) {
+	h.mu.Lock()
+	slot, ok := h.slots[cmd.WorkspaceID]
+	h.mu.Unlock()
+	if !ok {
+		return command.EnumerateSkillsResult{}, ErrUnknownWorkspace
+	}
+
+	skills, err := scanRepoLocalSkills(slot.path)
+	if err != nil {
+		return command.EnumerateSkillsResult{}, fmt.Errorf("scan repo skills: %w", err)
+	}
+	return command.EnumerateSkillsResult{
+		WorkspaceID: cmd.WorkspaceID,
+		Skills:      skills,
+	}, nil
+}
+
+// scanRepoLocalSkills walks <clone>/.claude/skills/*/SKILL.md and returns one
+// SkillManifestEntry per directory that contains a SKILL.md file. The handle is
+// the directory name (not the file path). Missing or unreadable dirs are skipped
+// silently — partial results are better than a hard failure.
+func scanRepoLocalSkills(clonePath string) ([]command.SkillManifestEntry, error) {
+	skillsDir := filepath.Join(clonePath, ".claude", "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No .claude/skills/ directory — the repo declares no local skills.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read skills dir: %w", err)
+	}
+	var skills []command.SkillManifestEntry
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillFile := filepath.Join(skillsDir, entry.Name(), "SKILL.md")
+		if _, statErr := os.Stat(skillFile); statErr != nil {
+			// No SKILL.md in this directory — skip silently.
+			continue
+		}
+		skills = append(skills, command.SkillManifestEntry{
+			Name:       entry.Name(),
+			Source:     "repo",
+			PluginName: nil,
+		})
+	}
+	return skills, nil
+}
+
 func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	h.mu.Lock()
 	slot, ok := h.slots[cmd.WorkspaceID]

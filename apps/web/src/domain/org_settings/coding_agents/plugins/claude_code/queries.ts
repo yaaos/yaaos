@@ -76,3 +76,32 @@ export function useClearByokAnthropic() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),
   });
 }
+
+// ── Repo skills ──────────────────────────────────────────────────────────────
+
+export interface SkillEntry {
+  name: string;
+  source: "repo" | "plugin";
+  plugin_name: string | null;
+}
+
+export function useRepoSkills(repoExternalId: string) {
+  return useSuspenseQuery<SkillEntry[]>({
+    queryKey: ["claude_code", "skills", repoExternalId],
+    queryFn: () =>
+      apiFetch<SkillEntry[]>(`/api/claude_code/repos/${encodeURIComponent(repoExternalId)}/skills`),
+    staleTime: 30_000,
+  });
+}
+
+export function useRefreshRepoSkills(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ enqueued: boolean }>(
+        `/api/claude_code/repos/${encodeURIComponent(repoExternalId)}/skills/refresh`,
+        { method: "POST" },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["claude_code", "skills", repoExternalId] }),
+  });
+}

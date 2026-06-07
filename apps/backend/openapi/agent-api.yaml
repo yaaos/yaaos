@@ -376,6 +376,7 @@ components:
         - $ref: '#/components/schemas/RefreshWorkspaceAuthCommand'
         - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
         - $ref: '#/components/schemas/CleanupWorkspaceCommand'
+        - $ref: '#/components/schemas/EnumerateSkillsCommand'
         - $ref: '#/components/schemas/ConfigUpdateCommand'
       discriminator:
         propertyName: kind
@@ -385,6 +386,7 @@ components:
           RefreshWorkspaceAuth: '#/components/schemas/RefreshWorkspaceAuthCommand'
           InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
           CleanupWorkspace: '#/components/schemas/CleanupWorkspaceCommand'
+          EnumerateSkills: '#/components/schemas/EnumerateSkillsCommand'
           ConfigUpdate: '#/components/schemas/ConfigUpdateCommand'
 
     CommandBase:
@@ -567,6 +569,16 @@ components:
             kind:
               type: string
               enum: [CleanupWorkspace]
+
+    EnumerateSkillsCommand:
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [EnumerateSkills]
 
     AgentConfig:
       type: object
