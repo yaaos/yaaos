@@ -127,7 +127,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.lessons", "app.domain.mcp_proxy", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.lessons", "app.domain.mcp_proxy", "app.domain.pull_requests", "app.domain.tickets", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -577,6 +577,7 @@ expose = [
   "WorkflowExecutionSummary",
   "WorkflowNotFoundError",
   "WorkflowState",
+  "WorkspaceWorkflowCommand",
   "bind_engine",
   "get_awaiting_human_execution",
   "get_engine",
@@ -618,6 +619,7 @@ expose = [
   "WorkspaceExpiredError",
   "WorkspaceInfo",
   "WorkspaceNotFoundError",
+  "WorkspaceOwner",
   "WorkspaceProvider",
   "WorkspaceProvisionError",
   "WorkspaceRegistry",
@@ -636,6 +638,7 @@ expose = [
   "get_workspace_claim_state",
   "get_workspace_command_state",
   "get_workspace_info",
+  "get_workspace_owner",
   "get_workspace_statuses",
   "health_check_all",
   "is_workspace_provider_registered",

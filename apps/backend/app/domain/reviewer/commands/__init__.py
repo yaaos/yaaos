@@ -26,12 +26,13 @@ for per-command output shapes.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import structlog
 from sqlalchemy import select, update
 
+from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command, pin_command_to_agent
 from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
 from app.core.workspace import (
@@ -39,8 +40,12 @@ from app.core.workspace import (
     WorkspaceTicketContext,
     get_workflow_context_provider,
     get_workspace,
+    get_workspace_owner,
 )
 from app.domain.tickets import get_payload as get_ticket_payload
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger("domain.reviewer.commands")
 
@@ -118,6 +123,47 @@ class _WorkspaceReviewCommand:
         the engine workflow draining cleanly until each real body lands."""
         del workspace, ticket_ctx, inputs, ctx
         return Outcome.success()
+
+    async def dispatch(
+        self,
+        inputs: dict[str, Any],
+        ctx: CommandContext,
+        *,
+        session: AsyncSession,
+    ) -> UUID:
+        """Enqueue a placeholder AgentCommand against the workspace and return
+        the new command_id. The five subclasses (`CodeReview`, `IncrementalReview`,
+        `VerifyFix`, `StaleCheck`, `AnswerQuestion`) are each intended to map to a
+        distinct `InvokeClaudeCode` AgentCommand; that wiring is not yet in place,
+        so this enqueues a `CleanupWorkspace`-shaped no-op pinned to the
+        workspace's owning agent so the correlation path
+        (`command_id → workflow_execution_id`) is exercised end-to-end with no
+        agent code running.
+        """
+        ws_id_raw = inputs.get("workspace_id")
+        if not ws_id_raw:
+            raise RuntimeError(f"{self.kind}.dispatch missing workspace_id input")
+        ws_id = UUID(str(ws_id_raw))
+
+        owner = await get_workspace_owner(ws_id, session=session)
+        if owner is None:
+            raise RuntimeError(f"workspace {ws_id} not found for {self.kind}.dispatch")
+
+        command_id = uuid4()
+        cmd = CleanupWorkspaceCommand(
+            command_id=command_id,
+            workspace_id=ws_id,
+            traceparent=ctx.traceparent or "",
+        )
+        await enqueue_command(
+            org_id=owner.org_id,
+            command=cmd,
+            session=session,
+            workflow_execution_id=UUID(ctx.workflow_execution_id),
+        )
+        if owner.owning_agent_id is not None:
+            await pin_command_to_agent(command_id, owner.owning_agent_id, session=session)
+        return command_id
 
 
 async def _load_finding_by_id(pr_id: UUID, org_id: UUID, finding_id: UUID):  # type: ignore[no-untyped-def]

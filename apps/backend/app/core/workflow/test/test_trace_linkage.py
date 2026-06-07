@@ -191,6 +191,10 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
             del inputs, ctx
             return Outcome.success()
 
+        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+            del inputs, ctx, session
+            return uuid4()
+
     eng.register_command(_NoopWs())
     workflow = Workflow(
         name="trace-linkage-ws",

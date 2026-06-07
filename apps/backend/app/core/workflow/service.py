@@ -2,8 +2,9 @@
 
 Provides:
 - `start_step` body — branches on command category. Local + HITL execute
-  inline; Workspace sets `awaiting_agent` and assigns a
-  `pending_agent_command_id`.
+  inline; Workspace calls `command.dispatch(inputs, ctx, session=s)` to enqueue
+  an AgentCommand row, parks the workflow in `awaiting_agent`, and stores
+  the returned `command_id` as `pending_agent_command_id`.
 - `handle_agent_event` body — validates the event matches the pending
   command id, clears it, enqueues `route_workflow`. Idempotent: stale
   events exit cleanly.
@@ -21,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 from opentelemetry import trace
@@ -48,6 +49,7 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkspaceWorkflowCommand,
 )
 
 log = structlog.get_logger("core.workflow")
@@ -79,9 +81,9 @@ async def start_step(
 ) -> None:
     """Dispatch the step. Branches on the WorkflowCommand category:
 
-    - **Workspace** — sets `state = awaiting_agent` and assigns
-      `pending_agent_command_id`. The engine synthesizes the command id while
-      real dispatch via `core/workspace.dispatch` is stubbed.
+    - **Workspace** — calls `command.dispatch(inputs, ctx, session=s)` to
+      enqueue an AgentCommand row, parks the workflow in `awaiting_agent`,
+      and sets `pending_agent_command_id` to the returned `command_id`.
     - **Local** — runs the command inline, persists its outcome, enqueues
       `route_workflow` via the outbox in the same transaction.
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
@@ -173,18 +175,27 @@ async def _start_step_impl(
         wfx.current_step_id = step_id
 
         if command.category == CommandCategory.WORKSPACE:
-            # Workspace commands always dispatch over the wire to the registered
-            # WorkspaceProvider. The engine parks the execution in `awaiting_agent`
-            # and assigns a `pending_agent_command_id`; the terminal AgentEvent
-            # arrives via `handle_agent_event` to resume routing. Provider
-            # resolution and "no provider" errors surface in the workspace
-            # module's actual dispatch path (not here) to preserve the module DAG.
-            wfx.pending_agent_command_id = uuid4()
+            # Workspace commands enqueue an AgentCommand durably inside this
+            # transaction via the command's own `dispatch` method. The engine
+            # parks the execution in `awaiting_agent` and stores the returned
+            # `command_id` as `pending_agent_command_id`. The terminal
+            # AgentEvent arrives via `handle_agent_event` to resume routing.
+            # The engine remains ignorant of workspace internals — the command
+            # owns the enqueue + repository wiring; the engine only handles
+            # the state transition.
+            if not isinstance(command, WorkspaceWorkflowCommand):
+                raise WorkflowError(
+                    f"WorkflowCommand kind '{step.command_kind}' has category=workspace "
+                    f"but does not implement WorkspaceWorkflowCommand.dispatch"
+                )
+            command_id = await command.dispatch(inputs, cmd_ctx, session=s)
+            wfx.pending_agent_command_id = command_id
             wfx.state = WorkflowState.AWAITING_AGENT.value
             log.info(
                 "workflow.start_step.workspace_dispatched",
                 workflow_execution_id=workflow_execution_id,
                 command_kind=step.command_kind,
+                command_id=str(command_id),
             )
             await s.commit()
             return

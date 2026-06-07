@@ -28,6 +28,7 @@ from app.core.workspace.types import (
     WorkspaceError,
     WorkspaceInfo,
     WorkspaceNotFoundError,
+    WorkspaceOwner,
     WorkspaceProvider,
     WorkspaceProvisionError,
     WorkspaceSpec,
@@ -823,6 +824,29 @@ async def health_check_all() -> dict[str, HealthStatus]:
         except Exception as e:
             out[plugin_id] = HealthStatus(healthy=False, message=str(e), checked_at=_utcnow())
     return out
+
+
+async def get_workspace_owner(
+    workspace_id: UUID,
+    session: AsyncSession,
+) -> WorkspaceOwner | None:
+    """Return the `(org_id, owning_agent_id)` projection for `workspace_id`,
+    or None if the row is missing.
+
+    Used by Workspace WorkflowCommand `dispatch` bodies that need to enqueue
+    an AgentCommand pinned to the workspace's owning agent without crossing
+    the module boundary via a raw Row.
+    """
+    row = (
+        await session.execute(
+            select(WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.owning_agent_id).where(
+                WorkspaceRow.id == workspace_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return WorkspaceOwner(workspace_id=row[0], org_id=row[1], owning_agent_id=row[2])
 
 
 async def get_workspace_claim_state(

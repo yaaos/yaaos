@@ -392,8 +392,19 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     # provider and parks at AWAITING_AGENT. drain returns when no more outbox rows.
     await _drain_workflow_outbox(db_session)
 
-    # Simulate agent ProvisionWorkspace.result with a synthetic workspace_id.
-    sim_workspace_id = str(uuid4())
+    # Seed a real workspace row so the Workspace WorkflowCommands' `dispatch`
+    # can resolve org_id + owning_agent_id via `get_workspace_owner`. The
+    # ProvisionWorkspace.result event reports this same id back as its output.
+    sim_workspace_id = str(
+        await _seed_workspace_for_tests(
+            org_id=org_id,
+            provider_id="in_process",
+            plugin_state={"sha": "deadbeefcafef00d"},
+            sha="deadbeefcafef00d",
+            caller_session=db_session,
+        )
+    )
+    await db_session.commit()
     await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
     # Now parked at AWAITING_AGENT on CodeReview. Simulate the

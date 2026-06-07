@@ -123,8 +123,13 @@ class _AppendOnce:
 
 
 class _WorkspaceStub:
-    """Workspace-category command whose dispatch start_step stubs.
-    Provided here so the workspace branch of start_step is exercised."""
+    """Workspace-category command exercised by the engine's Workspace branch.
+
+    `dispatch` returns a fresh UUID without writing an agent_commands row;
+    these tests inject the terminal AgentEvent directly via `HANDLE_AGENT_EVENT`
+    (bypassing `record_agent_event` and therefore the column lookup), so a
+    durable row is not needed.
+    """
 
     kind = "DoOnAgent"
     category = CommandCategory.WORKSPACE
@@ -133,6 +138,10 @@ class _WorkspaceStub:
     async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.success()
+
+    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
+        return uuid4()
 
 
 class _MinimalWorkspaceProvider:

@@ -86,11 +86,18 @@ async def enqueue_command(
     command: AgentCommand,
     *,
     session: AsyncSession,
+    workflow_execution_id: UUID | None = None,
 ) -> None:
     """Insert an AgentCommand row in `pending` status.
 
-    Called by `RemoteAgentWorkspaceProvider` inside the workflow engine's
-    start_step transaction — the insert is atomic with `try_claim`.
+    Called by the workflow engine's Workspace branch (via
+    `WorkflowCommand.dispatch`) inside `start_step`'s transaction — the insert
+    is atomic with the engine's state transition to `awaiting_agent`.
+
+    `workflow_execution_id` is stamped on the row so the terminal-event
+    ingestion path can resolve `command_id → workflow` directly, without a
+    workspace-row lookup. NULL only for agent-scoped commands that do not
+    correlate to a workflow (e.g. `ConfigUpdate`).
 
     The DB-minted UUIDv7 PK serves as the idempotency key and FIFO sort key.
     `agent_id` is left NULL at enqueue time; it is stamped by `claim_next`.
@@ -110,6 +117,7 @@ async def enqueue_command(
         id=command.command_id,
         org_id=org_id,
         workspace_id=workspace_id,
+        workflow_execution_id=workflow_execution_id,
         command_kind=str(command.kind),
         payload=command.model_dump(mode="json"),
         status="pending",
@@ -468,22 +476,28 @@ async def record_agent_event(
     *,
     session: AsyncSession,
 ) -> None:
-    """Apply the stale-claim guard against the workspace, then — if the
-    event is terminal — enqueue `workflow.handle_agent_event` via the
-    outbox in the same transaction.
+    """Resolve the workflow correlation directly from `agent_commands.workflow_execution_id`,
+    then — if the event is terminal — enqueue `workflow.handle_agent_event` via
+    the outbox in the same transaction.
 
     A `received` non-terminal event flips the command row from
     `claimed` to `delivered`, cancelling the lease requeue.
 
-    Raises `StaleClaimError` when the workspace's `current_command_id`
-    no longer matches; the endpoint maps this to `410 Gone`.
+    Raises `StaleClaimError` when the command row no longer exists (already
+    retired by an earlier terminal event); the endpoint maps this to `410 Gone`.
+
+    Workflow correlation is independent of the workspace row — the engine
+    stamps `workflow_execution_id` on the command at enqueue time. An agent
+    can therefore report a terminal event for a workspace that has been torn
+    down (`failure-report-precedes-disposal`), and the workflow still resumes.
 
     Required `session`; caller commits.
     """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
     from app.core.agent_gateway.types import AgentEventKind  # noqa: PLC0415
 
-    # Handle `received` before the stale-claim guard — the guard looks at
-    # the workspace, but `received` only updates the command row lease.
+    # Handle `received` before the row lookup — `received` only updates the
+    # command row lease and does not require workflow correlation.
     if event.kind == AgentEventKind.RECEIVED:
         await acknowledge_command_received(event.command_id, session=session)
         log.info(
@@ -492,36 +506,46 @@ async def record_agent_event(
         )
         return
 
-    # Look up the workspace holding this command. The single-flight claim
-    # writes `current_command_id` + `current_holder_workflow_id` on the
-    # workspace; delegates to the registered sink so workspace-state access
-    # stays inside core/workspace.
-    sink = get_report_sink()
-    holder_workflow_id = await sink.resolve_claim(event.command_id, session)
-    if holder_workflow_id is None:
-        raise StaleClaimError(f"no workspace holds command {event.command_id}")
+    # Resolve workflow correlation directly from the command row — no
+    # workspace-row dependency for the resumption path.
+    cmd_row = (
+        (await session.execute(select(AgentCommandRow).where(AgentCommandRow.id == event.command_id)))
+        .scalars()
+        .one_or_none()
+    )
+    if cmd_row is None:
+        raise StaleClaimError(f"no agent_commands row for {event.command_id}")
+    holder_workflow_id = cmd_row.workflow_execution_id
 
     if not event.is_terminal():
         # Non-terminal events (progress) skip workflow-engine resumption —
         # only `completed_*` events resume the workflow state machine.
         # Republish to the org-scoped workspace-activity channel so the SPA's
-        # SSE live-tail picks them up.
+        # SSE live-tail picks them up. Skipped when the command has no
+        # workflow correlation (agent-scoped ConfigUpdate has no live-tail
+        # subscriber to fan out to).
         log.info(
             "agent.event.progress",
             command_id=str(event.command_id),
         )
-        from app.core.auth import require_org_context  # noqa: PLC0415
-        from app.core.sse import publish_workspace_activity  # noqa: PLC0415
+        if holder_workflow_id is not None:
+            from app.core.auth import require_org_context  # noqa: PLC0415
+            from app.core.sse import publish_workspace_activity  # noqa: PLC0415
 
-        await publish_workspace_activity(
-            org_id=require_org_context(),
-            workflow_execution_id=holder_workflow_id,
-            payload=event.model_dump(mode="json"),
-        )
+            await publish_workspace_activity(
+                org_id=require_org_context(),
+                workflow_execution_id=holder_workflow_id,
+                payload=event.model_dump(mode="json"),
+            )
         return
 
-    # Terminal — retire the command row and enqueue the workflow handler.
+    # Terminal — retire the command row and enqueue the workflow handler
+    # (only when there is a workflow to resume; agent-scoped commands without
+    # workflow correlation simply retire).
     await retire_command(event.command_id, session=session)
+
+    if holder_workflow_id is None:
+        return
 
     from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 

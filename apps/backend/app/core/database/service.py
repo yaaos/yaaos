@@ -173,6 +173,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("037_drop_provider_columns", "drop_provider_columns"),
     ("038_agent_identity_exchange_schema", "agent_identity_exchange_schema"),
     ("039_create_agent_commands", "create_agent_commands"),
+    ("040_agent_commands_workflow_execution_id", "agent_commands_workflow_execution_id"),
 )
 
 
@@ -1228,6 +1229,18 @@ async def _apply_create_agent_commands(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_agent_commands_workflow_execution_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `agent_commands.workflow_execution_id` (uuid, nullable).
+
+    Carries the workflow this command resumes. Workflow correlation no longer
+    depends on a workspace row — the engine stamps this column at enqueue time
+    so `record_agent_event` resolves `command_id → workflow_execution_id`
+    directly. NULL only for agent-scoped commands without workflow correlation
+    (e.g. ConfigUpdate). Idempotent.
+    """
+    await conn.execute(text("ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS workflow_execution_id UUID"))
+
+
 async def _apply_pending() -> None:
     """Body of `migrate()`, called while holding the advisory lock.
 
@@ -1319,6 +1332,8 @@ async def _apply_pending() -> None:
                 await _apply_agent_identity_exchange_schema(conn)
             elif kind == "create_agent_commands":
                 await _apply_create_agent_commands(conn)
+            elif kind == "agent_commands_workflow_execution_id":
+                await _apply_agent_commands_workflow_execution_id(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

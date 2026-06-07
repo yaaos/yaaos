@@ -152,27 +152,24 @@ def _engine_with_stubs(workspace_providers_isolation, workflow_context_provider_
 
 _OTHER_FOUR_WORKFLOWS = [incremental_review_v1, verify_fix_v1, stale_check_v1, answer_question_v1]
 
-# Minimum-shape agent-event outputs for each Workspace step per workflow,
-# in step-dispatch order. Downstream Local steps short-circuit on no-op
-# values (empty findings, empty verdict, etc.).
-_WORKSPACE_STEP_OUTPUTS: dict[str, list[dict[str, Any]]] = {
+
+# Minimum-shape outputs for the non-Provision Workspace steps in each workflow.
+# The first Workspace step is always ProvisionWorkspace — the test injects the
+# seeded workspace_id at runtime so subsequent dispatches can resolve owner.
+_NON_PROVISION_OUTPUTS: dict[str, list[dict[str, Any]]] = {
     "incremental_review_v1": [
-        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
         {"draft_findings": [], "summary_body": "", "state": "COMMENT"},  # IncrementalReview
         {},  # CleanupWorkspace
     ],
     "verify_fix_v1": [
-        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
         {"verdict": {}},  # VerifyFix
         {},  # CleanupWorkspace
     ],
     "stale_check_v1": [
-        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
         {"stale_finding_ids": []},  # StaleCheck
         {},  # CleanupWorkspace
     ],
     "answer_question_v1": [
-        {"workspace_id": "fake-ws-id"},  # ProvisionWorkspace
         {"reply_body": ""},  # AnswerQuestion
         {},  # CleanupWorkspace
     ],
@@ -230,8 +227,26 @@ async def test_workflow_reaches_done(db_session, _engine_with_stubs, workflow) -
     # Drain local steps; stops at first Workspace step (AWAITING_AGENT).
     await _drain_workflow_outbox(db_session)
 
+    # Seed a real workspace row so subsequent Workspace WorkflowCommands'
+    # `dispatch` can resolve org_id + owning_agent_id via `get_workspace_owner`.
+    # The ProvisionWorkspace.result event reports this same id back as output.
+    from app.testing.seed import seed_workspace as _seed_workspace_for_tests  # noqa: PLC0415
+
+    seeded_ws_id = str(
+        await _seed_workspace_for_tests(
+            org_id=org_id,
+            provider_id="in_process",
+            plugin_state={"sha": "deadbeef"},
+            sha="deadbeef",
+            caller_session=db_session,
+        )
+    )
+    await db_session.commit()
+
     # Advance each Workspace step via simulated agent events.
-    for outputs in _WORKSPACE_STEP_OUTPUTS[workflow.name]:
+    # Step 1 is always ProvisionWorkspace — feed it the seeded workspace_id.
+    await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
+    for outputs in _NON_PROVISION_OUTPUTS[workflow.name]:
         await _advance_pending_agent_event(db_session, wfx_id, outputs=outputs)
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
@@ -333,8 +348,25 @@ async def test_all_workflows_share_upstream_trace_id(  # type: ignore[no-untyped
     # Drain local steps; parks at first Workspace step (AWAITING_AGENT).
     await _drain_workflow_outbox(db_session)
 
+    # Seed a real workspace row so subsequent Workspace WorkflowCommands'
+    # `dispatch` can resolve owner. See `test_workflow_reaches_done` for the
+    # same pattern + rationale.
+    from app.testing.seed import seed_workspace as _seed_workspace_for_tests  # noqa: PLC0415
+
+    seeded_ws_id = str(
+        await _seed_workspace_for_tests(
+            org_id=org_id,
+            provider_id="in_process",
+            plugin_state={"sha": "deadbeef"},
+            sha="deadbeef",
+            caller_session=db_session,
+        )
+    )
+    await db_session.commit()
+
     # Advance each Workspace step — this emits handle_agent_event spans.
-    for outputs in _WORKSPACE_STEP_OUTPUTS[workflow.name]:
+    await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
+    for outputs in _NON_PROVISION_OUTPUTS[workflow.name]:
         await _advance_pending_agent_event(db_session, wfx_id, outputs=outputs)
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)

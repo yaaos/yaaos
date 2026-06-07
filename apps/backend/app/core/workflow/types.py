@@ -11,9 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class WorkflowState(StrEnum):
@@ -170,13 +174,37 @@ class CommandContext(BaseModel):
 @runtime_checkable
 class WorkflowCommand(Protocol):
     """A WorkflowCommand. Implementations register against `WorkflowEngine`
-    by their `kind` string. The category dictates how `start_step` runs them."""
+    by their `kind` string. The category dictates how `start_step` runs them:
+
+    - **Workspace** category — must additionally satisfy
+      `WorkspaceWorkflowCommand` (`dispatch(inputs, ctx, *, session) -> UUID`).
+      The engine calls `dispatch` inside `start_step`'s transaction to enqueue
+      an AgentCommand row and parks on the returned `command_id`.
+    - **Local + HITL** category — only `execute` is called; `dispatch` is never
+      invoked and need not exist.
+    """
 
     kind: str
     category: CommandCategory
     restart_safe: bool
 
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome: ...
+
+
+@runtime_checkable
+class WorkspaceWorkflowCommand(WorkflowCommand, Protocol):
+    """Workspace-category seam: enqueue an `AgentCommand` durably inside the
+    caller's transaction and return the new `command_id`. The engine sets
+    `pending_agent_command_id` to the returned value and parks the workflow
+    in `awaiting_agent`."""
+
+    async def dispatch(
+        self,
+        inputs: BaseModel,
+        ctx: CommandContext,
+        *,
+        session: AsyncSession,
+    ) -> UUID: ...
 
 
 class WorkflowError(Exception):

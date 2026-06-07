@@ -13,6 +13,7 @@
 - **Three tasks, not two** — Workspace commands can issue long-running AgentCommands. `start_step` exits after dispatch; workers stay free during the wait; `handle_agent_event` fires when the terminal event arrives.
 - **Recovery fires at most once per step instance** — repeated `auth_expired` after recovery has run falls through to Tier-2 retry then Tier-3 transitions. Prevents infinite auth-refresh loops.
 - **Workspace commands always dispatch to `awaiting_agent`** — the engine parks the execution and assigns `pending_agent_command_id`; the terminal AgentEvent resumes routing. Provider resolution errors surface in the workspace module's dispatch, not the engine. There is no inline/in-memory dispatch path.
+- **`WorkflowCommand.dispatch` is the Workspace seam** — Workspace-category commands satisfy `WorkspaceWorkflowCommand` (a sub-Protocol of `WorkflowCommand`) by implementing `async dispatch(inputs, ctx, *, session) -> UUID`. `start_step` calls it inside the same transaction it parks the execution in, then sets `pending_agent_command_id` to the returned `agent_commands.id`. Local + HITL commands never have `dispatch` called and need not implement it. Command-to-workflow correlation is stamped via `agent_commands.workflow_execution_id` at enqueue time — `record_agent_event` resolves the workflow from that column with no workspace-row dependency.
 - **`$`-expression inputs** — `$<step_id>.<field>` reads a prior step's `outputs`; `$ticket.<field>` reads the payload stashed at `engine.start()` time. Absent fields return `None` rather than erroring.
 - **Cross-module callers use read projections**, not raw SQLAlchemy rows. See `WorkflowExecutionSummary`, `HitlHistoryEntry`, and the `list_*` / `get_*` ops in `__init__.py`.
 
@@ -25,7 +26,8 @@
 
 ## Vocabulary
 
-- **WorkflowCommand** — Protocol; one registered impl per `kind`. Carries `restart_safe`, `category` (`Workspace | Local | Hitl`).
+- **WorkflowCommand** — base Protocol; one registered impl per `kind`. Carries `restart_safe`, `category` (`Workspace | Local | Hitl`), `execute`.
+- **WorkspaceWorkflowCommand** — sub-Protocol adding `dispatch(inputs, ctx, *, session) -> UUID` for Workspace-category commands. Structurally satisfied by any class with the right shape; never subclassed explicitly in production.
 - **CommandContext** — payload a command sees: execution id, ticket id, step id, attempt counter, optional traceparent.
 - **Outcome** — tagged by `OutcomeKind` (`success | failure | hitl_pending`). Carries `outputs`, optional failure/hitl fields, and `append_steps` escape hatch.
 - **Recovery-policy insertion (Tier-1)** — engine checks `core/workflow.get_recovery_policy(label)` (via `app/core/workflow/recovery.py`) before Tier-2 retry; appends a synthetic recovery step and resets the failed step's attempt counter. Producers (e.g. `core/workspace`) register their policies via an explicit startup call (`register_workspace_recovery_policies()`), not at import time — both `web.py` and `worker.py` call this after importing workspace.

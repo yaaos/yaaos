@@ -242,10 +242,10 @@ When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(..
 
 ## WorkflowCommand discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories with a single `execute(inputs, ctx) -> Outcome` shape:
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories:
 
-- **Workspace** — issues one or more AgentCommands. `start_step` dispatches and parks the workflow in `awaiting_agent`; `handle_agent_event` resumes when the terminal event arrives. Worker never blocks on the agent.
-- **Local** — runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
+- **Workspace** — implements `WorkspaceWorkflowCommand` (adds `dispatch(inputs, ctx, *, session) -> UUID` to the base `WorkflowCommand` Protocol). `start_step` calls `dispatch` inside its own transaction to enqueue an `agent_commands` row pre-stamped with `workflow_execution_id`, parks the workflow in `awaiting_agent` on the returned `command_id`, and resumes via `handle_agent_event` when the terminal event arrives. Worker never blocks on the agent.
+- **Local** — implements `WorkflowCommand.execute(inputs, ctx) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
 - **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 
 Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
@@ -256,7 +256,7 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Failure-report-precedes-disposal invariant
 
-`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal AgentEvent must arrive before the workspace row is disposed. This means reconciliation lookups can always resolve `command_id → workspace → current_holder_workflow_id → workflow_execution` — even after the workspace is being torn down.
+`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id` on the workspace row for observability. Command-to-workflow correlation does NOT depend on this — `agent_commands.workflow_execution_id` is stamped by `dispatch` at enqueue time and read directly by `record_agent_event`, so terminal events still resolve their workflow after the workspace has been torn down.
 
 ### Recovery policy registry
 

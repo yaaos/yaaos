@@ -47,6 +47,7 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkspaceWorkflowCommand,
 )
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "WorkflowExecutionSummary",
     "WorkflowNotFoundError",
     "WorkflowState",
+    "WorkspaceWorkflowCommand",
     "bind_engine",
     "get_awaiting_human_execution",
     "get_engine",
