@@ -1,10 +1,12 @@
 """Service tests for `publish_findings` — the canonical finding pipeline.
 
-Covers the three behaviors the publish path guarantees:
+Covers the behaviors the publish path guarantees:
 1. Out-of-range `severity`/`confidence` strings raise (the runtime gate).
 2. `finding_display_id` assignment is per-`pr_id` monotonic and unique under
    concurrent inserts.
-3. The `ReportedFinding` field set is pinned to `finding_output_schema()` —
+3. Each `ReportedFinding` results in one `vcs.post_finding` call; null-anchor
+   findings (no file/line) still produce a `post_finding` call.
+4. The `ReportedFinding` field set is pinned to `finding_output_schema()` —
    the single source of truth for the agent's response contract.
 """
 
@@ -250,6 +252,75 @@ def test_reported_finding_field_set_matches_finding_output_schema() -> None:
         f"drift: ReportedFinding has {reported_fields - schema_fields}, "
         f"schema has {schema_fields - reported_fields}"
     )
+
+
+# ── VCS post_finding transport ─────────────────────────────────────────────
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_publish_findings_calls_post_finding_once_per_finding(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Each `ReportedFinding` maps to exactly one `vcs.post_finding` call.
+
+    Two conforming findings → two entries in `stub.posted_findings`.
+    """
+    org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
+
+    findings = [
+        _conforming(category="security", severity="blocker"),
+        _conforming(category="correctness", severity="should_fix"),
+    ]
+
+    with register_stub_vcs(plugin_id="github") as stub:
+        await publish_findings(
+            pr_id=pr_id,
+            org_id=org_id,
+            pr_external_id=pr_external_id,
+            vcs_plugin_id=vcs_plugin_id,
+            findings=findings,
+            session=db_session,
+        )
+
+    assert len(stub.posted_findings) == 2
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_publish_findings_null_anchor_calls_post_finding(db_session) -> None:  # type: ignore[no-untyped-def]
+    """A finding with no `file`/`line` (null anchor) still calls `post_finding`.
+
+    The stub records the call regardless of anchor; the GitHub plugin routes
+    null-anchor findings to the issue-comments endpoint — tested separately
+    in the plugin's own unit tests.
+    """
+    org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
+
+    null_anchor = ReportedFinding(
+        file=None,
+        line=None,
+        category="architecture",
+        severity="nit",
+        confidence="speculative",
+        rationale="PR-wide observation.",
+        rule_violated="no-rule",
+        rule_source="house",
+        suggested_fix="",
+    )
+
+    with register_stub_vcs(plugin_id="github") as stub:
+        await publish_findings(
+            pr_id=pr_id,
+            org_id=org_id,
+            pr_external_id=pr_external_id,
+            vcs_plugin_id=vcs_plugin_id,
+            findings=[null_anchor],
+            session=db_session,
+        )
+
+    assert len(stub.posted_findings) == 1
+    _ext_id, kwargs = stub.posted_findings[0]
+    assert kwargs["file"] is None
+    assert kwargs["line_start"] is None
 
 
 def test_reported_finding_severity_and_confidence_match_typed_aliases() -> None:

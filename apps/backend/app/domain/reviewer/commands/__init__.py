@@ -305,7 +305,7 @@ class SecretsScan:
 
         from app.domain.reviewer.secrets_detection import (  # noqa: PLC0415
             detect_secrets,
-            secrets_warning_review,
+            secrets_warning_body,
         )
         from app.domain.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
 
@@ -328,7 +328,7 @@ class SecretsScan:
             return Outcome.success(outputs={"rule_id": None})
 
         try:
-            await vcs_plugin.post_review(pr_external_id, secrets_warning_review(rule_id))
+            await vcs_plugin.post_comment(pr_external_id, body=secrets_warning_body(rule_id))
         except Exception:
             log.exception(
                 "secrets_scan.post_warning_failed",

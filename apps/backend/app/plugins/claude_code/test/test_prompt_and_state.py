@@ -1,8 +1,8 @@
 """Tests for plugin-internal prompt assembly + state computation.
 
 Prompt assembly + state computation are plugin-internal because the
-public Protocol (`review(context) -> ReviewResult`) returns vendor-neutral
-`vcs.Finding`s. Tests stay close to the code they cover.
+public Protocol (`review(context) -> ReviewResult`) returns `ReportedFinding`
+value objects. Tests stay close to the code they cover.
 """
 
 from __future__ import annotations

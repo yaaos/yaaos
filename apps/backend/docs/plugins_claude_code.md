@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check`). Spawns one parent reviewer per run; the parent dispatches `yaaos-*` subagents via the Task tool and synthesizes findings. Returns `FindingDraft`s — the reviewer aggregate handles admission and conversion to `vcs.Finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check`). Spawns one parent reviewer per run; the parent dispatches `yaaos-*` subagents via the Task tool and synthesizes findings. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 ## Module architecture
 

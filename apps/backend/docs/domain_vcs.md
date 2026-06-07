@@ -1,15 +1,16 @@
 # domain/vcs
 
-> Vendor-neutral abstraction over VCS providers — types, Protocol, registry, exception hierarchy.
+> Vendor-neutral abstraction over VCS providers — transport types, Protocol, registry, exception hierarchy. No finding taxonomy.
 
 ## Scope
 
-Owns: abstract data types (`VCSPullRequest`, `Diff`, `Comment`, `Finding`, `Review`, `ReviewPostResult`, `VCSEvent` discriminated union), `VCSPlugin` Protocol, plugin registry, typed exception hierarchy.
+Owns: abstract transport types (`VCSPullRequest`, `Diff`, `Comment`, `VCSEvent` discriminated union), `VCSPlugin` Protocol, plugin registry, typed exception hierarchy.
 
-Does NOT own: business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/pull_requests`). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
+Does NOT own: finding taxonomy (lives in `domain/reviewer`), business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/pull_requests`). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
 
 ## Why / invariants
 
+- **No finding value object crosses the boundary.** `post_finding` takes named primitive args; each plugin renders a platform-appropriate body. Finding taxonomy (severity, confidence, category) lives entirely in `domain/reviewer`.
 - **Plugin methods never see yaaos UUIDs.** They take `external_id: str` (GitHub: `"owner/repo#123"`). Conversion happens at the call site.
 - **`get_installation_token` is short-lived; callers use once** (e.g., `git clone` via `GIT_ASKPASS`) and forget. Never cached.
 - **Status-not-raise for transient errors:** a thin retry wrapper at the plugin call site retries `VCSTransientError` and `VCSRateLimitError` with backoff. Other `VCSError` subclasses propagate to the background-task wrapper or HTTP middleware.
@@ -17,8 +18,11 @@ Does NOT own: business logic, filtering, LLM calls, HTTP, PR mirror state (`doma
 ## `VCSPlugin` Protocol
 
 Signatures in `app/domain/vcs/types.py`:
+
 - Read: `fetch_pr`, `fetch_diff`, `list_yaaos_comments`, `is_repo_accessible`.
-- Write: `post_review`, `post_comment_reply`, `mark_comments_outdated`.
+- Write (findings): `post_finding(external_id, *, file, line_start, line_end, severity, category, confidence, finding_display_id, rationale, rule_violated, rule_source, suggested_fix) -> str` — posts one finding as a platform comment; returns the external comment id. When `file`/`line_start` are `None`, the plugin posts a top-level PR comment.
+- Write (plain messages): `post_comment(external_id, *, body) -> str` — plain top-level PR comment for non-finding system messages (e.g., secrets-detected warning).
+- Write (retained, unused): `post_comment_reply`, `mark_comments_outdated` — kept for future follow-up flows; no domain logic wired.
 - Auth: `get_installation_token(org_id)`.
 
 ## Registry

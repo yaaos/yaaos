@@ -1,4 +1,10 @@
-"""Abstract VCS types used by every plugin and consumer."""
+"""Abstract VCS types used by every plugin and consumer.
+
+Finding taxonomy lives in `domain/reviewer`, not here. This module owns
+transport types (PR, diff, comment, events) and the `VCSPlugin` Protocol.
+`post_finding` and `post_comment` are the two write operations; plugins
+render per-platform from named primitive args.
+"""
 
 from __future__ import annotations
 
@@ -57,44 +63,6 @@ class Comment(BaseModel):
     line: int | None = None
     posted_at: datetime
     in_reply_to_external_id: str | None = None
-
-
-Severity = Literal["must-fix", "nit", "suggestion", "info"]
-ReviewState = Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]
-
-
-class FindingSnippetLine(BaseModel):
-    line_number: int
-    kind: Literal["context", "add", "del"]
-    text: str
-
-
-class Finding(BaseModel):
-    file: str | None = None
-    line_start: int | None = None
-    line_end: int | None = None
-    severity: Severity
-    title: str
-    body: str
-    rationale: str | None = None
-    snippet: list[FindingSnippetLine] | None = None
-    applied_lesson_ids: list[UUID] = []
-    # Which yaaos subagent surfaced this finding (e.g. "yaaos-architecture").
-    # Set by the parent reviewer when it synthesizes its subagents' outputs.
-    # Used for the per-comment prefix on GitHub.
-    source_agent: str | None = None
-
-
-class Review(BaseModel):
-    agent_tag: str
-    state: ReviewState
-    summary_body: str | None = None
-    findings: list[Finding]
-
-
-class ReviewPostResult(BaseModel):
-    review_external_id: str
-    finding_to_comment_external_id: dict[int, str] = {}
 
 
 # Events
@@ -241,7 +209,37 @@ class VCSPlugin(Protocol):
     async def list_commit_messages(
         self, repo_external_id: str, prev_sha: str, head_sha: str
     ) -> list[str]: ...
-    async def post_review(self, external_id: str, review: Review) -> ReviewPostResult: ...
+    async def post_finding(
+        self,
+        external_id: str,
+        *,
+        file: str | None,
+        line_start: int | None,
+        line_end: int | None,
+        severity: str,
+        category: str,
+        confidence: str,
+        finding_display_id: int,
+        rationale: str,
+        rule_violated: str,
+        rule_source: str,
+        suggested_fix: str | None,
+    ) -> str:
+        """Post a single finding to the PR. Returns the external comment id.
+
+        When `file`/`line_start` are None the plugin posts a top-level PR
+        comment (GitHub: issues endpoint). The plugin renders the body from
+        the named primitive args — no finding value object crosses this boundary.
+        """
+        ...
+
+    async def post_comment(self, external_id: str, *, body: str) -> str:
+        """Post a plain top-level PR comment (non-finding). Returns the external comment id.
+
+        Used for system messages such as the secrets-detected warning.
+        """
+        ...
+
     async def post_comment_reply(
         self, external_id: str, parent_comment_external_id: str, body: str
     ) -> str: ...

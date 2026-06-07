@@ -71,7 +71,7 @@ For `pull_request.synchronize` only: `GET /repos/{owner}/{repo}/compare/{before}
 
 All calls use short-lived per-method `httpx` clients against `github_api_base_url` (defaults to `https://api.github.com`; tests point at `apps/fake-github`).
 
-`post_review` posts each finding as its own comment. Findings with `file` + `line_start` → `POST /pulls/{n}/comments`; orphan findings and `summary_body` → `POST /issues/{n}/comments`.
+`post_finding` posts each finding as its own comment from named primitive args rendered by `_format_finding_body`. Findings with `file` + `line_start` → `POST /pulls/{n}/comments` (inline); null-anchor findings → `POST /issues/{n}/comments` (top-level PR comment). `post_comment` always routes to `POST /issues/{n}/comments` — used by the secrets-detected warning.
 
 `clone_url(repo_external_id)` returns `<github_web_base_url>/<external_id>.git`. Workspace provider pairs this with a fresh installation token via `GIT_ASKPASS`.
 
@@ -87,7 +87,7 @@ No per-org credential storage. `github_settings` was dropped in migration `030_d
 Unit tests in `app/plugins/github/test/`:
 - `test_signature.py` — HMAC verification.
 - `test_payload_parser.py` — every event-mapping branch.
-- `test_post_review.py` — `post_review` routing and `_format_finding_body`.
+- `test_post_review.py` — `post_finding` (inline vs null-anchor routing) and `post_comment` routing, and `_format_finding_body`.
 - `test_install_binding.py` — install start, install callback, webhook signature scoping.
 - `test_intake_producer_service.py` (`@pytest.mark.service`) — `_prepare_pr_review` enqueues notifications outbox row and publishes SSE event.
 

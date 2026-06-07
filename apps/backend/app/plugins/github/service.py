@@ -21,8 +21,6 @@ from app.domain.vcs import (
     Comment,
     Diff,
     FileSummary,
-    Review,
-    ReviewPostResult,
     VCSAuthError,
     VCSNotFoundError,
     VCSPullRequest,
@@ -46,17 +44,6 @@ def _split_external(external_id: str) -> tuple[str, str, int]:
     repo_full, num_s = external_id.split("#", 1)
     owner, repo = repo_full.split("/", 1)
     return owner, repo, int(num_s)
-
-
-# Maps a yaaos subagent name to the emoji rendered in the small attribution
-# suffix on each posted comment. Anything not listed falls back to 🤖.
-_AGENT_EMOJI = {
-    "yaaos-docs": "📝",
-    "yaaos-architecture": "🏗",
-    "yaaos-security": "🛡",
-    "yaaos-tests": "🧪",
-    "yaaos-line-level": "🔍",
-}
 
 
 def verify_webhook_signature(body: bytes, header: str | None, secret: bytes) -> bool:
@@ -355,65 +342,74 @@ class GitHubPlugin:
         except Exception:
             return False
 
-    async def post_review(self, external_id: str, review: Review) -> ReviewPostResult:
-        # We post each finding as an independent comment rather than a single
-        # GitHub Review object, so there is no top-level "[yaaos]" wrapper on
-        # the PR. Findings with `file` + `line_start` go to the inline
-        # pull-request-comments endpoint (requires `commit_id`, so we fetch the
-        # PR's head sha once up front). Findings without file/line, plus the
-        # secrets-warning case (no findings, only `summary_body`), go to the
-        # issue-comments endpoint — that's GitHub's path for top-level PR
-        # comments despite the "issues" naming.
+    async def post_finding(
+        self,
+        external_id: str,
+        *,
+        file: str | None,
+        line_start: int | None,
+        line_end: int | None,
+        severity: str,
+        category: str,
+        confidence: str,
+        finding_display_id: int,
+        rationale: str,
+        rule_violated: str,
+        rule_source: str,
+        suggested_fix: str | None,
+    ) -> str:
+        # Findings with `file` + `line_start` go to the inline pull-request-
+        # comments endpoint (requires `commit_id`; fetch head sha once per
+        # call). Findings without file/line go to the issue-comments endpoint —
+        # that's GitHub's path for top-level PR comments despite the "issues"
+        # naming.
         owner, repo, num = _split_external(external_id)
         org_id = await self._resolve_org_id()
-
-        inline_findings = [
-            (i, f) for i, f in enumerate(review.findings) if f.file and f.line_start is not None
-        ]
-        top_level_findings = [
-            (i, f) for i, f in enumerate(review.findings) if not (f.file and f.line_start is not None)
-        ]
-
-        commit_id: str | None = None
-        if inline_findings:
-            pr = await self.fetch_pr(external_id)
-            commit_id = pr.head_sha
-
-        finding_to_comment: dict[int, str] = {}
+        body = _format_finding_body(
+            finding_display_id=finding_display_id,
+            category=category,
+            severity=severity,
+            confidence=confidence,
+            rationale=rationale,
+            rule_violated=rule_violated,
+            rule_source=rule_source,
+            suggested_fix=suggested_fix,
+        )
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             headers = await self._api_headers(org_id)
-            for i, f in inline_findings:
+            if file and line_start is not None:
+                pr = await self.fetch_pr(external_id)
                 resp = await client.post(
                     f"/repos/{owner}/{repo}/pulls/{num}/comments",
                     json={
-                        "commit_id": commit_id,
-                        "path": f.file,
-                        "line": f.line_end or f.line_start,
-                        "body": _format_finding_body(f),
+                        "commit_id": pr.head_sha,
+                        "path": file,
+                        "line": line_end or line_start,
+                        "body": body,
                     },
                     headers=headers,
                 )
-                resp.raise_for_status()
-                finding_to_comment[i] = str(resp.json().get("id", ""))
-            for i, f in top_level_findings:
+            else:
                 resp = await client.post(
                     f"/repos/{owner}/{repo}/issues/{num}/comments",
-                    json={"body": _format_finding_body(f)},
+                    json={"body": body},
                     headers=headers,
                 )
-                resp.raise_for_status()
-                finding_to_comment[i] = str(resp.json().get("id", ""))
-            if not review.findings and review.summary_body:
-                resp = await client.post(
-                    f"/repos/{owner}/{repo}/issues/{num}/comments",
-                    json={"body": review.summary_body},
-                    headers=headers,
-                )
-                resp.raise_for_status()
-        return ReviewPostResult(
-            review_external_id="",
-            finding_to_comment_external_id=finding_to_comment,
-        )
+        resp.raise_for_status()
+        return str(resp.json().get("id", ""))
+
+    async def post_comment(self, external_id: str, *, body: str) -> str:
+        # Top-level PR comment — uses the issue-comments endpoint.
+        owner, repo, num = _split_external(external_id)
+        org_id = await self._resolve_org_id()
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.post(
+                f"/repos/{owner}/{repo}/issues/{num}/comments",
+                json={"body": body},
+                headers=await self._api_headers(org_id),
+            )
+        resp.raise_for_status()
+        return str(resp.json().get("id", ""))
 
     async def post_comment_reply(self, external_id: str, parent_comment_external_id: str, body: str) -> str:
         owner, repo, num = _split_external(external_id)
@@ -544,14 +540,35 @@ async def mark_installation_inactive(*, install_external_id: str, status: str) -
         await s.commit()
 
 
-def _format_finding_body(f: Any) -> str:
-    parts = [f"**{f.title}**", "", f.body]
-    if getattr(f, "rationale", None):
-        parts.extend(["", f"> {f.rationale}"])
-    agent = getattr(f, "source_agent", None)
-    if agent:
-        emoji = _AGENT_EMOJI.get(agent, "🤖")
-        parts.extend(["", f"<sub>{emoji} {agent}</sub>"])
+def _format_finding_body(
+    *,
+    finding_display_id: int,
+    category: str,
+    severity: str,
+    confidence: str,
+    rationale: str,
+    rule_violated: str,
+    rule_source: str,
+    suggested_fix: str | None,
+) -> str:
+    """Render a finding as a GitHub comment body.
+
+    Uses the canonical named primitive args from `VCSPlugin.post_finding`.
+    No value object crosses this boundary.
+    """
+    # Category prefix for the handle, e.g. "sec-1".
+    from app.domain.reviewer import finding_handle  # noqa: PLC0415
+
+    handle = finding_handle(category, finding_display_id)
+    parts = [
+        f"**[{handle}] {rule_violated}**",
+        "",
+        rationale,
+        "",
+        f"- **Severity:** {severity}  **Confidence:** {confidence}  **Source:** {rule_source}",
+    ]
+    if suggested_fix:
+        parts.extend(["", f"**Suggested fix:** {suggested_fix}"])
     return "\n".join(parts)
 
 

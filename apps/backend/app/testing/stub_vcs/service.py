@@ -3,8 +3,9 @@
 Implements every method in the `domain.vcs.VCSPlugin` Protocol so the type
 check passes at registration. Methods return canned defaults; tests set
 specific responses via `set_pr` / `set_diff` / `set_comments` before
-exercising the flow. Every `post_review` call is recorded on
-`posted_reviews` for assertions.
+exercising the flow. Every `post_finding` call is recorded on
+`posted_findings` for assertions. Every `post_comment` call is recorded on
+`posted_comments`.
 
 Register with `register_stub_vcs(plugin_id="github")` in a pytest fixture;
 the fixture yields the stub instance so the test can configure state and
@@ -24,8 +25,6 @@ from app.domain.vcs import (
     Comment,
     Diff,
     FileSummary,
-    Review,
-    ReviewPostResult,
     VCSPullRequest,
     bind_vcs_registry,
     current_vcs_registry,
@@ -76,7 +75,8 @@ class StubVCSPlugin:
     Construct with a `plugin_id` matching whatever your seeded PRs use
     (default `"github"`). State is mutable from outside — tests call
     `set_pr`/`set_diff`/`set_comments`/`set_commit_messages` before driving
-    the flow. Recorded `post_review` calls land on `posted_reviews`.
+    the flow. Recorded `post_finding` calls land on `posted_findings`;
+    recorded `post_comment` calls land on `posted_comments`.
     """
 
     def __init__(self, *, plugin_id: str = "github") -> None:
@@ -92,8 +92,10 @@ class StubVCSPlugin:
         self._commit_messages: dict[tuple[str, str, str], list[str]] = {}
         self._force_push: dict[tuple[str, str, str], bool] = {}
         # Recording — tests read these to assert flow side-effects.
-        self.posted_reviews: list[tuple[str, Review]] = []
-        self.post_review_external_ids: dict[str, str] = {}
+        # Each entry: (external_id, kwargs_dict) matching post_finding's signature.
+        self.posted_findings: list[tuple[str, dict[str, object]]] = []
+        # Each entry: (external_id, body)
+        self.posted_comments: list[tuple[str, str]] = []
 
     # ── Test-driven state setters ────────────────────────────────────────
 
@@ -142,17 +144,41 @@ class StubVCSPlugin:
     async def list_commit_messages(self, repo_external_id: str, prev_sha: str, head_sha: str) -> list[str]:
         return list(self._commit_messages.get((repo_external_id, prev_sha, head_sha), []))
 
-    async def post_review(self, external_id: str, review: Review) -> ReviewPostResult:
-        self.posted_reviews.append((external_id, review))
-        external_review_id = f"stub-review-{len(self.posted_reviews)}"
-        # Map each finding index to a synthetic comment id.
-        mapping = {i: f"stub-comment-{external_review_id}-{i}" for i in range(len(review.findings))}
-        result = ReviewPostResult(
-            review_external_id=external_review_id,
-            finding_to_comment_external_id=mapping,
-        )
-        self.post_review_external_ids[external_id] = external_review_id
-        return result
+    async def post_finding(
+        self,
+        external_id: str,
+        *,
+        file: str | None,
+        line_start: int | None,
+        line_end: int | None,
+        severity: str,
+        category: str,
+        confidence: str,
+        finding_display_id: int,
+        rationale: str,
+        rule_violated: str,
+        rule_source: str,
+        suggested_fix: str | None,
+    ) -> str:
+        entry: dict[str, object] = {
+            "file": file,
+            "line_start": line_start,
+            "line_end": line_end,
+            "severity": severity,
+            "category": category,
+            "confidence": confidence,
+            "finding_display_id": finding_display_id,
+            "rationale": rationale,
+            "rule_violated": rule_violated,
+            "rule_source": rule_source,
+            "suggested_fix": suggested_fix,
+        }
+        self.posted_findings.append((external_id, entry))
+        return f"stub-finding-comment-{len(self.posted_findings)}"
+
+    async def post_comment(self, external_id: str, *, body: str) -> str:
+        self.posted_comments.append((external_id, body))
+        return f"stub-comment-{len(self.posted_comments)}"
 
     async def post_comment_reply(self, external_id: str, parent_comment_external_id: str, body: str) -> str:
         del external_id, parent_comment_external_id, body

@@ -30,7 +30,7 @@ For the top-level review arc see [`docs/system-architecture.md`](../../../docs/s
 2. For each `ReportedFinding`: validate `severity`/`confidence` raw strings against the `Severity`/`Confidence` `Literal` aliases — out-of-range raises (caught by `PostFindings` as the runtime gate above).
 3. Assign each finding a `finding_display_id` — per-`pr_id` `max+1`, monotonic across categories. Rendered as `<category-prefix>-<id>` (`sec-3`). The category→prefix map is the single hardcoded dict at the top of `publish.py`; unknown category slugifies to a lowercase alnum string ≤8 chars.
 4. Persist each `Finding` row.
-5. Post each finding to the VCS plugin. (Wired through `vcs.post_review` as a mock seam; the real `vcs.post_finding` lands when the vcs interface ships.)
+5. Post each finding to the VCS plugin via `vcs.post_finding` with named primitive args — no value object crosses the `vcs` boundary.
 
 The skill never emits `finding_display_id`; yaaos assigns + persists it.
 

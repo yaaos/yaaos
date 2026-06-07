@@ -164,7 +164,5 @@ async def test_post_findings_persists_canonical_finding_rows(
     assert second.severity == "nit"
     assert second.file is None
 
-    # 6. VCS plugin received one post_review call with both findings.
-    assert len(stub.posted_reviews) == 1
-    _ext_id, posted_review = stub.posted_reviews[0]
-    assert len(posted_review.findings) == 2
+    # 6. VCS plugin received one post_finding call per finding.
+    assert len(stub.posted_findings) == 2

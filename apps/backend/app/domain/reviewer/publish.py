@@ -2,11 +2,9 @@
 
 `publish_findings` is the single entry point: open a `Review`, convert each
 `ReportedFinding → Finding` (validating severity/confidence strings), assign a
-per-PR `finding_display_id`, persist, and post each finding to the VCS plugin.
-
-The `vcs.post_finding` call is wired as a mock seam via `vcs.post_review`
-until the real `post_finding` API lands (sequenced separately). Posting maps
-the new `Finding` onto the surviving `vcs.Finding`/`vcs.Review` types.
+per-PR `finding_display_id`, persist, and post each finding to the VCS plugin
+via `vcs.post_finding`. No value object crosses the `vcs` boundary — findings
+pass as named primitive args.
 """
 
 from __future__ import annotations
@@ -97,8 +95,7 @@ async def publish_findings(
     Opens a new `Review` row, converts each `ReportedFinding` to a `Finding`
     (validating severity/confidence — out-of-range raises `ValueError`),
     assigns a per-PR monotonic `finding_display_id`, persists, and posts
-    each finding via `vcs.post_finding` (mock seam: routes through
-    `vcs.post_review` until the real API is wired).
+    each finding via `vcs.post_finding` with named primitive args.
 
     Caller holds the per-PR advisory lock (`acquire_pr_lock`). Caller commits.
 
@@ -178,7 +175,7 @@ async def publish_findings(
         admitted.append(f)
         finding_rows.append(row)
 
-    # ── Post to VCS (mock seam via vcs.post_review) ───────────────────────
+    # ── Post to VCS via post_finding ──────────────────────────────────────
     if admitted:
         await _post_findings_via_vcs(
             pr_external_id=pr_external_id,
@@ -221,48 +218,38 @@ async def _post_findings_via_vcs(
     vcs_plugin_id: str,
     findings: list[Finding],
 ) -> None:
-    """Post findings to the VCS plugin.
+    """Post each finding to the VCS plugin via `post_finding`.
 
-    Mock seam: maps the new `Finding` shape onto `vcs.Finding`/`vcs.Review`
-    types so the existing `post_review` path continues to work. This seam is
-    removed when `vcs.post_finding` is wired.
+    Passes named primitive args — no value object crosses the `vcs` boundary.
+    Each finding is posted independently; the plugin renders per-platform.
     """
-    from app.domain.vcs import Finding as VcsFinding  # noqa: PLC0415
-    from app.domain.vcs import Review as VcsReview  # noqa: PLC0415
     from app.domain.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
 
     plugin = get_vcs_plugin(vcs_plugin_id)
 
-    vcs_findings = [
-        VcsFinding(
-            file=f.file,
-            line_start=f.line,
-            line_end=f.line,
-            severity="must-fix"
-            if f.severity == "blocker"
-            else ("nit" if f.severity == "nit" else "suggestion"),
-            title=finding_handle(f.category, f.finding_display_id),
-            body=f.rationale,
-            rationale=f.suggested_fix or None,
-            source_agent=None,
-        )
-        for f in findings
-    ]
-    review_obj = VcsReview(
-        agent_tag="yaaos",
-        state="COMMENT",
-        summary_body=None,
-        findings=vcs_findings,
-    )
-    try:
-        await plugin.post_review(pr_external_id, review_obj)
-    except Exception:
-        log.exception(
-            "publish_findings.vcs_post_failed",
-            pr_external_id=pr_external_id,
-            findings_count=len(findings),
-        )
-        raise
+    for f in findings:
+        try:
+            await plugin.post_finding(
+                pr_external_id,
+                file=f.file,
+                line_start=f.line,
+                line_end=f.line,
+                severity=f.severity,
+                category=f.category,
+                confidence=f.confidence,
+                finding_display_id=f.finding_display_id,
+                rationale=f.rationale,
+                rule_violated=f.rule_violated,
+                rule_source=f.rule_source,
+                suggested_fix=f.suggested_fix,
+            )
+        except Exception:
+            log.exception(
+                "publish_findings.vcs_post_failed",
+                pr_external_id=pr_external_id,
+                finding_display_id=f.finding_display_id,
+            )
+            raise
 
 
 __all__ = [

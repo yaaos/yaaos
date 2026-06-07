@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed into a plugin-internal Pydantic model, then converted to vendor-neutral domain types (`vcs.Finding`).
+- Coding-agent CLI stdout parsed into a plugin-internal Pydantic model, then converted to `ReportedFinding` (raw strings; reviewer validates into domain types).
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 
@@ -349,7 +349,7 @@ Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBL
 
 ### Service tests
 
-When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer → vcs.post_review → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
+When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer → vcs.post_finding → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
 
 Mechanics:
 
@@ -419,7 +419,7 @@ A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ..
 Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`). Add manual spans only at meaningful boundaries:
 
 - Every external call — VCS API, coding-agent CLI, webhook signature verification.
-- Every plugin entry point — `VCSPlugin.post_review`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
+- Every plugin entry point — `VCSPlugin.post_finding`, `VCSPlugin.post_comment`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
 - Long phases inside a background coro — review_job phase transitions each get a span so the trace shows where wall time went.
 
 Don't wrap every domain function — noise hurts more than detail helps.

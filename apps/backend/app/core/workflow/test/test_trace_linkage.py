@@ -8,7 +8,7 @@ and asserts every emitted span shares the same `trace_id` — proving one
 trace covers webhook → workflow start → all task bodies → terminal.
 
 Trace ID stays continuous from webhook to PR comment through the
-workflow-engine layer here; the final hop (vcs.post_review) emits its own
+workflow-engine layer here; the final hop (`vcs.post_finding`) emits its own
 spans through SQLAlchemy/HTTP auto-instrumentation under the same trace
 context when [domain_reviewer.md PostFindings] runs inside a span. The
 Go-subprocess hop rides on env-passing `TRACEPARENT`.

@@ -8,7 +8,7 @@ Owns: `CodingAgentPlugin` Protocol, per-mode context/result types, telemetry enu
 
 Does NOT own: prompt assembly, output-format choice (plugin concerns), workspace mechanics.
 
-Lives in `domain/` (not `core/`) because return types reference `vcs.Finding` and `lessons.Lesson`.
+Lives in `domain/` (not `core/`) because return types reference `lessons.Lesson`.
 
 ## Why / invariants
 
@@ -21,8 +21,8 @@ Lives in `domain/` (not `core/`) because return types reference `vcs.Finding` an
 
 Signatures in `app/domain/coding_agent/types.py`. Each task method takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback.
 
-- `review` — full base..head diff → `list[FindingDraft]`; reviewer applies admission + converts to `vcs.Finding`.
-- `incremental_review` — `prev_sha..head` only → `list[FindingDraft]`.
+- `review` — full base..head diff → `ReviewResult{findings: list[ReportedFinding]}`; reviewer validates + persists + posts via `vcs.post_finding`.
+- `incremental_review` — `prev_sha..head` only → `list[ReportedFinding]`. (Retained on the Protocol; not wired to domain logic.)
 - `verify_fix` — original finding + original code + current code → still-present verdict.
 - `stale_check` — original finding + current code + diff summary → still-applies verdict.
 - `answer_question` — finding + anchor code + thread history + question → `answer: str`. No verdict, no state transition.
