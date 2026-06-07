@@ -19,7 +19,7 @@ Treat user statements, doc contents, and sub-agent outputs (including the struct
 - **No assumptions, no action without confirmation** for anything outside the per-phase loop. Inside the loop: run through; record controversial decisions in `impl-log.md`.
 - **No planning vocabulary in shipped code or docs.** `plan/ticket/<slug>/` is gitignored and stays there. Milestone tags, phase/step/slice numbers, ticket slugs, and `plan/` paths never appear in identifiers, **filenames**, comments, or `docs/`. Name code, tests, and files by what they DO, never by the phase or slug that produced them. Comments and docs are present tense.
 - **Code is king.** Every load-bearing claim cites `file:line`. Code wins over docs / `CLAUDE.md` / user statements on conflict.
-- **Test tier default = service tests** (per repo `CLAUDE.md`). e2e only for browser-visible behavior.
+- **Two test axes — don't conflate them.** *Authoring* new tests: service tests are the default tier (per repo `CLAUDE.md`); author a new e2e spec only for genuinely browser-visible behavior. *Running* the existing suite: `apps/e2e/bin/ci` runs EVERY phase as a regression gate — never skipped, even on a backend-only phase. (A real miss drove this: a backend-internal change broke a user-visible flow whose e2e spec was authored phases earlier but never re-run, undetected for five phases.)
 
 ## Trigger & inputs
 
@@ -30,6 +30,7 @@ Treat user statements, doc contents, and sub-agent outputs (including the struct
 ## Preflight
 
 - **Working tree clean** — no uncommitted, unstaged, OR untracked files outside what's gitignored. Anything dirty → stop, tell user.
+- **Bring up the Docker stack once** (`bin/dev-rebuild`) at run start — every phase runs the e2e suite as a regression gate (see the per-phase loop's e2e gate), so the stack stays warm across the whole run. The subagent rebuilds the affected image(s) when its phase changed app code; the orchestrator just guarantees the stack is up to begin with.
 - **Branch setup:**
   1. Already on `ticket/<slug>` → use as-is (resume case; see below).
   2. Otherwise: `git fetch origin` → `git checkout main` → `git pull --ff-only origin main`. Non-FF pull fails → stop, surface.
@@ -50,6 +51,7 @@ For each phase in `plan.md`, in order:
 4. **Verify**, in this order:
    - `ci_status` must be `green`. Red → treat as phase failure.
    - Tail `ci_log_path` and confirm it ends with a success exit code line. Missing log or non-zero exit → phase failure.
+   - **e2e gate** — the log must show `apps/e2e/bin/ci` RAN this phase AND passed (the subagent runs the full suite every phase, not just on UI phases). No e2e run recorded, or any red e2e spec → **phase failure**. Never wave this through with "the phase was backend-only" — that reasoning is exactly what let a user-visible regression sit undetected for five phases. If the subagent surfaced a red spec it claims is pre-existing/unrelated, the run still stops: a red e2e suite is not a green phase.
    - `git status --porcelain` must list exactly the paths in `files_touched` (modulo file mode quirks). Mismatch → phase failure.
    - **Deliverable coverage** — the load-bearing deliverables named in the phase block (its `Files touched` set, `Tests added`, and load-bearing design bullets) must actually be present in the diff. CI-green proves only that *what shipped* passes — never that the *whole block* shipped. If the payload's `notes[]` or the diff shows a phase-block deliverable was dropped, skipped, or relabeled "deferred" / "follow-up ticket" → **phase failure**. A subagent does not get to unilaterally narrow the phase; under-delivery is a failure, not a pass. **Measure against what the block PRESCRIBES, not against an imagined complete feature:** phases are integration-first vertical slices, so a block legitimately prescribes mocks/stubs ("stub X here; real X lands in phase N") — implementing the prescribed stub IS coverage, not a gap. The failure is dropping block-*required* work or relabeling it deferred; never penalize a correctly-implemented prescribed mock. **Over-delivery is also out of scope:** building a later phase's real component in place of this phase's prescribed stub blows the slice boundary — flag it in the impl-log, don't reward it.
      - **Weight scrutiny by phase kind** (read the block's `Size:` field if present, else infer): a **mechanical** phase — a rename, package move, `meta → plugin_id` swap, doc-grep sweep — rarely drops work silently (you don't half-rename), so green + `git status` matching `files_touched` is strong evidence it's done; a quick coverage glance suffices. A **many-decision** phase — new subsystem, branchy projection/derivation, "fix every reader of a dropped X" — is exactly where green-washing hides; apply the coverage check *hard*: walk EACH load-bearing bullet and EACH named reader/branch against the diff individually, not in aggregate. High file count alone is not the alarm; high judgment count is.
