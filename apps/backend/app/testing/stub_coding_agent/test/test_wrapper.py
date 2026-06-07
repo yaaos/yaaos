@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -19,35 +20,10 @@ from app.domain.coding_agent import (
     list_registered_plugins,
     register_plugin,
 )
-from app.domain.vcs import Diff, VCSPullRequest
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,
 )
-
-
-def _make_pr() -> VCSPullRequest:
-    now = datetime.now(UTC)
-    return VCSPullRequest(
-        plugin_id="github",
-        external_id="acme/web#1",
-        repo_external_id="acme/web",
-        number=1,
-        title="Test",
-        body=None,
-        author_login="alice",
-        author_type="user",
-        base_branch="main",
-        head_branch="feat",
-        base_sha="b",
-        head_sha="h",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://x",
-        created_at=now,
-        updated_at=now,
-    )
 
 
 class _DummyPlugin:
@@ -76,7 +52,13 @@ class _FakeWorkspace:
 @pytest.mark.asyncio
 async def test_review_returns_canned_success() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    ctx = ReviewContext(pr=_make_pr(), diff=Diff(raw="", files=[]))
+    ctx = ReviewContext(
+        org_id=UUID(int=1),
+        repo_external_id="acme/web",
+        pr_external_id="acme/web#1",
+        head_sha="h",
+        base_sha="b",
+    )
     result = await stub.review(_FakeWorkspace(), ctx)
     assert result.status == InvocationStatus.SUCCESS
     assert result.state == "COMMENT"

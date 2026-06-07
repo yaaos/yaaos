@@ -14,6 +14,7 @@ Asserts:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -34,6 +35,7 @@ from app.domain.reviewer.commands import (
 )
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create as create_ticket
+from app.testing.seed import seed_agent as _seed_agent_for_tests
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
 
@@ -244,11 +246,14 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     )
     pr_id = pr.id
 
+    # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
+    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
     seeded_ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="in_process",
         plugin_state={"sha": "deadbeef", "files": {"src/foo.py": "def foo(x):\n    return x.value\n"}},
         sha="deadbeef",
+        agent_id=agent_row["id"],
         caller_session=db_session,
     )
     await db_session.commit()
@@ -265,18 +270,35 @@ async def test_pr_review_v1_with_findings_persists_to_db(
         )
     )
 
-    # Canonical ReportedFinding shape returned by CodeReview agent event outputs.
-    spy_finding = {
-        "file": "src/foo.py",
-        "line": 2,
-        "category": "correctness",
-        "severity": "blocker",
-        "confidence": "verified",
-        "rationale": "Unvalidated input passed to SQL query.",
-        "rule_violated": "spy_rule",
-        "rule_source": "yaaos",
-        "suggested_fix": "Use parameterized queries.",
+    # CodeReview agent event returns stream-json stdout; PostFindings (LOCAL) parses it.
+    spy_finding_payload = {
+        "findings": [
+            {
+                "file": "src/foo.py",
+                "line": 2,
+                "category": "correctness",
+                "severity": "blocker",
+                "confidence": "verified",
+                "rationale": "Unvalidated input passed to SQL query.",
+                "rule_violated": "spy_rule",
+                "rule_source": "yaaos",
+                "suggested_fix": "Use parameterized queries.",
+            }
+        ]
     }
+    spy_stdout = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": json.dumps(spy_finding_payload),
+                    "is_error": False,
+                }
+            ),
+        ]
+    )
 
     from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
@@ -306,11 +328,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(
 
             # ProvisionWorkspace: return the pre-seeded workspace_id.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
-            # CodeReview: return the canonical finding via outputs.
+            # CodeReview: return the stream-json stdout via outputs; PostFindings parses it.
             await _advance_pending_agent_event(
                 db_session,
                 wfx_id,
-                outputs={"draft_findings": [spy_finding], "summary_body": "", "state": "COMMENT"},
+                outputs={"stdout": spy_stdout},
             )
             # PostFindings (LOCAL) ran inline. CleanupWorkspace parks.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={})
@@ -386,26 +408,29 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     # ProvisionWorkspace (Workspace) dispatches and parks at AWAITING_AGENT.
     await _drain_workflow_outbox(db_session)
 
+    # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
+    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
     sim_workspace_id = str(
         await _seed_workspace_for_tests(
             org_id=org_id,
             provider_id="in_process",
             plugin_state={"sha": "deadbeefcafef00d"},
             sha="deadbeefcafef00d",
+            agent_id=agent_row["id"],
             caller_session=db_session,
         )
     )
     await db_session.commit()
     await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
-    # CodeReview parks. Simulate empty draft_findings (no findings path).
+    # CodeReview parks. Simulate empty stdout (no findings path — PostFindings treats no stdout as zero findings).
     await _advance_pending_agent_event(
         db_session,
         wfx_id,
-        outputs={"draft_findings": [], "summary_body": "", "state": "COMMENT"},
+        outputs={"stdout": ""},
     )
 
-    # PostFindings (Local) ran inline with empty drafts → success-no-op;
+    # PostFindings (Local) ran inline with empty stdout → success-no-op;
     # CleanupWorkspace then parked. Simulate its terminal event.
     await _advance_pending_agent_event(db_session, wfx_id, outputs={})
 

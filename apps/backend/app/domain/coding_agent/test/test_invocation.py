@@ -8,7 +8,6 @@ shape so an accidental change shows up loudly.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 import pytest
 from pydantic import SecretStr
@@ -20,7 +19,6 @@ from app.domain.coding_agent import (
     ReviewContext,
     build_invocation,
 )
-from app.domain.vcs import Diff, VCSPullRequest
 
 
 def _ctx() -> AnswerQuestionContext:
@@ -155,27 +153,15 @@ def test_exec_answer_question_uses_leaner_allowed_tools() -> None:
 
 def test_exec_review_uses_full_allowed_tools() -> None:
     """Full review keeps `Task` so the parent can dispatch yaaos-* subagents."""
-    pr = VCSPullRequest(
-        plugin_id="github",
-        external_id="acme/web#1",
+    from uuid import UUID as _UUID  # noqa: PLC0415
+
+    ctx = ReviewContext(
+        org_id=_UUID(int=1),
         repo_external_id="acme/web",
-        number=1,
-        title="t",
-        body="b",
-        author_login="dev",
-        author_type="user",
-        base_branch="main",
-        head_branch="feature",
-        base_sha="b",
+        pr_external_id="acme/web#1",
         head_sha="h",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="https://x",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
+        base_sha="b",
     )
-    ctx = ReviewContext(pr=pr, diff=Diff(raw="", files=[]), lessons=[])
     inv = build_invocation(mode="review", context=ctx, anthropic_api_key=SecretStr("sk"))
     tool_flag = next(a for a in inv["exec"]["argv"] if a.startswith("--allowed-tools="))
     assert "Task" in tool_flag

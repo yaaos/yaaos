@@ -27,7 +27,7 @@ PER_IP_LIMIT = 10
 PER_IP_WINDOW_SECONDS = 60
 
 
-@dataclass(frozen=True)
+@dataclass
 class RateLimitedError(Exception):
     """Raised when an identity-exchange attempt exceeds a window."""
 

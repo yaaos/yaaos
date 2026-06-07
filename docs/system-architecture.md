@@ -61,7 +61,7 @@ See per-module deep dives: [`plugins_github`](../apps/backend/docs/plugins_githu
 
 Per-org, per-review. Coding-agent CLIs call hosted MCP servers (Linear, Notion) through a yaaos-owned proxy — authorization in one place, every JSON-RPC method writes an audit row.
 
-Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`, sha256 → `mcp_review_tokens`), builds an MCP payload (`integrations.known_providers()` filtered to enabled + non-failed), injects `{token, base_url, servers}` into `agent_config["mcp"]`. The workspace writes `.mcp.json`; the CLI calls `mcp__linear__get_issue`; the proxy at `POST /api/mcp/{review_id}/linear` verifies the sha256 bearer, resolves `org_id`, enforces the write-tool allowlist, decrypts the org's access token, forwards to upstream, audits the call. Token revoked before workspace teardown.
+Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`, sha256 → `mcp_review_tokens`), builds an MCP payload (`integrations.known_providers()` filtered to enabled + non-failed), threads `{token, base_url, servers}` into the coding-agent invocation so the CLI has MCP server config. The workspace writes `.mcp.json`; the CLI calls `mcp__linear__get_issue`; the proxy at `POST /api/mcp/{review_id}/linear` verifies the sha256 bearer, resolves `org_id`, enforces the write-tool allowlist, decrypts the org's access token, forwards to upstream, audits the call. Token revoked before workspace teardown.
 
 **Attribution.** Manual UI review → `actor_kind=user`. Webhook review → `actor_kind=system`. Reviews always execute as the org service account, never as the triggering developer.
 

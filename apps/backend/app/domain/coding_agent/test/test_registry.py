@@ -82,34 +82,16 @@ def test_get_unknown_plugin_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_review_dispatch() -> None:
-    from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
+    from uuid import UUID as _UUID  # noqa: PLC0415
 
     register_plugin(_StubPlugin())
 
-    pr = VCSPullRequest(
-        plugin_id="github",
-        external_id="acme/web#1",
-        repo_external_id="acme/web",
-        number=1,
-        title="t",
-        body=None,
-        author_login="alice",
-        author_type="user",
-        base_branch="main",
-        head_branch="feat",
-        base_sha="b",
-        head_sha="h",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://x",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-    )
     ctx = ReviewContext(
-        pr=pr,
-        diff=Diff(raw="", files=[]),
-        lessons=[],
+        org_id=_UUID(int=1),
+        repo_external_id="acme/web",
+        pr_external_id="acme/web#1",
+        head_sha="h",
+        base_sha="b",
     )
     result = await review("stub", workspace=None, context=ctx)  # type: ignore[arg-type]
     assert result.status == InvocationStatus.SUCCESS

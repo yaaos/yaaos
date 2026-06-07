@@ -4,6 +4,7 @@ as canonical `FindingRow` rows with correct severity/confidence/display_id.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -97,30 +98,47 @@ async def test_post_findings_persists_canonical_finding_rows(
     )
 
     # 3. Two canonical ReportedFinding dicts — severity + confidence are valid enum strings.
-    drafts = [
-        {
-            "file": "src/foo.py",
-            "line": 10,
-            "category": "security",
-            "severity": "blocker",
-            "confidence": "verified",
-            "rationale": "Unvalidated input passed to SQL query.",
-            "rule_violated": "sql-injection",
-            "rule_source": "owasp",
-            "suggested_fix": "Use parameterized queries.",
-        },
-        {
-            "file": None,
-            "line": None,
-            "category": "correctness",
-            "severity": "nit",
-            "confidence": "speculative",
-            "rationale": "Minor naming inconsistency.",
-            "rule_violated": "naming/convention",
-            "rule_source": "yaaos",
-            "suggested_fix": "Rename to snake_case.",
-        },
-    ]
+    #    Encoded as stream-json stdout (the format `PostFindings` now parses via the plugin).
+    findings_payload = {
+        "findings": [
+            {
+                "file": "src/foo.py",
+                "line": 10,
+                "category": "security",
+                "severity": "blocker",
+                "confidence": "verified",
+                "rationale": "Unvalidated input passed to SQL query.",
+                "rule_violated": "sql-injection",
+                "rule_source": "owasp",
+                "suggested_fix": "Use parameterized queries.",
+            },
+            {
+                "file": None,
+                "line": None,
+                "category": "correctness",
+                "severity": "nit",
+                "confidence": "speculative",
+                "rationale": "Minor naming inconsistency.",
+                "rule_violated": "naming/convention",
+                "rule_source": "yaaos",
+                "suggested_fix": "Rename to snake_case.",
+            },
+        ]
+    }
+    # Stream-json format: each line is a JSON object; `type=result` carries the payload.
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": json.dumps(findings_payload),
+                    "is_error": False,
+                }
+            ),
+        ]
+    )
 
     ctx = CommandContext(
         workflow_execution_id=str(uuid4()),
@@ -133,7 +151,7 @@ async def test_post_findings_persists_canonical_finding_rows(
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
     with register_stub_vcs(plugin_id="github") as stub:
-        outcome = await PostFindings().execute({"draft_findings": drafts}, ctx)
+        outcome = await PostFindings().execute({"stdout": stdout}, ctx)
 
     assert outcome.label == "success", f"unexpected failure: {outcome.failure_reason}"
     assert outcome.outputs.get("admitted_count") == 2

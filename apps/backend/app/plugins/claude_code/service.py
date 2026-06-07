@@ -34,9 +34,12 @@ from app.domain.coding_agent import (
     ActivityEvent,
     AnswerQuestionContext,
     AnswerQuestionResult,
+    CodingAgentError,
+    ExecSpec,
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
+    Invocation,
     InvocationStatus,
     InvocationTelemetry,
     OnActivity,
@@ -67,9 +70,6 @@ from app.domain.coding_agent import (
 )
 from app.domain.coding_agent import (
     assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
-)
-from app.domain.coding_agent import (
-    assemble_review_prompt as _assemble_review_prompt,
 )
 from app.domain.coding_agent import (
     assemble_stale_check_prompt as _assemble_stale_check_prompt,
@@ -453,15 +453,25 @@ class ClaudeCodePlugin:
         context: ReviewContext,
         on_activity: OnActivity | None = None,
     ) -> ReviewResult:
-        mcp_tools = await _materialize_mcp_config(workspace, context.agent_config.get("mcp"))
-        prep = await self._prepare_invocation(context.agent_config, extra_allowed_tools=mcp_tools)
+        # This in-process path is retained for future re-introduction but not
+        # called in the remote-dispatch model. The remote path uses
+        # build_review_invocation + dispatch_invoke_claude_code.
+        prep = await self._prepare_invocation({})
         if isinstance(prep, ReviewResult):
             return prep
         argv, env, timeout = prep
 
-        # Full review uses the canonical finding schema (FindingDraftList DTO).
-        # The reviewer module validates severity/confidence and persists findings.
-        full_prompt = _assemble_review_prompt(context) + _schema_appendix(_FindingDraftList)
+        import json as _json  # noqa: PLC0415
+
+        schema_str = _json.dumps(context.output_schema, indent=2)
+        full_prompt = (
+            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "
+            f"Base: {context.base_sha}, Head: {context.head_sha}.\n\n"
+            "## Output Format (STRICT)\n\n"
+            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+            f"{schema_str}\n"
+        )
 
         envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
         if isinstance(envelope, ReviewResult):
@@ -469,9 +479,9 @@ class ClaudeCodePlugin:
         agent_text, telemetry = envelope
 
         try:
-            parsed_dict = json.loads(agent_text)
+            parsed_dict = _json.loads(agent_text)
             parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (json.JSONDecodeError, ValidationError) as e:
+        except (_json.JSONDecodeError, ValidationError) as e:
             return ReviewResult(
                 status=InvocationStatus.PARSE_FAILURE,
                 telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
@@ -497,7 +507,6 @@ class ClaudeCodePlugin:
             findings=findings,
             state=_compute_state_v2(findings),
             summary_body=None,
-            lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
 
@@ -842,6 +851,118 @@ class ClaudeCodePlugin:
             answer=parsed.answer,
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
+
+    # ── Remote-dispatch methods (Shape B) ────────────────────────────────
+
+    async def build_review_invocation(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: Any,
+    ) -> Invocation:
+        """Build the `Invocation` for a remote PR review.
+
+        Resolves the API key from `claude_code_settings`, assembles the
+        prompt (review instructions + output schema appendix), and returns
+        the complete exec spec. The Anthropic key goes in `exec.env` — the
+        accepted carve-out for wire-bound exec.
+
+        The skill handle is hardcoded to `"code-review"` — the repo-own
+        happy path. Skill-assignment resolution (repo-own vs plugin vs
+        bundle) lands in a follow-up iteration.
+        """
+        del session  # reserved for future skill-assignment DB lookup
+        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        if not api_key:
+            raise CodingAgentError("ANTHROPIC_API_KEY not set in claude_code_settings")
+        cli_path = cli_path_setting or "claude"
+
+        # Assemble the review prompt + the canonical output-schema appendix.
+        # `ctx.output_schema` is the snapshot frozen at dispatch; we pass it
+        # directly so the prompt matches what the caller will validate against.
+        import json as _json  # noqa: PLC0415
+
+        schema_str = _json.dumps(ctx.output_schema, indent=2)
+        prompt = (
+            f"Review the pull request. Base SHA: {ctx.base_sha}. Head SHA: {ctx.head_sha}.\n"
+            f"Run `git diff {ctx.base_sha}..HEAD` to inspect changes.\n\n"
+            "## Output Format (STRICT)\n\n"
+            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+            f"{schema_str}\n"
+        )
+
+        argv = (
+            cli_path,
+            "--print",
+            "--output-format=stream-json",
+            "--verbose",
+            "--permission-mode=bypassPermissions",
+            "--model",
+            _MODEL,
+            "--effort",
+            _EFFORT,
+            "--allowed-tools="
+            "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
+            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
+        )
+        env = {"ANTHROPIC_API_KEY": api_key.get_secret_value()}
+        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
+
+        return Invocation(
+            kind="code-review",
+            exec=ExecSpec(argv=argv, stdin=prompt, env=env),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=_DEFAULT_TIMEOUT_SECONDS),
+        )
+
+    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+        """Parse the agent's stream-json stdout into `ReportedFinding` objects.
+
+        Finds the terminal `type=result` event, extracts the `result` field,
+        and parses the JSON payload against `FindingDraftList`. Raises
+        `ValueError` on any parse failure so `PostFindings` can gate on it.
+        """
+        events = _parse_stream_events(stdout)
+        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        if result_event is None:
+            raise ValueError("no 'type=result' event found in stdout")
+        raw_result = result_event.get("result", "")
+        if not isinstance(raw_result, str):
+            raise ValueError(f"result field is not a string: {type(raw_result)}")
+        try:
+            parsed_dict = json.loads(raw_result)
+            parsed = _FindingDraftList.model_validate(parsed_dict)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise ValueError(f"agent output did not match FindingDraftList: {exc}") from exc
+        return [
+            ReportedFinding(
+                file=d.file,
+                line=d.line,
+                category=d.category,
+                severity=d.severity,
+                confidence=d.confidence,
+                rationale=d.rationale,
+                rule_violated=d.rule_violated,
+                rule_source=d.rule_source,
+                suggested_fix=d.suggested_fix,
+            )
+            for d in parsed.findings
+        ]
+
+    async def review_preflight_steps(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: Any,
+    ) -> tuple[str, ...]:
+        """Return WorkflowCommand kinds to insert before the review step.
+
+        Hardcoded to `()` — skill-assignment resolution lands in a follow-up
+        iteration. The bundle/plugin branch is added when skill routing is built.
+        """
+        del ctx, session
+        return ()
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         errors: list[str] = []

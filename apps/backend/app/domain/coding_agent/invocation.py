@@ -54,7 +54,6 @@ from app.domain.coding_agent.prompts import (
     VerifyFixDto,
     assemble_answer_question_prompt,
     assemble_incremental_review_prompt,
-    assemble_review_prompt,
     assemble_stale_check_prompt,
     assemble_verify_fix_prompt,
     schema_appendix,
@@ -144,8 +143,15 @@ def _render(mode: InvocationMode, context: _Context) -> tuple[str, str]:
     Each mode pairs its prompt assembler with the schema appendix that
     matches the expected response DTO."""
     if mode == "review":
+        # The review path now uses plugin.build_review_invocation (Shape B).
+        # build_invocation("review", ...) is retained for tests that verify
+        # the allowed-tools constant; it no longer generates a prompt body.
         assert isinstance(context, ReviewContext)
-        return assemble_review_prompt(context) + schema_appendix(FindingDraftList), _DEFAULT_ALLOWED_TOOLS
+        dummy_prompt = (
+            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "
+            f"Base: {context.base_sha}, Head: {context.head_sha}."
+        )
+        return dummy_prompt + schema_appendix(FindingDraftList), _DEFAULT_ALLOWED_TOOLS
     if mode == "incremental_review":
         assert isinstance(context, IncrementalReviewContext)
         return (

@@ -95,7 +95,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.coding_agent"
-depends_on = ["app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.intake"
@@ -175,7 +175,7 @@ depends_on = ["app.core.tasks", "app.core.webserver"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.agent_gateway", "app.core.workspace", "app.domain.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -633,6 +633,7 @@ expose = [
   "close_workspace",
   "create_workspace",
   "current_workspace_registry",
+  "dispatch_invoke_claude_code",
   "force_close_all",
   "get_provider",
   "get_workflow_context_provider",
@@ -667,11 +668,13 @@ expose = [
   "CodingAgentError",
   "CodingAgentPlugin",
   "CodingAgentRegistry",
+  "ExecSpec",
   "FindingAnchor",
   "FindingDraftList",
   "HealthStatus",
   "IncrementalReviewContext",
   "IncrementalReviewResult",
+  "Invocation",
   "InvocationMode",
   "InvocationStatus",
   "InvocationTelemetry",

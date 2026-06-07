@@ -1,12 +1,13 @@
 """Reviewer WorkflowCommands.
 
 Workspace commands:
-- `CodeReview` — full-PR review, produces `draft_findings`.
+- `CodeReview` — full-PR review dispatched to the remote agent; the terminal
+  event's `stdout` is consumed by `PostFindings`.
 
 Local commands:
 - `CheckShouldReview` — admission gate before workspace provisioning.
 - `SecretsScan` — pre-flight secrets detection.
-- `PostFindings` — convert `draft_findings` → `Finding` rows via `publish.py`.
+- `PostFindings` — parse agent `stdout` → `FindingRow` rows via `publish.py`.
 """
 
 from __future__ import annotations
@@ -22,9 +23,11 @@ from app.core.workflow import CommandCategory, CommandContext, Outcome
 from app.core.workspace import (
     Workspace,
     WorkspaceTicketContext,
+    dispatch_invoke_claude_code,
     get_workflow_context_provider,
     get_workspace,
     get_workspace_owner,
+    try_claim,
 )
 from app.domain.tickets import get_payload as get_ticket_payload
 
@@ -143,75 +146,105 @@ def _activity_publisher_for(ctx: CommandContext):  # type: ignore[no-untyped-def
 # ── CodeReview ──────────────────────────────────────────────────────────────
 
 
-class CodeReview(_WorkspaceReviewCommand):
-    """Full-PR review. Invokes `coding_agent.review` and emits
-    `draft_findings: list[dict]` for downstream `PostFindings`.
+class CodeReview:
+    """Full-PR review. Builds an `InvokeClaudeCode` AgentCommand via
+    `coding_agent.build_review_invocation`, claims the workspace, dispatches,
+    and parks. The terminal event's `stdout` is parsed by `PostFindings`.
     """
 
     kind = "CodeReview"
+    category = CommandCategory.WORKSPACE
+    restart_safe = True
 
-    async def _run_in_workspace(self, workspace, ticket_ctx, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs
-        from datetime import UTC, datetime  # noqa: PLC0415
-        from typing import Any as _Any  # noqa: PLC0415
+    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+        # The remote model dispatches via `dispatch`; `execute` is never called
+        # by the engine's Workspace branch in normal operation. Retained so the
+        # command satisfies the Local execute shape for test harnesses that
+        # exercise commands directly.
+        del inputs, ctx
+        return Outcome.failure(reason="CodeReview.execute is not the dispatch path for remote review")
+
+    async def dispatch(
+        self,
+        inputs: dict[str, Any],
+        ctx: CommandContext,
+        *,
+        session: Any,
+    ) -> UUID:
+        from uuid import UUID as _UUID  # noqa: PLC0415
 
         from app.domain import coding_agent  # noqa: PLC0415
-        from app.domain.coding_agent import ReviewContext  # noqa: PLC0415
-        from app.domain.vcs import Diff, VCSPullRequest  # noqa: PLC0415
+        from app.domain.coding_agent import ReviewContext, finding_output_schema  # noqa: PLC0415
 
-        head_sha = str(ticket_ctx.payload.get("head_sha") or "")
-        base_sha = str(ticket_ctx.payload.get("base_sha") or "")
+        ws_id_raw = inputs.get("workspace_id")
+        if not ws_id_raw:
+            raise RuntimeError("CodeReview.dispatch missing workspace_id input")
+        ws_id = _UUID(str(ws_id_raw))
+
+        owner = await get_workspace_owner(ws_id, session=session)
+        if owner is None:
+            raise RuntimeError(f"workspace {ws_id} not found for CodeReview.dispatch")
+        if owner.owning_agent_id is None:
+            raise RuntimeError(f"workspace {ws_id} has no owning_agent_id; cannot dispatch review")
+
+        provider = get_workflow_context_provider()
+        ticket_ctx = await provider.get_workspace_ticket_context(_UUID(ctx.ticket_id))
+        if ticket_ctx is None:
+            raise RuntimeError(f"ticket {ctx.ticket_id} not found for CodeReview.dispatch")
+
+        head_sha = str(ticket_ctx.payload.get("head_sha") or inputs.get("head_sha") or "")
+        base_sha = str(ticket_ctx.payload.get("base_sha") or inputs.get("base_sha") or "")
         pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
-        now = datetime.now(UTC)
-        author_type_raw = str(ticket_ctx.payload.get("author_type") or "user")
-        author_type: _Any = author_type_raw if author_type_raw in ("user", "bot") else "user"
-        state_raw = str(ticket_ctx.payload.get("state") or "open")
-        state: _Any = state_raw if state_raw in ("open", "closed", "merged") else "open"
-        try:
-            pr = VCSPullRequest(
-                plugin_id=ticket_ctx.plugin_id,
-                external_id=pr_external_id,
-                repo_external_id=ticket_ctx.repo_external_id,
-                number=int(ticket_ctx.payload.get("pr_number") or 0),
-                title=str(ticket_ctx.payload.get("title") or ""),
-                body=str(ticket_ctx.payload.get("body") or ""),
-                author_login=str(ticket_ctx.payload.get("author_login") or ""),
-                author_type=author_type,
-                base_branch=str(ticket_ctx.payload.get("base_branch") or "main"),
-                head_branch=str(ticket_ctx.payload.get("head_branch") or ""),
-                base_sha=base_sha,
-                head_sha=head_sha,
-                is_draft=bool(ticket_ctx.payload.get("is_draft", False)),
-                is_fork=bool(ticket_ctx.payload.get("is_fork", False)),
-                state=state,
-                html_url=str(ticket_ctx.payload.get("html_url") or ""),
-                created_at=now,
-                updated_at=now,
-            )
-        except Exception as exc:
-            return Outcome.failure(reason=f"could not build VCSPullRequest: {exc}")
-        diff = Diff(raw="", files=[])
 
-        review_ctx = ReviewContext(pr=pr, diff=diff, language_hint=None)
+        review_ctx = ReviewContext(
+            org_id=ticket_ctx.org_id,
+            repo_external_id=ticket_ctx.repo_external_id,
+            pr_external_id=pr_external_id,
+            head_sha=head_sha,
+            base_sha=base_sha,
+            output_schema=finding_output_schema(),
+        )
+
+        plugin = coding_agent.get_plugin("claude_code")
         try:
-            result = await coding_agent.review(
-                "claude_code", workspace, review_ctx, on_activity=_activity_publisher_for(ctx)
-            )
+            invocation = await plugin.build_review_invocation(review_ctx, session=session)
         except Exception as exc:
             log.exception(
-                "code_review.coding_agent_failed",
+                "code_review.build_invocation_failed",
                 workflow_execution_id=ctx.workflow_execution_id,
                 ticket_id=ctx.ticket_id,
             )
-            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+            raise RuntimeError(f"build_review_invocation failed: {exc}") from exc
 
-        return Outcome.success(
-            outputs={
-                "draft_findings": [f.model_dump(mode="json") for f in result.findings],
-                "summary_body": result.summary_body or "",
-                "state": result.state or "COMMENT",
-            }
+        # Enqueue the InvokeClaudeCode command pinned to the owning agent first,
+        # then atomically claim the workspace with the returned command_id.
+        # This ordering guarantees the AgentCommand row exists before claim.
+        command_id = await dispatch_invoke_claude_code(
+            ws_id,
+            org_id=owner.org_id,
+            agent_id=owner.owning_agent_id,
+            invocation=invocation.model_dump(mode="json"),
+            traceparent=ctx.traceparent or "",
+            session=session,
+            workflow_execution_id=_UUID(ctx.workflow_execution_id),
         )
+
+        claimed = await try_claim(
+            ws_id,
+            command_id=command_id,
+            workflow_execution_id=_UUID(ctx.workflow_execution_id),
+            session=session,
+        )
+        if not claimed:
+            raise RuntimeError(f"workspace {ws_id} is busy or inactive; cannot claim for CodeReview")
+
+        log.info(
+            "code_review.dispatched",
+            workspace_id=str(ws_id),
+            command_id=str(command_id),
+            workflow_execution_id=ctx.workflow_execution_id,
+        )
+        return command_id
 
 
 # ── Local command base ──────────────────────────────────────────────────────
@@ -352,35 +385,48 @@ class SecretsScan:
 
 
 class PostFindings(_LocalReviewCommand):
-    """Persist `ReportedFinding`s from the upstream `CodeReview` step.
+    """Parse the review step's stdout into `ReportedFinding`s and persist them.
 
     Inputs:
-    - `draft_findings`: list of `ReportedFinding`-shaped dicts.
-    - `workspace_id`: the workspace the drafts were produced against.
+    - `stdout`: raw stream-json stdout from the `InvokeClaudeCode` terminal event.
+    - `workspace_id`: the workspace the review ran against (unused here; kept for
+      step-graph symmetry).
 
-    Calls `publish.publish_findings` which validates severity/confidence,
-    assigns `finding_display_id`, persists, and posts via VCS.
-    Empty/missing `draft_findings` → success-no-op.
+    Calls `coding_agent.parse_review_output(stdout)` → `list[ReportedFinding]`,
+    then `publish_findings` which validates severity/confidence, assigns
+    `finding_display_id`, persists, and posts via VCS.
+
+    Non-conforming stdout (parse failure OR out-of-range enum values) →
+    `Outcome.failure(reason="schema_invalid")` → FAIL_WORKFLOW.
     """
 
     kind = "PostFindings"
 
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
-        drafts_raw = inputs.get("draft_findings") or []
-        if not drafts_raw:
-            return Outcome.success(outputs={"admitted_count": 0})
+        stdout_raw = inputs.get("stdout") or ""
 
-        from app.domain.coding_agent import ReportedFinding  # noqa: PLC0415
+        from app.domain import coding_agent  # noqa: PLC0415
         from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
         from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
 
-        # Validate inputs before touching any external state.
-        try:
-            findings = [ReportedFinding.model_validate(d) for d in drafts_raw]
-        except Exception as exc:
-            return Outcome.failure(reason=f"invalid ReportedFinding payload: {exc}")
+        # Parse and validate stdout before touching any external state.
+        if not stdout_raw:
+            # No output from the agent — zero findings, nothing to post.
+            return Outcome.success(outputs={"admitted_count": 0})
+        else:
+            plugin = coding_agent.get_plugin("claude_code")
+            try:
+                findings = plugin.parse_review_output(stdout_raw)
+            except ValueError as exc:
+                log.warning(
+                    "post_findings.parse_failed",
+                    workflow_execution_id=ctx.workflow_execution_id,
+                    ticket_id=ctx.ticket_id,
+                    error=str(exc),
+                )
+                return Outcome.failure(reason="schema_invalid")
 
         provider = get_workflow_context_provider()
         ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
@@ -441,7 +487,7 @@ class PostFindings(_LocalReviewCommand):
         return Outcome.success(outputs={"admitted_count": len(admitted)})
 
 
-ALL_WORKSPACE_COMMANDS: tuple[_WorkspaceReviewCommand, ...] = (CodeReview(),)
+ALL_WORKSPACE_COMMANDS: tuple[object, ...] = (CodeReview(),)
 
 ALL_LOCAL_COMMANDS: tuple[object, ...] = (
     CheckShouldReview(),

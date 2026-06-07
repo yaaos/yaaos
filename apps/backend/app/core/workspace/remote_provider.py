@@ -208,6 +208,51 @@ async def dispatch_provision_workspace(
     return ProvisionWorkspaceDispatch(command_id=command_id)
 
 
+async def dispatch_invoke_claude_code(
+    workspace_id: UUID,
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    invocation: dict,  # type: ignore[type-arg]
+    traceparent: str,
+    session: AsyncSession,
+    workflow_execution_id: UUID | None = None,
+) -> UUID:
+    """Enqueue an `InvokeClaudeCode` command pinned to the owning agent.
+
+    `agent_id` is the workspace's `owning_agent_id` — the pod that ran
+    `ProvisionWorkspace`. Post-provision commands MUST route to that same
+    agent because only that pod has the checkout. The command is pinned
+    via `pin_command_to_agent` so `claim_next`'s workspace_ids sweep finds it.
+    Returns the new `command_id`.
+
+    `invocation` is the serialised `Invocation` value object from
+    `domain/coding_agent.build_review_invocation`; it carries the skill
+    handle, argv/stdin/env exec spec, and per-run limits.
+    """
+    from app.core.agent_gateway import InvokeClaudeCodeCommand, InvokeClaudeCodeLimits  # noqa: PLC0415
+
+    command_id = uuid4()
+    limits_raw = invocation.get("limits") or {}
+    limits = InvokeClaudeCodeLimits(wallclock_seconds=limits_raw.get("wallclock_seconds", 1200))
+    cmd = InvokeClaudeCodeCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent=traceparent,
+        invocation=invocation,
+        limits=limits,
+        mcp_servers=(),
+    )
+    await enqueue_command(
+        org_id=org_id,
+        command=cmd,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
+    await pin_command_to_agent(command_id, agent_id, session=session)
+    return command_id
+
+
 async def dispatch_cleanup_workspace(
     workspace_id: UUID,
     *,

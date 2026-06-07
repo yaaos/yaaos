@@ -1,29 +1,38 @@
 """Types + Protocol for the coding-agent abstraction.
 
-The Protocol exposes five task modes — `review`, `incremental_review`,
-`verify_fix`, `stale_check`, `answer_question`. Plugins own prompt assembly
-+ parsing for each mode; consumers hand over domain context and receive
-domain results.
+The Protocol exposes five in-process task modes (retained, unused in the
+remote path) plus three remote-dispatch methods: `build_review_invocation`,
+`parse_review_output`, `review_preflight_steps`. Plugins own prompt assembly,
+exec spec construction, and parsing for each mode; consumers hand over domain
+context and receive domain results.
 
 `ReportedFinding` is the raw-string output twin for findings returned by
 the agent. It carries no enum constraints (those live in `domain/reviewer`)
 so `core/coding_agent` stays free of domain imports.
+
+`Invocation` + `ExecSpec` are the value objects `build_review_invocation`
+returns. `ExecSpec.env` carries the Anthropic API key in cleartext — the
+documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate).
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.agent_gateway import InvokeClaudeCodeLimits
 from app.core.plugin_kit import PluginMeta
 from app.core.workspace import HealthStatus, Workspace
 from app.domain.lessons import Lesson
 from app.domain.vcs import Diff, VCSPullRequest
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # Re-exported for the canonical schema so reviewers can compare field sets.
 # `Severity` stays here as the raw-string alias used by the Protocol.
@@ -79,19 +88,52 @@ class FindingAnchor(BaseModel):
     line_end: int
 
 
-class ReviewContext(BaseModel):
-    """Everything a plugin needs to produce a review of a PR.
+class ExecSpec(BaseModel):
+    """The concrete exec block the Go agent uses to spawn the Claude Code CLI.
 
-    There's no per-agent persona anymore — the plugin spawns a single parent
-    reviewer that dispatches subagents whose definitions ship with yaaos.
+    `env` carries the Anthropic API key in cleartext — the accepted carve-out
+    for wire-bound exec (the key must reach the agent to call `claude`), same
+    as the `otlp_token` on ConfigUpdate. The dict is persisted in
+    `agent_commands.payload` JSONB until the command row is retired.
     """
 
-    pr: VCSPullRequest
-    diff: Diff
-    lessons: list[Lesson] = []
-    language_hint: str | None = None
-    prior_yaaos_comment_bodies: list[str] = []
-    agent_config: dict[str, Any] = {}
+    argv: tuple[str, ...] = ()
+    stdin: str = ""
+    env: dict[str, str] = {}
+
+
+class Invocation(BaseModel):
+    """Output of `build_*_invocation`. Serialised into `InvokeClaudeCodeCommand.invocation`.
+
+    `kind` identifies the skill handle the agent should run.
+    `exec` carries the argv/stdin/env block.
+    `limits` are the per-run wallclock caps passed through to the agent.
+    """
+
+    kind: str
+    exec: ExecSpec
+    limits: InvokeClaudeCodeLimits
+
+
+class ReviewContext(BaseModel):
+    """Context for a remote PR review dispatch.
+
+    Carries the identifiers the skill needs to run `git diff base..head` in
+    the clone and emit structured findings. No diff blob crosses the wire —
+    the skill computes it from the clone.
+
+    `output_schema` is an immutable snapshot of `finding_output_schema()`
+    frozen at dispatch, so the skill validates against the exact shape the
+    run launched with (no mid-run drift). `PostFindings` re-validates the
+    returned stdout against the same contract.
+    """
+
+    org_id: UUID
+    repo_external_id: str
+    pr_external_id: str
+    head_sha: str
+    base_sha: str
+    output_schema: Mapping[str, Any] = {}
 
 
 class ReviewResult(BaseModel):
@@ -296,6 +338,48 @@ class CodingAgentPlugin(Protocol):
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult: ...
 
     async def health_check(self) -> HealthStatus: ...
+
+    # ── Remote-dispatch methods (Shape B) ────────────────────────────────
+    # These three replace the in-process run-methods for the remote model.
+    # The in-process run-methods above are retained for future re-introduction.
+
+    async def build_review_invocation(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: AsyncSession,
+    ) -> Invocation:
+        """Build the `Invocation` (argv/stdin/env + limits) for a PR review.
+
+        Resolves the skill handle, decrypts the Anthropic API key, assembles
+        the prompt and output-schema appendix, and returns the complete exec
+        spec the agent will run. Never dispatches — caller dispatches via
+        `dispatch_invoke_claude_code`.
+        """
+        ...
+
+    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+        """Parse the agent's stream-json stdout into `ReportedFinding` objects.
+
+        Finds the terminal `type=result` event, extracts the `result` field,
+        and lenient-parses the JSON. Raises `ValueError` on any parse failure
+        or structurally non-conforming output so `PostFindings` can gate on it.
+        """
+        ...
+
+    async def review_preflight_steps(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: AsyncSession,
+    ) -> tuple[str, ...]:
+        """Return WorkflowCommand kind strings to insert before the review step.
+
+        Returns `("SeedSkills",)` when the repo uses the yaaos skill bundle;
+        returns `()` otherwise. Hardcoded to `()` until skill-assignment
+        resolution is implemented.
+        """
+        ...
 
 
 class CodingAgentError(Exception):

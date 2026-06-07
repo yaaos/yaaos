@@ -4,8 +4,8 @@ Two pieces, shared by the workflow-engine path and tests:
 
 - `build_mcp_payload(review_id, org_id)` — collect connected MCP
   providers for the org, mint a per-review bearer, and return the
-  `agent_config["mcp"]` payload that `plugins/claude_code` materializes
-  into a workspace `.mcp.json`. Returns None when nothing's connected.
+  MCP config dict that `plugins/claude_code` uses when building the
+  review invocation. Returns None when nothing's connected.
 - `prefix_broken_creds_warning(body, providers)` — prepend a yellow
   GitHub callout to the PR-review summary listing any providers that
   returned `broken_creds` / `not_connected` during the review. No-op
@@ -36,8 +36,9 @@ async def build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any] 
 
     Returns None when no providers are connected (or all are broken/disabled) —
     the reviewer still runs, just without MCP context. The bearer + provider
-    catalogue are threaded into the agent via `ReviewContext.agent_config["mcp"]`;
-    `plugins/claude_code` materializes the workspace `.mcp.json` from it.
+    catalogue are returned as a dict; the caller passes it into
+    `build_review_invocation` so `plugins/claude_code` includes MCP server
+    config in the exec spec.
     """
     servers: list[dict[str, Any]] = []
     async with db_session() as s:

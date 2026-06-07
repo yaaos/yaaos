@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check`). Spawns one parent reviewer per run; the parent dispatches `yaaos-*` subagents via the Task tool and synthesizes findings. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — in-process methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) and remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`), plus `validate_config` and `health_check`. Spawns one parent reviewer per run (in-process path) or produces an exec spec for the remote agent (remote-dispatch path). Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 ## Module architecture
 
@@ -18,19 +18,23 @@ Singleton holds no decrypted credentials — settings loaded per-invocation so k
 
 Per-mode prompts live in `prompts/` (`full_review.md`, `incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`). Loaded once at import via `_load_prompt(name)`. The `.md` files are the versioned source of truth.
 
-### `review` — six-step pipeline
+### `build_review_invocation` — remote-dispatch exec spec
 
-1. **MCP context** (`_materialize_mcp_config`) — if `ReviewContext.agent_config["mcp"]` is set, writes `.mcp.json` into the workspace. Each provider becomes an HTTP MCP server pointing at `domain/mcp_proxy`. Returns per-server `--allowed-tools` additions.
+Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind="code-review", exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
 
-2. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles the `claude --print --output-format=stream-json --verbose --permission-mode=bypassPermissions` command with allowed tools: `Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task` + restricted Bash git commands. `Task` enables subagent dispatch. Bash is read-only git so the agent diffs itself rather than consuming inlined diffs. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`; overridable via `agent_config["timeout_seconds"]`.
+### `parse_review_output` — stream-json parse
 
-3. **Assemble prompt** (`_assemble_review_prompt`) — parent-dispatcher prompt instructs parallel Task dispatches, finding verification, and a single merged JSON output. Diff is **not** inlined — agent runs `git diff base_sha..HEAD` itself. `ctx.prior_yaaos_comment_bodies` is intentionally excluded; the aggregate handles dedup. `_schema_appendix` appends `_FindingDraftList.model_json_schema()` as a strict output constraint.
+Receives raw stdout from the agent's terminal event. Finds the terminal `type=result` event, extracts `result`, validates against `_FindingDraftList`. Raises `ValueError` on any failure — `PostFindings` gates on this and returns `schema_invalid` failure when it raises.
 
-4. **Run via workspace** — workspace owns subprocess lifecycle (SIGTERM → 2s → SIGKILL). `WorkspaceExecError` → `AGENT_ERROR`; `timed_out=True` → `TIMEOUT`.
+### `review` — in-process pipeline (retained)
 
-5. **Parse stream-json events** — `--output-format=stream-json --verbose` emits per-line JSON. Plugin dispatches each to `on_activity` (persisted + broadcast by `domain/reviewer`). Partial stream on timeout/error is the primary diagnostic. `_render_activity` maps known event shapes to `ActivityEvent`; unknown types are logged + skipped.
+Retained for future re-introduction. Builds the same argv/prompt as `build_review_invocation` but runs via the workspace `run_coding_agent_cli` call directly. Same `_prepare_invocation` → `_run_and_parse_envelope` structure as the other in-process modes.
 
-6. **Strict-parse response** — JSON → `_FindingDraftList`. No markdown-fence fallback. Failure → `PARSE_FAILURE`. `_compute_state_v2`: empty → `APPROVED`; any `blocker`/`major` → `CHANGES_REQUESTED`; else `COMMENT`.
+1. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles argv with `Task` in allowed tools, restricted Bash git commands. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`.
+2. **Assemble prompt** — review instructions + schema appendix. Diff is **not** inlined — agent runs `git diff base_sha..HEAD` itself.
+3. **Run via workspace** — `WorkspaceExecError` → `AGENT_ERROR`; `timed_out=True` → `TIMEOUT`.
+4. **Parse stream-json events** — `_render_activity` maps known event shapes to `ActivityEvent`; unknown types skipped.
+5. **Strict-parse response** — JSON → `_FindingDraftList`. `_compute_state_v2`: empty → `APPROVED`; any `blocker` → `CHANGES_REQUESTED`; else `COMMENT`.
 
 ### `answer_question`
 

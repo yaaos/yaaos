@@ -124,7 +124,6 @@ class StubCodingAgentPlugin:
             findings=[finding],
             state="COMMENT",
             summary_body="[stub] yaaos review",
-            lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=_STUB_TELEMETRY,
         )
 
@@ -197,6 +196,32 @@ class StubCodingAgentPlugin:
             answer=f"[stub] answering: {context.question[:120]}",
             telemetry=_STUB_TELEMETRY,
         )
+
+    async def build_review_invocation(self, ctx: ReviewContext, *, session: Any) -> Any:
+        """Returns a minimal stub `Invocation` so service tests that exercise
+        `CodeReview.dispatch` don't need a real API key or DB settings row.
+        """
+        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
+        from app.domain.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
+
+        del ctx, session
+        return Invocation(
+            kind="code-review",
+            exec=ExecSpec(argv=("claude", "--print"), stdin="stub prompt", env={}),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=60),
+        )
+
+    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+        """Parse the stream-json stdout — delegates to the real plugin if available,
+        otherwise returns an empty list so tests that don't care about findings pass.
+        """
+        if hasattr(self._wrapped, "parse_review_output"):
+            return self._wrapped.parse_review_output(stdout)
+        return []
+
+    async def review_preflight_steps(self, ctx: ReviewContext, *, session: Any) -> tuple[str, ...]:
+        del ctx, session
+        return ()
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         return await self._wrapped.validate_config(agent_config)
