@@ -23,16 +23,19 @@ from app.core.workspace.models import WorkspaceRow
 
 
 async def _seed_workspace(db_session, *, status: str = "active", **kwargs) -> WorkspaceRow:
+    from app.testing.seed import seed_agent  # noqa: PLC0415
+
+    agent = await seed_agent(org_id=uuid4(), session=db_session)
     row = WorkspaceRow(
         id=uuid4(),
         org_id=uuid4(),
         provider_id="remote_agent",
         spec={"sha": "abc123"},
-        plugin_state={},
         status=status,
         activated_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(seconds=600),
         max_idle_seconds=600,
+        owning_agent_id=agent["id"],
         **kwargs,
     )
     db_session.add(row)
@@ -51,16 +54,12 @@ async def test_get_workspace_claim_state_returns_none_when_no_match(db_session) 
 
 @pytest.mark.asyncio
 async def test_get_workspace_claim_state_returns_projection_for_claimed_workspace(db_session) -> None:
-    """Projection contains workspace_id, status, and owning_agent_id.
-    current_holder_workflow_id is no longer surfaced here — correlation lives
-    on agent_commands.workflow_execution_id."""
+    """Projection contains workspace_id, status, and owning_agent_id."""
     cmd_id = uuid4()
-    wfx_id = uuid4()
     ws = await _seed_workspace(
         db_session,
         status="active",
         current_command_id=cmd_id,
-        current_holder_workflow_id=wfx_id,
     )
 
     state = await get_workspace_claim_state(cmd_id, db_session)
@@ -68,7 +67,7 @@ async def test_get_workspace_claim_state_returns_projection_for_claimed_workspac
     assert state is not None
     assert state.workspace_id == ws.id
     assert state.status == "active"
-    # current_holder_workflow_id is shed from this projection.
+    # current_holder_workflow_id column is gone.
     assert not hasattr(state, "current_holder_workflow_id")
 
 
@@ -84,15 +83,14 @@ async def test_get_workspace_claim_state_returns_owning_agent_id(db_session) -> 
         db_session,
         status="active",
         current_command_id=cmd_id,
-        owning_agent_id=None,
     )
 
     state = await get_workspace_claim_state(cmd_id, db_session)
 
     assert state is not None
     assert state.workspace_id == ws.id
-    # owning_agent_id is in the projection (None here — no owning agent).
-    assert state.owning_agent_id is None
+    # owning_agent_id is in the projection.
+    assert state.owning_agent_id is not None
 
 
 # ── get_workspace_command_state ─────────────────────────────────────────────

@@ -48,20 +48,19 @@ class _StubWorkspaceProvider:
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {"working_dir": "/tmp/stub", "sha": spec.sha}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
+    async def health_check(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+    async def read_text(self, path):  # type: ignore[no-untyped-def]
         return None
 
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
         return None
 
 
@@ -177,20 +176,19 @@ async def test_pr_review_v1_with_findings_persists_to_db(
         async def provision(self, spec):  # type: ignore[no-untyped-def]
             return {}
 
-        async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+        async def destroy(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-            del plugin_state
+        async def health_check(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+        async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
             raise NotImplementedError
 
-        async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
-            return plugin_state.get("files", {}).get(path)
+        async def read_text(self, path):  # type: ignore[no-untyped-def]
+            return None
 
-        async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+        async def write_text(self, path, content):  # type: ignore[no-untyped-def]
             return None
 
     register_workspace_provider(_StubProviderWithFiles())
@@ -250,7 +248,6 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     seeded_ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="in_process",
-        plugin_state={"sha": "deadbeef", "files": {"src/foo.py": "def foo(x):\n    return x.value\n"}},
         sha="deadbeef",
         agent_id=agent_row["id"],
         caller_session=db_session,
@@ -413,7 +410,6 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         await _seed_workspace_for_tests(
             org_id=org_id,
             provider_id="in_process",
-            plugin_state={"sha": "deadbeefcafef00d"},
             sha="deadbeefcafef00d",
             agent_id=agent_row["id"],
             caller_session=db_session,

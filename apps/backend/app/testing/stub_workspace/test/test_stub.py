@@ -34,21 +34,18 @@ class _FakeProvider:
         working_dir = tempfile.mkdtemp(prefix="yaaos-fake-ws-")
         return {"working_dir": working_dir}
 
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
-        del plugin_state, argv, kwargs
+    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
+        del argv, kwargs
         return CodingAgentCliResult(exit_code=0, stdout="", stderr="", timed_out=False, duration_ms=0)
 
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+    async def read_text(self, path):  # type: ignore[no-untyped-def]
         return None
 
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
         return None
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
-        import shutil  # noqa: PLC0415
-
-        if working_dir := plugin_state.get("working_dir"):
-            shutil.rmtree(working_dir, ignore_errors=True)
+    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
+        pass
 
     async def health_check(self):  # type: ignore[no-untyped-def]
         return HealthStatus(healthy=True, message="ok")
@@ -99,14 +96,17 @@ async def test_stub_provision_creates_empty_tempdir() -> None:
         assert os.path.isfile(os.path.join(working_dir, ".yaaos-workspace"))
         assert not os.path.isdir(os.path.join(working_dir, ".git"))
     finally:
-        await stub.destroy(state)
+        import shutil  # noqa: PLC0415
+
+        if working_dir := state.get("working_dir"):
+            shutil.rmtree(working_dir, ignore_errors=True)
+        await stub.destroy()
 
 
 @pytest.mark.asyncio
 async def test_stub_run_coding_agent_cli_is_noop() -> None:
     stub = StubWorkspaceProvider(wrapped=_FakeProvider())
     result = await stub.run_coding_agent_cli(
-        {"working_dir": "/tmp/whatever"},
         argv=["does", "not", "matter"],
     )
     assert result.exit_code == 0

@@ -191,7 +191,6 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
     ws_id_str = await seed_workspace(
         org_id=org.org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="abc",
         current_command_id=command_id,
         agent_id=agent["id"],

@@ -224,14 +224,13 @@ async def _seed_workspace_for_tests(
     *,
     org_id: UUID,
     provider_id: str,
-    plugin_state: dict,
     sha: str,
     current_command_id: UUID | None = None,
-    current_holder_workflow_id: UUID | None = None,
+    owning_agent_id: UUID | None = None,
     status: str | None = None,
     caller_session: AsyncSession | None = None,
 ) -> str:
-    """Insert a workspace row in `active` state with caller-supplied plugin_state.
+    """Insert a workspace row in `active` state for test purposes.
 
     For cross-module tests that need a workspace in the DB without going through
     the full provision flow. Returns the workspace id string.
@@ -240,8 +239,8 @@ async def _seed_workspace_for_tests(
     (no commit — the caller commits). When omitted a new session is opened and
     committed immediately.
 
-    `current_command_id` and `current_holder_workflow_id` are optional — set
-    them when the test needs to simulate a claimed workspace (agent_gateway tests).
+    `current_command_id` is optional — set it when the test needs to simulate
+    a claimed workspace (agent_gateway tests).
     """
     from datetime import timedelta  # noqa: PLC0415
 
@@ -252,9 +251,8 @@ async def _seed_workspace_for_tests(
             spec={"sha": sha},
             status=status or WorkspaceStatus.ACTIVE.value,
             expires_at=_utcnow() + timedelta(hours=1),
-            plugin_state=plugin_state,
             current_command_id=current_command_id,
-            current_holder_workflow_id=current_holder_workflow_id,
+            owning_agent_id=owning_agent_id,
         )
 
     if caller_session is not None:
@@ -435,10 +433,9 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
 
     For each expired workspace that holds an in-flight `current_command_id`,
     the owning workflow execution is resolved from `agent_commands.workflow_execution_id`
-    (the durable correlation column — no dependency on the shed
-    `workspaces.current_holder_workflow_id`). A synthetic terminal-failure event
-    is enqueued via `HANDLE_AGENT_EVENT` so the WorkflowExecution resumes (fails
-    the step) rather than hanging in AWAITING_AGENT indefinitely.
+    (the durable correlation column). A synthetic terminal-failure event is enqueued
+    via `HANDLE_AGENT_EVENT` so the WorkflowExecution resumes (fails the step)
+    rather than hanging in AWAITING_AGENT indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
@@ -569,7 +566,7 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
         await s.commit()
 
     try:
-        await provider.destroy(row.plugin_state or {})
+        await provider.destroy()
     except Exception as e:
         log.warning("workspace.destroy_failed", workspace_id=str(row.id), error=str(e))
         async with get_session() as s:
@@ -697,8 +694,7 @@ async def get_workspace_claim_state(
 
     Used by `core/agent_gateway` to apply the stale-claim guard and locate the
     workspace owner without crossing the module boundary via a raw Row.
-    Workflow-execution correlation now lives on `agent_commands.workflow_execution_id`;
-    `current_holder_workflow_id` is no longer surfaced here.
+    Workflow-execution correlation lives on `agent_commands.workflow_execution_id`.
     """
     row = (
         await session.execute(

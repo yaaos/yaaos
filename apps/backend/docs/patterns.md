@@ -256,7 +256,7 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Failure-report-precedes-disposal invariant
 
-`release_claim` clears `current_command_id`; `current_holder_workflow_id` stays written (by `try_claim`) but is no longer read by any code path — it is shed in the next migration slice. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow regardless of workspace row state.
+`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow after the workspace has been torn down.
 
 ### Recovery policy registry
 

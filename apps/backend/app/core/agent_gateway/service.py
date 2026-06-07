@@ -182,8 +182,7 @@ async def get_command_workflow_execution_id(
     commands like ConfigUpdate have NULL there).
 
     Pure read — no writes. Used by `core/workspace` failsafe-6 to synthesize
-    a terminal failure event for in-flight commands without reading the now-shed
-    `workspaces.current_holder_workflow_id` column.
+    a terminal failure event for in-flight commands.
 
     Caller owns session lifecycle.
     """

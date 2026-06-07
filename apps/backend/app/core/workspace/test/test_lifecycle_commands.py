@@ -47,12 +47,16 @@ async def test_cleanup_with_invalid_workspace_id_fails() -> None:
 
 
 async def test_cleanup_flips_row_to_expired(db_session) -> None:  # type: ignore[no-untyped-def]
+    from app.testing.seed import seed_agent  # noqa: PLC0415
+
     org_id = uuid4()
     ws_id = uuid4()
+    agent = await seed_agent(org_id=org_id, session=db_session)
     db_session.add(
         WorkspaceRow(
             id=ws_id,
             org_id=org_id,
+            owning_agent_id=agent["id"],
             provider_id="remote_agent",
             spec={"sha": "deadbeef"},
             status=WorkspaceStatus.ACTIVE.value,

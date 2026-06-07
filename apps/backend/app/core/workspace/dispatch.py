@@ -1,10 +1,10 @@
 """Single-flight claim for workspace AgentCommands.
 
 The workspace state machine has one in-flight AgentCommand at a time.
-`try_claim()` atomically assigns `current_command_id` + `current_holder_workflow_id`
-to a workspace ONLY if no other command holds it; it's the engine's gate
-into the wire protocol. `release_claim()` clears the claim after the
-terminal event has been observed (failure-report-precedes-disposal).
+`try_claim()` atomically assigns `current_command_id` to a workspace ONLY if no
+other command holds it; it's the engine's gate into the wire protocol.
+`release_claim()` clears the claim after the terminal event has been observed
+(failure-report-precedes-disposal).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ async def try_claim(
     agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> bool:
-    """Atomically claim `workspace_id` for `command_id` + `workflow_execution_id`.
+    """Atomically claim `workspace_id` for `command_id`.
 
     Returns True iff the row had `current_command_id IS NULL` AND was
     `status='active'`. False otherwise — caller MUST treat as "busy" and
@@ -42,12 +42,15 @@ async def try_claim(
     Lean-created rows already carry `owning_agent_id` from the first workspace
     event; legacy in-process rows omit it, leaving `WorkspaceRow.owning_agent_id` NULL.
 
+    `workflow_execution_id` is accepted for API compatibility but no longer written
+    to the workspace row — correlation lives exclusively on
+    `agent_commands.workflow_execution_id`.
+
     Caller commits; the outbox row enqueueing the AgentCommand should go
     in the same transaction so claim + dispatch land atomically.
     """
     values: dict[str, UUID] = {
         "current_command_id": command_id,
-        "current_holder_workflow_id": workflow_execution_id,
     }
     if agent_id is not None:
         values["owning_agent_id"] = agent_id
@@ -78,10 +81,7 @@ async def release_claim(
 ) -> bool:
     """Release the claim if-and-only-if `command_id` still owns it. Returns
     True if the claim was released. Idempotent — second release for the
-    same command_id is a no-op.
-
-    `current_holder_workflow_id` is preserved so the workspace remembers
-    which workflow last touched it; reaper / reconciliation reads it."""
+    same command_id is a no-op."""
     result = await session.execute(
         update(WorkspaceRow)
         .where(

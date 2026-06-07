@@ -164,19 +164,19 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
         async def provision(self, spec):  # type: ignore[no-untyped-def]
             return {}
 
-        async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+        async def destroy(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+        async def health_check(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+        async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
             raise NotImplementedError
 
-        async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+        async def read_text(self, path):  # type: ignore[no-untyped-def]
             return None
 
-        async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+        async def write_text(self, path, content):  # type: ignore[no-untyped-def]
             return None
 
     bind_workspace_registry(WorkspaceRegistry())

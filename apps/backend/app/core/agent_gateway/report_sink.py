@@ -85,8 +85,7 @@ class WorkspaceAgentReportSink(Protocol):
         """Return the `workflow_execution_id` for `command_id`, or None if the
         command row is not found or has no workflow correlation.
 
-        Correlation comes from `agent_commands.workflow_execution_id`; the shed
-        `workspaces.current_holder_workflow_id` column is no longer consulted.
+        Correlation comes from `agent_commands.workflow_execution_id`.
         """
         ...
 

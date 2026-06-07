@@ -293,18 +293,18 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     # Seed a workspace row that holds the current command claim.
     from datetime import timedelta  # noqa: PLC0415
 
+    agent_result = await seed_agent(org_id=org_id, session=db_session)
     ws = WorkspaceRow(
         id=workspace_id,
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "abc"},
-        plugin_state=None,
         status=WorkspaceStatus.ACTIVE.value,
         current_command_id=command_id,
-        current_holder_workflow_id=uuid4(),
         activated_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(seconds=600),
         max_idle_seconds=600,
+        owning_agent_id=agent_result["id"],
     )
     db_session.add(ws)
     await db_session.flush()

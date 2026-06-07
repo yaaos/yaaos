@@ -88,7 +88,6 @@ class RemoteAgentWorkspaceProvider:
 
     async def run_coding_agent_cli(
         self,
-        plugin_state: dict[str, Any],
         argv: list[str],
         *,
         env: dict[str, str] | None = None,
@@ -96,7 +95,7 @@ class RemoteAgentWorkspaceProvider:
         timeout_seconds: int | None = None,
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult:
-        del plugin_state, argv, env, stdin, timeout_seconds, on_stream_line
+        del argv, env, stdin, timeout_seconds, on_stream_line
         # The reviewer commands enqueue `InvokeClaudeCode` AgentCommands
         # and the workflow engine awaits the terminal event. Calling this
         # method directly is a programming error against the remote provider.
@@ -105,8 +104,8 @@ class RemoteAgentWorkspaceProvider:
             "Workspace WorkflowCommands enqueue AgentCommands and await events."
         )
 
-    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
-        del plugin_state, path
+    async def read_text(self, path: str) -> str | None:
+        del path
         # Same shape issue as run_coding_agent_cli — reads come back as
         # outputs on terminal events in the remote model.
         raise WorkspaceProvisionError(
@@ -114,15 +113,14 @@ class RemoteAgentWorkspaceProvider:
             "reads arrive as outputs on terminal AgentEvents."
         )
 
-    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
-        del plugin_state, path, content
+    async def write_text(self, path: str, content: str) -> None:
+        del path, content
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider.write_text is not a synchronous call; "
             "use a `WriteFiles` AgentCommand."
         )
 
-    async def destroy(self, plugin_state: dict[str, Any]) -> None:
-        del plugin_state
+    async def destroy(self) -> None:
         # Destruction runs through the engine's CleanupWorkspace
         # WorkflowCommand, which enqueues a CleanupWorkspace AgentCommand;
         # that is the proper invocation path, not this method.

@@ -178,6 +178,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("042_outbox_entries_pk_created_at", "outbox_entries_pk_created_at"),
     ("043_create_claude_code_repos", "create_claude_code_repos"),
     ("044_canonical_findings_schema", "canonical_findings_schema"),
+    ("045_shed_workspace_columns", "shed_workspace_columns"),
 )
 
 
@@ -1334,6 +1335,24 @@ async def _apply_canonical_findings_schema(conn) -> None:  # type: ignore[no-unt
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_shed_workspace_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Remove vestigial columns from `workspaces` and tighten `owning_agent_id`.
+
+    - Drop `plugin_state` (JSONB) — no longer needed; workspace state lives in
+      the WorkspaceRow status + agent_commands workflow correlation.
+    - Drop `current_holder_workflow_id` (UUID) — workflow correlation is via
+      `agent_commands.workflow_execution_id`; the workspace row never needs it.
+    - Drop the index on `current_holder_workflow_id`.
+    - Set `owning_agent_id NOT NULL` — every workspace row is created by an agent.
+
+    Idempotent: each step uses IF EXISTS / IF NOT EXISTS guards.
+    """
+    await conn.execute(text("DROP INDEX IF EXISTS ix_workspaces_current_holder_workflow_id"))
+    await conn.execute(text("ALTER TABLE workspaces DROP COLUMN IF EXISTS plugin_state"))
+    await conn.execute(text("ALTER TABLE workspaces DROP COLUMN IF EXISTS current_holder_workflow_id"))
+    await conn.execute(text("ALTER TABLE workspaces ALTER COLUMN owning_agent_id SET NOT NULL"))
+
+
 async def _apply_outbox_entries_pk_created_at(conn) -> None:  # type: ignore[no-untyped-def]
     """Widen the `outbox_entries` primary key to `(id, created_at)`.
 
@@ -1465,6 +1484,8 @@ async def _apply_pending() -> None:
                 await _apply_create_claude_code_repos(conn)
             elif kind == "canonical_findings_schema":
                 await _apply_canonical_findings_schema(conn)
+            elif kind == "shed_workspace_columns":
+                await _apply_shed_workspace_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

@@ -26,7 +26,6 @@ OnStreamLine = Callable[[bytes], Awaitable[None]]
 
 
 class WorkspaceStatus(StrEnum):
-    CREATING = "creating"
     ACTIVE = "active"
     EXPIRED = "expired"
     DESTROYING = "destroying"
@@ -145,9 +144,12 @@ class Workspace(Protocol):
 
 
 class WorkspaceProvider(Protocol):
-    """Plugin contract. Provision returns opaque plugin_state; `run_coding_agent_cli`
-    operates against that state. The state shape is private to each plugin (e.g.,
-    `{"working_dir": str}` for in-process; `{"container_id": str}` for Docker).
+    """Plugin contract for workspace providers.
+
+    The remote provider dispatches every operation as an AgentCommand and awaits
+    terminal events from the workflow engine — none of these methods are called
+    synchronously in production. The Protocol shape exists so the stub can wrap
+    the registered implementation without importing provider internals.
     """
 
     meta: PluginMeta
@@ -155,7 +157,6 @@ class WorkspaceProvider(Protocol):
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]: ...
     async def run_coding_agent_cli(
         self,
-        plugin_state: dict[str, Any],
         argv: list[str],
         *,
         env: dict[str, str] | None = None,
@@ -163,9 +164,9 @@ class WorkspaceProvider(Protocol):
         timeout_seconds: int | None = None,
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
-    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None: ...
-    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None: ...
-    async def destroy(self, plugin_state: dict[str, Any]) -> None: ...
+    async def read_text(self, path: str) -> str | None: ...
+    async def write_text(self, path: str, content: str) -> None: ...
+    async def destroy(self) -> None: ...
     async def health_check(self) -> HealthStatus: ...
 
 
@@ -174,15 +175,14 @@ class WorkspaceClaimState(BaseModel):
 
     Contains only what `core/agent_gateway` needs to apply the stale-claim guard
     and identify the workspace owner — no ORM Row crosses the module boundary.
-    Workflow-execution correlation is now on `agent_commands.workflow_execution_id`;
-    `current_holder_workflow_id` is no longer part of this projection.
+    Workflow-execution correlation is on `agent_commands.workflow_execution_id`.
     """
 
     workspace_id: UUID
     status: str
-    # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
-    # agent_gateway compares this against the bearer's agent_id to authorize
-    # command-event posts.
+    # owning agent (`workspace_agents.id`). agent_gateway compares this against
+    # the bearer's agent_id to authorize command-event posts. NOT NULL on all
+    # rows after migration 045.
     owning_agent_id: UUID | None
 
 

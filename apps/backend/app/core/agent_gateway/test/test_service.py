@@ -50,19 +50,19 @@ class _MinimalWorkspaceProvider:
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def health_check(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+    async def read_text(self, path):  # type: ignore[no-untyped-def]
         return None
 
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
         return None
 
 
@@ -86,17 +86,18 @@ def _make_provision_command() -> ProvisionWorkspaceCommand:
 
 async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dict:
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
+    from app.testing.seed import seed_agent  # noqa: PLC0415
 
     cmd_id = uuid4()
     wfx_id = uuid4()
     org_id = uuid4()
+    agent = await seed_agent(org_id=org_id, session=db_session)
     ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
-        current_holder_workflow_id=wfx_id if claimed_by_command else None,
+        agent_id=agent["id"],
         caller_session=db_session,
     )
     if claimed_by_command:
@@ -238,13 +239,16 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         # engine stamps `workflow_execution_id` on the agent_commands row at
         # dispatch time, and `record_agent_event` resolves the workflow via
         # that column rather than via the workspace.
+        from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
+
+        _ws_org_id = uuid4()
+        _ws_agent = await _seed_agent(org_id=_ws_org_id, session=db_session)
         seeded_ws_id = await _seed_workspace_for_tests(
-            org_id=uuid4(),
+            org_id=_ws_org_id,
             provider_id="remote_agent",
-            plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=UUID(exec_id),
+            agent_id=_ws_agent["id"],
             caller_session=db_session,
         )
 
@@ -346,13 +350,15 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
+        from app.testing.seed import seed_agent as _seed_agent2  # noqa: PLC0415
+
+        _ws_agent2 = await _seed_agent2(org_id=ws_org_id, session=db_session)
         await _seed_workspace_for_tests(
             org_id=ws_org_id,
             provider_id="remote_agent",
-            plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=UUID(exec_id),
+            agent_id=_ws_agent2["id"],
             caller_session=db_session,
         )
 
@@ -462,8 +468,8 @@ async def test_workspace_event_ready_transitions_to_active(db_session) -> None:
     cmd_id = ws["command_id"]
     ws_id = UUID(ws["id"])
 
-    # Demote status to creating so we can observe the transition.
-    await update_workspace_status(ws_id, "creating", db_session)
+    # Demote status so we can observe the ready→active transition.
+    await update_workspace_status(ws_id, "expired", db_session)
     await db_session.flush()
 
     event = WorkspaceEvent(
