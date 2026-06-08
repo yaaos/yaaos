@@ -355,7 +355,7 @@ func (p *Pool) ActiveIDs() []string {
 func (p *Pool) IdleIDs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var out []string
+	out := make([]string, 0)
 	for id, rec := range p.registry {
 		if rec.state == StateActive && rec.currentCommandID == "" {
 			out = append(out, id)

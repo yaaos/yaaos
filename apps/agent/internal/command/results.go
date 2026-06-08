@@ -22,22 +22,25 @@ type ExecResult struct {
 // ProvisionResult is the typed output of ProvisionWorkspace. Path carries the
 // workspace path the supervisor registry keys on; Reused signals an idempotent repeat.
 type ProvisionResult struct {
-	Path    string
-	Repo    string
-	HeadSHA string
-	Branch  string
-	Reused  bool
+	WorkspaceID string
+	Path        string
+	Repo        string
+	HeadSHA     string
+	Branch      string
+	Reused      bool
 }
 
 // ToWire returns the map[string]any the backend expects from ProvisionWorkspace.
-// Keys match the legacy realhandler.go output so the backend contract is unchanged.
+// workspace_id is required so the router can resolve "$provision.workspace_id"
+// when dispatching CodeReview and CleanupWorkspace.
 func (r ProvisionResult) ToWire() map[string]any {
 	return map[string]any{
-		"path":     r.Path,
-		"repo":     r.Repo,
-		"head_sha": r.HeadSHA,
-		"branch":   r.Branch,
-		"reused":   r.Reused,
+		"workspace_id": r.WorkspaceID,
+		"path":         r.Path,
+		"repo":         r.Repo,
+		"head_sha":     r.HeadSHA,
+		"branch":       r.Branch,
+		"reused":       r.Reused,
 	}
 }
 

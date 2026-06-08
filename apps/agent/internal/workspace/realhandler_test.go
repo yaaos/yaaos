@@ -61,6 +61,9 @@ func TestRealHandler_ProvisionWorkspace_AllocatesTempDir(t *testing.T) {
 	if _, err := os.Stat(res.Path); err != nil {
 		t.Errorf("tempdir not created: %v", err)
 	}
+	if res.WorkspaceID != "ws-1" {
+		t.Errorf("workspace_id: want ws-1 got %q", res.WorkspaceID)
+	}
 	if res.Repo != "acme/web" {
 		t.Errorf("repo: want acme/web got %q", res.Repo)
 	}

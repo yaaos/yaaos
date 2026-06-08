@@ -497,9 +497,18 @@ async def _route_workflow_impl(
             target = _resolve_transition(wf, step, outcome_label or "success")
 
         if target is TerminalAction.COMPLETE_WORKFLOW:
-            wfx.state = WorkflowState.DONE.value
-            await s.commit()
-            return
+            # If the finalizer step already ran (i.e. we're completing the
+            # cleanup step that ran after a prior failure), the workflow must
+            # end as FAILED, not DONE.  The cleanup step's own transition
+            # "success → COMPLETE_WORKFLOW" is the *normal-path* contract;
+            # during the failure path the finalizer's completion is just the
+            # resource-release gate before recording failure.
+            if _has_finalizer_fired(wfx) and completed_step_id == wf.finalizer_step_id:
+                target = TerminalAction.FAIL_WORKFLOW
+            else:
+                wfx.state = WorkflowState.DONE.value
+                await s.commit()
+                return
         if target is TerminalAction.FAIL_WORKFLOW:
             # Run the declared finalizer (one-shot) before recording failure.
             # The finalizer step runs cleanup (e.g. CleanupWorkspace) so it

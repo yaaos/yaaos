@@ -29,6 +29,7 @@
 import { expect, test, type Page, type APIRequestContext } from "@playwright/test";
 import {
   dispatchWebhook,
+  gitHeadSha,
   postedComments,
   prPayload,
   resetStack,
@@ -80,6 +81,9 @@ test("PR open → real agent claims InvokeClaudeCode → findings post to fake-g
 }) => {
   await setupAuthedAcmeOwner(page, request);
 
+  // Use the real HEAD SHA from the fake-github bare repo so the agent's
+  // `git checkout --detach <sha>` resolves against a real commit.
+  const headSha = await gitHeadSha("acme", "review-happy");
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({
@@ -87,6 +91,7 @@ test("PR open → real agent claims InvokeClaudeCode → findings post to fake-g
       number: 101,
       title: "Real-agent review: happy path",
       body: "Cross-plane e2e: real Go agent + fake-claude happy scenario.",
+      headSha,
     }),
   });
 
@@ -138,12 +143,14 @@ test("SSE-driven ticket list shows new ticket without page reload", async ({
   // Land on the tickets list FIRST so the SSE subscriber is mounted before
   // any events fly.
   await page.goto(`${YAAOS_URL}/orgs/acme/tickets`);
+  const headSha = await gitHeadSha("acme", "review-happy");
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({
       repo: "acme/review-happy",
       number: 102,
       title: "SSE live update: real-agent path",
+      headSha,
     }),
   });
   // The ticket must appear without a manual reload — the SSE event

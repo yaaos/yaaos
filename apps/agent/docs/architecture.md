@@ -133,6 +133,10 @@ No goroutine shares mutable state without a lock or atomic. The `Pool` guards al
 
 **STS backoff is env-tunable.** `YAAOS_AGENT_STS_BACKOFF_SECONDS` (comma-separated positive integers, e.g. `2,2,2,2,2`) overrides the STS identity-exchange step list. Unset → the prod ramp (`1m/3m/5m/15m/60m`). A malformed value logs a WARN and falls back to the prod ramp. The 1 h deadline cap applies regardless of the step list. Only the `stsBackoff` surface is tunable; `claimBackoff`, `heartbeatBackoff`, and `wsBackoff` are always the prod ramp.
 
+**Mid-command re-auth.** A 401/403 response on a terminal-event post (in `postTerminalEvent`) triggers `reauthIfUnauthorized` before retrying — identical to the claim-loop and heartbeat paths. The `reauthMu` serializes concurrent re-auth attempts across all goroutines; a goroutine that loses the TryLock falls back to the normal backoff sleep and retries after the winner has updated the shared bearer. Error classification (`classifyConnErr`) matches both the numeric HTTP codes (`: 401 `, `: 403 `) and the text form returned by `ClaimCommand` and `doJSON` (`: unauthorized`).
+
+**`YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE=1`.** Test-only env var: allows `reauthIfUnauthorized` to accept a different `agent_id`/`org_id` after a DB wipe (e.g. `resetStack()` in the e2e suite). Production agents exit on any identity mismatch to prevent operating under a stale identity. Never set in production.
+
 ## Testing model
 
 Tests are pure-stdlib and fake-driven at the capability seams (`WorkspaceOps`, `AgentOps`, `identity.Provider`, `CloneFunc`, `RunFunc`); timing tests run in a `testing/synctest` bubble; every concurrency invariant ships a `-race` test (reviewer-gated convention); `protocol/openapi_drift_test.go` is the cross-plane Go↔Python schema-parity guard. Full per-layer map → [patterns.md § Testing](patterns.md#testing).

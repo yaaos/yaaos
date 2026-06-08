@@ -831,6 +831,45 @@ async def test_ticket_payload_resolved_in_step_inputs(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalizer_runs_then_workflow_records_failed(db_session) -> None:
+    """A workflow with a declared finalizer step must end in FAILED (not DONE)
+    when an earlier step fails.
+
+    The finalizer step (cleanup) has ``transitions={"success": COMPLETE_WORKFLOW}``
+    on the normal happy path.  When it runs as the failure-path finalizer it
+    must NOT flip the execution to DONE — the pending failure context from the
+    failing step must win instead.
+    """
+    failing = _FailingLocal("Work")
+    cleanup = _RecordingLocal("Cleanup")
+    wf = Workflow(
+        name="finalizer-1",
+        version=1,
+        steps=(
+            Step(id="work", command_kind="Work"),
+            Step(
+                id="cleanup",
+                command_kind="Cleanup",
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+        ),
+        entry_step_id="work",
+        finalizer_step_id="cleanup",
+    )
+    eng = _engine_with(failing, cleanup, workflow=wf)
+    exec_id = await eng.start(workflow_name="finalizer-1", ticket_id=_ticket_id(), session=db_session)
+    await db_session.commit()
+    await _drain_workflow_outbox(db_session)
+
+    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+    # The finalizer must have run exactly once.
+    assert len(cleanup.calls) == 1
+    # The workflow must end in FAILED, not DONE.
+    assert wfx.state == WorkflowState.FAILED.value
+    assert wfx.failure_reason == "planned-failure"
+
+
+@pytest.mark.asyncio
 async def test_ticket_payload_missing_when_not_supplied(db_session) -> None:
     """Engine.start without ticket_payload → $ticket.<field> resolves to None."""
     captured: list[Any] = []

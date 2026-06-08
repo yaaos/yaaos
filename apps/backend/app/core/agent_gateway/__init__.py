@@ -25,6 +25,7 @@ from app.core.agent_gateway.org_arn_lookup import (
     lookup_org_by_arn,
     register_org_arn_lookup,
 )
+from app.core.agent_gateway.rate_limit import delete_rate_limits as delete_identity_exchange_rate_limits
 from app.core.agent_gateway.report_sink import (
     WorkspaceAgentReportSink,
     WorkspaceEventOutcome,
@@ -133,6 +134,7 @@ __all__ = [
     "claim_next",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
+    "delete_identity_exchange_rate_limits",
     "enqueue_command",
     "ensure_agent_row",
     "get_agent_info",

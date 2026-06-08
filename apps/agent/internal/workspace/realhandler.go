@@ -155,8 +155,9 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 		path := existing.path
 		h.mu.Unlock()
 		return command.ProvisionResult{
-			Path:   path,
-			Reused: true,
+			WorkspaceID: cmd.WorkspaceID,
+			Path:        path,
+			Reused:      true,
 		}, nil
 	}
 	h.mu.Unlock()
@@ -206,8 +207,9 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 	if existing, raced := h.slots[cmd.WorkspaceID]; raced {
 		_ = os.RemoveAll(path)
 		return command.ProvisionResult{
-			Path:   existing.path,
-			Reused: true,
+			WorkspaceID: cmd.WorkspaceID,
+			Path:        existing.path,
+			Reused:      true,
 		}, nil
 	}
 	h.slots[cmd.WorkspaceID] = &realSlot{
@@ -217,11 +219,12 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 		authTok:  secret.New(cmd.Auth.Token),
 	}
 	return command.ProvisionResult{
-		Path:    path,
-		Repo:    cmd.Repo.ExternalID,
-		HeadSHA: cmd.Repo.HeadSHA,
-		Branch:  cmd.Repo.BranchName,
-		Reused:  false,
+		WorkspaceID: cmd.WorkspaceID,
+		Path:        path,
+		Repo:        cmd.Repo.ExternalID,
+		HeadSHA:     cmd.Repo.HeadSHA,
+		Branch:      cmd.Repo.BranchName,
+		Reused:      false,
 	}, nil
 }
 

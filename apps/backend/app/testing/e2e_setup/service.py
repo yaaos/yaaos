@@ -31,13 +31,19 @@ DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def reset() -> None:
-    """Truncate all tables. Reviewer specialists are defined as shipped
-    markdown files in `domain/coding_agent/reviewers/`, not DB rows — no
-    structural seeding needed.
+    """Truncate all tables and flush Redis rate-limit state.
+
+    DB truncation covers all domain state. Redis rate-limit keys for the
+    agent identity-exchange endpoint are also deleted so a subsequent seed
+    (bootstrap_owner) isn't blocked by a prior run's burst from the agent
+    container's IP.
     """
+    from app.core.agent_gateway import delete_identity_exchange_rate_limits  # noqa: PLC0415
+
     async with db_session() as s:
         await truncate_all_tables(s)
         await s.commit()
+    await delete_identity_exchange_rate_limits()
 
 
 async def seed_github_install(

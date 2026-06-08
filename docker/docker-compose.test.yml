@@ -127,6 +127,11 @@ services:
       NOTION_API_BASE_URL: http://fake-notion:8080
       YAAOS_OAUTH_NOTION_CLIENT_ID: fake-notion-client-id
       YAAOS_OAUTH_NOTION_CLIENT_SECRET: fake-notion-client-secret
+      # STS host override: the agent signs GetCallerIdentity requests targeting
+      # mock-aws (http://mock-aws:4566/). The backend's STS verifier must
+      # allowlist this host so it replays the signed request there instead of
+      # rejecting it as endpoint_disallowed. The dev compose does the same.
+      YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
       # No YAAOS_CODING_AGENT_STUB: the cross-plane review e2e runs the REAL
       # claude_code plugin (build_review_invocation + parse_review_output) end
       # to end against the real Go agent + fake-claude. The Anthropic key is
@@ -234,6 +239,14 @@ services:
       # Fast STS backoff so the test agent re-authenticates within seconds
       # after the org-ARN seed completes. Prod leaves this unset → 1m/3m/… ramp.
       YAAOS_AGENT_STS_BACKOFF_SECONDS: "2,2,2,2,2"
+      # Fast ops backoff (claim, heartbeat, WS) so the agent recovers quickly
+      # after a resetStack() DB wipe. Prod leaves this unset → 1m/3m/… ramp.
+      YAAOS_AGENT_OPS_BACKOFF_SECONDS: "2,2,2,2,2"
+      # Allow the agent to accept a new identity after a DB wipe (test only).
+      # After resetStack() truncates workspace_agents the agent re-authenticates
+      # with a fresh agent_id; without this flag it would detect the mismatch
+      # and exit. Never set in production.
+      YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE: "1"
     volumes:
       - ../apps/fake-claude/claude:/usr/local/bin/claude:ro
       - ../apps/fake-claude/scenarios:/opt/fake-claude/scenarios:ro

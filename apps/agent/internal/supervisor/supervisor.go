@@ -54,30 +54,51 @@ var defaultEventPostSteps = []time.Duration{
 	30 * time.Second,
 }
 
-// classifyConnErr returns "auth" if the error carries a 401 or 403
-// status indication, "network" otherwise. The protocol client wraps
-// HTTP failures as `fmt.Errorf("%s %s: %d %s", method, path, status, body)`
-// so a substring check on the status segment is sufficient for the
-// metric attribute. Same ramp applies either way — the label is for
-// dashboarding, not for cadence selection.
+// classifyConnErr returns "auth" if the error carries a 401/403 status
+// indication or the literal word "unauthorized", "network" otherwise.
+//
+// Two error formats come from the protocol client:
+//   - doJSON generic path: `"METHOD /path: unauthorized"` (no numeric code)
+//   - ClaimCommand: `"claim: unauthorized"` (no numeric code)
+//
+// Both contain `": unauthorized"` so a suffix check covers them without
+// matching unrelated numbers (e.g. port numbers, latency values).
+// containsStatus handles the `": <code> "` numeric form; the extra check
+// covers the text form.
 func classifyConnErr(err error) string {
 	if err == nil {
 		return ""
 	}
 	s := err.Error()
-	if containsStatus(s, "401") || containsStatus(s, "403") {
+	if containsStatus(s, "401") || containsStatus(s, "403") ||
+		containsWord(s, "unauthorized") {
 		return "auth"
 	}
 	return "network"
 }
 
 func containsStatus(s, code string) bool {
-	// Look for `: <code> ` to match the doJSON formatting and avoid
-	// matching a substring of a port / latency / unrelated number.
+	// Look for `: <code> ` to match the doJSON numeric-status formatting and
+	// avoid matching a substring of a port / latency / unrelated number.
 	needle := ": " + code + " "
 	for i := 0; i+len(needle) <= len(s); i++ {
 		if s[i:i+len(needle)] == needle {
 			return true
+		}
+	}
+	return false
+}
+
+func containsWord(s, word string) bool {
+	// Look for `: <word>` at the end of the string or followed by space/punct.
+	// Avoids matching partial words (e.g. "unauthorized_access" in a path).
+	needle := ": " + word
+	for i := 0; i+len(needle) <= len(s); i++ {
+		if s[i:i+len(needle)] == needle {
+			tail := i + len(needle)
+			if tail == len(s) || s[tail] == ' ' || s[tail] == '.' || s[tail] == ',' {
+				return true
+			}
 		}
 	}
 	return false
@@ -196,6 +217,12 @@ type Supervisor struct {
 	// A re-delivered command_id returns the cached event without re-executing.
 	// Lost on restart (at-least-once; crash-loss accepted).
 	dedup *dedupCache
+
+	// reauthMu serializes concurrent re-authentication attempts. When N claim
+	// workers all receive 401 simultaneously, only the goroutine that acquires
+	// the lock calls exchangeIdentity; the rest see the updated bearer on
+	// their next iteration without burning extra rate-limit quota.
+	reauthMu sync.Mutex
 }
 
 // New constructs a Supervisor. The client is wired but identity hasn't
@@ -237,9 +264,9 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		// YAAOS_AGENT_STS_BACKOFF_SECONDS overrides the step list for test
 		// stacks that need fast re-auth; unset → the prod ramp.
 		stsBackoff:       parseStsBackoffEnv(),
-		claimBackoff:     backoff.New(),
-		heartbeatBackoff: backoff.New(),
-		wsBackoff:        backoff.New(),
+		claimBackoff:     parseOpsBackoffEnv(),
+		heartbeatBackoff: parseOpsBackoffEnv(),
+		wsBackoff:        parseOpsBackoffEnv(),
 		eventPostSteps:   defaultEventPostSteps,
 		dedup:            newDedupCache(dedupCacheSize),
 	}
@@ -618,6 +645,13 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 			if ctx.Err() != nil {
 				return
 			}
+			// On 401/403: attempt a fresh identity exchange before backing
+			// off. If re-auth succeeds the bearer is updated and we can
+			// retry without the full backoff interval.
+			if s.reauthIfUnauthorized(ctx, err) {
+				s.claimBackoff.Reset()
+				continue
+			}
 			recordBackoff(ctx, s.claimBackoff, surfaceClaim, err)
 			s.log.Warn("supervisor.claim_error",
 				"worker", workerNum,
@@ -692,6 +726,12 @@ func (s *Supervisor) sendHeartbeat(ctx context.Context) {
 		Workspaces: s.pool.Snapshot(),
 	})
 	if err != nil {
+		// On 401/403: attempt a fresh identity exchange before backing off.
+		// If re-auth succeeds the bearer is updated; skip the backoff sleep.
+		if s.reauthIfUnauthorized(ctx, err) {
+			s.heartbeatBackoff.Reset()
+			return
+		}
 		recordBackoff(ctx, s.heartbeatBackoff, surfaceHeartbeat, err)
 		s.log.Warn("supervisor.heartbeat_error",
 			"err", err.Error(),
@@ -859,9 +899,12 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 
 // postTerminalEvent posts a terminal AgentEvent to the control plane with
 // backoff retry. It stops on success (nil) or ErrStaleClaim (410 Gone —
-// the claim is no longer valid; drop silently). Any other error is retried
-// on a per-call backoff ramp (see s.eventPostSteps). Progress events are NOT
-// routed here — they remain best-effort single-shot.
+// the claim is no longer valid; drop silently). On 401/403 it attempts a
+// fresh identity exchange before retrying so that a bearer expiry during a
+// long-running workspace command does not block the terminal event post
+// indefinitely. Any other error is retried on a per-call backoff ramp (see
+// s.eventPostSteps). Progress events are NOT routed here — they remain
+// best-effort single-shot.
 func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.CommandHeader, event protocol.AgentEvent) error {
 	eventPostBackoff := backoff.NewWithSteps(s.eventPostSteps)
 	for {
@@ -875,6 +918,14 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 			// Drop silently; re-delivering would be wrong.
 			s.log.Info("supervisor.event_stale_claim", "command_id", header.CommandID)
 			return nil
+		}
+		// Auth error: attempt a fresh identity exchange. If re-auth succeeds,
+		// reset the backoff and retry immediately with the updated bearer so a
+		// DB wipe between command dispatch and terminal-event delivery does not
+		// stall the claim worker goroutine for the full backoff window.
+		if s.reauthIfUnauthorized(ctx, err) {
+			eventPostBackoff.Reset()
+			continue
 		}
 		// Transient error — record a retry metric and wait.
 		s.log.Warn("supervisor.event_post_failed",
@@ -921,7 +972,7 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 			WaitSeconds:   s.cfg.ClaimWaitSeconds,
 			Lifecycle:     "unconfigured",
 			NewWorkspaces: 0,
-			WorkspaceIDs:  nil,
+			WorkspaceIDs:  []string{}, // empty slice serializes as [] not null
 		}
 	}
 	activeIDs := s.pool.ActiveIDs()

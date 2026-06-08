@@ -508,8 +508,29 @@ async def record_heartbeat(
     if not reported_ids:
         return HeartbeatResponse(reconciled_at=datetime.now(UTC), forgotten_workspaces=())
 
+    # Exclude workspace IDs that are still being provisioned (an in-flight
+    # ProvisionWorkspace command exists but the workspace row hasn't been
+    # created yet). The workspace row is written lazily on the first workspace
+    # event from the agent; before that the row is absent, so reconciliation
+    # would incorrectly mark these as forgotten and kill the subprocess mid-clone.
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    provisioning_rows = (
+        await session.execute(
+            select(AgentCommandRow.workspace_id).where(
+                AgentCommandRow.workspace_id.in_(reported_ids),
+                AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
+                AgentCommandRow.status.in_(["pending", "claimed", "delivered"]),
+            )
+        )
+    ).all()
+    provisioning_ids: set[UUID] = {r[0] for r in provisioning_rows if r[0] is not None}
+
+    # Only reconcile the IDs that are not currently being provisioned.
+    reconcile_ids = reported_ids - provisioning_ids
+
     sink = get_report_sink()
-    forgotten_ids = await sink.reconcile_heartbeat(reported_ids, session)
+    forgotten_ids = await sink.reconcile_heartbeat(reconcile_ids, session)
 
     return HeartbeatResponse(
         reconciled_at=datetime.now(UTC),
@@ -523,6 +544,7 @@ async def record_heartbeat(
 async def record_agent_event(
     event: AgentEvent,
     *,
+    agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> None:
     """Resolve the workflow correlation directly from `agent_commands.workflow_execution_id`,
@@ -539,6 +561,11 @@ async def record_agent_event(
     stamps `workflow_execution_id` on the command at enqueue time. An agent
     can therefore report a terminal event for a workspace that has been torn
     down (`failure-report-precedes-disposal`), and the workflow still resumes.
+
+    `agent_id` — the `workspace_agents.id` of the reporting bearer — is used
+    to create the lean workspace row when a `ProvisionWorkspace` command
+    completes successfully (the Go agent never sends workspace events, so the
+    row is materialised here on the terminal `completed_success` event instead).
 
     Required `session`; caller commits.
     """
@@ -600,6 +627,37 @@ async def record_agent_event(
     # workflow correlation simply retire).
     await retire_command(event.command_id, session=session)
 
+    # Lean workspace row creation for ProvisionWorkspace.
+    #
+    # The Go agent never sends workspace events (WorkspaceEvent is a
+    # backend-side type — see openapi_drift_test.go). The row must therefore
+    # be materialised here, on the terminal `completed_success` for the
+    # ProvisionWorkspace command, using `cmd_row.workspace_id` (minted in
+    # `ProvisionWorkspace.dispatch`) and the reporting bearer's `agent_id`.
+    # The sink's `apply_workspace_event` handles idempotency (row already
+    # exists → status transition only, no duplicate insert).
+    if (
+        agent_id is not None
+        and cmd_row.command_kind == AgentCommandKind.PROVISION_WORKSPACE
+        and cmd_row.workspace_id is not None
+        and event.kind == AgentEventKind.COMPLETED_SUCCESS
+    ):
+        await get_report_sink().apply_workspace_event(
+            WorkspaceEventReport(
+                workspace_id=cmd_row.workspace_id,
+                command_id=event.command_id,
+                kind="created",
+                agent_id=agent_id,
+            ),
+            session,
+        )
+        log.info(
+            "agent.provision_workspace.lean_row_created",
+            workspace_id=str(cmd_row.workspace_id),
+            command_id=str(event.command_id),
+            agent_id=str(agent_id),
+        )
+
     if holder_workflow_id is None:
         return
 
@@ -610,7 +668,8 @@ async def record_agent_event(
         args={
             "workflow_execution_id": str(holder_workflow_id),
             "agent_command_id": str(event.command_id),
-            "outcome_label": event.outcome_label or "success",
+            "outcome_label": event.outcome_label
+            or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
             "outputs": dict(event.outputs),
             "traceparent": event.traceparent,
         },

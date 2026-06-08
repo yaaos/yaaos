@@ -9,6 +9,10 @@ COPY apps/fake-github/app ./app
 
 ENV UV_LINK_MODE=copy
 
+# git is required by the git HTTP backend (git http-backend + git init/clone)
+# for serving ProvisionWorkspace clone requests from the agent container.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 RUN uv sync --no-dev || uv sync
 
 ENV PATH="/app/.venv/bin:$PATH" \

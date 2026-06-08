@@ -16,9 +16,10 @@ type StubHandler struct{}
 
 func (StubHandler) ProvisionWorkspace(_ context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
 	return command.ProvisionResult{
-		Path:   "/stub/" + cmd.WorkspaceID,
-		Repo:   cmd.Repo.ExternalID,
-		Reused: false,
+		WorkspaceID: cmd.WorkspaceID,
+		Path:        "/stub/" + cmd.WorkspaceID,
+		Repo:        cmd.Repo.ExternalID,
+		Reused:      false,
 	}, nil
 }
 

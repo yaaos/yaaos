@@ -28,10 +28,12 @@
 import { expect, test, type Page, type APIRequestContext } from "@playwright/test";
 import {
   dispatchWebhook,
+  gitHeadSha,
   postedComments,
   prPayload,
   resetStack,
   seedGithubInstall,
+  ticketJobStatus,
   YAAOS_URL,
 } from "./_helpers";
 
@@ -108,6 +110,7 @@ test("nonconforming output: schema_invalid failure — no findings posted to fak
 }) => {
   await setupAuthedAcmeOwner(page, request);
 
+  const headSha = await gitHeadSha("acme", "review-nonconforming");
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({
@@ -115,6 +118,7 @@ test("nonconforming output: schema_invalid failure — no findings posted to fak
       number: 201,
       title: "Failure: nonconforming output",
       body: "fake-claude will emit non-conforming stream-json.",
+      headSha,
     }),
   });
 
@@ -129,6 +133,20 @@ test("nonconforming output: schema_invalid failure — no findings posted to fak
   // No findings: the schema gate caught the non-conforming output and the
   // workflow failed before `PostFindings` could post anything.
   expect(comments).toHaveLength(0);
+
+  // Tightened: the workflow must have completed with `failed` status.
+  // This catches regressions where the workflow never started (e.g. git
+  // clone failed before InvokeClaudeCode was dispatched) — those would
+  // also have no comments but would either be stuck in `running` or fail
+  // at ProvisionWorkspace rather than at PostFindings.
+  // Use page.request (shares session cookie with the browser context) so
+  // the authenticated /api/tickets and /api/reviewer/jobs endpoints succeed.
+  await expect
+    .poll(
+      () => ticketJobStatus("acme", "Failure: nonconforming output", page.request),
+      { timeout: 5_000 },
+    )
+    .toBe("failed");
 });
 
 /**
@@ -144,6 +162,7 @@ test("agent failure: terminal failure — cleanup finalizer runs, no findings po
 }) => {
   await setupAuthedAcmeOwner(page, request);
 
+  const headSha = await gitHeadSha("acme", "review-agentfail");
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({
@@ -151,6 +170,7 @@ test("agent failure: terminal failure — cleanup finalizer runs, no findings po
       number: 301,
       title: "Failure: agent exit non-zero",
       body: "fake-claude will exit with code 42.",
+      headSha,
     }),
   });
 
@@ -165,4 +185,16 @@ test("agent failure: terminal failure — cleanup finalizer runs, no findings po
   // No findings: the agent reported terminal failure; the workflow ran the
   // cleanup finalizer and recorded the failure without posting any findings.
   expect(comments).toHaveLength(0);
+
+  // Tightened: the workflow must have completed with `failed` status,
+  // proving the agent actually ran InvokeClaudeCode (and exit 42 was
+  // received) rather than the workflow never starting at all.
+  // Use page.request (shares session cookie with the browser context) so
+  // the authenticated /api/tickets and /api/reviewer/jobs endpoints succeed.
+  await expect
+    .poll(
+      () => ticketJobStatus("acme", "Failure: agent exit non-zero", page.request),
+      { timeout: 5_000 },
+    )
+    .toBe("failed");
 });

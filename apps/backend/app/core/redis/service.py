@@ -61,6 +61,22 @@ async def ping() -> bool:
         return False
 
 
+async def delete_keys_with_prefix(prefix: str) -> int:
+    """Delete all keys whose names start with `prefix`. Returns the count deleted.
+
+    Uses SCAN+DEL (not KEYS) so it does not block the Redis event loop on
+    large keyspaces. Safe to call on an empty keyspace — returns 0.
+    Used by the test-reset path to flush rate-limit windows for the
+    agent identity-exchange endpoint between test runs.
+    """
+    redis = _get_client()
+    deleted = 0
+    async for key in redis.scan_iter(match=f"{prefix}*", count=100):
+        await redis.delete(key)
+        deleted += 1
+    return deleted
+
+
 async def shutdown() -> None:
     """Close every cached client. Called by the process shutdown registries
     during web/worker teardown and from test teardown. Idempotent —

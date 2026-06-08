@@ -212,6 +212,54 @@ export async function postedComments(): Promise<Array<Record<string, unknown>>> 
 }
 
 /**
+ * Return the HEAD SHA of a fake-github bare repo. Cross-plane e2e specs pass
+ * this as `headSha` in `prPayload` so the agent's `git checkout --detach <sha>`
+ * resolves against the real bare repo that fake-github serves via git HTTP.
+ */
+export async function gitHeadSha(owner: string, repo: string): Promise<string> {
+  const r = await fetch(`${FAKE_GITHUB_URL}/__test/git_head_sha/${owner}/${repo}`);
+  if (!r.ok) {
+    throw new Error(`gitHeadSha ${owner}/${repo} → ${r.status}: ${await r.text()}`);
+  }
+  const body = (await r.json()) as { sha: string; error?: string };
+  if (!body.sha) {
+    throw new Error(`gitHeadSha ${owner}/${repo}: empty sha (${body.error ?? "unknown"})`);
+  }
+  return body.sha;
+}
+
+/**
+ * Return the first review-job status for the ticket matching `title` on
+ * `orgSlug`. Returns `null` when the ticket or job isn't found yet.
+ *
+ * Used by failure-path specs to assert the workflow actually completed with
+ * a `failed` status (vs never having started at all).
+ */
+export async function ticketJobStatus(
+  orgSlug: string,
+  title: string,
+  request: APIRequestContext,
+): Promise<string | null> {
+  const listResp = await request.get(`${YAAOS_URL}/api/tickets?q=${encodeURIComponent(title)}`, {
+    headers: { "X-Org-Slug": orgSlug },
+  });
+  if (!listResp.ok()) return null;
+  const body = (await listResp.json()) as { items: Array<{ id: string; title: string }> };
+  const list = body.items ?? [];
+  const ticket = list.find((t) => t.title === title);
+  if (!ticket) return null;
+
+  const jobsResp = await request.get(`${YAAOS_URL}/api/reviewer/jobs/by-ticket/${ticket.id}`, {
+    headers: { "X-Org-Slug": orgSlug },
+  });
+  if (!jobsResp.ok()) return null;
+  const jobs = (await jobsResp.json()) as Array<{ status: string }>;
+  if (jobs.length === 0) return null;
+  // Most recent job is first (sorted by created_at desc via the view).
+  return jobs[0].status;
+}
+
+/**
  * Log in as a freshly-seeded owner on the given org and land on the dashboard.
  * Resets both stacks, seeds the owner profile, seeds a GitHub install, and
  * completes the OAuth test flow.
