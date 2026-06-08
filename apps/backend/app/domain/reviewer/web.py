@@ -18,7 +18,6 @@ from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain import tickets
 from app.domain.reviewer.models import ReviewRow
-from app.domain.reviewer.review_job import ReviewJob
 from app.domain.reviewer.service import (
     list_findings_for_pr,
 )
@@ -50,26 +49,6 @@ async def cancel_jobs(ticket_id: UUID) -> dict[str, int]:
 
     cancelled = await cancel_workflows_for_ticket(ticket_id)
     return {"cancelled_count": cancelled}
-
-
-@router.get("/jobs/by-ticket/{ticket_id}", dependencies=[Depends(require(Action.REVIEWER_READ))])
-async def jobs_by_ticket(ticket_id: UUID) -> list[ReviewJob]:
-    """Per-ticket review history."""
-
-    from app.domain.reviewer.workflow_review_view import (  # noqa: PLC0415
-        list_review_jobs_for_ticket as list_workflow_jobs,
-    )
-
-    org_id = _org()
-    try:
-        t = await tickets.get(ticket_id, org_id=org_id)
-    except tickets.TicketNotFoundError:
-        raise HTTPException(status_code=404, detail="ticket not found")
-
-    pr_id_for_projection = t.pr_id or UUID(int=0)
-    rows = await list_workflow_jobs(ticket_id, pr_id=pr_id_for_projection, org_id=org_id)
-    rows.sort(key=lambda j: j.scheduled_at, reverse=True)
-    return rows
 
 
 @router.get("/metrics", dependencies=[Depends(require(Action.REVIEWER_READ))])

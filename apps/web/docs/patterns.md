@@ -56,7 +56,7 @@ Use `vi.useFakeTimers({ toFake: ["Date"] })` (not full fake timers) when tests n
 - Page container: `<page>-<state>` (e.g. `dashboard-onboarding`, `ticket-detail`).
 - List containers: `<entity>-list` (`tickets-list`, `findings-list`, `lessons-list`, `audit-log`).
 - List rows: `<entity>-row-<id>`.
-- Actions: `<action>-<entity>` (`rereview-button`, `cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
+- Actions: `<action>-<entity>` (`cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
 - Status badges: `<entity>-status` (`github-status`, `apikey-status`).
 - Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
 - Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
@@ -143,7 +143,9 @@ If a FE change could alter stored/posted/counted state without a corresponding A
 Module-scoped arrays. Canonical keys:
 
 - `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["tickets", id, "hitl-history"]`
-- `["reviewer", "jobs", ticket_id]`, `["reviewer", "metrics"]`, `["reviewer", "agents"]`, `["reviewer", "findings", ticket_id, includeTerminal]`
+- `["workflow", "runs", ticket_id]` — workflow run step tree for one ticket (invalidated by `workflow_state_changed` SSE)
+- `["workflow", "activity", execution_id, step_id]` — persisted activity blob for one terminal step (lazy-loaded in the accordion)
+- `["reviewer", "metrics"]`, `["reviewer", "agents"]`, `["reviewer", "findings", ticket_id, includeTerminal]`
 - `["agents", orgSlug]` — slug-scoped so different orgs don't share the entry
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`

@@ -43,7 +43,7 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [domain_coding_agent](domain_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
 | [domain_pull_requests](domain_pull_requests.md) | PR aggregate mirroring VCS state. |
 | [domain_tickets](domain_tickets.md) | Lifecycle `open → in_review → complete`. |
-| [domain_reviewer](domain_reviewer.md) | `ReviewJob` aggregate, per-PR queue, workflow. |
+| [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
 

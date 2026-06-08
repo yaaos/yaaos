@@ -186,6 +186,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("050_reviews_run_id", "reviews_run_id"),
     ("051_create_coding_agent_activity", "create_coding_agent_activity"),
     ("052_create_scheduled_runs", "create_scheduled_runs"),
+    ("053_drop_reviews_dead_columns", "drop_reviews_dead_columns"),
 )
 
 
@@ -1614,6 +1615,31 @@ async def _apply_outbox_entries_pk_created_at(conn) -> None:  # type: ignore[no-
     )
 
 
+async def _apply_drop_reviews_dead_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the legacy run-metric/activity columns from `reviews`.
+
+    `reviews` was recreated lean in migration 044 (`canonical_findings_schema`),
+    so these columns do not exist on fresh DBs. This migration is idempotent
+    (DROP COLUMN IF EXISTS) and covers any DB that pre-dates 044 or still has
+    stale columns from the old `review_jobs`-era schema. The `run_id` FK stays.
+
+    Columns: `activity_log`, `model`, `effort`, `tokens_in`, `tokens_out`,
+    `duration_s`, `scheduled_at`, `started_at`, `completed_at`.
+    """
+    for stmt in [
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS activity_log",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS model",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS effort",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS tokens_in",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS tokens_out",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS duration_s",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS scheduled_at",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS started_at",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS completed_at",
+    ]:
+        await conn.execute(text(stmt))
+
+
 async def _apply_pending() -> None:
     """Body of `migrate()`, called while holding the advisory lock.
 
@@ -1731,6 +1757,8 @@ async def _apply_pending() -> None:
                 await _apply_create_coding_agent_activity(conn)
             elif kind == "create_scheduled_runs":
                 await _apply_create_scheduled_runs(conn)
+            elif kind == "drop_reviews_dead_columns":
+                await _apply_drop_reviews_dead_columns(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

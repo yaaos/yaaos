@@ -5,9 +5,9 @@
 ## Scope
 
 - `/tickets` — filterable list.
-- `/tickets/$ticketId` — detail: findings, activity log, HITL panel.
+- `/tickets/$ticketId` — detail: workflow run step tree, findings, HITL panel.
 
-Consumes: `GET /api/tickets`, `GET /api/tickets/:id`, `POST /api/reviewer/cancel`, `POST /api/reviewer/rereview`, findings/jobs/hitl endpoints. Owns no data.
+Consumes: `GET /api/tickets`, `GET /api/tickets/:id`, `GET /api/tickets/:id/workflow-runs`, `GET /api/tickets/:id/activity/:executionId/:stepId`, `POST /api/reviewer/cancel`, findings/hitl endpoints. Owns no data.
 
 ## List page
 
@@ -23,19 +23,24 @@ Live updates: `ticket_status_changed` SSE invalidates `["tickets"]` (200 ms debo
 
 Three tabs: **Findings** (default), **Activity**, **HITL**. Each tab body is wrapped in its own `<ErrorBoundary>` + `<Suspense>` pair so a single tab failure does not crash the other tabs.
 
-- **Findings** — `useFindingsForTicket(ticketId, true)` (`useSuspenseQuery`, `refetchInterval: 5s`). Each `FindingRow` has inline Ack / Push-back for `state === "open"` (≥10-char reason gate on push-back).
-- **Activity** — `useReviewJobsForTicket` (`useSuspenseQuery`, `refetchInterval: 3s`) flattened into a chronological stream via `ActivityEventRow`; long messages auto-collapse.
-- **HITL** — `useHitlHistory` (`useSuspenseQuery`). First `resolved_at: null` row is the current prompt (`HitlPanel` renders `kind: "choice" | "text" | "form"`); resolved exchanges show below as JSON. `useHitlRespond(ticketId).mutate(response)` submits.
+- **Findings** — `useFindingsForTicket(ticketId, true)`. Each `FindingRow` is non-interactive (read-only). Canonical schema: `severity ∈ {blocker, should_fix, nit}`, `confidence ∈ {verified, plausible, speculative}`, `category`, `rationale`, `rule_violated`, `rule_source`, `suggested_fix`, optional `file`/`line`.
+- **Activity** — `useWorkflowRuns(ticketId)` (key `["workflow","runs",ticketId]`). The most recent run's steps render as a step tree:
+  - Non-`InvokeClaudeCode` steps: compact label row (`name · state · ago`).
+  - Running `InvokeClaudeCode`: pinned `max-h-[400px]` live stream via `useWorkflowActivityStream(executionId)` (SSE to `/api/sse/workspace_activity/:id`).
+  - Terminal `InvokeClaudeCode`: `<details>/<summary>` accordion; opens with `useStepActivity(ticketId, executionId, stepId)` (key `["workflow","activity",executionId,stepId]`).
+- **HITL** — `useHitlHistory` (`useSuspenseQuery`). First `resolved_at: null` row is the current prompt (`HitlPanel` renders `kind: "choice" | "text" | "form"`); resolved exchanges show below. `useHitlRespond(ticketId).mutate(response)` submits.
 
-Header: Cancel (`ConfirmModal`, non-terminal only) and Re-run (`ConfirmModal`, cost-protective). Both fire through `core/api`.
+Header: title + status pill + Cancel button (`ConfirmModal`, non-terminal only). No Re-run.
 
-Detail queries carry `refetchInterval` as SSE-gap fallback.
+`StageIndicator` is sourced from `useWorkflowRuns` (not `ticket.stages`). Runs arrive oldest-first; displayed left to right.
+
+Live updates: `workflow_state_changed` SSE invalidates `["workflow","runs",ticketId]` + `["tickets",ticketId]`. No polling fallback.
 
 ## Standalone composites
 
 `StageIndicator`, `HitlPanel`, `FindingRow`, `ActivityEventRow` — each has its own Vitest file under `test/`.
 
-`ActivityEventRow` accepts `ReviewJobActivityEvent` from `core/api` — no local duplicate interface. The same type is used for both persisted `activity_log` events and live SSE events merged in `ActivityTab`.
+`ActivityEventRow` accepts `ReviewJobActivityEvent` from `core/api`. Used for both live SSE events (in the running `InvokeClaudeCode` step) and persisted blob events (in the terminal accordion).
 
 ## Public interface
 
@@ -48,6 +53,7 @@ Router imports each directly by path; no barrel.
 
 - `test/use-tickets-filters.test.ts` — unit: pure hook logic (status toggle, repo filter, query filter, myOnly, pagination, repoOptions merge).
 - `test/tickets-list.test.tsx` — component/MSW: filter chips render, empty state.
-- `test/ticket-detail.test.tsx` — component/MSW: title, stage indicator, tab strip, Cancel/Re-run buttons.
-- 4 composite Vitest files (see above).
+- `test/ticket-detail.test.tsx` — component/MSW: title, stage indicator, tab strip, Cancel button, no Re-run, step tree.
+- `test/finding-row.test.tsx` — component: severity/confidence chips, file:line, non-interactive.
+- `test/stage-indicator.test.tsx` — component: empty, single-run, multi-run chronological, awaiting_human label.
 - Page composition: `apps/e2e/tests/pr-review-end-to-end.spec.ts`.

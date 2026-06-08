@@ -30,7 +30,6 @@ function makeTicket(overrides: Partial<Ticket> = {}): Ticket {
     max_severity: null,
     builder_kind: "user",
     builder_display_name: "alice",
-    stages: [],
     builder: { kind: "user", display_name: "alice" },
     ...overrides,
   };

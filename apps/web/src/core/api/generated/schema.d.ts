@@ -1066,26 +1066,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Jobs By Ticket
-         * @description Per-ticket review history.
-         */
-        get: operations["jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/reviewer/metrics": {
         parameters: {
             query?: never;
@@ -1359,16 +1339,15 @@ export interface paths {
         };
         /**
          * Detail
-         * @description Per-ticket detail with the enrichment: `stages[]` (projected from
-         *     `workflow_executions`) + `builder` (the trigger identity).
+         * @description Per-ticket detail with the enrichment: `builder` (the trigger identity).
          *
          *     Returns the Ticket pydantic fields plus:
-         *     - `stages: [{name, state, attempt_count, current_attempt, started_at,
-         *        completed_at, workflow_execution_id}]` — one entry per workflow run
-         *        on the ticket, newest first.
          *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
          *        when the ticket's PR has an `author_login`; `kind="system"` when
          *        yaaos triggered the run with no human attribution.
+         *
+         *     Workflow-run data is served by the dedicated
+         *     `GET /api/tickets/{id}/workflow-runs` endpoint.
          */
         get: operations["detail_api_tickets__ticket_id__get"];
         put?: never;
@@ -2222,51 +2201,6 @@ export interface components {
             repo_external_id: string;
             /** Skill Name */
             skill_name: string | null;
-        };
-        /**
-         * ReviewJob
-         * @description Read-side projection of a `reviews` row for the ticket history API.
-         */
-        ReviewJob: {
-            /** Commit Sha At Start */
-            commit_sha_at_start: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Destination */
-            destination: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Org Id
-             * Format: uuid
-             */
-            org_id: string;
-            /**
-             * Pr Id
-             * Format: uuid
-             */
-            pr_id: string;
-            /** Scheduled At */
-            scheduled_at?: string | null;
-            /** Scope Kind */
-            scope_kind: string;
-            /** Sequence Number */
-            sequence_number: number;
-            /** Status */
-            status: string;
-            /** Trigger Reason */
-            trigger_reason: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
         };
         /**
          * Role
@@ -4709,41 +4643,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewJob"][];
                 };
             };
             /** @description Validation Error */

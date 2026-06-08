@@ -1,33 +1,31 @@
 /**
- * Ticket detail — anchor page (E2a.4).
- *
- * Composes the standalone composites:
- *   - StageIndicator
- *   - FindingRow (with inline ack / push-back wired to mutations)
- *   - ActivityEventRow
- *   - HitlPanel
+ * Ticket detail — shows the workflow run step tree (live for the running
+ * `CodeReview` step, persisted accordion when done), non-interactive
+ * findings, and HITL history.
  *
  * Sections:
- *   1. Header band — title + repo + status pill + Cancel/Re-run buttons.
- *   2. Stage indicator.
+ *   1. Header band — title + status pill + Cancel button.
+ *   2. Stage indicator (workflow-run band, sourced from useWorkflowRuns).
  *   3. Tab strip — Findings / Activity / HITL.
- *   4. Tab body — depends on active tab.
+ *   4. Tab body.
  *
- * Live updates flow via `useTicket` / `useFindingsForTicket` /
- * `useReviewJobsForTicket` / `useHitlHistory` polling.
+ * Live updates:
+ *   - `workflow_state_changed` SSE → invalidates ["workflow","runs",ticketId]
+ *     + ["tickets",ticketId] — step tree and stage band refresh automatically.
+ *   - Live `CodeReview` step: `useWorkflowActivityStream(execution_id)`.
+ *   - Terminal `CodeReview` step: `useStepActivity` accordion.
  */
 
 import type { Ticket } from "@core/api/public/client";
 import {
-  useAckFinding,
+  type WorkflowRunView,
   useCancelReviewerJobs,
   useFindingsForTicket,
   useHitlHistory,
   useHitlRespond,
-  usePushBackFinding,
-  useRereviewMutation,
-  useReviewJobsForTicket,
+  useStepActivity,
   useTicket,
+  useWorkflowRuns,
 } from "@core/api/public/queries";
 import { useWorkflowActivityStream } from "@core/sse/public/workflow_activity";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
@@ -38,17 +36,7 @@ import { Skeleton } from "@shared/components/ui/skeleton";
 import { ago } from "@shared/utils/public/ago";
 import { cn } from "@shared/utils/public/cn";
 import { useParams } from "@tanstack/react-router";
-import {
-  AlertCircle,
-  Bell,
-  CheckCircle2,
-  CircleDashed,
-  ListChecks,
-  Loader2,
-  RotateCcw,
-  X,
-  XCircle,
-} from "lucide-react";
+import { AlertCircle, Bell, CheckCircle2, CircleDashed, Loader2, X, XCircle } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ActivityEventRow } from "../ActivityEventRow";
@@ -119,11 +107,10 @@ export function TicketDetailPage() {
 function TicketDetailContent() {
   const { ticketId } = useParams({ from: "/orgs/$slug/tickets/$ticketId" });
   const { data: ticket } = useTicket(ticketId);
+  const { data: runs } = useWorkflowRuns(ticketId);
   const [tab, setTab] = useState<Tab>("findings");
   const [showCancel, setShowCancel] = useState(false);
-  const [showRerun, setShowRerun] = useState(false);
   const cancel = useCancelReviewerJobs();
-  const rereview = useRereviewMutation();
 
   const status = ticket.status;
   const meta = STATUS_META[status] ?? DEFAULT_STATUS_META;
@@ -138,19 +125,17 @@ function TicketDetailContent() {
         meta={meta}
         Icon={Icon}
         onCancel={() => setShowCancel(true)}
-        onRerun={() => setShowRerun(true)}
         isTerminal={isTerminal}
         pendingCancel={cancel.isPending}
-        pendingRerun={rereview.isPending}
       />
 
-      <StageIndicator stages={ticket.stages} />
+      <StageIndicator runs={runs} />
 
       <Tabs tab={tab} onChange={setTab} />
 
       <div className="mt-4">
         {tab === "findings" && <FindingsTab ticketId={ticketId} />}
-        {tab === "activity" && <ActivityTab ticketId={ticketId} />}
+        {tab === "activity" && <ActivityTab ticketId={ticketId} runs={runs ?? []} />}
         {tab === "hitl" && <HitlTab ticketId={ticketId} />}
       </div>
 
@@ -166,53 +151,8 @@ function TicketDetailContent() {
           cancel.mutate(ticketId, { onSettled: () => setShowCancel(false) });
         }}
       />
-      <ConfirmModal
-        open={showRerun}
-        onOpenChange={setShowRerun}
-        title="Re-run review?"
-        body={
-          <>
-            <p>Running again spends LLM tokens against the org's BYOK key.</p>
-            <p className="mt-2">
-              Estimate: ~<span className="font-mono">{estimateTokens(ticket.findings_count)}</span>{" "}
-              tokens ( ≈$<span className="font-mono">{estimateUsd(ticket.findings_count)}</span> at
-              default Sonnet rates). Existing findings persist; the agents look at the latest
-              commit.
-            </p>
-          </>
-        }
-        confirmLabel="Re-run"
-        pending={rereview.isPending}
-        onConfirm={() => {
-          rereview.mutate(ticketId, { onSettled: () => setShowRerun(false) });
-        }}
-      />
     </div>
   );
-}
-
-/**
- * Heuristic token-spend estimate for the re-run modal. Stand-in for
- * a real per-org / per-model integration with the BYOK provider — keeps
- * the spec promise ("cost-protective modal") while avoiding fake
- * precision. Scales with findings count since more findings → bigger
- * conversation context.
- */
-function estimateTokens(findingsCount: number): string {
-  const baseline = 15_000;
-  const perFinding = 4_000;
-  const est = baseline + Math.max(0, findingsCount) * perFinding;
-  return est.toLocaleString();
-}
-
-function estimateUsd(findingsCount: number): string {
-  // Claude Sonnet input ≈ $3 / 1M tokens, output ≈ $15 / 1M. Blended
-  // midpoint: $5 / 1M.
-  const baseline = 15_000;
-  const perFinding = 4_000;
-  const tokens = baseline + Math.max(0, findingsCount) * perFinding;
-  const usd = (tokens / 1_000_000) * 5;
-  return usd < 0.1 ? usd.toFixed(2) : usd.toFixed(2);
 }
 
 function Header({
@@ -221,20 +161,16 @@ function Header({
   meta,
   Icon,
   onCancel,
-  onRerun,
   isTerminal,
   pendingCancel,
-  pendingRerun,
 }: {
   ticket: Ticket;
   status: string;
   meta: { label: string; chip: string };
   Icon: typeof Loader2;
   onCancel: () => void;
-  onRerun: () => void;
   isTerminal: boolean;
   pendingCancel: boolean;
-  pendingRerun: boolean;
 }) {
   const builder = ticket.builder ?? {
     kind: ticket.builder_kind,
@@ -244,25 +180,6 @@ function Header({
     <header className="flex items-start justify-between gap-4 mb-4">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-xs text-muted-foreground mono mb-1">
-          <span>{ticket.repo_external_id}</span>
-          {ticket.pr_number != null && (
-            <>
-              <span>·</span>
-              {ticket.pr_html_url ? (
-                <a
-                  href={ticket.pr_html_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground"
-                >
-                  PR #{ticket.pr_number}
-                </a>
-              ) : (
-                <span>PR #{ticket.pr_number}</span>
-              )}
-            </>
-          )}
-          <span>·</span>
           <span>updated {ago(ticket.updated_at)}</span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{ticket.title}</h1>
@@ -294,15 +211,6 @@ function Header({
             Cancel
           </Button>
         )}
-        <Button
-          variant="default"
-          onClick={onRerun}
-          disabled={pendingRerun}
-          data-testid="ticket-rerun-button"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          {isTerminal ? "Re-run review" : "Re-run"}
-        </Button>
       </div>
     </header>
   );
@@ -357,12 +265,10 @@ function FindingsTab({ ticketId }: { ticketId: string }) {
 
 function FindingsTabContent({ ticketId }: { ticketId: string }) {
   const { data: findings } = useFindingsForTicket(ticketId, true);
-  const ack = useAckFinding(ticketId);
-  const pushBack = usePushBackFinding(ticketId);
   if (!findings || findings.length === 0) {
     return (
       <EmptyState
-        icon={ListChecks}
+        icon={AlertCircle}
         headline="No findings yet."
         body="When yaaos surfaces something to review, it'll appear here."
       />
@@ -371,67 +277,257 @@ function FindingsTabContent({ ticketId }: { ticketId: string }) {
   return (
     <div className="flex flex-col gap-2" data-testid="findings-list">
       {findings.map((f) => (
-        <FindingRow
-          key={f.id}
-          finding={f}
-          onAck={(id) => ack.mutate(id)}
-          onPushBack={(args) => pushBack.mutate(args)}
-          pending={ack.isPending || pushBack.isPending}
-        />
+        <FindingRow key={f.id} finding={f} />
       ))}
     </div>
   );
 }
 
-function ActivityTab({ ticketId }: { ticketId: string }) {
+// ── Activity tab: step tree ────────────────────────────────────────────────
+
+/**
+ * Canonical step label for a non-CodeReview step: name · state · timings.
+ * No expandable content — these are control-plane coordination steps.
+ */
+function StepLabel({
+  step,
+  ticketId,
+  executionId,
+}: {
+  step: WorkflowRunView["steps"][number];
+  ticketId: string;
+  executionId: string;
+}) {
+  const isInvokeStep = step.command_kind === "InvokeClaudeCode";
+  const isRunning = step.state === "running";
+  const isDone = step.state === "done" || step.state === "failed";
+
+  if (isInvokeStep) {
+    if (isRunning) {
+      return (
+        <LiveCodeReviewStep ticketId={ticketId} executionId={executionId} stepId={step.step_id} />
+      );
+    }
+    if (isDone) {
+      return (
+        <TerminalCodeReviewStep
+          ticketId={ticketId}
+          executionId={executionId}
+          stepId={step.step_id}
+          state={step.state}
+        />
+      );
+    }
+  }
+
+  // Non-CodeReview steps: compact label row.
+  type StepIconMeta = { icon: typeof Loader2; tone: string; spin: boolean };
+  const STEP_PENDING: StepIconMeta = {
+    icon: CircleDashed,
+    tone: "text-muted-foreground",
+    spin: false,
+  };
+  const stateIcon: Record<string, StepIconMeta> = {
+    pending: STEP_PENDING,
+    running: { icon: Loader2, tone: "text-info", spin: true },
+    done: { icon: CheckCircle2, tone: "text-success", spin: false },
+    failed: { icon: XCircle, tone: "text-destructive", spin: false },
+    skipped: STEP_PENDING,
+  };
+  const s: StepIconMeta = stateIcon[step.state] ?? STEP_PENDING;
+  const Icon = s.icon;
+
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 border-b border-border last:border-0 text-sm"
+      data-testid={`step-row-${step.step_id}`}
+    >
+      <Icon className={cn("w-3.5 h-3.5 shrink-0", s.tone, s.spin && "animate-spin")} aria-hidden />
+      <span className="font-medium text-foreground">{step.command_kind}</span>
+      <span className="text-muted-foreground">·</span>
+      <span className="text-muted-foreground capitalize">{step.state}</span>
+      {step.started_at && (
+        <>
+          <span className="text-muted-foreground">·</span>
+          <span className="text-xs text-muted-foreground mono">{ago(step.started_at)}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Running `InvokeClaudeCode` step: pinned ScrollArea with live activity stream.
+ * Opening this EventSource tells the backend's SubscriberRegistry to start
+ * forwarding WorkspaceAgent activity batches for this execution.
+ */
+function LiveCodeReviewStep({
+  ticketId: _ticketId,
+  executionId,
+  stepId: _stepId,
+}: {
+  ticketId: string;
+  executionId: string;
+  stepId: string;
+}) {
+  const liveEvents = useWorkflowActivityStream(executionId);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to newest event. `liveEvents.length` is the logical trigger but
+  // Biome's exhaustive-deps sees the array reference as unneeded. We read the
+  // length inside the effect so the dep is genuinely observed.
+  useEffect(() => {
+    const _len = liveEvents.length; // consumed so biome sees the dep
+    if (_len > 0 && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [liveEvents]);
+
+  return (
+    <div
+      className="flex flex-col px-3 py-2 border-b border-border last:border-0"
+      data-testid="step-code-review-live"
+    >
+      <div className="flex items-center gap-2 text-sm mb-2">
+        <Loader2 className="w-3.5 h-3.5 shrink-0 text-info animate-spin" aria-hidden />
+        <span className="font-medium">CodeReview</span>
+        <span className="text-muted-foreground">·</span>
+        <span className="text-muted-foreground">Running</span>
+      </div>
+      {liveEvents.length > 0 ? (
+        <div
+          className="max-h-[400px] overflow-y-auto rounded border border-border"
+          data-testid="activity-stream"
+        >
+          {liveEvents.map((e) => (
+            <ActivityEventRow key={`${e.ts}-${e.kind}`} event={e} />
+          ))}
+          <div ref={bottomRef} aria-hidden />
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Waiting for agent activity…</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Terminal `InvokeClaudeCode` step: accordion that lazy-loads the persisted
+ * ActivityLog blob via `useStepActivity`. The accordion opens on click;
+ * the inner Suspense fetches the blob on first open.
+ */
+function TerminalCodeReviewStep({
+  ticketId,
+  executionId,
+  stepId,
+  state,
+}: {
+  ticketId: string;
+  executionId: string;
+  stepId: string;
+  state: string;
+}) {
+  const stateIcon =
+    state === "done"
+      ? { icon: CheckCircle2, tone: "text-success" }
+      : { icon: XCircle, tone: "text-destructive" };
+  const Icon = stateIcon.icon;
+
+  return (
+    <details className="border-b border-border last:border-0" data-testid="step-code-review-done">
+      <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer text-sm list-none select-none hover:bg-accent/40">
+        <Icon className={cn("w-3.5 h-3.5 shrink-0", stateIcon.tone)} aria-hidden />
+        <span className="font-medium">CodeReview</span>
+        <span className="text-muted-foreground">·</span>
+        <span className="text-muted-foreground capitalize">{state}</span>
+        <span className="ml-auto text-xs text-muted-foreground">Click to expand</span>
+      </summary>
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load activity." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense fallback={<Skeleton className="h-16 m-3" />}>
+          <StepActivityContent ticketId={ticketId} executionId={executionId} stepId={stepId} />
+        </Suspense>
+      </ErrorBoundary>
+    </details>
+  );
+}
+
+function StepActivityContent({
+  ticketId,
+  executionId,
+  stepId,
+}: {
+  ticketId: string;
+  executionId: string;
+  stepId: string;
+}) {
+  const { data } = useStepActivity(ticketId, executionId, stepId);
+  const activity = data?.activity;
+
+  if (activity === null || activity === undefined) {
+    return (
+      <p className="px-3 py-2 text-xs text-muted-foreground italic">
+        Activity log expired or unavailable.
+      </p>
+    );
+  }
+
+  // The ActivityLog blob is an array of events at `activity.events`.
+  const events = Array.isArray(activity.events) ? (activity.events as unknown[]) : [];
+
+  if (events.length === 0) {
+    return <p className="px-3 py-2 text-xs text-muted-foreground italic">No activity recorded.</p>;
+  }
+
+  return (
+    <div className="max-h-[400px] overflow-y-auto" data-testid="step-activity-blob">
+      {events.map((e, i) => {
+        const ev = e as { ts?: string; kind?: string; message?: string; detail?: unknown };
+        return (
+          <ActivityEventRow
+            key={`${ev.ts ?? i}-${ev.kind ?? i}`}
+            event={{
+              ts: ev.ts ?? "",
+              kind: ev.kind ?? "unknown",
+              message: ev.message ?? "",
+              detail: (ev.detail as Record<string, unknown>) ?? null,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function ActivityTab({
+  ticketId,
+  runs,
+}: {
+  ticketId: string;
+  runs: WorkflowRunView[];
+}) {
   return (
     <ErrorBoundary
       fallbackRender={({ resetErrorBoundary }) => (
         <ErrorBanner message="Couldn't load activity." onRetry={resetErrorBoundary} />
       )}
     >
-      <Suspense fallback={<Skeleton className="h-24" />}>
-        <ActivityTabContent ticketId={ticketId} />
-      </Suspense>
+      <ActivityTabContent ticketId={ticketId} runs={runs} />
     </ErrorBoundary>
   );
 }
 
-function ActivityTabContent({ ticketId }: { ticketId: string }) {
-  const { data: jobs } = useReviewJobsForTicket(ticketId);
-  const { data: ticket } = useTicket(ticketId);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const events = (jobs ?? []).flatMap((j) => j.activity_log ?? []);
-  // Latest workflow execution drives the demand-pull live stream — opening
-  // this EventSource sends `track()` to SubscriberRegistry which fans
-  // `subscribe` over the agent WebSocket, so the WorkspaceAgent only emits
-  // activity while this tab is mounted.
-  const latestWorkflowId =
-    ticket?.stages && ticket.stages.length > 0
-      ? ticket.stages[ticket.stages.length - 1]?.workflow_execution_id
-      : null;
-  const liveEvents = useWorkflowActivityStream(latestWorkflowId);
-  // Merge stored + live, dedupe by ts+kind, sort chronologically.
-  const seen = new Set<string>();
-  const ordered = [...events, ...liveEvents]
-    .filter((e) => {
-      const k = `${e.ts ?? ""}-${e.kind ?? ""}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    })
-    .sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
-  const newestTs = ordered.length > 0 ? ordered[ordered.length - 1]?.ts : null;
-
-  // Auto-scroll to the newest event when it changes — so a long-running
-  // review keeps the latest step visible without manual scroll-down.
-  useEffect(() => {
-    if (newestTs && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [newestTs]);
-
-  if (ordered.length === 0) {
+function ActivityTabContent({
+  ticketId,
+  runs,
+}: {
+  ticketId: string;
+  runs: WorkflowRunView[];
+}) {
+  if (runs.length === 0) {
     return (
       <EmptyState
         icon={AlertCircle}
@@ -440,15 +536,16 @@ function ActivityTabContent({ ticketId }: { ticketId: string }) {
       />
     );
   }
+
+  // Show the most recent run's step tree. Runs arrive oldest-first so the
+  // last entry is the most recent.
+  const latestRun = runs[runs.length - 1];
+
   return (
-    <div
-      className="rounded-md border border-border max-h-[600px] overflow-y-auto"
-      data-testid="activity-stream"
-    >
-      {ordered.map((e) => (
-        <ActivityEventRow key={`${e.ts}-${e.kind}`} event={e} />
+    <div className="rounded-md border border-border" data-testid="step-tree">
+      {latestRun?.steps.map((step) => (
+        <StepLabel key={step.step_id} step={step} ticketId={ticketId} executionId={latestRun.id} />
       ))}
-      <div ref={bottomRef} aria-hidden />
     </div>
   );
 }

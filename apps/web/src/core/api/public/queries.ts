@@ -5,7 +5,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { type Lesson, type ReviewJob, type Ticket, apiFetch } from "./client";
+import { type Lesson, type Ticket, apiFetch } from "./client";
 
 // ── Auth / session ────────────────────────────────────────────────────────────
 
@@ -302,35 +302,82 @@ export function useTicket(ticket_id: string) {
   });
 }
 
+// ── Workflow runs (step tree for the Activity tab) ───────────────────────────
+
+/** One step in a workflow run — state is pending|running|done|failed|skipped. */
+export interface WorkflowStepSummary {
+  step_id: string;
+  command_kind: string;
+  state: "pending" | "running" | "done" | "failed" | "skipped";
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+/** One workflow execution for a ticket. */
+export interface WorkflowRunView {
+  id: string;
+  workflow_name: string;
+  workflow_version: string;
+  state: string;
+  current_step_id: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  steps: WorkflowStepSummary[];
+}
+
 /**
- * @param ticket_id must be non-empty; enforced by the required route URL param.
+ * All workflow runs for the ticket, oldest-first, with their step lists.
+ * Invalidated by `workflow_state_changed` SSE events.
  */
-export function useReviewJobsForTicket(ticket_id: string) {
-  return useSuspenseQuery<ReviewJob[]>({
-    queryKey: ["reviewer", "jobs", ticket_id],
-    queryFn: () => apiFetch<ReviewJob[]>(`/api/reviewer/jobs/by-ticket/${ticket_id}`),
-    refetchInterval: 3_000,
+export function useWorkflowRuns(ticket_id: string) {
+  return useSuspenseQuery<WorkflowRunView[]>({
+    queryKey: ["workflow", "runs", ticket_id],
+    queryFn: () => apiFetch<WorkflowRunView[]>(`/api/tickets/${ticket_id}/workflow-runs`),
   });
 }
 
 /**
- * Durable-findings list (plan/notes/full-pr-flow.md §9). Open + acknowledged
- * by default; pass include_terminal to also fetch resolved + stale.
+ * Persisted activity blob for one workflow step. Only fetched for the
+ * `CodeReview` (InvokeClaudeCode) step when the run is terminal (done/failed).
+ * Returns `{activity: <log> | null}` — null when the step never had a run
+ * or when the weekly partition has aged out.
+ */
+export interface StepActivityResponse {
+  activity: Record<string, unknown> | null;
+}
+
+/**
+ * Fetches the persisted activity blob for one workflow step. Only called
+ * for a terminal `InvokeClaudeCode` step where both ids are available.
+ */
+export function useStepActivity(ticket_id: string, execution_id: string, step_id: string) {
+  return useSuspenseQuery<StepActivityResponse>({
+    queryKey: ["workflow", "activity", execution_id, step_id],
+    queryFn: () =>
+      apiFetch<StepActivityResponse>(
+        `/api/tickets/${ticket_id}/activity/${execution_id}/${step_id}`,
+      ),
+  });
+}
+
+/**
+ * Canonical finding in the new schema.
+ * No `state` field — findings are non-interactive (ack/push-back removed).
  */
 export interface FindingRow {
   id: string;
-  state: "open" | "acknowledged" | "resolved_confirmed" | "resolved_unverified" | "stale";
-  severity: "blocker" | "major" | "minor" | "nit";
-  rule_id: string;
-  title: string;
-  body: string;
+  finding_display_id: number;
+  category: string;
+  severity: "blocker" | "should_fix" | "nit";
+  confidence: "verified" | "plausible" | "speculative";
   rationale: string;
-  confidence: number;
-  first_seen_review_id: string;
-  last_observed_review_id: string;
-  file_path: string;
-  line_start: number;
-  line_end: number;
+  rule_violated: string;
+  rule_source: string;
+  suggested_fix: string;
+  file: string | null;
+  line: number | null;
+  review_id: string;
 }
 
 /**
@@ -345,36 +392,6 @@ export function useFindingsForTicket(ticket_id: string, includeTerminal = false)
           includeTerminal ? "?include_terminal=true" : ""
         }`,
       ),
-    refetchInterval: 5_000,
-  });
-}
-
-/** : Builder confirms a finding ("yeah I'll fix this"). */
-export function useAckFinding(ticket_id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (finding_id: string) =>
-      apiFetch<{ finding_id: string; state: string }>(`/api/reviewer/findings/${finding_id}/ack`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["reviewer", "findings", ticket_id] });
-    },
-  });
-}
-
-/** : Builder rejects a finding with a reason. */
-export function usePushBackFinding(ticket_id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (args: { finding_id: string; reason: string }) =>
-      apiFetch<{ finding_id: string; state: string }>(
-        `/api/reviewer/findings/${args.finding_id}/push-back`,
-        { method: "POST", body: JSON.stringify({ reason: args.reason }) },
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["reviewer", "findings", ticket_id] });
-    },
   });
 }
 
@@ -415,21 +432,6 @@ export function useHitlRespond(ticket_id: string) {
   });
 }
 
-export function useRereviewMutation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ticket_id: string) =>
-      apiFetch<{ scheduled_count: number }>("/api/reviewer/rereview", {
-        method: "POST",
-        body: JSON.stringify({ ticket_id }),
-      }),
-    onSuccess: (_, ticket_id) => {
-      qc.invalidateQueries({ queryKey: ["reviewer", "jobs", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "audit"] });
-    },
-  });
-}
-
 export function useCancelReviewerJobs() {
   const qc = useQueryClient();
   return useMutation({
@@ -439,7 +441,8 @@ export function useCancelReviewerJobs() {
         { method: "POST" },
       ),
     onSuccess: (_, ticket_id) => {
-      qc.invalidateQueries({ queryKey: ["reviewer", "jobs", ticket_id] });
+      qc.invalidateQueries({ queryKey: ["workflow", "runs", ticket_id] });
+      qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
       qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "audit"] });
     },
   });

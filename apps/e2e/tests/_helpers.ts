@@ -246,11 +246,15 @@ export async function gitHeadSha(owner: string, repo: string): Promise<string> {
 }
 
 /**
- * Return the first review-job status for the ticket matching `title` on
- * `orgSlug`. Returns `null` when the ticket or job isn't found yet.
+ * Return the most-recent workflow run state for the ticket matching `title`
+ * on `orgSlug`. Returns `null` when the ticket or runs aren't found yet, or
+ * when the most recent run is still in a non-terminal state.
  *
  * Used by failure-path specs to assert the workflow actually completed with
- * a `failed` status (vs never having started at all).
+ * a `failed` state (vs never having started at all).
+ *
+ * Uses `GET /api/tickets/:id/workflow-runs` which is the canonical source of
+ * truth for workflow lifecycle state.
  */
 export async function ticketJobStatus(
   orgSlug: string,
@@ -266,14 +270,19 @@ export async function ticketJobStatus(
   const ticket = list.find((t) => t.title === title);
   if (!ticket) return null;
 
-  const jobsResp = await request.get(`${YAAOS_URL}/api/reviewer/jobs/by-ticket/${ticket.id}`, {
+  const runsResp = await request.get(`${YAAOS_URL}/api/tickets/${ticket.id}/workflow-runs`, {
     headers: { "X-Org-Slug": orgSlug },
   });
-  if (!jobsResp.ok()) return null;
-  const jobs = (await jobsResp.json()) as Array<{ status: string }>;
-  if (jobs.length === 0) return null;
-  // Most recent job is first (sorted by created_at desc via the view).
-  return jobs[0].status;
+  if (!runsResp.ok()) return null;
+  const runs = (await runsResp.json()) as Array<{ state: string }>;
+  if (runs.length === 0) return null;
+  // Most recent run is last (API returns oldest-first).
+  const latestRun = runs[runs.length - 1];
+  if (!latestRun) return null;
+  // Return `null` while still running; surface the state once terminal.
+  const terminalStates = ["done", "failed", "cancelled"];
+  if (!terminalStates.includes(latestRun.state)) return null;
+  return latestRun.state;
 }
 
 /**

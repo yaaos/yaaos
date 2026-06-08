@@ -16,34 +16,20 @@ import { getCurrentOrgSlug } from "./org-context";
 /** Lesson from backend schema. */
 export type Lesson = components["schemas"]["Lesson"];
 
-// ── ReviewJob — generated base with typed activity_log overlay ─────────────
-// The backend schema types `activity_log` as `{[key: string]: unknown}[]`
-// because the field is a raw JSONB column with no Pydantic model. The UI
-// needs a typed overlay so ActivityEventRow and the stream-merge logic
-// compile safely. We keep `ReviewJobActivityEvent` as a client-side type and
-// overlay it here.
+// ── Activity event — shared by live stream + persisted step blob ──────────
 
 /**
  * Pre-rendered activity event captured from the coding-agent stream.
  *
- * `message` is rendered by the backend so the FE doesn't interpret raw
- * Claude shapes; `detail` carries kind-specific extras for expanded views.
+ * `message` is rendered by the backend; `detail` carries kind-specific
+ * extras for expanded views. Shared by `ActivityEventRow` and the live
+ * `useWorkflowActivityStream` hook.
  */
 export type ReviewJobActivityEvent = {
   ts: string;
   kind: string;
   message: string;
   detail?: Record<string, unknown> | null;
-};
-
-type _GeneratedReviewJob = components["schemas"]["ReviewJob"];
-
-/** ReviewJob with a typed `activity_log`. */
-export type ReviewJob = Omit<_GeneratedReviewJob, "activity_log"> & {
-  // The backend emits ReviewJobActivityEvent objects; JSONB means the spec
-  // only knows the column as arbitrary object arrays. Overlay the concrete
-  // type here so UI code doesn't cast at every call site.
-  activity_log: ReviewJobActivityEvent[];
 };
 
 // ── Hand-typed shapes — no generated equivalent ───────────────────────────
@@ -77,17 +63,7 @@ export type Ticket = {
   max_severity: "low" | "medium" | "high" | null;
   builder_kind: "user" | "system";
   builder_display_name: string | null;
-  // Present on GET /api/tickets/:id. Absent on the list
-  // endpoint and on cached entries that predate the extension.
-  stages?: Array<{
-    name: string;
-    state: string;
-    attempt_count: number;
-    current_attempt: number;
-    started_at: string | null;
-    completed_at: string | null;
-    workflow_execution_id: string;
-  }>;
+  // Present on GET /api/tickets/:id. Absent on the list endpoint.
   builder?: {
     kind: "user" | "system";
     user_id?: string | null;

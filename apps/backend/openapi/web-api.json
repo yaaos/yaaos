@@ -1215,94 +1215,6 @@
         "title": "RepoSkillRow",
         "type": "object"
       },
-      "ReviewJob": {
-        "description": "Read-side projection of a `reviews` row for the ticket history API.",
-        "properties": {
-          "commit_sha_at_start": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commit Sha At Start"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "destination": {
-            "title": "Destination",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "org_id": {
-            "format": "uuid",
-            "title": "Org Id",
-            "type": "string"
-          },
-          "pr_id": {
-            "format": "uuid",
-            "title": "Pr Id",
-            "type": "string"
-          },
-          "scheduled_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scheduled At"
-          },
-          "scope_kind": {
-            "title": "Scope Kind",
-            "type": "string"
-          },
-          "sequence_number": {
-            "title": "Sequence Number",
-            "type": "integer"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "trigger_reason": {
-            "title": "Trigger Reason",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "org_id",
-          "pr_id",
-          "status",
-          "trigger_reason",
-          "destination",
-          "scope_kind",
-          "commit_sha_at_start",
-          "sequence_number",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "ReviewJob",
-        "type": "object"
-      },
       "Role": {
         "description": "Three-tier org role; Owner >= Admin >= Builder.\n\n`OWNER` — full control incl. org deletion, billing, SSO config.\n`ADMIN` — Owner powers minus deleting the org or removing other Owners.\n`BUILDER` — read findings, post replies, trigger reviews, manage own acks.",
         "enum": [
@@ -6333,86 +6245,6 @@
         ]
       }
     },
-    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
-      "get": {
-        "description": "Per-ticket review history.",
-        "operationId": "jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ReviewJob"
-                  },
-                  "title": "Response Jobs By Ticket Api Reviewer Jobs By Ticket  Ticket Id  Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Jobs By Ticket",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
     "/api/reviewer/metrics": {
       "get": {
         "description": "Aggregate review counters.",
@@ -7300,7 +7132,7 @@
     },
     "/api/tickets/{ticket_id}": {
       "get": {
-        "description": "Per-ticket detail with the enrichment: `stages[]` (projected from\n`workflow_executions`) + `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `stages: [{name, state, attempt_count, current_attempt, started_at,\n   completed_at, workflow_execution_id}]` — one entry per workflow run\n   on the ticket, newest first.\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.",
+        "description": "Per-ticket detail with the enrichment: `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.\n\nWorkflow-run data is served by the dedicated\n`GET /api/tickets/{id}/workflow-runs` endpoint.",
         "operationId": "detail_api_tickets__ticket_id__get",
         "parameters": [
           {
