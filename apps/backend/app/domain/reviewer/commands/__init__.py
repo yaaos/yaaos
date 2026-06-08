@@ -85,8 +85,8 @@ class CodeReview:
     ) -> UUID:
         from uuid import UUID as _UUID  # noqa: PLC0415
 
-        from app.domain import coding_agent  # noqa: PLC0415
-        from app.domain.coding_agent import (  # noqa: PLC0415
+        from app.core import coding_agent  # noqa: PLC0415
+        from app.core.coding_agent import (  # noqa: PLC0415
             ReviewContext,
             create_run,
             finding_output_schema,
@@ -339,7 +339,7 @@ class PostFindings(_LocalReviewCommand):
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
         stdout_raw = inputs.get("stdout") or ""
 
-        from app.domain import coding_agent  # noqa: PLC0415
+        from app.core import coding_agent  # noqa: PLC0415
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
         from app.domain.tickets import PullRequestNotFoundError, get_pull_request  # noqa: PLC0415
@@ -385,7 +385,7 @@ class PostFindings(_LocalReviewCommand):
             return Outcome.success(outputs={"admitted_count": 0})
 
         try:
-            from app.domain.coding_agent import get_run_id_for_workflow_step  # noqa: PLC0415
+            from app.core.coding_agent import get_run_id_for_workflow_step  # noqa: PLC0415
 
             async with db_session() as s:
                 # Look up the run created by the preceding CodeReview step so

@@ -18,8 +18,7 @@ from typing import Any
 
 import structlog
 
-from app.core.workspace import Workspace
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
     AnswerQuestionContext,
@@ -40,6 +39,7 @@ from app.domain.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.workspace import Workspace
 
 log = structlog.get_logger("testing.stub_coding_agent")
 
@@ -204,7 +204,7 @@ class StubCodingAgentPlugin:
         `CodeReview.dispatch` don't need a real API key or DB settings row.
         """
         from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
-        from app.domain.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
+        from app.core.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
 
         del ctx, session
         return Invocation(
@@ -267,7 +267,7 @@ def wrap_all_registered_plugins() -> int:
     Binds a fresh registry with wrapped entries; never mutates the canonical
     registry dict.
     """
-    from app.domain.coding_agent import (  # noqa: PLC0415
+    from app.core.coding_agent import (  # noqa: PLC0415
         CodingAgentRegistry,
         bind_coding_agent_registry,
         current_coding_agent_registry,

@@ -92,7 +92,7 @@ Three concepts span all apps:
 2. `route_workflow` picks up; `CheckShouldReview` (Local). `ProvisionWorkspace` (Workspace) parks workflow in `awaiting_agent`, dispatches via `core/agent_gateway.enqueue_command`.
 3. Agent long-polls, runs operation, reports via `POST /api/v1/commands/{id}/events`. Backend's `record_agent_event` validates stale-claim guard, resolves `command_id → agent_commands.workflow_execution_id`, enqueues `handle_agent_event`.
 4. `handle_agent_event` clears claim, enqueues `route_workflow` → `CodeReview → PostFindings → CleanupWorkspace`.
-5. Every `InvokeClaudeCode` dispatch creates a `coding_agent_runs` row (`status=running`, started_at). The registered `CodingAgentRunSink` (in `domain/coding_agent`) fires on the matching terminal `AgentEvent`, calls the `claude_code` plugin's `parse_usage` + `render_activity` against the captured stdout, writes `status`/`exit_code`/`tokens_in`/`tokens_out`/`duration_ms` onto the run row, and persists the rendered `ActivityLog` JSONB to the partitioned `coding_agent_activity` table (weekly partitions, ~4-week TTL). `reviews.run_id` links each review to its run. See [`apps/backend/docs/domain_coding_agent.md`](../apps/backend/docs/domain_coding_agent.md).
+5. Every `InvokeClaudeCode` dispatch creates a `coding_agent_runs` row (`status=running`, started_at). The registered `CodingAgentRunSink` (in `core/coding_agent`) fires on the matching terminal `AgentEvent`, calls the `claude_code` plugin's `parse_usage` + `render_activity` against the captured stdout, writes `status`/`exit_code`/`tokens_in`/`tokens_out`/`duration_ms` onto the run row, and persists the rendered `ActivityLog` JSONB to the partitioned `coding_agent_activity` table (weekly partitions, ~4-week TTL). `reviews.run_id` links each review to its run. See [`apps/backend/docs/core_coding_agent.md`](../apps/backend/docs/core_coding_agent.md).
 6. Activity events from workspace flow over WebSocket only when a UI tab is subscribed.
 
 ### Test stack
@@ -106,7 +106,7 @@ Cluster-safe recurring tasks run in every worker process via `core/tasks.schedul
 - `scheduled_runs_prune` (daily, `0 0 * * *`, `core/tasks`) — deletes `scheduled_runs` rows >7 days old.
 - `identity_purge` (hourly, `0 * * * *`, `core/identity`) — purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION`.
 - `workspace_reaper` (per minute, `* * * * *`, `core/workspace`) — TTL expiry, idle-timeout, agent-loss detection, destroy retries.
-- `coding_agent_activity_partition_maintenance` (daily, `0 1 * * *`, `domain/coding_agent`) — creates the current ISO week + the next two partitions of `coding_agent_activity`, drops partitions >4 weeks old; raw partition DDL is in `core/database`.
+- `coding_agent_activity_partition_maintenance` (daily, `0 1 * * *`, `core/coding_agent`) — creates the current ISO week + the next two partitions of `coding_agent_activity`, drops partitions >4 weeks old; raw partition DDL is in `core/database`.
 
 See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
 

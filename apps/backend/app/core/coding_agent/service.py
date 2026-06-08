@@ -8,8 +8,7 @@ from typing import Any
 
 import structlog
 
-from app.core.workspace import Workspace
-from app.domain.coding_agent.types import (
+from app.core.coding_agent.types import (
     AnswerQuestionContext,
     AnswerQuestionResult,
     CodingAgentPlugin,
@@ -26,6 +25,7 @@ from app.domain.coding_agent.types import (
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.workspace import Workspace
 
 log = structlog.get_logger("coding_agent")
 

@@ -8,7 +8,7 @@ from uuid import UUID
 
 import pytest
 
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
     InvocationStatus,

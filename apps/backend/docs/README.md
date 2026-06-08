@@ -33,13 +33,13 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [core_sse](core_sse.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers; declares `/api/sse` as org-scoped. |
 | [core_identity](core_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 | [core_sessions](core_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints. |
+| [core_coding_agent](core_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
 
 ### Domain — business logic, vendor-neutral
 
 | Module | Responsibility |
 |---|---|
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
-| [domain_coding_agent](domain_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
 | [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
 | [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |

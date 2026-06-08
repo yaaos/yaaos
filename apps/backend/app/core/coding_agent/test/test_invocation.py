@@ -12,7 +12,7 @@ import json
 import pytest
 from pydantic import SecretStr
 
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     AnswerQuestionContext,
     FindingAnchor,
     InvocationMode,

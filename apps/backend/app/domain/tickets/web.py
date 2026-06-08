@@ -294,9 +294,9 @@ async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> di
     Cross-tenant safety: 404s when the execution does not belong to the
     ticket (and therefore not to the caller's org).
     """
+    from app.core.coding_agent import get_step_activity  # noqa: PLC0415
     from app.core.database import session as _db_session  # noqa: PLC0415
     from app.core.workflow import get_execution_summary  # noqa: PLC0415
-    from app.domain.coding_agent import get_step_activity  # noqa: PLC0415
 
     org_id = _org()
     try:

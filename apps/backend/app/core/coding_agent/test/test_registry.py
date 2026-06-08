@@ -1,4 +1,4 @@
-"""Registry + dispatch tests for `domain/coding_agent`."""
+"""Registry + dispatch tests for `core/coding_agent`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
     InvocationStatus,
@@ -146,7 +146,7 @@ def test_list_registered_plugins_returns_insertion_order() -> None:
 
 def test_registry_items_returns_tuple_of_pairs() -> None:
     """items() returns a tuple of (plugin_id, plugin) pairs matching registered entries."""
-    from app.domain.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
+    from app.core.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
 
     plugin = _StubPlugin()
     register_plugin(plugin)
@@ -160,7 +160,7 @@ def test_registry_items_returns_tuple_of_pairs() -> None:
 
 def test_registry_items_is_immutable_snapshot() -> None:
     """Mutating the tuple returned by items() does not affect the registry."""
-    from app.domain.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
+    from app.core.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
 
     register_plugin(_StubPlugin())
     reg = current_coding_agent_registry()

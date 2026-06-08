@@ -29,11 +29,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from app.core.database import get_engine, get_sessionmaker, maintain_coding_agent_activity_partitions
-from app.core.tasks import get_broker, get_pending_task_names, schedule_task, tick_once
-from app.domain.coding_agent.partition_maintenance import (
+from app.core.coding_agent.partition_maintenance import (
     coding_agent_activity_partition_maintenance,
 )
+from app.core.database import get_engine, get_sessionmaker, maintain_coding_agent_activity_partitions
+from app.core.tasks import get_broker, get_pending_task_names, schedule_task, tick_once
 
 _SCHEDULE_ID = "coding_agent_activity_partition_maintenance"
 _TASK_NAME = "coding_agent_activity_partition_maintenance"

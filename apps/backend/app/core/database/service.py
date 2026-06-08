@@ -202,7 +202,7 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.domain.tickets.models",
         "app.domain.lessons.models",
         "app.domain.reviewer.models",
-        "app.domain.coding_agent.models",
+        "app.core.coding_agent.models",
     ):
         importlib.import_module(mod)
     await conn.run_sync(Base.metadata.create_all)
@@ -1385,7 +1385,7 @@ async def _apply_create_coding_agent_runs(conn) -> None:  # type: ignore[no-unty
     """
     import importlib  # noqa: PLC0415
 
-    importlib.import_module("app.domain.coding_agent.models")
+    importlib.import_module("app.core.coding_agent.models")
     new_tables = [Base.metadata.tables["coding_agent_runs"]]
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 

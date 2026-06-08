@@ -7,7 +7,7 @@ by the integration tests in `test_pr_review_v1_e2e_service.py`.
 
 from __future__ import annotations
 
-from app.domain.coding_agent import ReportedFinding
+from app.core.coding_agent import ReportedFinding
 from app.plugins.claude_code.service import _compute_state_v2
 
 

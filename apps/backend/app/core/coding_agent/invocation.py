@@ -2,7 +2,7 @@
 payload for each of the five reviewer task modes.
 
 The wire-layer `InvokeClaudeCodeCommand.invocation` is `dict[str, Any]` —
-intentionally permissive because shape ownership is in `domain/coding_agent`,
+intentionally permissive because shape ownership is in `core/coding_agent`,
 not the wire. This module is that owner.
 
 The Go workspace agent unmarshals the dict, reads the `exec` sub-block
@@ -47,7 +47,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, SecretStr
 
-from app.domain.coding_agent.prompts import (
+from app.core.coding_agent.prompts import (
     AnswerQuestionDto,
     FindingDraftList,
     StaleCheckDto,
@@ -58,7 +58,7 @@ from app.domain.coding_agent.prompts import (
     assemble_verify_fix_prompt,
     schema_appendix,
 )
-from app.domain.coding_agent.types import (
+from app.core.coding_agent.types import (
     AnswerQuestionContext,
     IncrementalReviewContext,
     ReviewContext,

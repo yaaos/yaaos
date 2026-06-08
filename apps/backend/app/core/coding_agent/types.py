@@ -29,7 +29,6 @@ from pydantic import BaseModel, Field
 from app.core.agent_gateway import InvokeClaudeCodeLimits
 from app.core.vcs import Diff, VCSPullRequest
 from app.core.workspace import HealthStatus, Workspace
-from app.domain.lessons import Lesson
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,13 +209,18 @@ class IncrementalReviewContext(BaseModel):
 
     Prior findings passed so the agent can avoid re-raising issues already
     known.
+
+    `lessons` is typed `list[Any]` to avoid a core→domain import; callers
+    supply `domain/lessons.Lesson` objects, which satisfy the duck-type
+    access in `prompts.assemble_incremental_review_prompt` (`.id`, `.title`,
+    `.body`).
     """
 
     pr: VCSPullRequest
     diff: Diff
     prev_sha: str
     head_sha: str
-    lessons: list[Lesson] = []
+    lessons: list[Any] = []
     language_hint: str | None = None
     prior_open_finding_summaries: list[str] = []
     prior_acknowledged_finding_summaries: list[str] = []

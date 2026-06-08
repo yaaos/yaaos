@@ -19,10 +19,10 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
-from app.domain.coding_agent.types import ActivityLog, Usage
+from app.core.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
+from app.core.coding_agent.types import ActivityLog, Usage
 
-log = structlog.get_logger("domain.coding_agent.run_service")
+log = structlog.get_logger("core.coding_agent.run_service")
 
 
 async def create_run(

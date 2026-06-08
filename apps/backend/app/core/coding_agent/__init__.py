@@ -1,4 +1,4 @@
-"""domain/coding_agent — Protocol + registry for coding-agent CLI plugins.
+"""core/coding_agent — Protocol + registry for coding-agent CLI plugins.
 
 The Protocol exposes five task modes — `review` (full-review),
 `incremental_review` (prev_sha..head only), `verify_fix` (is the finding still
@@ -14,9 +14,9 @@ from app.core.agent_gateway import register_run_sink as _register_run_sink
 # Import the partition-maintenance module for its `@scheduled` side effect —
 # registers the daily `coding_agent_activity_partition_maintenance` task with
 # the broker + scheduler registry at import time.
-from app.domain.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
-from app.domain.coding_agent.invocation import InvocationMode, build_invocation
-from app.domain.coding_agent.prompts import (
+from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
+from app.core.coding_agent.invocation import InvocationMode, build_invocation
+from app.core.coding_agent.prompts import (
     AnswerQuestionDto,
     FindingDraftList,
     StaleCheckDto,
@@ -28,15 +28,15 @@ from app.domain.coding_agent.prompts import (
     finding_output_schema,
     schema_appendix,
 )
-from app.domain.coding_agent.run_service import (
+from app.core.coding_agent.run_service import (
     create_run,
     finalize_run,
     get_run_id_for_command,
     get_run_id_for_workflow_step,
     get_step_activity,
 )
-from app.domain.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
-from app.domain.coding_agent.service import (
+from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
+from app.core.coding_agent.service import (
     CodingAgentRegistry,
     answer_question,
     bind_coding_agent_registry,
@@ -53,7 +53,7 @@ from app.domain.coding_agent.service import (
     validate_config,
     verify_fix,
 )
-from app.domain.coding_agent.types import (
+from app.core.coding_agent.types import (
     ActivityEvent,
     ActivityLog,
     AnswerQuestionContext,

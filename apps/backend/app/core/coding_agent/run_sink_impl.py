@@ -1,6 +1,6 @@
 """Concrete implementation of `AgentRunSink`.
 
-Registered by `domain/coding_agent.__init__` at import time.
+Registered by `core/coding_agent.__init__` at import time.
 Fires only on `InvokeClaudeCode` terminal events — all other command kinds
 are silently no-ops so the sink can be registered without per-kind checks
 in `agent_gateway`.
@@ -18,11 +18,11 @@ from uuid import UUID
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.coding_agent.run_service import finalize_run, get_run_id_for_command
-from app.domain.coding_agent.service import get_plugin
-from app.domain.coding_agent.types import ActivityLog, Usage
+from app.core.coding_agent.run_service import finalize_run, get_run_id_for_command
+from app.core.coding_agent.service import get_plugin
+from app.core.coding_agent.types import ActivityLog, Usage
 
-log = structlog.get_logger("domain.coding_agent.run_sink")
+log = structlog.get_logger("core.coding_agent.run_sink")
 
 # Only this command kind produces run rows.
 _INVOKE_CLAUDE_CODE_KIND = "InvokeClaudeCode"

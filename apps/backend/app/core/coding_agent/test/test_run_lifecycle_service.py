@@ -17,16 +17,16 @@ import pytest
 from sqlalchemy import select, text
 
 import app.web  # noqa: F401 — registers all models so FK metadata resolves correctly
-from app.domain.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
-from app.domain.coding_agent.run_service import (
+from app.core.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
+from app.core.coding_agent.run_service import (
     create_run,
     finalize_run,
     get_run_id_for_command,
     get_run_id_for_workflow_step,
     get_step_activity,
 )
-from app.domain.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
-from app.domain.coding_agent.types import ActivityEvent, ActivityLog, Usage
+from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
+from app.core.coding_agent.types import ActivityEvent, ActivityLog, Usage
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

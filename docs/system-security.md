@@ -103,7 +103,7 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
-| Activity events leaking source content | Not yet defended — WebSocket plumbing exists but no pre-renderer audit on `domain/coding_agent` ActivityEvents. |
+| Activity events leaking source content | Not yet defended — WebSocket plumbing exists but no pre-renderer audit on `core/coding_agent` ActivityEvents. |
 | Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by workflow state-machine tests. |
 
 ## Not defended against (yet)

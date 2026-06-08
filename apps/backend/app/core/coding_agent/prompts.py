@@ -1,6 +1,6 @@
 """Prompt assembly + structured-output DTOs for the reviewer sub-modes.
 
-The per-mode prompt builders live in the domain rather than inside
+The per-mode prompt builders live in core rather than inside
 `plugins/claude_code/service.py` because:
 
 1. `build_invocation` ships the literal `{argv, stdin, env}` exec
@@ -10,8 +10,8 @@ The per-mode prompt builders live in the domain rather than inside
    prompt-assembly functions can't sit inside the plugin (Tach: domain
    doesn't import plugins).
 2. `plugins/claude_code` is the only renderer, so keeping them in the
-   domain is neutral on the in-process path — the plugin imports the
-   same names from the domain.
+   core is neutral on the in-process path — the plugin imports the
+   same names from the core.
 
 `assemble_incremental_review_prompt`, `assemble_verify_fix_prompt`,
 `assemble_stale_check_prompt`, `assemble_answer_question_prompt` + the
@@ -29,12 +29,16 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.domain.coding_agent.types import (
+from app.core.coding_agent.types import (
     AnswerQuestionContext,
     IncrementalReviewContext,
     StaleCheckContext,
     VerifyFixContext,
 )
+
+# `lessons` in IncrementalReviewContext carries `domain/lessons.Lesson` objects
+# at runtime (duck-typed as `Any`). Access only `.id`, `.title`, `.body` here.
+
 
 # ── Prompt-template loader ───────────────────────────────────────────────
 
@@ -179,7 +183,7 @@ def finding_output_schema() -> dict:  # type: ignore[type-arg]
 
     Single source of truth: generated from `FindingDraftList.model_json_schema()`.
     Consumers: the skill-invocation prompt (schema appendix) and the skills
-    popover endpoint. `ReportedFinding` in `domain/coding_agent/types.py` is
+    popover endpoint. `ReportedFinding` in `core/coding_agent/types.py` is
     the lenient raw-string parse twin; a unit test pins its field set to this.
     """
     return FindingDraftList.model_json_schema()

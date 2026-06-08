@@ -17,7 +17,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.coding_agent import ReportedFinding
+from app.core.coding_agent import ReportedFinding
 from app.domain.reviewer.models import FindingRow, ReviewRow
 from app.domain.reviewer.types import Confidence, Finding, Review, ReviewScope, Severity
 

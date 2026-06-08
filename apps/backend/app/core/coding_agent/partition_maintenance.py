@@ -21,7 +21,7 @@ import structlog
 from app.core.database import maintain_coding_agent_activity_partitions
 from app.core.tasks import scheduled
 
-log = structlog.get_logger("domain.coding_agent.partition_maintenance")
+log = structlog.get_logger("core.coding_agent.partition_maintenance")
 
 
 async def maintain_partitions() -> None:

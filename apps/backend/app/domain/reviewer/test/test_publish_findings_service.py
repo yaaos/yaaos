@@ -19,8 +19,8 @@ from typing import get_args
 import pytest
 from sqlalchemy import select
 
+from app.core.coding_agent import ReportedFinding, finding_output_schema
 from app.core.vcs import VCSPullRequest
-from app.domain.coding_agent import ReportedFinding, finding_output_schema
 from app.domain.reviewer import publish_findings
 from app.domain.reviewer.models import FindingRow
 from app.domain.reviewer.types import Confidence, Severity

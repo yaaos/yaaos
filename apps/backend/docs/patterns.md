@@ -497,8 +497,8 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 1. Load environment — `app.core.config`.
 2. Configure core infra — `app.core.database`, `app.core.observability`.
 3. Import webserver registry — `app.core.webserver` *before any module registers routes*.
-4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.vcs`, `app.core.workspace`.
-5. Domain modules in dependency order — types first (lessons), then coding_agent, then leaf domain modules, then dependents.
+4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
+5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
 6. Plugins — `claude_code`, `github`.
 7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 8. Build the FastAPI app — `webserver.create_app()`.

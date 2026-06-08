@@ -25,7 +25,7 @@ observability.configure(role="app")
 from app.core import webserver  # noqa: E402
 
 # 4. Core modules whose plugins are domain-facing.
-from app.core import audit_log, vcs, workspace  # noqa: F401, E402
+from app.core import audit_log, coding_agent, vcs, workspace  # noqa: F401, E402
 
 # 4a. workflow engine + agent gateway. Workflow engine registers the
 # three taskiq task names at import; agent_gateway registers `/v1/*` routes.
@@ -54,11 +54,9 @@ from app.domain.orgs import audit_web as _orgs_audit_web  # noqa: F401, E402
 from app.domain.orgs import sso_web as _orgs_sso_web  # noqa: F401, E402
 from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
 
-# 5. Domain modules — order: types first (lessons), then coding_agent
-#    (which references vcs + lessons types), then leaf domain modules,
+# 5. Domain modules — order: types first (lessons), then leaf domain modules,
 #    then domain modules that depend on others.
 from app.domain import lessons  # noqa: F401, E402
-from app.domain import coding_agent  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 

@@ -13,8 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.core.workspace import Workspace
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     AnswerQuestionContext,
     AnswerQuestionResult,
     HealthStatus,
@@ -32,6 +31,7 @@ from app.domain.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.workspace import Workspace
 
 _TELEMETRY = InvocationTelemetry(tokens_in=0, tokens_out=0, latency_ms=0)
 
@@ -172,7 +172,7 @@ def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[
     Binds a fresh registry copy with the fake substituted; restores the prior
     binding on exit. Never mutates the canonical registry dict.
     """
-    from app.domain.coding_agent import (  # noqa: PLC0415
+    from app.core.coding_agent import (  # noqa: PLC0415
         bind_coding_agent_registry,
         current_coding_agent_registry,
     )

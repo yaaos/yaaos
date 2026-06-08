@@ -90,8 +90,8 @@ def _canonical_registries():
         wrap_all_registered_plugins()
         wrap_all_registered_workspace_providers()
 
+    from app.core.coding_agent import current_coding_agent_registry  # noqa: PLC0415
     from app.core.workspace import current_workspace_registry  # noqa: PLC0415
-    from app.domain.coding_agent import current_coding_agent_registry  # noqa: PLC0415
 
     class _Snapshot:
         coding_agent = current_coding_agent_registry().copy()
@@ -109,8 +109,8 @@ async def plugin_registries_isolation(_canonical_registries) -> None:
     affects its own copy; the next test rebinds from the canonical snapshot —
     no restore, no leak, no order dependence.
     """
+    from app.core.coding_agent import bind_coding_agent_registry  # noqa: PLC0415
     from app.core.workspace import bind_workspace_registry  # noqa: PLC0415
-    from app.domain.coding_agent import bind_coding_agent_registry  # noqa: PLC0415
 
     bind_coding_agent_registry(_canonical_registries.coding_agent.copy())
     bind_vcs_registry(_canonical_registries.vcs.copy())

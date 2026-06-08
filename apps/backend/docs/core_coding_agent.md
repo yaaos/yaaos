@@ -1,4 +1,4 @@
-# domain/coding_agent
+# core/coding_agent
 
 > Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, and per-mode prompt assembly.
 
@@ -8,7 +8,7 @@ Owns: `CodingAgentPlugin` Protocol, per-mode context/result types (`ExecSpec`, `
 
 Does NOT own: prompt assembly for the remote-dispatch full-review path (that's `plugins/claude_code.build_review_invocation`), output-format choice, workspace mechanics.
 
-Lives in `domain/` (not `core/`) because return types reference `domain/lessons.Lesson` in the in-process path.
+Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Protocol and is depended on by `plugins/`. `IncrementalReviewContext.lessons` is typed `list[Any]` at the core boundary to avoid a core→domain import; callers supply `domain/lessons.Lesson` objects, which satisfy the duck-typed `.id`/`.title`/`.body` access in `prompts.py`.
 
 ## Why / invariants
 
@@ -20,7 +20,7 @@ Lives in `domain/` (not `core/`) because return types reference `domain/lessons.
 
 ## `CodingAgentPlugin` Protocol
 
-Signatures in `app/domain/coding_agent/types.py`.
+Signatures in `app/core/coding_agent/types.py`.
 
 ### In-process task methods
 
@@ -48,11 +48,11 @@ Each takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnA
 
 ## Registry
 
-`app/domain/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
+`app/core/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
 
 ## Run lifecycle
 
-`app/domain/coding_agent/models.py` owns the `coding_agent_runs` table. One row per `InvokeClaudeCode` agent command; created at dispatch and finalized when the terminal `AgentEvent` arrives.
+`app/core/coding_agent/models.py` owns the `coding_agent_runs` table. One row per `InvokeClaudeCode` agent command; created at dispatch and finalized when the terminal `AgentEvent` arrives.
 
 ### Table — `coding_agent_runs`
 
@@ -85,11 +85,11 @@ Index: `(org_id, command_kind, created_at)` for dashboard-style aggregations.
 
 ### `AgentRunSink` (IoC seam)
 
-`core/agent_gateway` defines the `AgentRunSink` Protocol and a single-slot registry (`register_run_sink` / `get_run_sink` / `clear_run_sink`) in `app/core/agent_gateway/run_sink.py`. This module registers `CodingAgentRunSinkImpl()` at import time via the `domain/coding_agent.__init__` side effect. `agent_gateway.record_agent_event` calls the registered sink on every terminal `AgentEvent`; the sink no-ops silently for non-`InvokeClaudeCode` command kinds. For `InvokeClaudeCode` runs it reads the captured stdout from `event.outputs`, calls the registered `claude_code` plugin's `parse_usage` + `render_activity`, and passes the results into `finalize_run`. See [core_agent_gateway.md](core_agent_gateway.md).
+`core/agent_gateway` defines the `AgentRunSink` Protocol and a single-slot registry (`register_run_sink` / `get_run_sink` / `clear_run_sink`) in `app/core/agent_gateway/run_sink.py`. This module registers `CodingAgentRunSinkImpl()` at import time via the `core/coding_agent.__init__` side effect. `agent_gateway.record_agent_event` calls the registered sink on every terminal `AgentEvent`; the sink no-ops silently for non-`InvokeClaudeCode` command kinds. For `InvokeClaudeCode` runs it reads the captured stdout from `event.outputs`, calls the registered `claude_code` plugin's `parse_usage` + `render_activity`, and passes the results into `finalize_run`. See [core_agent_gateway.md](core_agent_gateway.md).
 
 ### Table — `coding_agent_activity`
 
-Partitioned by RANGE on `created_at` (weekly child partitions, ~4-week TTL). This is the codebase's first partitioned table; the parent table and DDL live in [`core/database`](core_database.md). Maintenance — daily `@scheduled` task `coding_agent_activity_partition_maintenance` (cron `0 1 * * *`, in `domain/coding_agent/partition_maintenance.py`) — calls `core/database.maintain_coding_agent_activity_partitions()`: creates partitions for the current week + the next two and drops partitions whose week is more than 4 weeks before the current week. Idempotent: `CREATE TABLE IF NOT EXISTS` / `DROP TABLE IF EXISTS`. Raw partition DDL lives in `core/database` (the only module the table-access checker allows raw SQL against `coding_agent_activity`); this module owns scheduling only.
+Partitioned by RANGE on `created_at` (weekly child partitions, ~4-week TTL). This is the codebase's first partitioned table; the parent table and DDL live in [`core/database`](core_database.md). Maintenance — daily `@scheduled` task `coding_agent_activity_partition_maintenance` (cron `0 1 * * *`, in `core/coding_agent/partition_maintenance.py`) — calls `core/database.maintain_coding_agent_activity_partitions()`: creates partitions for the current week + the next two and drops partitions whose week is more than 4 weeks before the current week. Idempotent: `CREATE TABLE IF NOT EXISTS` / `DROP TABLE IF EXISTS`. Raw partition DDL lives in `core/database` (the only module the table-access checker allows raw SQL against `coding_agent_activity`); this module owns scheduling only.
 
 | Column | Purpose |
 |---|---|
@@ -107,9 +107,9 @@ The row's SQLAlchemy mapped class (`CodingAgentActivityRow`) is declared on a de
 
 ## How it's tested
 
-- `app/domain/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, `validate_config` forwarding, `health_check_all` exception-to-unhealthy.
-- `app/domain/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
-- `app/domain/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row), run-sink no-op for non-`InvokeClaudeCode`, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
+- `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, `validate_config` forwarding, `health_check_all` exception-to-unhealthy.
+- `app/core/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
+- `app/core/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row), run-sink no-op for non-`InvokeClaudeCode`, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `parse_usage` (extracts tokens + duration, tolerates missing usage block, empty stream) and `render_activity` (monotonic seq across the full stream, null-render filtering, empty-stream → empty log).
 - `app/core/database/test/test_coding_agent_activity_migration.py` — verifies the parent is RANGE-partitioned, ≥3 weekly child partitions exist, and `_apply_create_coding_agent_activity` is idempotent under double-fire.
 - Plugin-specific behaviour in `app/plugins/<plugin>/test/`.

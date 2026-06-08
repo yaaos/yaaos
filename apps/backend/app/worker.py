@@ -33,6 +33,7 @@ def main() -> int:
 
     _bind_inbox(_EmailInbox())
 
+    import app.core.coding_agent  # noqa: PLC0415
     import app.core.workflow  # noqa: PLC0415
     import app.domain.reviewer  # noqa: PLC0415
 

@@ -6,7 +6,7 @@
 
 Owns review runs and the findings they produce: `Review`s and `Finding`s. Findings carry the canonical schema — `severity ∈ {blocker, should_fix, nit}`, `confidence ∈ {verified, plausible, speculative}`, `category`, `rationale`, `rule_violated`, `rule_source`, `suggested_fix`, optional `file`/`line`, persisted `finding_display_id`.
 
-Does NOT call an LLM for code review — `domain/coding_agent` + `plugins/claude_code` do that. Reviewer is skill-agnostic: it dispatches the review and writes whatever findings the skill emits, validating against the canonical schema.
+Does NOT call an LLM for code review — `core/coding_agent` + `plugins/claude_code` do that. Reviewer is skill-agnostic: it dispatches the review and writes whatever findings the skill emits, validating against the canonical schema.
 
 ## Workflows + commands
 
@@ -36,7 +36,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Canonical output schema
 
-`finding_output_schema() -> dict` (in `domain/coding_agent.__all__`) is the single source of truth — generated from a Pydantic model's `model_json_schema()`. The skill-invocation prompt appends this schema as a strict output contract; `PostFindings` re-validates the returned findings against it. `ReportedFinding` in `domain/coding_agent/types.py` is the lenient raw-string parse twin; a unit test pins its field set to `finding_output_schema()`.
+`finding_output_schema() -> dict` (in `core/coding_agent.__all__`) is the single source of truth — generated from a Pydantic model's `model_json_schema()`. The skill-invocation prompt appends this schema as a strict output contract; `PostFindings` re-validates the returned findings against it. `ReportedFinding` in `core/coding_agent/types.py` is the lenient raw-string parse twin; a unit test pins its field set to `finding_output_schema()`.
 
 ## Invariants + why
 
@@ -53,7 +53,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Vocabulary
 
-- `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `domain/coding_agent` (the agent's output type).
+- `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `core/coding_agent` (the agent's output type).
 - `Finding` — validated, persisted finding. Lives in `domain/reviewer`.
 - `finding_display_id` — per-PR monotonic integer; rendered as `<category-prefix>-<id>` (`sec-3`, `arch-7`).
 - `Review` — one row per PR review run.

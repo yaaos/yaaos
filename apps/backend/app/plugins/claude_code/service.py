@@ -23,10 +23,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import select
 
-from app.core.config import get_settings
-from app.core.database import session as db_session
-from app.core.workspace import Workspace, WorkspaceExecError
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
     AnswerQuestionContext,
@@ -51,33 +48,36 @@ from app.domain.coding_agent import (
     VerifyFixResult,
     register_plugin,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     AnswerQuestionDto as _AnswerQuestionDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     FindingDraftList as _FindingDraftList,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     StaleCheckDto as _StaleCheckDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     VerifyFixDto as _VerifyFixDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_answer_question_prompt as _assemble_answer_question_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_stale_check_prompt as _assemble_stale_check_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_verify_fix_prompt as _assemble_verify_fix_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     schema_appendix as _schema_appendix,
 )
+from app.core.config import get_settings
+from app.core.database import session as db_session
+from app.core.workspace import Workspace, WorkspaceExecError
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")

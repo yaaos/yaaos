@@ -22,6 +22,10 @@ path = "app.core.byok"
 depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
+path = "app.core.coding_agent"
+depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workspace"]
+
+[[modules]]
 path = "app.core.config"
 depends_on = []
 
@@ -94,10 +98,6 @@ path = "app.core.workspace"
 depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
-path = "app.domain.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workspace", "app.domain.lessons"]
-
-[[modules]]
 path = "app.domain.intake"
 depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.domain.tickets"]
 
@@ -115,19 +115,19 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.observability", "app.core.saml", "app.core.sessions", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.domain.coding_agent"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.observability", "app.core.saml", "app.core.sessions", "app.core.tenancy", "app.core.vcs", "app.core.webserver"]
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.coding_agent", "app.domain.orgs", "app.domain.tickets", "app.plugins.github"]
+depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.tickets", "app.plugins.github"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -155,7 +155,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.coding_agent", "app.core.workspace"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -163,7 +163,7 @@ depends_on = ["app.core.tasks", "app.core.webserver"]
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.workspace", "app.domain.coding_agent"]
+depends_on = ["app.core.agent_gateway", "app.core.coding_agent", "app.core.workspace"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -327,6 +327,72 @@ expose = [
   "validate",
 ]
 from = ["app.core.byok"]
+
+[[interfaces]]
+expose = [
+  "ActivityEvent",
+  "ActivityLog",
+  "AnswerQuestionContext",
+  "AnswerQuestionDto",
+  "AnswerQuestionResult",
+  "CodingAgentCacheMiss",
+  "CodingAgentError",
+  "CodingAgentPlugin",
+  "CodingAgentRegistry",
+  "CodingAgentRunSinkImpl",
+  "ExecSpec",
+  "FindingAnchor",
+  "FindingDraftList",
+  "HealthStatus",
+  "IncrementalReviewContext",
+  "IncrementalReviewResult",
+  "Invocation",
+  "InvocationMode",
+  "InvocationStatus",
+  "InvocationTelemetry",
+  "OnActivity",
+  "PluginNotFoundError",
+  "PriorThreadMessage",
+  "ReportedFinding",
+  "ReviewContext",
+  "ReviewResult",
+  "Severity",
+  "StaleCheckContext",
+  "StaleCheckDto",
+  "StaleCheckResult",
+  "Usage",
+  "ValidationResult",
+  "VerifyFixContext",
+  "VerifyFixDto",
+  "VerifyFixResult",
+  "answer_question",
+  "assemble_answer_question_prompt",
+  "assemble_incremental_review_prompt",
+  "assemble_stale_check_prompt",
+  "assemble_verify_fix_prompt",
+  "bind_coding_agent_registry",
+  "build_invocation",
+  "create_run",
+  "current_coding_agent_registry",
+  "finalize_run",
+  "finding_output_schema",
+  "get_plugin",
+  "get_run_id_for_command",
+  "get_run_id_for_workflow_step",
+  "get_step_activity",
+  "health_check_all",
+  "incremental_review",
+  "list_registered_plugins",
+  "register_coding_agent_plugin",
+  "register_plugin",
+  "registered_plugin_ids",
+  "review",
+  "schema_appendix",
+  "stale_check",
+  "validate_config",
+  "verify_fix",
+]
+from = ["app.core.coding_agent"]
 
 [[interfaces]]
 expose = ["Settings", "get_settings"]
@@ -687,72 +753,6 @@ expose = [
   "update_workspace_status",
 ]
 from = ["app.core.workspace"]
-
-[[interfaces]]
-expose = [
-  "ActivityEvent",
-  "ActivityLog",
-  "AnswerQuestionContext",
-  "AnswerQuestionDto",
-  "AnswerQuestionResult",
-  "CodingAgentCacheMiss",
-  "CodingAgentError",
-  "CodingAgentPlugin",
-  "CodingAgentRegistry",
-  "CodingAgentRunSinkImpl",
-  "ExecSpec",
-  "FindingAnchor",
-  "FindingDraftList",
-  "HealthStatus",
-  "IncrementalReviewContext",
-  "IncrementalReviewResult",
-  "Invocation",
-  "InvocationMode",
-  "InvocationStatus",
-  "InvocationTelemetry",
-  "OnActivity",
-  "PluginNotFoundError",
-  "PriorThreadMessage",
-  "ReportedFinding",
-  "ReviewContext",
-  "ReviewResult",
-  "Severity",
-  "StaleCheckContext",
-  "StaleCheckDto",
-  "StaleCheckResult",
-  "Usage",
-  "ValidationResult",
-  "VerifyFixContext",
-  "VerifyFixDto",
-  "VerifyFixResult",
-  "answer_question",
-  "assemble_answer_question_prompt",
-  "assemble_incremental_review_prompt",
-  "assemble_stale_check_prompt",
-  "assemble_verify_fix_prompt",
-  "bind_coding_agent_registry",
-  "build_invocation",
-  "create_run",
-  "current_coding_agent_registry",
-  "finalize_run",
-  "finding_output_schema",
-  "get_plugin",
-  "get_run_id_for_command",
-  "get_run_id_for_workflow_step",
-  "get_step_activity",
-  "health_check_all",
-  "incremental_review",
-  "list_registered_plugins",
-  "register_coding_agent_plugin",
-  "register_plugin",
-  "registered_plugin_ids",
-  "review",
-  "schema_appendix",
-  "stale_check",
-  "validate_config",
-  "verify_fix",
-]
-from = ["app.domain.coding_agent"]
 
 [[interfaces]]
 expose = [

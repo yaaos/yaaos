@@ -52,8 +52,8 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 Two GET routes back the Ticket page's workflow view (see `apps/backend/app/domain/tickets/web.py`):
 
 - `GET /api/tickets/{ticket_id}/workflow-runs` — projects every workflow execution attached to the ticket via [`core/workflow.list_run_views_for_ticket`](core_workflow.md), oldest first. Each run carries `{id, workflow_name, workflow_version, state, current_step_id, failure_reason, created_at, updated_at, steps[]}`; each `step` carries `{step_id, command_kind, state, started_at, completed_at}`. 404 when the ticket is missing.
-- `GET /api/tickets/{ticket_id}/activity/{execution_id}/{step_id}` — returns `{activity: <log> | null}` via [`domain/coding_agent.get_step_activity`](domain_coding_agent.md). 404 when the `workflow_executions` row doesn't belong to the ticket — cross-tenant safe by construction. `null` when the partition has aged out (>4 weeks).
+- `GET /api/tickets/{ticket_id}/activity/{execution_id}/{step_id}` — returns `{activity: <log> | null}` via [`core/coding_agent.get_step_activity`](core_coding_agent.md). 404 when the `workflow_executions` row doesn't belong to the ticket — cross-tenant safe by construction. `null` when the partition has aged out (>4 weeks).
 
 The SPA invalidates the run-view query on every `workflow_state_changed` SSE event from [`core/sse`](core_sse.md).
 
-See [core_notifications.md](core_notifications.md), [core_sse.md](core_sse.md), [core_tasks.md](core_tasks.md), [core_workflow.md](core_workflow.md), [domain_coding_agent.md](domain_coding_agent.md).
+See [core_notifications.md](core_notifications.md), [core_sse.md](core_sse.md), [core_tasks.md](core_tasks.md), [core_workflow.md](core_workflow.md), [core_coding_agent.md](core_coding_agent.md).

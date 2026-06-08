@@ -1,6 +1,6 @@
 # plugins/claude_code
 
-> Wraps the Claude Code CLI as a `domain/coding_agent.CodingAgentPlugin`. Owns output parsing and Anthropic credentials.
+> Wraps the Claude Code CLI as a `core/coding_agent.CodingAgentPlugin`. Owns output parsing and Anthropic credentials.
 
 ## Scope
 
