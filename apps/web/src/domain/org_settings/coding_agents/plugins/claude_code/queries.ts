@@ -1,35 +1,6 @@
 import { apiFetch } from "@core/api/public/client";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
-export interface AgentConfig {
-  name: string;
-  prompt: string;
-  model: string;
-  version: string;
-  effort: string;
-  updated_at: string;
-  // — system-prompt override toggle per E2a.2. Both optional
-  // so existing settings rows stay compatible.
-  use_default_system_prompt?: boolean;
-  system_prompt?: string | null;
-}
-
-export interface ClaudeCodeDefaults {
-  orchestrator: AgentConfig;
-  agents: AgentConfig[];
-  models: string[];
-  versions: string[];
-  efforts: string[];
-}
-
-export function useClaudeCodeDefaults() {
-  return useSuspenseQuery<ClaudeCodeDefaults>({
-    queryKey: ["claude_code", "defaults"],
-    queryFn: () => apiFetch<ClaudeCodeDefaults>("/api/claude_code/defaults"),
-    staleTime: 60_000,
-  });
-}
-
 export interface ByokProviderStatus {
   provider: string;
   status: "configured" | "not_set";

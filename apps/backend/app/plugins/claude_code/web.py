@@ -41,12 +41,11 @@ async def health() -> dict[str, object]:
 
 @router.get("/defaults", dependencies=[Depends(require(Action.CODING_AGENT_READ))])
 async def defaults_endpoint() -> dict:
-    """Code defaults for the orchestrator + sub-agents, plus the model /
-    version / effort dropdown enums. Imported at request time so a code
-    change to `defaults.py` surfaces on the next request — never cached."""
-    from app.plugins.claude_code.defaults import get_defaults  # noqa: PLC0415
+    """Model / effort dropdown enums for the Claude Code settings UI.
+    Imported at request time so a code change surfaces on the next request."""
+    from app.plugins.claude_code.defaults import EFFORTS, MODELS  # noqa: PLC0415
 
-    return get_defaults()
+    return {"models": list(MODELS), "efforts": list(EFFORTS)}
 
 
 register_routes(

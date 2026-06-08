@@ -180,6 +180,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("044_canonical_findings_schema", "canonical_findings_schema"),
     ("045_shed_workspace_columns", "shed_workspace_columns"),
     ("046_drop_skill_manifest_columns", "drop_skill_manifest_columns"),
+    ("047_drop_default_model", "drop_default_model"),
 )
 
 
@@ -1349,6 +1350,15 @@ async def _apply_drop_skill_manifest_columns(conn) -> None:  # type: ignore[no-u
     await conn.execute(text("ALTER TABLE claude_code_repos DROP COLUMN IF EXISTS enumerated_at"))
 
 
+async def _apply_drop_default_model(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `default_model` from `claude_code_settings`.
+
+    The orchestrator/subagent model is retired; `default_model` was the only
+    remaining reader column. Idempotent: DROP COLUMN IF EXISTS.
+    """
+    await conn.execute(text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS default_model"))
+
+
 async def _apply_shed_workspace_columns(conn) -> None:  # type: ignore[no-untyped-def]
     """Remove vestigial columns from `workspaces` and tighten `owning_agent_id`.
 
@@ -1502,6 +1512,8 @@ async def _apply_pending() -> None:
                 await _apply_shed_workspace_columns(conn)
             elif kind == "drop_skill_manifest_columns":
                 await _apply_drop_skill_manifest_columns(conn)
+            elif kind == "drop_default_model":
+                await _apply_drop_default_model(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

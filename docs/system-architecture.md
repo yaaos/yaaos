@@ -13,7 +13,7 @@
 ## Runtime topology
 
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
-- Claude Code CLI baked into the image; spawned once per review inside the ticket's workspace. The parent reviewer dispatches `yaaos-*` subagents via the Task tool. Subagent definitions are markdown files installed into `~/.claude/agents/` at bootstrap. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
+- Claude Code CLI baked into the workspace agent image; spawned once per review inside the ticket's workspace. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
 - OTel collector optional; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is gated on `VITE_OTEL_COLLECTOR_ENDPOINT`.
 

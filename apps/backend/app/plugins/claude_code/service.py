@@ -1,9 +1,6 @@
 """Claude Code CLI wrapper. Implements `domain/coding_agent.CodingAgentPlugin`.
 
 Vendor-only: this module talks to Anthropic's Claude Code CLI and nothing else.
-It spawns ONE parent reviewer per PR review. The parent dispatches yaaos-*
-subagents (installed by `installer.py` into `~/.claude/agents/`) via the Task
-tool, then synthesizes their findings by re-reading cited code.
 
 Test-mode (stub/replay) wrapping is handled by the `testing/` layer's
 `StubCodingAgentPlugin` — see `app.testing.stub_coding_agent`. The bootstrap
@@ -416,19 +413,12 @@ class ClaudeCodePlugin:
         return None
 
     def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        """Full Pydantic validation: orchestrator + agents shape, enums on
-        model/version/effort, agent count 1..8, name uniqueness within
-        agents. See `settings_schema.validate_settings`. Accepts an empty
-        dict and substitutes defaults so the picker's `POST /api/coding-
-        agents` install path doesn't have to pre-populate settings."""
-        from app.plugins.claude_code.defaults import get_defaults  # noqa: PLC0415
+        """Pydantic validation: `{mcp_proxy_ids}` shape.
+        See `settings_schema.validate_settings`. Accepts an empty dict."""
         from app.plugins.claude_code.settings_schema import (  # noqa: PLC0415
             validate_settings as _validate,
         )
 
-        if not settings:
-            d = get_defaults()
-            settings = {"orchestrator": d["orchestrator"], "agents": d["agents"]}
         return _validate(settings)
 
     async def _load_settings_for_invocation(self) -> tuple[SecretStr | None, str | None]:
@@ -556,12 +546,8 @@ class ClaudeCodePlugin:
             _MODEL,
             "--effort",
             _EFFORT,
-            # Task is required so the parent reviewer can dispatch yaaos-* subagents.
-            # Bash is restricted to read-only git commands so subagents can run
-            # `git diff <base_sha>..HEAD` themselves instead of yaaos inlining
-            # the entire diff into the prompt (saves tens of thousands of
-            # tokens on big PRs and avoids duplicating the diff across N
-            # subagent task briefs).
+            # Task is available for skill dispatch. Bash is restricted to
+            # read-only git commands.
             "--allowed-tools="
             + (
                 allowed_tools_override
@@ -1192,21 +1178,12 @@ def bootstrap() -> None:
     from app.core.byok import register_validator as _byok_register_validator  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor  # noqa: PLC0415
     from app.plugins.claude_code.byok_validator import validate_anthropic_key  # noqa: PLC0415
-    from app.plugins.claude_code.installer import install_subagents  # noqa: PLC0415
 
     register_plugin(_plugin)
     register_onboarding_contributor("anthropic_key_set", _onboarding_anthropic_key_set)
     # BYOK: the `/api/api-keys/anthropic/validate` endpoint dispatches to this
     # callable so core/byok stays free of provider-specific HTTP.
     _byok_register_validator("anthropic", validate_anthropic_key)
-    # Install yaaos-* subagent definitions so the parent reviewer can dispatch
-    # them via the Task tool. Static files, idempotent — fine to run on every
-    # backend startup. Future Docker-workspace isolation will move this per-
-    # workspace; today there's one HOME shared by all reviews.
-    try:
-        install_subagents()
-    except OSError as e:
-        log.warning("claude_code.subagent_install_failed", error=str(e))
 
 
 def get_plugin() -> ClaudeCodePlugin:

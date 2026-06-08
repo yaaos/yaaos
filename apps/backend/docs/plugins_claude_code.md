@@ -1,26 +1,22 @@
 # plugins/claude_code
 
-> Wraps the Claude Code CLI as a `domain/coding_agent.CodingAgentPlugin`. Owns parent dispatcher prompt, subagent installer, output parsing, and Anthropic credentials.
+> Wraps the Claude Code CLI as a `domain/coding_agent.CodingAgentPlugin`. Owns output parsing and Anthropic credentials.
 
 ## Scope
 
-Implements `CodingAgentPlugin` — in-process methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) and remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`), plus `validate_config` and `health_check`. Spawns one parent reviewer per run (in-process path) or produces an exec spec for the remote agent (remote-dispatch path). Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — in-process methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) and remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`), plus `validate_config` and `health_check`. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 ## Module architecture
 
 Singleton holds no decrypted credentials — settings loaded per-invocation so key rotation takes effect immediately.
 
-### Subagent installer (`installer.py`)
-
-`install_subagents()` reads the six markdown files in `app/domain/coding_agent/reviewers/` and writes them to `$HOME/.claude/agents/yaaos-*.md` with YAML frontmatter prepended. Idempotent; called from `bootstrap()`. The `yaaos-` prefix prevents collisions with any repo's own agents while leaving a deliberate override seam.
-
 ### Prompt files
 
-Per-mode prompts live in `prompts/` (`full_review.md`, `incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`). Loaded once at import via `_load_prompt(name)`. The `.md` files are the versioned source of truth.
+Per-mode prompts live in `prompts/` (`incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`). Loaded once at import via `_load_prompt(name)`. The `.md` files are the versioned source of truth.
 
 ### `build_review_invocation` — remote-dispatch exec spec
 
-Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind="code-review", exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
+Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (review instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind="code-review", exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
 
 ### `parse_review_output` — stream-json parse
 
@@ -28,10 +24,10 @@ Receives raw stdout from the agent's terminal event. Finds the terminal `type=re
 
 ### `review` — in-process pipeline (retained)
 
-Retained for future re-introduction. Builds the same argv/prompt as `build_review_invocation` but runs via the workspace `run_coding_agent_cli` call directly. Same `_prepare_invocation` → `_run_and_parse_envelope` structure as the other in-process modes.
+Retained for future re-introduction. Builds the same argv/prompt as `build_review_invocation` but runs via the workspace `run_coding_agent_cli` call directly.
 
-1. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles argv with `Task` in allowed tools, restricted Bash git commands. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`.
-2. **Assemble prompt** — review instructions + schema appendix. Diff is **not** inlined — agent runs `git diff base_sha..HEAD` itself.
+1. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles argv. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`.
+2. **Assemble prompt** — review instructions + schema appendix.
 3. **Run via workspace** — `WorkspaceExecError` → `AGENT_ERROR`; `timed_out=True` → `TIMEOUT`.
 4. **Parse stream-json events** — `_render_activity` maps known event shapes to `ActivityEvent`; unknown types skipped.
 5. **Strict-parse response** — JSON → `_FindingDraftList`. `_compute_state_v2`: empty → `APPROVED`; any `blocker` → `CHANGES_REQUESTED`; else `COMMENT`.
@@ -58,15 +54,16 @@ Never branches on env vars. When `YAAOS_CODING_AGENT_STUB` is set, `app/web.py` 
 
 ## Data owned
 
-`claude_code_settings` — one row per org: `encrypted_anthropic_api_key`, `default_model` (optional), `cli_path` (optional).
+`claude_code_settings` — one row per org: `encrypted_anthropic_api_key`, `cli_path` (optional).
 
 `claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `created_at`, `updated_at`.
 
 ## How it's tested
 
 Unit tests in `app/plugins/claude_code/test/`:
-- `test_prompt_and_state.py` — prompt assembly and verdict computation.
-- `test_installer.py` — installer writes frontmatter, is idempotent, leaves unrelated files alone.
+- `test_prompt_and_state.py` — verdict computation.
 - `test_stream_parsing.py` — `_parse_stream_events` handles well-formed streams, garbage interleaved with valid JSON, and partial streams (timeout case).
+- `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
+- `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
 
 CLI subprocess + envelope parsing + Anthropic auth probe exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1`.

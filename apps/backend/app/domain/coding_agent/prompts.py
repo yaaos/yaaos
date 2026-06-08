@@ -1,4 +1,4 @@
-"""Prompt assembly + structured-output DTOs for the five reviewer modes.
+"""Prompt assembly + structured-output DTOs for the reviewer sub-modes.
 
 The per-mode prompt builders live in the domain rather than inside
 `plugins/claude_code/service.py` because:
@@ -13,14 +13,12 @@ The per-mode prompt builders live in the domain rather than inside
    domain is neutral on the in-process path — the plugin imports the
    same names from the domain.
 
-Five `assemble_<mode>_prompt(ctx) -> str` functions + `schema_appendix(
-response_model) -> str` (which renders the JSON-schema STRICT footer the
-agent's response is expected to match). The four response DTOs
-(`FindingDraftList`, `VerifyFixDto`, `StaleCheckDto`, `AnswerQuestionDto`)
-live here too — they're the parse targets paired with each prompt.
+`assemble_incremental_review_prompt`, `assemble_verify_fix_prompt`,
+`assemble_stale_check_prompt`, `assemble_answer_question_prompt` + the
+`schema_appendix` footer. The four response DTOs (`FindingDraftList`,
+`VerifyFixDto`, `StaleCheckDto`, `AnswerQuestionDto`) live here too.
 
-The `prompts/*.md` template files live next to this module (versioned in
-the repo so PR review of prompt changes is direct).
+The `prompts/*.md` template files live next to this module.
 """
 
 from __future__ import annotations
@@ -34,7 +32,6 @@ from pydantic import BaseModel
 from app.domain.coding_agent.types import (
     AnswerQuestionContext,
     IncrementalReviewContext,
-    ReviewContext,
     StaleCheckContext,
     VerifyFixContext,
 )
@@ -51,89 +48,13 @@ def _load(name: str) -> str:
     return (_PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
 
 
-_PARENT_PROMPT_HEADER = _load("full_review")
 _INCREMENTAL_PROMPT_HEADER = _load("incremental_review")
 _VERIFY_FIX_PROMPT = _load("verify_fix")
 _STALE_CHECK_PROMPT = _load("stale_check")
 _ANSWER_QUESTION_PROMPT = _load("answer_question")
 
 
-_MCP_BROKEN_CREDS_ADDENDUM = (
-    "If an MCP tool returns `not_connected` or `broken_creds`, note the missing "
-    "context in your review and continue."
-)
-
-
 # ── Per-mode prompt assembly ─────────────────────────────────────────────
-
-
-def assemble_review_prompt(ctx: ReviewContext) -> str:
-    """Full-review parent prompt. Includes MCP context block when the
-    review has connected providers, language hint, PR metadata, and how
-    the parent should pull diffs itself + dispatch yaaos-* subagents.
-
-    The fingerprint dedup at admission (`aggregate.post_process_raw_findings`)
-    handles re-emission of the same finding across runs — we deliberately
-    do NOT tell the agent to skip prior comments because telling it to
-    "not duplicate" was fighting the persistence layer and starved the
-    re-observation signal."""
-    parts: list[str] = [_PARENT_PROMPT_HEADER, ""]
-    mcp = ctx.agent_config.get("mcp") if isinstance(ctx.agent_config, dict) else None
-    if mcp and mcp.get("servers"):
-        provider_names = sorted(s["provider"] for s in mcp["servers"])
-        parts.extend(
-            [
-                "## MCP context servers",
-                "The following MCP servers are connected for this review and may be "
-                f"called via the `mcp__<server>__<tool>` toolset: {', '.join(provider_names)}.",
-                _MCP_BROKEN_CREDS_ADDENDUM,
-                "",
-            ]
-        )
-    if ctx.language_hint:
-        parts.extend(
-            [
-                "## Repository language",
-                f"This repository is primarily {ctx.language_hint}.",
-                "",
-            ]
-        )
-    parts.extend(
-        [
-            "## Pull request",
-            f"### Title\n{ctx.pr.title}",
-            f"### Description\n{ctx.pr.body or '(no description)'}",
-            "",
-            "## Branch",
-            f"- Base: `{ctx.pr.base_branch}` at `{ctx.pr.base_sha}` (the branch this PR will merge into)",
-            f"- HEAD: `{ctx.pr.head_branch}` at `{ctx.pr.head_sha}` (currently checked out)",
-            "",
-            "## How to inspect the changes",
-            "Run git commands yourself — the diff is NOT inlined below. You have Bash access "
-            "restricted to read-only git commands (`git diff`, `git log`, `git show`, `git blame`, "
-            "`git ls-files`, `git rev-parse`, `git status`). Useful starting points:",
-            "",
-            f"- `git diff {ctx.pr.base_sha}..HEAD --name-only` — list of changed files",
-            f"- `git diff {ctx.pr.base_sha}..HEAD --stat` — change summary by file",
-            f"- `git diff {ctx.pr.base_sha}..HEAD -- <path>` — diff for one file or directory",
-            f"- `git diff {ctx.pr.base_sha}..HEAD` — full diff (use sparingly on large PRs)",
-            "",
-            "Pass these instructions through to each subagent in its Task brief so the subagent "
-            "can pull only the slice of the diff it needs to review.",
-        ]
-    )
-    if ctx.lessons:
-        parts.extend(
-            [
-                "",
-                "## Lessons learned from past reviews",
-                "Apply these when reviewing this PR. Pass them to each subagent in its task brief.",
-                "",
-            ]
-        )
-        for lesson in ctx.lessons:
-            parts.append(f"### {lesson.title}\n_lesson_id: {lesson.id}_\n{lesson.body}")
-    return "\n".join(parts)
 
 
 def assemble_incremental_review_prompt(ctx: IncrementalReviewContext) -> str:
@@ -308,7 +229,6 @@ __all__ = [
     "VerifyFixDto",
     "assemble_answer_question_prompt",
     "assemble_incremental_review_prompt",
-    "assemble_review_prompt",
     "assemble_stale_check_prompt",
     "assemble_verify_fix_prompt",
     "finding_output_schema",

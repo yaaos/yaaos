@@ -26,18 +26,13 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 `coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component via `coding_agents/plugin_registry.ts`. `claude_code` is the only registered plugin.
 
-`ClaudeCodeSettings` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` and `useClaudeCodeDefaults` (`useSuspenseQuery`).
+`ClaudeCodeSettings` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` (`useSuspenseQuery`).
 
 `ClaudeCodeSettings.tsx` composition (top → bottom):
 1. **`BrokenIntegrationsNotice`** — amber banner when any MCP credential has `last_refresh_status="failed"` (from `/api/auth/me`).
 2. **`BuilderReadOnlyBanner`** — info banner; UI only. Server enforces `require(Action.CODING_AGENT_WRITE)`.
 3. **`AnthropicKeyCard`** — BYOK Anthropic key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
-4. **`OrchestratorCard`** — `AgentEditor` for orchestrator; inline "overridden" badges + Reset when fields differ from `/api/claude_code/defaults`.
-5. **`SubAgentsCard`** — 1–8 repeatable `AgentEditor` rows; inline duplicate-name validation; Add/Remove (last-row protected).
-6. **Save** — one PATCH replacing the entire settings JSONB; disabled on duplicate name or out-of-range count.
-7. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
-
-`AgentEditor` fields: `name`, `prompt`, `model`, `version`, `effort`, `use_default_system_prompt` (checkbox; default true; toggling off reveals `system_prompt` textarea). Toggling back to default clears `system_prompt` so the wire payload stays clean.
+4. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
 
 ## Forms
 

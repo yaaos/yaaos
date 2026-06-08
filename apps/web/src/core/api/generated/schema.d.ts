@@ -294,9 +294,8 @@ export interface paths {
         };
         /**
          * Defaults Endpoint
-         * @description Code defaults for the orchestrator + sub-agents, plus the model /
-         *     version / effort dropdown enums. Imported at request time so a code
-         *     change to `defaults.py` surfaces on the next request — never cached.
+         * @description Model / effort dropdown enums for the Claude Code settings UI.
+         *     Imported at request time so a code change surfaces on the next request.
          */
         get: operations["defaults_endpoint_api_claude_code_defaults_get"];
         put?: never;

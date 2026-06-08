@@ -20,7 +20,6 @@ class ClaudeCodeSettingsRow(Base):
     )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, unique=True)
     encrypted_anthropic_api_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    default_model: Mapped[str | None] = mapped_column(String, nullable=True)
     cli_path: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

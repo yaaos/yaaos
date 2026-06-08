@@ -2994,7 +2994,7 @@
     },
     "/api/claude_code/defaults": {
       "get": {
-        "description": "Code defaults for the orchestrator + sub-agents, plus the model /\nversion / effort dropdown enums. Imported at request time so a code\nchange to `defaults.py` surfaces on the next request — never cached.",
+        "description": "Model / effort dropdown enums for the Claude Code settings UI.\nImported at request time so a code change surfaces on the next request.",
         "operationId": "defaults_endpoint_api_claude_code_defaults_get",
         "parameters": [
           {

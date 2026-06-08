@@ -6,9 +6,7 @@ present at HEAD?), `stale_check` (does the finding still apply after the code
 changed?), and `answer_question` (developer asked a question on a finding;
 answer it from the workspace). Plugins own prompt assembly + parsing for each
 mode; consumers (today: `domain/reviewer`) hand over domain context and read
-domain results. Subagent definitions live under
-`app/domain/coding_agent/reviewers/` and are installed into the local Claude
-Code agent directory by the `plugins/claude_code` plugin at bootstrap.
+domain results.
 """
 
 from app.domain.coding_agent.invocation import InvocationMode, build_invocation
@@ -19,7 +17,6 @@ from app.domain.coding_agent.prompts import (
     VerifyFixDto,
     assemble_answer_question_prompt,
     assemble_incremental_review_prompt,
-    assemble_review_prompt,
     assemble_stale_check_prompt,
     assemble_verify_fix_prompt,
     finding_output_schema,
@@ -108,7 +105,6 @@ __all__ = [
     "answer_question",
     "assemble_answer_question_prompt",
     "assemble_incremental_review_prompt",
-    "assemble_review_prompt",
     "assemble_stale_check_prompt",
     "assemble_verify_fix_prompt",
     "bind_coding_agent_registry",

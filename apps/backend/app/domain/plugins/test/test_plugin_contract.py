@@ -55,18 +55,17 @@ def test_claude_code_install_url_is_none() -> None:
     assert real.install_url(uuid4()) is None
 
 
-def test_claude_code_validate_settings_substitutes_defaults_on_empty() -> None:
+def test_claude_code_validate_settings_accepts_empty() -> None:
     """The picker's POST /api/coding-agents path calls validate_settings({});
-    fills in the code defaults so the install row starts populated."""
+    the empty dict validates to `{mcp_proxy_ids: []}`."""
     plugin = get_coding_agent_plugin("claude_code")
     real = getattr(plugin, "_wrapped", plugin)
     result = real.validate_settings({})
-    assert result["orchestrator"]["name"] == "Orchestrator"
-    assert len(result["agents"]) >= 1
+    assert result["mcp_proxy_ids"] == []
 
 
 def test_claude_code_validate_settings_rejects_unknown_keys() -> None:
     plugin = get_coding_agent_plugin("claude_code")
     real = getattr(plugin, "_wrapped", plugin)
     with pytest.raises(ValueError):
-        real.validate_settings({"rogue": 1, "orchestrator": {}, "agents": []})
+        real.validate_settings({"rogue": 1})

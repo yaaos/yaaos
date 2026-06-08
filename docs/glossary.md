@@ -8,7 +8,7 @@
 | **Ticket** | yaaos unit of work. References a PR; flows `open → in_review → complete / abandoned`. |
 | **PR** | VCS-side artefact mirrored into `pull_requests`. Owned by `domain/pull_requests`. |
 | **Review job** | One review run for one PR (`queued → running → posted / failed / skipped / cancelled`). Owned by `domain/reviewer`. |
-| **Subagent** | A shipped reviewer specialty (`yaaos-architecture`, `-security`, `-line-level`, `-tests`, `-docs`, `-skill`). Markdown-defined in `app/domain/coding_agent/reviewers/`, installed into `~/.claude/agents/`. Each finding carries `source_agent`. |
+| **Subagent** | A Claude Code sub-agent. The review skill may dispatch subagents internally; yaaos does not define or install them. |
 | **Coding agent** | The external CLI yaaos shells out to (Claude Code). Protocol: `domain/coding_agent.CodingAgentPlugin`. yaaos never calls an LLM directly. |
 | **Workspace** | Provisioned execution environment owned by a remote WorkspaceAgent. Lifecycle owned by `core/workspace`; the only registered `WorkspaceProvider` is `remote_agent`. Dispatch via AgentCommand; org-level IAM ARN (`orgs.registered_iam_arn`) authorizes the agent pod. |
 | **Finding** | One reviewer comment in the canonical schema: optional `file`/`line`, `category`, `severity` (`blocker / should_fix / nit`), `confidence` (`verified / plausible / speculative`), `rationale`, `rule_violated`, `rule_source`, `suggested_fix`, plus a persisted `finding_display_id` (per-PR monotonic int, rendered as `<category-prefix>-<id>` like `sec-3`). Defined in `domain/reviewer`. The skill (not yaaos) decides what to surface; yaaos validates the schema and posts the result. |
@@ -32,8 +32,6 @@
 | **Plugin install** | A specific `(org_id, plugin_id)` adoption. Mutations audit (`vcs.installed / vcs.cleared / coding_agent.installed / coding_agent.uninstalled`). |
 | **Verified GitHub username** | `users.github_username`. Denorm written by the OAuth callback on every sign-in. Re-binding is "sign in with GitHub again." Never user-typed. |
 | **Session-timeout override** | Nullable `orgs.session_timeout_override` (minutes). `require()` dep rejects sessions past `last_seen_at + override`. Null falls back to `SESSION_IDLE_TIMEOUT` (12h). |
-| **Orchestrator** | The single parent Claude Code session that dispatches subagents via the Task tool and synthesizes findings. One per `claude_code` install. |
-| **Sub-agent** | Focused review pass run as its own Claude Code session, dispatched by the orchestrator. 1..8 per install; names must be unique (enforced by Pydantic). |
 | **BYOK** | Bring-your-own-key per `(org_id, provider)`. Ships `anthropic` only. Plaintext only inbound on POST + outbound from `core/byok.get/.validate`; DB stores Fernet ciphertext. |
 | **MCP** | Model Context Protocol — JSON-RPC-over-HTTP shape hosted integrations (Linear, Notion) speak to coding-agent CLIs. yaaos proxies every MCP request via `domain/mcp_proxy`. |
 | **MCP review token** | Per-review opaque bearer authenticating the CLI to the yaaos proxy. Minted at review start (`sha256` persisted, raw returned once), revoked before workspace teardown, swept hourly. 2h absolute TTL. |
