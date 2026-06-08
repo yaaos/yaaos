@@ -1,9 +1,9 @@
 """Workflow-execution → `ReviewJob` projection.
 
-`pr_review_v1` workflows run through `workflow_executions`. The SPA's
-`/api/reviewer/jobs/by-ticket/{id}` + `/api/reviewer/metrics` endpoints
-return the `ReviewJob` shape, so this module projects
-`WorkflowExecutionSummary` into `ReviewJob` fields.
+`pr_review_v1` workflows run through `workflow_executions`. The
+`/api/reviewer/metrics` endpoint surfaces the `ReviewJob`-shaped aggregate
+the SPA reads, so this module projects `WorkflowExecutionSummary` into
+`ReviewJob` fields.
 
 Fields not tracked in `workflow_executions` (tokens, model, effort)
 project as `None`.

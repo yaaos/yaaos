@@ -283,15 +283,18 @@ async def _in_flight_review_id(pr_id: UUID) -> UUID | None:
 
 
 async def _last_push_timestamp(pr_id: UUID) -> datetime | None:
+    # `created_at` is the review row's insert timestamp — used as the proxy for
+    # "when was the last incremental review scheduled" since the standalone
+    # `scheduled_at` column was dropped in favor of `created_at`.
     async with db_session() as s:
         row = (
             await s.execute(
-                select(ReviewRow.scheduled_at)
+                select(ReviewRow.created_at)
                 .where(
                     ReviewRow.pr_id == pr_id,
                     ReviewRow.trigger_reason.in_(["push_incremental", "pr_synchronized"]),
                 )
-                .order_by(desc(ReviewRow.scheduled_at))
+                .order_by(desc(ReviewRow.created_at))
                 .limit(1)
             )
         ).first()
