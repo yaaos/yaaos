@@ -1,12 +1,16 @@
-"""SQLAlchemy model for `outbox_entries` — the pending-dispatch table.
+"""SQLAlchemy models for `outbox_entries` and `scheduled_runs`.
 
-Folded in from the former `core/outbox` module. The table name stays
-`outbox_entries` since migration 014 already shipped under it; the row
-shape is generic (`kind` / `payload` / `attempt` / `dispatched_at`) so
-new kinds plug in via dispatchers without schema changes.
+`outbox_entries` is the pending-dispatch table (folded in from the former
+`core/outbox` module; the row shape is generic so new kinds plug in via
+dispatchers without schema changes — only `taskiq_enqueue` today).
 
-Today the only `kind` is `taskiq_enqueue`. The row is a private detail
-of `core/tasks`; callers see only the `enqueue()` API.
+`scheduled_runs` is the per-tick dedup ledger for the recurring-task
+scheduler. The composite PK `(schedule_id, fire_time)` IS the
+exactly-once gate: every worker runs the scheduler tick, but the
+`INSERT … ON CONFLICT DO NOTHING` decides which one enqueues the slot.
+
+Both rows are private details of `core/tasks`; callers see only the
+public `enqueue()` / `@scheduled` / `schedule_task` API.
 """
 
 from __future__ import annotations
@@ -38,3 +42,22 @@ class OutboxEntryRow(Base):
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ScheduledRunRow(Base):
+    """Per-tick dedup ledger for the recurring-task scheduler.
+
+    Composite PK `(schedule_id, fire_time)` is the unique-target the
+    `INSERT … ON CONFLICT DO NOTHING` claim races against — exactly one
+    worker inserts the row for a normalized fire slot, and only that
+    worker enqueues. `fire_time` is the cron slot floored to the minute
+    so concurrent workers all race the same row.
+    """
+
+    __tablename__ = "scheduled_runs"
+
+    schedule_id: Mapped[str] = mapped_column(String, primary_key=True)
+    fire_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

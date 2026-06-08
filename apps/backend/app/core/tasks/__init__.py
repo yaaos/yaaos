@@ -26,8 +26,18 @@ from app.core.shutdown_registry import (
     register_web_shutdown_hook,
     register_worker_shutdown_hook,
 )
+
+# Register the daily prune for `scheduled_runs` — this is the first
+# `@scheduled` consumer (self-exercising; proves the wiring).
+from app.core.tasks import scheduled_runs_prune as _scheduled_runs_prune  # noqa: F401
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_once
+from app.core.tasks.scheduler import (
+    schedule_task,
+    scheduled,
+    scheduler_loop,
+    tick_once,
+)
 from app.core.tasks.service import (
     TaskRef,
     enqueue,
@@ -49,8 +59,12 @@ __all__ = [
     "get_pending_task_names",
     "iter_worker_shutdown_hooks",
     "register_worker_shutdown_hook",
+    "schedule_task",
+    "scheduled",
+    "scheduler_loop",
     "shutdown",
     "task",
+    "tick_once",
 ]
 
 register_web_shutdown_hook(shutdown)

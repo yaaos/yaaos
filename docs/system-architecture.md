@@ -99,6 +99,10 @@ Three concepts span all apps:
 
 `docker-compose.test.yml`: Postgres + `apps/fake-github` + backend with `GITHUB_API_BASE_URL=http://fake-github:8080` and `YAAOS_CODING_AGENT_STUB=1`. Plugins stubbed via `app/testing/`. E2E specs drive preconditions via `POST /api/testing/reset` + `seed/*`.
 
+### Periodic work
+
+Cluster-safe recurring tasks run in every worker process via `core/tasks.scheduler_loop`. Schedules are declared at import time with `@scheduled(name, cron)` or `schedule_task(name, cron, task_ref=...)`. Per-tick `INSERT INTO scheduled_runs (schedule_id, fire_time) ... ON CONFLICT DO NOTHING` is the sole gate that decides which worker enqueues for a slot — no leader election, no SPOF. The dedup ledger is pruned daily (>7-day rows) by the `scheduled_runs_prune` `@scheduled` task in `core/tasks`. See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
+
 ## Cross-app conventions
 
 ### Time

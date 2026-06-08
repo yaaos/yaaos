@@ -185,6 +185,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("049_create_coding_agent_runs", "create_coding_agent_runs"),
     ("050_reviews_run_id", "reviews_run_id"),
     ("051_create_coding_agent_activity", "create_coding_agent_activity"),
+    ("052_create_scheduled_runs", "create_scheduled_runs"),
 )
 
 
@@ -1465,6 +1466,23 @@ async def _apply_create_coding_agent_activity(conn) -> None:  # type: ignore[no-
         )
 
 
+async def _apply_create_scheduled_runs(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create `scheduled_runs` — the per-tick dedup ledger for `core/tasks`.
+
+    Composite PK `(schedule_id, fire_time)` is the unique-target the
+    `INSERT … ON CONFLICT DO NOTHING` claim races against. Owned by
+    `core/tasks`; pruned by a daily `@scheduled` task that deletes rows
+    older than 7 days.
+
+    Idempotent: CREATE TABLE IF NOT EXISTS.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.tasks.models")
+    new_tables = [Base.metadata.tables["scheduled_runs"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
 async def _apply_shed_workspace_columns(conn) -> None:  # type: ignore[no-untyped-def]
     """Remove vestigial columns from `workspaces` and tighten `owning_agent_id`.
 
@@ -1628,6 +1646,8 @@ async def _apply_pending() -> None:
                 await _apply_reviews_run_id(conn)
             elif kind == "create_coding_agent_activity":
                 await _apply_create_coding_agent_activity(conn)
+            elif kind == "create_scheduled_runs":
+                await _apply_create_scheduled_runs(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

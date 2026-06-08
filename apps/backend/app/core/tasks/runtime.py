@@ -28,6 +28,7 @@ from app.core.shutdown_registry import iter_worker_shutdown_hooks
 from app.core.tasks.broker import get_broker
 from app.core.tasks.drain import drain_loop
 from app.core.tasks.middleware import org_context_middleware
+from app.core.tasks.scheduler import scheduler_loop
 
 log = structlog.get_logger("core.tasks.worker")
 
@@ -84,11 +85,15 @@ async def run() -> None:
     # tie it to the same `stop` event the SIGTERM/SIGINT handler triggers.
     receiver = Receiver(broker, run_startup=False)
     consume_task = asyncio.create_task(receiver.listen(stop), name="broker_listen")
+    # Recurring-task scheduler tick loop — cluster-safe via per-tick
+    # claim on `scheduled_runs(schedule_id, fire_time)`. Every worker
+    # runs this; only the slot-winner enqueues.
+    scheduler_task = asyncio.create_task(scheduler_loop(), name="scheduler_loop")
     stop_task = asyncio.create_task(stop.wait(), name="stop_signal")
 
     log.info("tasks.worker.running")
     done, pending = await asyncio.wait(
-        {drain_task, consume_task, stop_task},
+        {drain_task, consume_task, scheduler_task, stop_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
     log.info(

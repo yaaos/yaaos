@@ -509,8 +509,12 @@ expose = [
   "get_pending_task_names",
   "iter_worker_shutdown_hooks",
   "register_worker_shutdown_hook",
+  "schedule_task",
+  "scheduled",
+  "scheduler_loop",
   "shutdown",
   "task",
+  "tick_once",
 ]
 from = ["app.core.tasks"]
 

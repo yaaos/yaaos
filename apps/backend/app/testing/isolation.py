@@ -44,6 +44,20 @@ async def subscriber_registry_isolation() -> None:
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def scheduler_registry_isolation() -> None:
+    """Clear the recurring-task scheduler registry per test.
+
+    Schedules are registered at import time (e.g. the `scheduled_runs`
+    prune); tests that register their own schedules (via `@scheduled`
+    or `schedule_task`) must start with a known-empty registry so the
+    `tick_once` call only fires the schedules the test introduced.
+    """
+    from app.core.tasks.scheduler import _reset_schedules_for_tests  # noqa: PLC0415
+
+    _reset_schedules_for_tests()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def email_inbox_isolation() -> None:
     """Bind a fresh email inbox for each test.
 
@@ -177,6 +191,7 @@ __all__ = [
     "plugin_registries_isolation",
     "pubsub_isolation",
     "recovery_policies_isolation",
+    "scheduler_registry_isolation",
     "scoped_vcs_plugin",
     "subscriber_registry_isolation",
     "workflow_context_provider_isolation",
