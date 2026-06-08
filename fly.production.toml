@@ -37,12 +37,17 @@ kill_timeout = "30s"
 [env]
   YAAOS_ENV = "prod"
   YAAOS_PUBLIC_HOSTNAME = "app.yaaos.cloud"
-  # Non-secret config that currently lives as Fly dashboard env/secrets can be
-  # migrated here for config-as-code (identifiers only, never secrets):
-  #   YAAOS_GITHUB_APP_ID, YAAOS_GITHUB_APP_SLUG, YAAOS_GITHUB_OAUTH_CLIENT_ID,
-  #   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_USE_TLS, SMTP_FROM
-  # Paste their values here and unset them from the dashboard to make this the
-  # single source of truth. Left in the dashboard for now to avoid churn.
+
+  # Non-secret GitHub identifiers — they appear in browser URLs / settings
+  # pages, so they belong here in [env], not in `fly secrets`. The matching
+  # *secrets* (private key, webhook secret, OAuth client secret) stay in
+  # `fly secrets`.
+  YAAOS_GITHUB_APP_ID = "3983378"
+  YAAOS_GITHUB_APP_SLUG = "yaaos"
+  YAAOS_GITHUB_OAUTH_CLIENT_ID = "Ov23liOakRow3PX62StR"
+
+  # SMTP non-secret identifiers (SMTP_HOST/PORT/USERNAME/USE_TLS/FROM) remain
+  # set in the Fly dashboard env for now; SMTP_PASSWORD stays a secret.
 
 # ── web: FastAPI/uvicorn HTTP + SSE ──────────────────────────────────────
 [http_service]

@@ -229,7 +229,7 @@ tasks:
   # context. `--remote-only` builds the amd64 image on Fly's remote builder
   # (this RWX runner is arm64), so no Docker is needed in the task. The app +
   # process groups + build target + deploy strategy are declared in the
-  # repo-root fly.toml. FLY_API_TOKEN is read from the `yaaos` vault.
+  # repo-root fly.production.toml. FLY_API_TOKEN is read from the `yaaos` vault.
   - key: deploy-prod
     if: ${{ init.branch == 'main' }}
     after: [docs-ci, backend-ci, web-ci, agent-ci, e2e-ci]
@@ -241,4 +241,4 @@ tasks:
       curl -L https://fly.io/install.sh | sh
       export FLYCTL_INSTALL="$HOME/.fly"
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
-      flyctl deploy --remote-only --config fly.toml
+      flyctl deploy --remote-only --config fly.production.toml
