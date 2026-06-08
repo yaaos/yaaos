@@ -10,8 +10,8 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 ## VCS page
 
-- **Loading** — `useVcsState` and `useAvailablePlugins` use `useSuspenseQuery`; page body renders under `<ErrorBoundary>` + `<Suspense>`.
-- **Empty state** — `PluginPicker`; GitHub selection fires `useStartGithubInstall()` (`POST /api/github/install/start`) then navigates to the returned state-signed github.com URL. Non-GitHub uses `useSetVcs` directly.
+- **Loading** — `useVcsState` uses `useSuspenseQuery`; page body renders under `<ErrorBoundary>` + `<Suspense>`.
+- **Empty state** — "Connect GitHub" card with a single CTA; clicking it fires `useStartGithubInstall()` (`POST /api/github/install/start`) then navigates to the returned state-signed github.com URL.
 - **Connected state** — reads `/api/github/installation` (`useSuspenseQuery`); two sub-states: not-installed-on-org (re-fires install handshake) and healthy (shows account + repos from `/api/github/repositories` (`useSuspenseQuery`)).
 - **`app_configured: false`** — platform env vars unset; shows operator guidance, no install button.
 - "Manage on GitHub" links to `installations_url` — canonical for repo access changes. No yaaos-side reconnect.
@@ -20,7 +20,7 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 ## Coding Agents list
 
-`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` and `useAvailablePlugins` (`useSuspenseQuery`). `PluginPicker` receives the resolved `plugins` array directly — loading and error states are handled by the surrounding Suspense boundary.
+`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` (`useSuspenseQuery`). "Add coding agent" opens an install card with a direct "Add Claude Code" button — `claude_code` is the only available plugin and is disabled when already installed.
 
 ## Coding Agent detail
 
@@ -68,11 +68,10 @@ Private (not in `public/`): `OrgSettingsLayout`, `queries.ts` (root + each sub-f
 
 All settings tests use MSW to intercept HTTP rather than `vi.mock("../queries")`.
 
-- `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add picker with installed plugins disabled, Remove confirmation, settings link.
+- `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add card with claude_code disabled when already installed, install flow, Remove confirmation, settings link.
 - `coding_agents/test/plugin_registry.test.tsx` — unit: dispatch to registered vs. unknown plugin.
 - `coding_agents/plugins/claude_code/test/claude_code_settings.test.tsx` — component/MSW: renders one input per repo, Save fires PUT with `encodeURIComponent`-encoded path (regression guard for the `%2F`-before-routing bug), empty state when no repos connected.
 - `byok/test/byok.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
 - `integrations/test/integrations.test.tsx` — component/MSW: connect flow, allowlist, enabled toggle, disconnect.
-- `vcs/test/vcs.test.tsx` — component/MSW: picker, connected, needs-setup, unprovisioned states; remove confirmation.
+- `vcs/test/vcs.test.tsx` — component/MSW: Connect GitHub card, connected, needs-setup, unprovisioned states; remove confirmation.
 - `test/layout.test.tsx` — tab visibility per role.
-- `shared/plugin_picker/public/test/picker.test.tsx` — unit: card rendering, Add click, installed predicate, empty state.

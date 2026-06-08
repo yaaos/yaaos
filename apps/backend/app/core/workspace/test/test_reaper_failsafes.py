@@ -23,7 +23,6 @@ import pytest
 from sqlalchemy import select
 
 from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import (
     WorkspaceRegistry,
     force_close_all,
@@ -46,7 +45,7 @@ class _RaisingProvider:
     """WorkspaceProvider whose `destroy` always raises. Counts call attempts
     so tests can assert retry behavior."""
 
-    meta = PluginMeta(id="raises", type="workspace", display_name="raises-on-destroy")
+    plugin_id = "raises"
 
     def __init__(self, error: str = "boom") -> None:
         self.calls = 0
@@ -75,7 +74,7 @@ class _RaisingProvider:
 class _GoodProvider:
     """Happy-path provider; destroy returns cleanly."""
 
-    meta = PluginMeta(id="good", type="workspace", display_name="good")
+    plugin_id = "good"
 
     def __init__(self) -> None:
         self.destroy_calls = 0

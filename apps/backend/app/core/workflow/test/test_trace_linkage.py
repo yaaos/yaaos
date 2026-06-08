@@ -24,7 +24,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
@@ -159,7 +158,7 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     eng = get_engine()
 
     class _MinimalProvider:
-        meta = PluginMeta(id="trace_test_stub", type="workspace", display_name="trace-stub")
+        plugin_id = "trace_test_stub"
 
         async def provision(self, spec):  # type: ignore[no-untyped-def]
             return {}

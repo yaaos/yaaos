@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import Workspace
 from app.domain.coding_agent import (
     AnswerQuestionContext,
@@ -43,7 +42,7 @@ class FakeCodingAgentPlugin:
     `verify_fix_still_present`, etc.) on the registered instance."""
 
     def __init__(self, plugin_id: str = "claude_code") -> None:
-        self.meta = PluginMeta(id=plugin_id, type="coding_agent", display_name=f"fake-{plugin_id}")
+        self.plugin_id = plugin_id
         # Overridable per-instance return values.
         self.review_findings: list[ReportedFinding] = []
         self.incremental_findings: list[ReportedFinding] = []

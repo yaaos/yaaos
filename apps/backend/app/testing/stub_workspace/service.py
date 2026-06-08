@@ -39,7 +39,7 @@ class StubWorkspaceProvider:
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
-        self.meta = wrapped.meta
+        self.plugin_id = wrapped.plugin_id
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         working_dir = tempfile.mkdtemp(prefix="yaaos-ws-stub-")

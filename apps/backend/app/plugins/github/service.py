@@ -16,7 +16,6 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.plugin_kit import PluginMeta
 from app.domain.vcs import (
     Comment,
     Diff,
@@ -76,13 +75,7 @@ def _platform_credentials() -> tuple[str, str, str]:
 class GitHubPlugin:
     """Implements domain/vcs.VCSPlugin against GitHub's REST API."""
 
-    meta = PluginMeta(
-        id="github",
-        type="vcs",
-        display_name="GitHub",
-        description="GitHub App integration — reads PRs, posts reviews, receives webhooks.",
-        docs_url="https://docs.github.com/en/apps",
-    )
+    plugin_id = "github"
 
     def __init__(self) -> None:
         # Settings are read lazily (in `base_url`) — avoids construction-time

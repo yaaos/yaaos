@@ -15,17 +15,8 @@ function wrap(node: React.ReactNode) {
   return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
 }
 
-const GITHUB_PLUGIN = {
-  id: "github",
-  type: "vcs",
-  display_name: "GitHub",
-  description: "GitHub App",
-  docs_url: "https://docs.github.com",
-};
-
 function setupBase() {
   server.use(
-    http.get("/api/plugins/available", () => HttpResponse.json({ plugins: [GITHUB_PLUGIN] })),
     http.get("/api/github/installation", () =>
       HttpResponse.json({
         app_configured: true,
@@ -48,7 +39,7 @@ describe("VcsSettingsPage (MSW)", () => {
     setupBase();
   });
 
-  it("empty state shows the picker; picking github fires startGithubInstall (not setVcs)", async () => {
+  it("empty state shows the Connect GitHub card; clicking it fires startGithubInstall", async () => {
     let installCalled = false;
     server.use(
       http.get("/api/vcs", () => HttpResponse.json({ plugin_id: null, settings: {} })),

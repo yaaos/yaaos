@@ -20,7 +20,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
-from app.core.plugin_kit import PluginMeta
 from app.domain.vcs import (
     Comment,
     Diff,
@@ -80,12 +79,7 @@ class StubVCSPlugin:
     """
 
     def __init__(self, *, plugin_id: str = "github") -> None:
-        self.meta = PluginMeta(
-            id=plugin_id,
-            type="vcs",
-            display_name=f"{plugin_id} (stub)",
-            description="In-process stub. Service tier only.",
-        )
+        self.plugin_id = plugin_id
         self._prs: dict[str, VCSPullRequest] = {}
         self._diffs: dict[str, Diff] = {}
         self._comments: dict[str, list[Comment]] = {}
@@ -126,7 +120,7 @@ class StubVCSPlugin:
         return dict(settings)
 
     async def fetch_pr(self, external_id: str) -> VCSPullRequest:
-        return self._prs.get(external_id) or _default_pr(external_id, self.meta.id)
+        return self._prs.get(external_id) or _default_pr(external_id, self.plugin_id)
 
     async def fetch_diff(self, external_id: str) -> Diff:
         return self._diffs.get(external_id) or _default_diff()

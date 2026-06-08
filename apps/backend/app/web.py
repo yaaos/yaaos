@@ -77,8 +77,6 @@ register_workspace_providers()
 register_workspace_recovery_policies()
 assert_workflow_context_provider()
 from app.domain import intake  # noqa: F401, E402
-from app.domain import plugins as _domain_plugins  # noqa: F401, E402
-from app.domain.plugins import web as _domain_plugins_web  # noqa: F401, E402
 from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402

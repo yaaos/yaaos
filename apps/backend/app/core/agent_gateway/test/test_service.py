@@ -25,7 +25,6 @@ from app.core.agent_gateway import (
     record_heartbeat,
     record_workspace_event,
 )
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
@@ -45,7 +44,7 @@ class _MinimalWorkspaceProvider:
     """Stub WorkspaceProvider so `list_workspace_providers()` returns exactly
     one entry when Workspace commands dispatch through the engine in tests."""
 
-    meta = PluginMeta(id="gw_test_stub", type="workspace", display_name="gw-test-stub")
+    plugin_id = "gw_test_stub"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {}

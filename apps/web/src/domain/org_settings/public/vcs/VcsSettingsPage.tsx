@@ -1,24 +1,21 @@
 import { useGithubInstallation, useGithubRepositories } from "@core/api/public/queries";
-import { type PluginMeta, useAvailablePlugins } from "@core/api/public/queries";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
 import { PageHeader } from "@shared/components/public/layout/page-header";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { PluginPicker } from "@shared/plugin_picker/public/PluginPicker";
 import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { OrgSettingsLayout } from "../../OrgSettingsLayout";
-import { useClearVcs, useSetVcs, useStartGithubInstall, useVcsState } from "../../vcs/queries";
+import { useClearVcs, useStartGithubInstall, useVcsState } from "../../vcs/queries";
 
 /**
  * Org Settings > VCS. Two states:
  *
- *  - Empty (`plugin_id === null`): renders the PluginPicker. Picking GitHub
- *    redirects to its install handshake; picking a settings-only plugin
- *    persists immediately.
+ *  - Empty (`plugin_id === null`): renders the Connect GitHub card. Clicking
+ *    redirects to the GitHub App install handshake.
  *  - Connected: renders the chosen plugin's settings card + a Remove control
- *    behind a confirmation modal. Today only the GitHub plugin ships.
+ *    behind a confirmation modal.
  */
 export function VcsSettingsPage() {
   return (
@@ -44,24 +41,7 @@ export function VcsSettingsPage() {
 
 function VcsContent() {
   const { data: state } = useVcsState();
-  const { data: plugins } = useAvailablePlugins("vcs");
-  const setVcs = useSetVcs();
   const startGithubInstall = useStartGithubInstall();
-
-  const onPick = (p: PluginMeta) => {
-    if (p.id === "github") {
-      // GitHub's install handshake is driven by the dedicated POST endpoint
-      // (so `X-Org-Slug` + CSRF reach the auth chain). Skip `setVcs` — the
-      // install_callback writes the `vcs_state` row itself on first-bind.
-      startGithubInstall.mutate(undefined, {
-        onSuccess: (resp) => {
-          window.location.href = resp.redirect_url;
-        },
-      });
-      return;
-    }
-    setVcs.mutate({ plugin_id: p.id, settings: {} });
-  };
 
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
@@ -69,18 +49,30 @@ function VcsContent() {
       {state.plugin_id ? (
         <ConnectedCard plugin_id={state.plugin_id} settings={state.settings} />
       ) : (
-        <section className="rounded-lg border border-border bg-card">
+        <section className="rounded-lg border border-border bg-card" data-testid="vcs-picker">
           <header className="border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Choose a VCS plugin</h3>
+            <h3 className="text-sm font-semibold">Connect GitHub</h3>
             <p className="text-muted-foreground text-xs mt-1">
-              Pick a plugin to start sending pull requests through yaaos.
+              Install the yaaos GitHub App to start sending pull request reviews.
             </p>
           </header>
           <div className="px-4 py-4">
-            <PluginPicker plugins={plugins} onPick={onPick} testIdPrefix="vcs-picker" />
-            {setVcs.isError && (
+            <Button
+              data-testid="vcs-picker-add-github"
+              disabled={startGithubInstall.isPending}
+              onClick={() =>
+                startGithubInstall.mutate(undefined, {
+                  onSuccess: (resp) => {
+                    window.location.href = resp.redirect_url;
+                  },
+                })
+              }
+            >
+              Install yaaos on GitHub
+            </Button>
+            {startGithubInstall.isError && (
               <p className="mt-3 text-xs text-destructive" data-testid="vcs-set-err">
-                {(setVcs.error as Error)?.message || "Failed"}
+                {(startGithubInstall.error as Error)?.message || "Failed"}
               </p>
             )}
           </div>

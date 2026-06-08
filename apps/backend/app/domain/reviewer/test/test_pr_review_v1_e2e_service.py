@@ -21,7 +21,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary
 from app.core.workspace import (
@@ -43,7 +42,7 @@ from app.testing.workflow_harness import scoped_engine
 class _StubWorkspaceProvider:
     """Doesn't clone anything — legacy stub; retained for test isolation."""
 
-    meta = PluginMeta(id="in_process", type="workspace", display_name="stub-in-memory")
+    plugin_id = "in_process"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {"working_dir": "/tmp/stub", "sha": spec.sha}
@@ -171,7 +170,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     from app.domain.vcs import VCSPullRequest as _VCSPullRequest  # noqa: PLC0415
 
     class _StubProviderWithFiles:
-        meta = PluginMeta(id="in_process", type="workspace", display_name="stub")
+        plugin_id = "in_process"
 
         async def provision(self, spec):  # type: ignore[no-untyped-def]
             return {}

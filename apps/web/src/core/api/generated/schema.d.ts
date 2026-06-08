@@ -1004,28 +1004,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/plugins/available": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Available Endpoint
-         * @description Enumerate registered plugins of the requested type. The settings UI
-         *     consumes this for the VCS + Coding Agents pickers — no plugin id is
-         *     hardcoded in the frontend.
-         */
-        get: operations["list_available_endpoint_api_plugins_available_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/reviewer/cancel": {
         parameters: {
             query?: never;
@@ -2118,11 +2096,6 @@ export interface components {
              */
             updated_at: string;
         };
-        /** ListAvailableResponse */
-        ListAvailableResponse: {
-            /** Plugins */
-            plugins: components["schemas"]["PluginMetaPayload"][];
-        };
         /** MemberView */
         MemberView: {
             /** Display Name */
@@ -2165,19 +2138,6 @@ export interface components {
             allowed_tools?: string[] | null;
             /** Enabled */
             enabled?: boolean | null;
-        };
-        /** PluginMetaPayload */
-        PluginMetaPayload: {
-            /** Description */
-            description?: string | null;
-            /** Display Name */
-            display_name: string;
-            /** Docs Url */
-            docs_url?: string | null;
-            /** Id */
-            id: string;
-            /** Type */
-            type: string;
         };
         /** ProviderStatus */
         ProviderStatus: {
@@ -4531,42 +4491,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentView"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_available_endpoint_api_plugins_available_get: {
-        parameters: {
-            query: {
-                /** @description Plugin type to enumerate */
-                type: "vcs" | "coding_agent";
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListAvailableResponse"];
                 };
             };
             /** @description Validation Error */

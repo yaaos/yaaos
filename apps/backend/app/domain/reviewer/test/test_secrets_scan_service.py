@@ -121,9 +121,7 @@ async def test_secrets_scan_advances_when_diff_fetch_fails(workflow_context_prov
     want a transient VCS hiccup to block reviews."""
 
     class _RaisingPlugin:
-        from app.core.plugin_kit import PluginMeta  # noqa: PLC0415
-
-        meta = PluginMeta(id="github", type="vcs", display_name="raises")
+        plugin_id = "github"
 
         async def fetch_diff(self, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")

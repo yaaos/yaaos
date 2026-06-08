@@ -516,16 +516,6 @@ export type GithubInstallation = {
   installations_url: string | null;
 };
 
-export type PluginType = "vcs" | "coding_agent" | "workspace";
-
-export type PluginMeta = {
-  id: string;
-  type: PluginType;
-  display_name: string;
-  description: string | null;
-  docs_url: string | null;
-};
-
 export type GithubRepository = {
   full_name: string;
   html_url: string;
@@ -551,25 +541,5 @@ export function useGithubInstallation() {
     queryKey: ["github", "installation"],
     queryFn: () => apiFetch<GithubInstallation>("/api/github/installation"),
     refetchInterval: 10_000,
-  });
-}
-
-// ── Plugin discovery ─────────────────────────────────────────────────────────
-
-interface ListAvailableResponse {
-  plugins: PluginMeta[];
-}
-
-/** GET /api/plugins/available?type=... */
-export function useAvailablePlugins(type: "vcs" | "coding_agent") {
-  return useSuspenseQuery<PluginMeta[]>({
-    queryKey: ["plugins", "available", type],
-    queryFn: async () => {
-      const body = await apiFetch<ListAvailableResponse>(
-        `/api/plugins/available?type=${encodeURIComponent(type)}`,
-      );
-      return body.plugins;
-    },
-    staleTime: 60_000,
   });
 }

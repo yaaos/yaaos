@@ -8,7 +8,6 @@ from typing import Any
 
 import structlog
 
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import Workspace
 from app.domain.coding_agent.types import (
     AnswerQuestionContext,
@@ -41,13 +40,13 @@ class CodingAgentRegistry:
         self._plugins: dict[str, CodingAgentPlugin] = {}
 
     def register(self, plugin: CodingAgentPlugin) -> None:
-        if plugin.meta.id in self._plugins:
-            raise ValueError(f"coding agent plugin {plugin.meta.id!r} already registered")
-        self._plugins[plugin.meta.id] = plugin
+        if plugin.plugin_id in self._plugins:
+            raise ValueError(f"coding agent plugin {plugin.plugin_id!r} already registered")
+        self._plugins[plugin.plugin_id] = plugin
 
     def replace(self, plugin: CodingAgentPlugin) -> None:
         """Overwrite-or-insert; used by stub/fake helpers."""
-        self._plugins[plugin.meta.id] = plugin
+        self._plugins[plugin.plugin_id] = plugin
 
     def get(self, plugin_id: str) -> CodingAgentPlugin:
         try:
@@ -221,9 +220,3 @@ async def health_check_all() -> dict[str, HealthStatus]:
 
 def registered_plugin_ids() -> list[str]:
     return current_coding_agent_registry().ids()
-
-
-def list_plugin_metas() -> list[PluginMeta]:
-    """Return `PluginMeta` for every registered coding-agent plugin, sorted by id."""
-    reg = current_coding_agent_registry()
-    return [plugin.meta for pid, plugin in sorted(reg.items())]

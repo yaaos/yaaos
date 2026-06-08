@@ -91,7 +91,7 @@ class StubCodingAgentPlugin:
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
-        self.meta = wrapped.meta
+        self.plugin_id = wrapped.plugin_id
 
     async def review(
         self,

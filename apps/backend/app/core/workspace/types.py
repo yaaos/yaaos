@@ -16,8 +16,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.plugin_kit import PluginMeta
-
 # Per-line callback used by `run_coding_agent_cli` to stream stdout in real
 # time. When provided, the provider invokes it for each newline-terminated
 # chunk from the CLI; when None, stdout is buffered and returned in the
@@ -152,7 +150,7 @@ class WorkspaceProvider(Protocol):
     the registered implementation without importing provider internals.
     """
 
-    meta: PluginMeta
+    plugin_id: str
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]: ...
     async def run_coding_agent_cli(

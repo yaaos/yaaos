@@ -5,7 +5,6 @@ from __future__ import annotations
 from contextvars import ContextVar
 from uuid import UUID
 
-from app.core.plugin_kit import PluginMeta
 from app.domain.vcs.types import PluginNotFoundError, VCSPlugin
 
 
@@ -19,13 +18,13 @@ class VCSRegistry:
         self._plugins: dict[str, VCSPlugin] = {}
 
     def register(self, plugin: VCSPlugin) -> None:
-        if plugin.meta.id in self._plugins:
-            raise ValueError(f"VCS plugin {plugin.meta.id!r} already registered")
-        self._plugins[plugin.meta.id] = plugin
+        if plugin.plugin_id in self._plugins:
+            raise ValueError(f"VCS plugin {plugin.plugin_id!r} already registered")
+        self._plugins[plugin.plugin_id] = plugin
 
     def replace(self, plugin: VCSPlugin) -> None:
         """Overwrite-or-insert; used by stub helpers."""
-        self._plugins[plugin.meta.id] = plugin
+        self._plugins[plugin.plugin_id] = plugin
 
     def get(self, plugin_id: str) -> VCSPlugin:
         try:
@@ -38,9 +37,6 @@ class VCSRegistry:
 
     def ids(self) -> list[str]:
         return list(self._plugins.keys())
-
-    def metas(self) -> list[PluginMeta]:
-        return [self._plugins[pid].meta for pid in sorted(self._plugins)]
 
     def copy(self) -> VCSRegistry:
         clone = VCSRegistry()
@@ -78,11 +74,6 @@ def is_registered(plugin_id: str) -> bool:
 
 def registered_plugin_ids() -> list[str]:
     return current_vcs_registry().ids()
-
-
-def list_plugin_metas() -> list[PluginMeta]:
-    """Return `PluginMeta` for every registered VCS plugin, sorted by id."""
-    return current_vcs_registry().metas()
 
 
 async def get_installation_token(plugin_id: str, org_id: UUID) -> str:

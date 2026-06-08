@@ -14,8 +14,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.plugin_kit import PluginMeta
-
 
 class RepoRef(BaseModel):
     plugin_id: str
@@ -174,7 +172,7 @@ class PluginNotFoundError(LookupError):
 
 
 class VCSPlugin(Protocol):
-    meta: PluginMeta
+    plugin_id: str
 
     def install_url(self, org_id: UUID) -> str | None:
         """URL to redirect the user to for plugin install (e.g. GitHub App install).

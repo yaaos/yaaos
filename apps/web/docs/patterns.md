@@ -126,7 +126,7 @@ Terse, bullets, no code snippets, no `Decisions` section, link don't repeat.
 
 - `OrgSettingsLayout` is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page.
 - Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`); unregistered plugins get the built-in placeholder.
-- `PluginPicker` (`shared/plugin_picker/public/`) is shared between the VCS empty-state and Coding Agents Add flow. Backed by `useAvailablePlugins(type)` → `GET /api/plugins/available?type=...`.
+- VCS empty-state: "Connect GitHub" card — single CTA fires `useStartGithubInstall`. Coding Agents install card: "Add Claude Code" button — installs directly via `useInstallCodingAgent`.
 
 ## Dumb frontend
 

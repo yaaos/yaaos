@@ -22,7 +22,6 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [core_audit_log](core_audit_log.md) | Append-only timeline. |
 | [core_workspace](core_workspace.md) | `Workspace` + `WorkspaceProvider` Protocols; lifecycle + reaper. |
 | [core_observability](core_observability.md) | structlog + conditional OTel SDK + `spawn()`. |
-| [core_plugin_kit](core_plugin_kit.md) | `PluginMeta` + `PluginType` — self-description every plugin exposes. Future plugin-system primitives land here. |
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 | [core_auth](core_auth.md) | Default-deny middleware, contextvars, `Action` enum, `RouteSecurity` taxonomy, `org_context()`. |
 | [core_tenancy](core_tenancy.md) | IAM access graph — `orgs` + `memberships` tables; `resolve_auth_org`, membership VOs. |

@@ -27,7 +27,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.agent_gateway import InvokeClaudeCodeLimits
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import HealthStatus, Workspace
 from app.domain.lessons import Lesson
 from app.domain.vcs import Diff, VCSPullRequest
@@ -320,7 +319,7 @@ class AnswerQuestionResult(BaseModel):
 
 
 class CodingAgentPlugin(Protocol):
-    meta: PluginMeta
+    plugin_id: str
 
     def install_url(self, org_id: UUID) -> str | None:
         """URL to redirect the user to for plugin install. `None` for plugins

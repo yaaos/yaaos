@@ -42,7 +42,6 @@ from app.core.agent_gateway import (
     has_any_reachable_agent,
     pin_command_to_agent,
 )
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
     CodingAgentCliResult,
     HealthStatus,
@@ -64,17 +63,7 @@ class RemoteAgentWorkspaceProvider:
     The dispatch entry points enqueue commands; the reviewer workflows
     drive the full integration through their command bodies."""
 
-    meta = PluginMeta(
-        id="remote_agent",
-        type="workspace",
-        display_name="Remote agent",
-        description=(
-            "Dispatch workspaces to a customer-deployed WorkspaceAgent. The "
-            "agent process spawns the workspace and runs coding-agent CLIs "
-            "locally; only metadata and findings cross the trust boundary."
-        ),
-        docs_url="https://github.com/yaaos/yaaos/blob/main/docs/system-architecture.md",
-    )
+    plugin_id = "remote_agent"
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         # Provisioning runs through the dispatch helpers, not this

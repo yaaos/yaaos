@@ -25,7 +25,6 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import Workspace, WorkspaceExecError
 from app.domain.coding_agent import (
     ActivityEvent,
@@ -400,13 +399,7 @@ def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "C
 
 
 class ClaudeCodePlugin:
-    meta = PluginMeta(
-        id="claude_code",
-        type="coding_agent",
-        display_name="Claude Code",
-        description="Wraps Anthropic's Claude Code CLI to run code reviews and replies.",
-        docs_url="https://docs.claude.com/en/docs/claude-code",
-    )
+    plugin_id = "claude_code"
 
     def install_url(self, org_id: UUID) -> str | None:
         """No out-of-band install — Claude Code settings are pure form. The

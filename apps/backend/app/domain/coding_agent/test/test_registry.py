@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from app.core.plugin_kit import PluginMeta
 from app.domain.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
@@ -30,7 +29,7 @@ from app.domain.coding_agent import (
 
 
 class _StubPlugin:
-    meta = PluginMeta(id="stub", type="coding_agent", display_name="Stub")
+    plugin_id = "stub"
 
     async def review(
         self,
@@ -108,7 +107,7 @@ async def test_validate_config_dispatch() -> None:
 @pytest.mark.asyncio
 async def test_health_check_all_handles_plugin_exception() -> None:
     class _Broken:
-        meta = PluginMeta(id="broken", type="coding_agent", display_name="Broken")
+        plugin_id = "broken"
 
         async def review(self, *a, **kw):
             raise NotImplementedError
@@ -134,15 +133,15 @@ def test_register_plugin_adds_and_is_retrievable() -> None:
 
 def test_list_registered_plugins_returns_insertion_order() -> None:
     class _A:
-        meta = PluginMeta(id="aaa", type="coding_agent", display_name="A")
+        plugin_id = "aaa"
 
     class _B:
-        meta = PluginMeta(id="bbb", type="coding_agent", display_name="B")
+        plugin_id = "bbb"
 
     register_plugin(_A())
     register_plugin(_B())
     result = list_registered_plugins()
-    assert [p.meta.id for p in result] == ["aaa", "bbb"]
+    assert [p.plugin_id for p in result] == ["aaa", "bbb"]
 
 
 def test_registry_items_returns_tuple_of_pairs() -> None:

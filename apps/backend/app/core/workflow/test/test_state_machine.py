@@ -24,7 +24,6 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
@@ -148,7 +147,7 @@ class _MinimalWorkspaceProvider:
     """Minimal WorkspaceProvider stub so `list_workspace_providers()` returns
     exactly one entry when Workspace commands are dispatched in tests."""
 
-    meta = PluginMeta(id="test_stub", type="workspace", display_name="test-stub")
+    plugin_id = "test_stub"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {}

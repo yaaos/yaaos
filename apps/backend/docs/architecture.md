@@ -27,13 +27,13 @@ Protocols define seams; plugins implement them. Registration happens at import t
 | `CodingAgentPlugin` | `domain/coding_agent` | `plugins/claude_code` |
 | `WorkspaceProvider` | `core/workspace` | `core/workspace/remote_provider` (`remote_agent`) |
 
-Each plugin exposes `meta: PluginMeta` (`id`, `type`, `display_name`, `description`, `docs_url`). The `id` is the registry key, URL prefix, and canonical accessor.
+Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL prefix, and canonical accessor.
 
 ## Structural patterns
 
 - **Workflow engine** — every review run passes through [`core/workflow`](core_workflow.md); commands are typed Pydantic steps dispatched by category (Workspace / Local / HITL).
 - **`PRReviewAggregate`** — durable layer in [`domain/reviewer`](domain_reviewer.md); survives restarts; owns `Review` / `Finding` state across runs.
-- **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `meta.id`; per-test isolation binds a fresh copy so tests never share state.
+- **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `plugin_id`; per-test isolation binds a fresh copy so tests never share state.
 - **Two process lifecycles** — web (`app/web.py`) and worker (`app/worker.py`); each registers shutdown hooks independently via `app.core.shutdown_registry`.
 - **Composition roots** — `app/web.py` and `app/worker.py` own all side-effect imports; bootstrap order is load-bearing (see [`patterns.md § Bootstrap composition order`](patterns.md#bootstrap-composition-order)).
 

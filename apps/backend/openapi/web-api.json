@@ -965,22 +965,6 @@
         "title": "Lesson",
         "type": "object"
       },
-      "ListAvailableResponse": {
-        "properties": {
-          "plugins": {
-            "items": {
-              "$ref": "#/components/schemas/PluginMetaPayload"
-            },
-            "title": "Plugins",
-            "type": "array"
-          }
-        },
-        "required": [
-          "plugins"
-        ],
-        "title": "ListAvailableResponse",
-        "type": "object"
-      },
       "MemberView": {
         "properties": {
           "display_name": {
@@ -1085,51 +1069,6 @@
           }
         },
         "title": "PatchIntegrationRequest",
-        "type": "object"
-      },
-      "PluginMetaPayload": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
-          "docs_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Docs Url"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "type": {
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "type",
-          "display_name"
-        ],
-        "title": "PluginMetaPayload",
         "type": "object"
       },
       "ProviderStatus": {
@@ -5990,87 +5929,6 @@
         "summary": "List Org Agents",
         "tags": [
           "orgs"
-        ]
-      }
-    },
-    "/api/plugins/available": {
-      "get": {
-        "description": "Enumerate registered plugins of the requested type. The settings UI\nconsumes this for the VCS + Coding Agents pickers — no plugin id is\nhardcoded in the frontend.",
-        "operationId": "list_available_endpoint_api_plugins_available_get",
-        "parameters": [
-          {
-            "description": "Plugin type to enumerate",
-            "in": "query",
-            "name": "type",
-            "required": true,
-            "schema": {
-              "description": "Plugin type to enumerate",
-              "enum": [
-                "vcs",
-                "coding_agent"
-              ],
-              "title": "Type",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListAvailableResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Available Endpoint",
-        "tags": [
-          "plugins"
         ]
       }
     },

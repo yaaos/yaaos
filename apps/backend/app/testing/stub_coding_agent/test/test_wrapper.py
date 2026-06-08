@@ -8,7 +8,6 @@ from uuid import UUID
 
 import pytest
 
-from app.core.plugin_kit import PluginMeta
 from app.domain.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
@@ -27,7 +26,7 @@ from app.testing.stub_coding_agent import (
 
 
 class _DummyPlugin:
-    meta = PluginMeta(id="dummy", type="coding_agent", display_name="Dummy")
+    plugin_id = "dummy"
 
     async def review(self, *args, **kwargs) -> ReviewResult:
         raise AssertionError("real review must not be called when wrapped")
@@ -86,10 +85,9 @@ async def test_health_check_always_healthy_in_stub_mode() -> None:
     assert "stub" in h.message.lower()
 
 
-def test_meta_mirrors_wrapped() -> None:
+def test_plugin_id_mirrors_wrapped() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    assert stub.meta.id == "dummy"
-    assert stub.meta.display_name == "Dummy"
+    assert stub.plugin_id == "dummy"
 
 
 def test_wrap_all_is_idempotent() -> None:

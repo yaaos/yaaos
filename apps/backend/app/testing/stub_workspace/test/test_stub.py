@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace import (
     CodingAgentCliResult,
     HealthStatus,
@@ -26,7 +25,7 @@ class _FakeProvider:
     """Minimal WorkspaceProvider for stub-wrapping tests. Returns a real tempdir
     from provision() so the stub's 'no clone' path is exercisable end-to-end."""
 
-    meta = PluginMeta(id="fake_ws", type="workspace", display_name="Fake WS")
+    plugin_id = "fake_ws"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         import tempfile  # noqa: PLC0415
@@ -66,9 +65,8 @@ async def test_wrap_all_swaps_registered_providers() -> None:
     assert count == 1
     wrapped = get_provider("fake_ws")
     assert isinstance(wrapped, StubWorkspaceProvider)
-    # meta is preserved end-to-end.
-    assert wrapped.meta.id == "fake_ws"
-    assert wrapped.meta.display_name == "Fake WS"
+    # plugin_id is preserved end-to-end.
+    assert wrapped.plugin_id == "fake_ws"
 
 
 @pytest.mark.asyncio

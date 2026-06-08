@@ -83,13 +83,13 @@ class WorkspaceRegistry:
         self._providers: dict[str, WorkspaceProvider] = {}
 
     def register(self, provider: WorkspaceProvider) -> None:
-        if provider.meta.id in self._providers:
-            raise ValueError(f"workspace provider {provider.meta.id!r} already registered")
-        self._providers[provider.meta.id] = provider
+        if provider.plugin_id in self._providers:
+            raise ValueError(f"workspace provider {provider.plugin_id!r} already registered")
+        self._providers[provider.plugin_id] = provider
 
     def replace(self, provider: WorkspaceProvider) -> None:
         """Overwrite-or-insert; used by stub helpers."""
-        self._providers[provider.meta.id] = provider
+        self._providers[provider.plugin_id] = provider
 
     def get(self, provider_id: str) -> WorkspaceProvider:
         try:
