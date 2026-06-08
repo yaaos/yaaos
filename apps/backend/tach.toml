@@ -87,7 +87,7 @@ depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core
 
 [[modules]]
 path = "app.core.workflow"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.tasks"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.sse", "app.core.tasks"]
 
 [[modules]]
 path = "app.core.workspace"
@@ -131,7 +131,7 @@ depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core
 
 [[modules]]
 path = "app.domain.tickets"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.pull_requests"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.coding_agent", "app.domain.pull_requests"]
 
 [[modules]]
 path = "app.domain.vcs"
@@ -589,7 +589,9 @@ expose = [
   "WorkflowExecutionNotFoundError",
   "WorkflowExecutionSummary",
   "WorkflowNotFoundError",
+  "WorkflowRunView",
   "WorkflowState",
+  "WorkflowStepSummary",
   "WorkspaceWorkflowCommand",
   "bind_engine",
   "get_awaiting_human_execution",
@@ -601,6 +603,7 @@ expose = [
   "list_all_execution_states",
   "list_executions_for_ticket",
   "list_hitl_history",
+  "list_run_views_for_ticket",
   "register_recovery_policy",
   "register_workflow",
   "registered_recovery_labels",
@@ -717,6 +720,7 @@ expose = [
   "get_plugin",
   "get_run_id_for_command",
   "get_run_id_for_workflow_step",
+  "get_step_activity",
   "health_check_all",
   "incremental_review",
   "list_plugin_metas",

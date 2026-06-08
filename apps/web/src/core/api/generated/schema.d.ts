@@ -1106,26 +1106,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/rereview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rereview Ticket
-         * @description Re-review a ticket — drives `pr_review_v1` via the workflow engine.
-         */
-        post: operations["rereview_ticket_api_reviewer_rereview_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/reviewer/reviews/by-ticket/{ticket_id}": {
         parameters: {
             query?: never;
@@ -1399,6 +1379,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Step Activity
+         * @description Return the persisted `ActivityLog` for one workflow step.
+         *
+         *     Returns `{activity: <log> | null}`. `null` means either the step never
+         *     ran a coding-agent invocation (non-`InvokeClaudeCode`) or the weekly
+         *     partition holding its activity row has aged out (4-week TTL).
+         *
+         *     Cross-tenant safety: 404s when the execution does not belong to the
+         *     ticket (and therefore not to the caller's org).
+         */
+        get: operations["step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{ticket_id}/audit": {
         parameters: {
             query?: never;
@@ -1466,6 +1473,32 @@ export interface paths {
          *     state immediately after the resume.
          */
         post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/workflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Workflow Runs
+         * @description All workflow runs for the ticket, oldest first, with their step lists.
+         *
+         *     One JSON object per run carries `id`, `workflow_name`, `workflow_version`,
+         *     `state`, `current_step_id`, `created_at`, `updated_at`, `failure_reason`,
+         *     and `steps[]`. Each step entry carries `step_id`, `command_kind`, `state`
+         *     (pending | running | done | failed | skipped), `started_at`, and
+         *     `completed_at`. Pure workflow vocabulary — no AgentCommand references.
+         */
+        get: operations["workflow_runs_api_tickets__ticket_id__workflow_runs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2189,14 +2222,6 @@ export interface components {
             repo_external_id: string;
             /** Skill Name */
             skill_name: string | null;
-        };
-        /** RereviewRequest */
-        RereviewRequest: {
-            /**
-             * Ticket Id
-             * Format: uuid
-             */
-            ticket_id: string;
         };
         /**
          * ReviewJob
@@ -4767,45 +4792,6 @@ export interface operations {
             };
         };
     };
-    rereview_ticket_api_reviewer_rereview_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RereviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get: {
         parameters: {
             query?: never;
@@ -5233,6 +5219,45 @@ export interface operations {
             };
         };
     };
+    step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+                execution_id: string;
+                step_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     audit_api_tickets__ticket_id__audit_get: {
         parameters: {
             query?: {
@@ -5339,6 +5364,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workflow_runs_api_tickets__ticket_id__workflow_runs_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
                 };
             };
             /** @description Validation Error */

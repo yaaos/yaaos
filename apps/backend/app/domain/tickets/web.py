@@ -1,10 +1,12 @@
 """HTTP routes for tickets.
 
-| Method | Path                            | Action          |
-|--------|---------------------------------|-----------------|
-| GET    | `/api/tickets`                  | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}`      | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}/audit`| `TICKETS_READ`  |
+| Method | Path                                                                       | Action          |
+|--------|----------------------------------------------------------------------------|-----------------|
+| GET    | `/api/tickets`                                                             | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}`                                                 | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/audit`                                           | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/workflow-runs`                                   | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}`               | `TICKETS_READ`  |
 
 Org context arrives via `X-Org-Slug` (RouteSecurity.ORG_SCOPED).
 """
@@ -255,6 +257,83 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
     payload["stages"] = stages
     payload["builder"] = builder
     return payload
+
+
+@router.get("/{ticket_id}/workflow-runs")
+async def workflow_runs(ticket_id: UUID) -> list[dict[str, Any]]:
+    """All workflow runs for the ticket, oldest first, with their step lists.
+
+    One JSON object per run carries `id`, `workflow_name`, `workflow_version`,
+    `state`, `current_step_id`, `created_at`, `updated_at`, `failure_reason`,
+    and `steps[]`. Each step entry carries `step_id`, `command_kind`, `state`
+    (pending | running | done | failed | skipped), `started_at`, and
+    `completed_at`. Pure workflow vocabulary — no AgentCommand references.
+    """
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow import list_run_views_for_ticket  # noqa: PLC0415
+
+    org_id = _org()
+    try:
+        await get(ticket_id, org_id=org_id)
+    except TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        runs = await list_run_views_for_ticket(ticket_id, session=s)
+
+    return [
+        {
+            "id": str(r.id),
+            "workflow_name": r.workflow_name,
+            "workflow_version": r.workflow_version,
+            "state": r.state,
+            "current_step_id": r.current_step_id,
+            "created_at": r.created_at.isoformat(),
+            "updated_at": r.updated_at.isoformat(),
+            "failure_reason": r.failure_reason,
+            "steps": [
+                {
+                    "step_id": s.step_id,
+                    "command_kind": s.command_kind,
+                    "state": s.state,
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                }
+                for s in r.steps
+            ],
+        }
+        for r in runs
+    ]
+
+
+@router.get("/{ticket_id}/activity/{execution_id}/{step_id}")
+async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> dict[str, Any]:
+    """Return the persisted `ActivityLog` for one workflow step.
+
+    Returns `{activity: <log> | null}`. `null` means either the step never
+    ran a coding-agent invocation (non-`InvokeClaudeCode`) or the weekly
+    partition holding its activity row has aged out (4-week TTL).
+
+    Cross-tenant safety: 404s when the execution does not belong to the
+    ticket (and therefore not to the caller's org).
+    """
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow import get_execution_summary  # noqa: PLC0415
+    from app.domain.coding_agent import get_step_activity  # noqa: PLC0415
+
+    org_id = _org()
+    try:
+        await get(ticket_id, org_id=org_id)
+    except TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        wfx = await get_execution_summary(execution_id, session=s)
+        if wfx is None or wfx.ticket_id != ticket_id:
+            raise HTTPException(status_code=404, detail="workflow execution not found")
+        activity = await get_step_activity(execution_id, step_id, session=s)
+
+    return {"activity": activity.model_dump(mode="json") if activity is not None else None}
 
 
 @router.get("/{ticket_id}/audit")

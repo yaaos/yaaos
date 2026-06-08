@@ -192,3 +192,31 @@ async def get_run_id_for_workflow_step(
     if row is None:
         return None
     return row[0]
+
+
+async def get_step_activity(
+    workflow_execution_id: UUID,
+    step_id: str,
+    *,
+    session: AsyncSession,
+) -> ActivityLog | None:
+    """Return the persisted `ActivityLog` for a workflow step's coding-agent
+    run, or None when there is no such run (non-`InvokeClaudeCode` step) or
+    the activity row's weekly partition has been dropped (4-week TTL).
+
+    Two-hop lookup: `(workflow_execution_id, step_id)` →
+    `coding_agent_runs.id` via `get_run_id_for_workflow_step`, then
+    `coding_agent_activity.payload` by `run_id`. The Activity tab in the
+    SPA tolerates None as "activity expired".
+    """
+    run_id = await get_run_id_for_workflow_step(workflow_execution_id, step_id, session=session)
+    if run_id is None:
+        return None
+    row = (
+        await session.execute(
+            select(CodingAgentActivityRow.payload).where(CodingAgentActivityRow.run_id == run_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return ActivityLog.model_validate(row[0])

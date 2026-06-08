@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: ticket identity, status transitions, idempotent creation, SSE + durable-task publishing on every transition, notification policy for status changes (`notifications.py:build_status_change_specs`), findings rollup columns (`findings_count`, `max_severity`).
+Owns: ticket identity, status transitions, idempotent creation, SSE + durable-task publishing on every transition, notification policy for status changes (`notifications.py:build_status_change_specs`), findings rollup columns (`findings_count`, `max_severity`), the Ticket page's workflow-run + step-activity read endpoints.
 
 Does NOT own: PR mirror state (`pull_requests`), review state (`reviewer`), workspace lifecycle, notification delivery (delegated to [core/notifications](core_notifications.md)). Does NOT aggregate findings at read time — `reviewer` writes the rollup via `update_findings_summary`. The `GET /api/tickets/{id}/audit` endpoint aggregates ticket + PR audit entries only; review_job and finding audit entries are reviewer-owned and not included.
 
@@ -42,4 +42,13 @@ Does NOT own: PR mirror state (`pull_requests`), review state (`reviewer`), work
 - `test/test_status_change_producer_service.py` — `notifications.fanout` outbox row, SSE after commit, no SSE on rollback.
 - `test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
 
-See [core_notifications.md](core_notifications.md), [core_sse.md](core_sse.md), [core_tasks.md](core_tasks.md).
+## Workflow-run read surface
+
+Two GET routes back the Ticket page's workflow view (see `apps/backend/app/domain/tickets/web.py`):
+
+- `GET /api/tickets/{ticket_id}/workflow-runs` — projects every workflow execution attached to the ticket via [`core/workflow.list_run_views_for_ticket`](core_workflow.md), oldest first. Each run carries `{id, workflow_name, workflow_version, state, current_step_id, failure_reason, created_at, updated_at, steps[]}`; each `step` carries `{step_id, command_kind, state, started_at, completed_at}`. 404 when the ticket is missing.
+- `GET /api/tickets/{ticket_id}/activity/{execution_id}/{step_id}` — returns `{activity: <log> | null}` via [`domain/coding_agent.get_step_activity`](domain_coding_agent.md). 404 when the `workflow_executions` row doesn't belong to the ticket — cross-tenant safe by construction. `null` when the partition has aged out (>4 weeks).
+
+The SPA invalidates the run-view query on every `workflow_state_changed` SSE event from [`core/sse`](core_sse.md).
+
+See [core_notifications.md](core_notifications.md), [core_sse.md](core_sse.md), [core_tasks.md](core_tasks.md), [core_workflow.md](core_workflow.md), [domain_coding_agent.md](domain_coding_agent.md).

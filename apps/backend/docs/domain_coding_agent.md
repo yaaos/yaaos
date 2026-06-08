@@ -81,6 +81,7 @@ Index: `(org_id, command_kind, created_at)` for dashboard-style aggregations.
 - `finalize_run(run_id, *, usage: Usage, activity: ActivityLog | None, exit_code, status, session)` — updates `status`, `exit_code`, `tokens_in`/`tokens_out`, `duration_ms`, `completed_at`. Prefers `usage.duration_ms` when present, falling back to wall-clock (`completed_at − started_at`). When `activity` is non-`None` and the run's `org_id` is known, inserts one `coding_agent_activity` row carrying the rendered log as a JSONB payload.
 - `get_run_id_for_command(agent_command_id, *, session) -> UUID | None` — lookup by command id.
 - `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session) -> UUID | None` — lookup by `(workflow_execution_id, step_id)`.
+- `get_step_activity(workflow_execution_id, step_id, *, session) -> ActivityLog | None` — two-hop projection: resolve `(wfx_id, step_id) → run_id` via `get_run_id_for_workflow_step`, then read the `coding_agent_activity` payload and validate into `ActivityLog`. Returns `None` when either hop is empty — most commonly because the weekly partition was dropped past the 4-week TTL. The Ticket page renders the `None` case as "activity expired".
 
 ### `AgentRunSink` (IoC seam)
 
@@ -108,7 +109,7 @@ The row's SQLAlchemy mapped class (`CodingAgentActivityRow`) is declared on a de
 
 - `app/domain/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, `validate_config` forwarding, `health_check_all` exception-to-unhealthy.
 - `app/domain/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
-- `app/domain/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row), run-sink no-op for non-`InvokeClaudeCode`, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`.
+- `app/domain/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row), run-sink no-op for non-`InvokeClaudeCode`, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `parse_usage` (extracts tokens + duration, tolerates missing usage block, empty stream) and `render_activity` (monotonic seq across the full stream, null-render filtering, empty-stream → empty log).
 - `app/core/database/test/test_coding_agent_activity_migration.py` — verifies the parent is RANGE-partitioned, ≥3 weekly child partitions exist, and `_apply_create_coding_agent_activity` is idempotent under double-fire.
 - Plugin-specific behaviour in `app/plugins/<plugin>/test/`.

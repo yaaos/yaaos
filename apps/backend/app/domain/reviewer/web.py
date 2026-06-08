@@ -1,8 +1,8 @@
 """HTTP routes for review history and findings reads.
 
-All writes (rereview, cancel) go through the workflow engine. Finding reads
-return the canonical schema: severity ∈ {blocker, should_fix, nit},
-confidence ∈ {verified, plausible, speculative}, category, rationale.
+Cancel goes through the workflow engine. Finding reads return the canonical
+schema: severity ∈ {blocker, should_fix, nit}, confidence ∈ {verified,
+plausible, speculative}, category, rationale.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var
 from app.core.database import session
@@ -27,10 +26,6 @@ from app.domain.reviewer.service import (
 router = APIRouter()
 
 
-class RereviewRequest(BaseModel):
-    ticket_id: UUID
-
-
 def _err(status: int, code: str) -> HTTPException:
     return HTTPException(status_code=status, detail={"error": code})
 
@@ -40,38 +35,6 @@ def _org() -> UUID:
     if org_id is None:
         raise _err(400, "no_org_context")
     return org_id
-
-
-@router.post("/rereview", dependencies=[Depends(require(Action.REVIEWER_WRITE))])
-async def rereview_ticket(req: RereviewRequest) -> dict[str, Any]:
-    """Re-review a ticket — drives `pr_review_v1` via the workflow engine."""
-    org_id = _org()
-    try:
-        await tickets.get(req.ticket_id, org_id=org_id)
-    except tickets.TicketNotFoundError:
-        raise HTTPException(status_code=404, detail="ticket not found")
-
-    from app.core.workflow import get_engine  # noqa: PLC0415
-    from app.core.workspace import get_workflow_context_provider  # noqa: PLC0415
-
-    provider = get_workflow_context_provider()
-    ctx = await provider.get_workspace_ticket_context(req.ticket_id)
-    if ctx is None:
-        raise HTTPException(status_code=404, detail="ticket not found")
-
-    async with session() as s:
-        workflow_execution_id = await get_engine().start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(req.ticket_id),
-            ticket_payload=dict(ctx.payload),
-            session=s,
-        )
-        await s.commit()
-
-    return {
-        "scheduled_count": 1,
-        "workflow_execution_id": workflow_execution_id,
-    }
 
 
 @router.post("/cancel", dependencies=[Depends(require(Action.REVIEWER_WRITE))])

@@ -23,6 +23,7 @@ from app.domain.coding_agent.run_service import (
     finalize_run,
     get_run_id_for_command,
     get_run_id_for_workflow_step,
+    get_step_activity,
 )
 from app.domain.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.domain.coding_agent.types import ActivityEvent, ActivityLog, Usage
@@ -390,3 +391,92 @@ async def test_get_run_id_for_workflow_step(db_session) -> None:
     # Wrong step_id returns None.
     result2 = await get_run_id_for_workflow_step(wfe_id, "other_step", session=db_session)
     assert result2 is None
+
+
+# ── get_step_activity ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_get_step_activity_returns_activity_log_when_present(db_session) -> None:
+    """get_step_activity returns the ActivityLog for (wfx_id, step_id) when
+    a finalize_run with an activity blob has landed."""
+    org_id = uuid.uuid4()
+    wfe_id = uuid.uuid4()
+    cmd_id = uuid.uuid4()
+
+    run_id = await create_run(
+        org_id=org_id,
+        workflow_execution_id=wfe_id,
+        step_id="review",
+        agent_command_id=cmd_id,
+        command_kind="review",
+        session=db_session,
+    )
+
+    activity = ActivityLog(
+        events=(
+            ActivityEvent(
+                seq=0,
+                ts=datetime_now(),
+                kind="session_start",
+                message="Session started",
+                detail={"model": "opus"},
+            ),
+        )
+    )
+    await finalize_run(
+        run_id,
+        usage=Usage(tokens_in=1, tokens_out=2, duration_ms=10),
+        activity=activity,
+        exit_code=0,
+        status="success",
+        session=db_session,
+    )
+
+    result = await get_step_activity(wfe_id, "review", session=db_session)
+    assert result is not None
+    assert isinstance(result, ActivityLog)
+    assert len(result.events) == 1
+    assert result.events[0].kind == "session_start"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_get_step_activity_returns_none_when_no_run(db_session) -> None:
+    """get_step_activity returns None when no run exists for the workflow step
+    (e.g. a non-InvokeClaudeCode step, or a step that hasn't dispatched)."""
+    result = await get_step_activity(uuid.uuid4(), "review", session=db_session)
+    assert result is None
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_get_step_activity_returns_none_when_partition_aged_out(db_session) -> None:
+    """get_step_activity returns None when the run row exists but no activity
+    blob was persisted (simulating a dropped weekly partition past the 4-week TTL).
+    The SPA renders this as 'activity expired'."""
+    org_id = uuid.uuid4()
+    wfe_id = uuid.uuid4()
+    cmd_id = uuid.uuid4()
+
+    run_id = await create_run(
+        org_id=org_id,
+        workflow_execution_id=wfe_id,
+        step_id="review",
+        agent_command_id=cmd_id,
+        command_kind="review",
+        session=db_session,
+    )
+    # Finalize with `activity=None` — no row is inserted in coding_agent_activity.
+    await finalize_run(
+        run_id,
+        usage=Usage(),
+        activity=None,
+        exit_code=0,
+        status="success",
+        session=db_session,
+    )
+
+    result = await get_step_activity(wfe_id, "review", session=db_session)
+    assert result is None

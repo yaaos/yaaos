@@ -33,6 +33,7 @@ from app.domain.coding_agent.run_service import (
     finalize_run,
     get_run_id_for_command,
     get_run_id_for_workflow_step,
+    get_step_activity,
 )
 from app.domain.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.domain.coding_agent.service import (
@@ -136,6 +137,7 @@ __all__ = [
     "get_plugin",
     "get_run_id_for_command",
     "get_run_id_for_workflow_step",
+    "get_step_activity",
     "health_check_all",
     "incremental_review",
     "list_plugin_metas",

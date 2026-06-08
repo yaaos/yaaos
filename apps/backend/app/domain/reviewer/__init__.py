@@ -3,8 +3,8 @@
 Entry points:
 
 - `start_pr_review(ticket_id, *, org_id)` — start a `pr_review_v1` workflow
-  execution. Intake's pr-ready handler + the SPA `/rereview` endpoint both
-  route through here.
+  execution. Called by `domain/intake` when a PR becomes review-ready or
+  when a `@yaaos review` comment is parsed.
 - `cancel_workflows_for_ticket(ticket_id)` — cancel any non-terminal
   workflow_executions rows for the ticket.
 - `publish_findings(...)` — convert `ReportedFinding`s from the coding-agent
