@@ -240,11 +240,16 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     cutoff = datetime.now(UTC) - timedelta(minutes=5)
 
     results = await list_running_older_than(cutoff)
-    result_ids = {r[0] for r in results}
+    # list_running_older_than is intentionally org-unfiltered (system sweep over
+    # all orgs), so other suite tests' running tickets can appear in the global
+    # result set. Scope assertions to this test's unique org so they hold
+    # regardless of suite ordering or concurrent rows.
+    own_org_rows = [r for r in results if r[1] == org_id]
+    result_ids = {r[0] for r in own_org_rows}
     assert stale_id in result_ids
     assert fresh_id not in result_ids
     # verify pr_id slot is present (may be None for tickets without pr)
-    stale_result = next(r for r in results if r[0] == stale_id)
+    stale_result = next(r for r in own_org_rows if r[0] == stale_id)
     assert len(stale_result) == 3  # (ticket_id, org_id, pr_id)
 
 
