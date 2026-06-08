@@ -198,7 +198,7 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.core.workspace.models",
         "app.plugins.claude_code.models",
         "app.plugins.github.models",
-        "app.domain.pull_requests.models",
+        "app.domain.tickets.pull_request",
         "app.domain.tickets.models",
         "app.domain.lessons.models",
         "app.domain.reviewer.models",
@@ -1337,7 +1337,7 @@ async def _apply_canonical_findings_schema(conn) -> None:  # type: ignore[no-unt
 
     # Import reviewer models + pull_requests model so FK targets are in metadata.
     importlib.import_module("app.domain.reviewer.models")
-    importlib.import_module("app.domain.pull_requests.models")
+    importlib.import_module("app.domain.tickets.pull_request")
     new_tables = [
         Base.metadata.tables[name] for name in ("reviews", "findings") if name in Base.metadata.tables
     ]

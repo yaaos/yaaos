@@ -1,7 +1,19 @@
-"""domain/tickets — yaaos's unit of work."""
+"""domain/tickets — yaaos's unit of work, including the PR mirror."""
 
 from app.domain.tickets import web  # noqa: F401
 from app.domain.tickets.notifications import build_status_change_specs
+from app.domain.tickets.pull_request import (
+    PRState,
+    PullRequest,
+    PullRequestNotFoundError,
+    get_by_external,
+    list_by_ids,
+    update_state,
+    upsert,
+)
+from app.domain.tickets.pull_request import (
+    get as get_pull_request,
+)
 from app.domain.tickets.service import (
     InvalidTicketTransition,
     Ticket,
@@ -28,6 +40,9 @@ from app.domain.tickets.service import (
 
 __all__ = [
     "InvalidTicketTransition",
+    "PRState",
+    "PullRequest",
+    "PullRequestNotFoundError",
     "Ticket",
     "TicketFilter",
     "TicketNotFoundError",
@@ -41,12 +56,17 @@ __all__ = [
     "create_for_pr",
     "fail",
     "get",
+    "get_by_external",
     "get_by_pr",
     "get_payload",
+    "get_pull_request",
     "get_workspace_ticket_context",
+    "list_by_ids",
     "list_running_older_than",
     "list_tickets",
     "set_workflow_execution",
     "update_findings_summary",
+    "update_state",
+    "upsert",
     "upsert_ticket_for_pr",
 ]

@@ -32,7 +32,6 @@ from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -41,6 +40,7 @@ from app.domain.reviewer import (
 )
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert as upsert_pr
 from app.domain.vcs import VCSPullRequest
 from app.testing.seed import read_email_inbox
 

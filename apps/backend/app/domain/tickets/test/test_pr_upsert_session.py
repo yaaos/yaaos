@@ -1,4 +1,4 @@
-"""`pull_requests.upsert` honors the required-session contract.
+"""`tickets.upsert` (PR mirror) honors the required-session contract.
 
 Regression: `upsert` must not open its own `db_session()` internally.
 Doing so meant the github intake's PR-opened path inserted a `pull_requests`
@@ -17,9 +17,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.domain import pull_requests
-from app.domain.pull_requests.models import PullRequestRow
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert
+from app.domain.tickets.pull_request import PullRequestRow
 from app.domain.vcs import VCSPullRequest
 
 
@@ -69,7 +69,7 @@ async def test_upsert_insert_uses_caller_session_and_satisfies_fk(db_session) ->
 
     # Upsert the PR on the same session. If the service opened its own
     # transaction we would FK-violate here because the ticket is uncommitted.
-    result = await pull_requests.upsert(_vcs_pr(), ticket_id=ticket_id, org_id=org_id, session=db_session)
+    result = await upsert(_vcs_pr(), ticket_id=ticket_id, org_id=org_id, session=db_session)
     assert result.ticket_id == ticket_id
 
     # Row is visible on the caller's session (flushed, not committed).
@@ -97,7 +97,7 @@ async def test_upsert_update_path_writes_changed_fields_and_audit(db_session) ->
         repo_external_id="acme/repo",
         session=db_session,
     )
-    initial = await pull_requests.upsert(
+    initial = await upsert(
         _vcs_pr(external_id="acme/repo#99"),
         ticket_id=ticket_id,
         org_id=org_id,
@@ -108,7 +108,7 @@ async def test_upsert_update_path_writes_changed_fields_and_audit(db_session) ->
     refreshed_vcs = _vcs_pr(external_id="acme/repo#99")
     refreshed_vcs.head_sha = "c" * 40
     refreshed_vcs.title = "renamed"
-    refreshed = await pull_requests.upsert(refreshed_vcs, ticket_id=None, org_id=org_id, session=db_session)
+    refreshed = await upsert(refreshed_vcs, ticket_id=None, org_id=org_id, session=db_session)
 
     assert refreshed.id == initial.id
     assert refreshed.head_sha == "c" * 40
@@ -122,7 +122,7 @@ async def test_upsert_update_path_writes_changed_fields_and_audit(db_session) ->
 async def test_upsert_insert_without_ticket_id_raises(db_session) -> None:
     """Insert path requires `ticket_id` — orphan PR rows have no meaning."""
     with pytest.raises(ValueError, match="ticket_id required"):
-        await pull_requests.upsert(
+        await upsert(
             _vcs_pr(external_id="acme/repo#1"),
             ticket_id=None,
             org_id=uuid4(),

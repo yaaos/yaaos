@@ -165,9 +165,9 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     PostFindings (LOCAL) runs inline, validates the canonical finding, and
     persists a FindingRow with `finding_display_id=1`.
     """
-    from app.domain.pull_requests import upsert as upsert_pr  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
     from app.domain.tickets import create as create_ticket2  # noqa: PLC0415
+    from app.domain.tickets import upsert as upsert_pr  # noqa: PLC0415
     from app.domain.vcs import VCSPullRequest as _VCSPullRequest  # noqa: PLC0415
 
     class _StubProviderWithFiles:

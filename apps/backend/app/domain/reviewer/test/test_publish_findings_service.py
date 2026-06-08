@@ -20,11 +20,11 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.coding_agent import ReportedFinding, finding_output_schema
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import publish_findings
 from app.domain.reviewer.models import FindingRow
 from app.domain.reviewer.types import Confidence, Severity
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert as upsert_pr
 from app.domain.vcs import VCSPullRequest
 from app.testing.stub_vcs import register_stub_vcs
 

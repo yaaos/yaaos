@@ -6,7 +6,7 @@
 
 Owns: abstract transport types (`VCSPullRequest`, `Diff`, `Comment`, `VCSEvent` discriminated union), `VCSPlugin` Protocol, plugin registry, typed exception hierarchy.
 
-Does NOT own: finding taxonomy (lives in `domain/reviewer`), business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/pull_requests`). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
+Does NOT own: finding taxonomy (lives in `domain/reviewer`), business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/tickets` — `pull_requests` table). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
 
 ## Why / invariants
 
@@ -35,7 +35,7 @@ Signatures in `app/domain/vcs/types.py`:
 
 ## Data owned
 
-None. Registry is in-memory. PR mirror state is in `domain/pull_requests`.
+None. Registry is in-memory. PR mirror state is in `domain/tickets` (`pull_requests` table).
 
 ## How it's tested
 

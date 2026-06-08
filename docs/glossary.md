@@ -6,7 +6,7 @@
 |---|---|
 | **Org** | Tenant boundary. UUID PK + immutable `slug`. Every non-user row is `org_id`-scoped. Soft-deleted via `archived_at`. |
 | **Ticket** | yaaos unit of work. References a PR; flows `open → in_review → complete / abandoned`. |
-| **PR** | VCS-side artefact mirrored into `pull_requests`. Owned by `domain/pull_requests`. |
+| **PR** | VCS-side artefact mirrored into `pull_requests`. Owned by `domain/tickets` (a property of a ticket; table `pull_requests` unchanged). |
 | **Review job** | One review run for one PR (`queued → running → posted / failed / skipped / cancelled`). Owned by `domain/reviewer`. |
 | **Skill** | A customer-authored `SKILL.md` file checked into the repo, identified by a short name (e.g. `code-review`). The WorkspaceAgent passes the name to Claude Code via `--skill`; Claude Code locates and executes the file. Configured per-repo on the Coding Agents settings page; stored as `claude_code_repos.skill_name`. |
 | **Subagent** | A Claude Code sub-agent. The review skill may dispatch subagents internally; yaaos does not define or install them. |

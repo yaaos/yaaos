@@ -16,10 +16,10 @@ from app.core.workspace import (
     WorkspaceTicketContext,
     register_workflow_context_provider,
 )
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert as upsert_pr
 from app.domain.vcs import VCSPullRequest
 
 

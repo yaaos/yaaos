@@ -260,10 +260,10 @@ class GithubIntakeType:
         PR back-reference, audit row, and workflow.start outbox enqueue
         commit atomically. Filters forks and bot authors with an audit row
         (no ticket created in that case)."""
-        from app.domain import pull_requests  # noqa: PLC0415
         from app.domain.tickets import (  # noqa: PLC0415
             attach_pr_to_ticket,
             set_workflow_execution,
+            upsert,
             upsert_ticket_for_pr,
         )
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
@@ -318,7 +318,7 @@ class GithubIntakeType:
         # PR upsert runs on the endpoint's session — same transaction as the
         # ticket insert above, so the FK on `pull_requests.ticket_id`
         # resolves before commit.
-        upserted_pr = await pull_requests.upsert(vcs_pr, ticket_id=ticket_id, org_id=org_id, session=session)
+        upserted_pr = await upsert(vcs_pr, ticket_id=ticket_id, org_id=org_id, session=session)
 
         await attach_pr_to_ticket(ticket_id, pr_id=upserted_pr.id, session=session)
 
@@ -388,7 +388,8 @@ class GithubIntakeType:
         return IntakeSideEffect(detail="pr_review_started")
 
     async def _handle_synchronize(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        from app.domain import pull_requests, reviewer  # noqa: PLC0415
+        from app.domain import reviewer  # noqa: PLC0415
+        from app.domain.tickets import get_by_external, upsert  # noqa: PLC0415
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
@@ -399,7 +400,7 @@ class GithubIntakeType:
         before_sha = payload.get("before") or ""
         after_sha = pr_payload.get("head", {}).get("sha") or payload.get("after") or ""
 
-        existing_pr = await pull_requests.get_by_external("github", pr_external_id, org_id=org_id)
+        existing_pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if existing_pr is None:
             log.warning("intake.github.synchronize_unknown_pr", pr_external_id=pr_external_id)
             return
@@ -409,7 +410,7 @@ class GithubIntakeType:
         # writes need to share this transaction, so the wrap stays here
         # rather than being plumbed in by the caller.
         async with db_session() as s:
-            await pull_requests.upsert(fresh, ticket_id=existing_pr.ticket_id, org_id=org_id, session=s)
+            await upsert(fresh, ticket_id=existing_pr.ticket_id, org_id=org_id, session=s)
             await s.commit()
 
         await reviewer.start_incremental_review(
@@ -420,7 +421,8 @@ class GithubIntakeType:
         )
 
     async def _handle_closed(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        from app.domain import pull_requests, reviewer, tickets  # noqa: PLC0415
+        from app.domain import reviewer  # noqa: PLC0415
+        from app.domain.tickets import complete, get_by_external, get_by_pr, update_state  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
         repo_full = (payload.get("repository") or {}).get("full_name") or ""
@@ -429,26 +431,26 @@ class GithubIntakeType:
         merged = pr_payload.get("merged", False)
         new_state = "merged" if merged else "closed"
 
-        pr = await pull_requests.get_by_external("github", pr_external_id, org_id=org_id)
+        pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if pr is None:
             return
-        await pull_requests.update_state(pr.id, new_state, org_id=org_id)  # type: ignore[arg-type]
-        ticket = await tickets.get_by_pr(pr.id, org_id=org_id)
+        await update_state(pr.id, new_state, org_id=org_id)  # type: ignore[arg-type]
+        ticket = await get_by_pr(pr.id, org_id=org_id)
         if ticket and ticket.status == "running":
-            await tickets.complete(ticket.id, org_id=org_id)
+            await complete(ticket.id, org_id=org_id)
             await reviewer.cancel_workflows_for_ticket(ticket.id)
 
     async def _handle_reopened(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        from app.domain import pull_requests  # noqa: PLC0415
+        from app.domain.tickets import get_by_external, update_state  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
         repo_full = (payload.get("repository") or {}).get("full_name") or ""
         pr_number = pr_payload.get("number")
         pr_external_id = f"{repo_full}#{pr_number}"
-        pr = await pull_requests.get_by_external("github", pr_external_id, org_id=org_id)
+        pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if pr is None:
             return
-        await pull_requests.update_state(pr.id, "open", org_id=org_id)  # type: ignore[arg-type]
+        await update_state(pr.id, "open", org_id=org_id)  # type: ignore[arg-type]
 
     # ── comment / reaction / installation branches ─────────────────────────
 
@@ -460,8 +462,9 @@ class GithubIntakeType:
         org_id: UUID,
         session: AsyncSession,
     ) -> IntakeOutcome:
-        from app.domain import pull_requests, reviewer, tickets  # noqa: PLC0415
+        from app.domain import reviewer  # noqa: PLC0415
         from app.domain.intake import parse_yaaos_command  # noqa: PLC0415
+        from app.domain.tickets import get_by_external, get_by_pr  # noqa: PLC0415
 
         comment = payload.get("comment") or {}
         user = comment.get("user") or {}
@@ -482,10 +485,10 @@ class GithubIntakeType:
             return IntakeSideEffect(detail="ignored_no_pr")
         pr_external_id = f"{repo_full}#{pr_number}"
 
-        pr = await pull_requests.get_by_external("github", pr_external_id, org_id=org_id)
+        pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if pr is None:
             return IntakeSideEffect(detail="ignored_unknown_pr")
-        ticket = await tickets.get_by_pr(pr.id, org_id=org_id)
+        ticket = await get_by_pr(pr.id, org_id=org_id)
         if ticket is None:
             return IntakeSideEffect(detail="ignored_no_ticket")
 

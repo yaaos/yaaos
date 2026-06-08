@@ -14,7 +14,6 @@ from app.domain.mcp_proxy import lookup_token, mint_token, revoke_token
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.mcp_proxy.service import run_sweep_loop, sweep_expired
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import (
     PRReviewAggregate,
     Review,
@@ -23,6 +22,7 @@ from app.domain.reviewer import (
     SqlAlchemyAggregateRepository,
 )
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert as upsert_pr
 from app.domain.vcs import VCSPullRequest
 
 

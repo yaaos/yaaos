@@ -10,7 +10,7 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-32 modules: **17 core · 8 domain · 4 plugins · 3 testing**. Each has a doc with five fixed sections.
+31 modules: **17 core · 7 domain · 4 plugins · 3 testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 
@@ -41,8 +41,7 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [domain_vcs](domain_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
 | [domain_coding_agent](domain_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
-| [domain_pull_requests](domain_pull_requests.md) | PR aggregate mirroring VCS state. |
-| [domain_tickets](domain_tickets.md) | Lifecycle `open → in_review → complete`. |
+| [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
 | [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |

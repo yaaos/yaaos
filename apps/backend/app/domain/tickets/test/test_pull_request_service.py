@@ -1,4 +1,4 @@
-"""Service-level tests for pull_requests public ops.
+"""Service-level tests for the PR mirror public ops (now owned by `domain/tickets`).
 
 Covers list_by_ids — the batch read added so callers can enumerate multiple
 PRs in one call without re-importing PullRequestRow.
@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain import pull_requests
+from app.domain import tickets
 from app.domain.tickets import create as create_ticket
 from app.domain.vcs import VCSPullRequest
 
@@ -45,7 +45,7 @@ async def _insert_pr(
     org_id,
     external_id: str,
     number: int = 1,
-) -> pull_requests.PullRequest:
+) -> tickets.PullRequest:
     """Helper: insert a ticket + PR row and return the PullRequest."""
     ticket_id, _ = await create_ticket(
         type="pr_review",
@@ -59,7 +59,7 @@ async def _insert_pr(
         repo_external_id="org/repo",
         session=db_session,
     )
-    pr = await pull_requests.upsert(
+    pr = await tickets.upsert(
         _vcs_pr(external_id=external_id, number=number),
         ticket_id=ticket_id,
         org_id=org_id,
@@ -77,7 +77,7 @@ async def test_list_by_ids_returns_matching_prs(db_session) -> None:
     pr_a = await _insert_pr(db_session, org_id=org_id, external_id="org/repo#10", number=10)
     pr_b = await _insert_pr(db_session, org_id=org_id, external_id="org/repo#11", number=11)
 
-    result = await pull_requests.list_by_ids([pr_a.id, pr_b.id])
+    result = await tickets.list_by_ids([pr_a.id, pr_b.id])
 
     result_ids = {p.id for p in result}
     assert pr_a.id in result_ids
@@ -89,7 +89,7 @@ async def test_list_by_ids_returns_matching_prs(db_session) -> None:
 @pytest.mark.service
 async def test_list_by_ids_empty_input_returns_empty(db_session) -> None:
     """list_by_ids with an empty list returns an empty list without hitting the DB."""
-    result = await pull_requests.list_by_ids([])
+    result = await tickets.list_by_ids([])
     assert result == []
 
 
@@ -97,7 +97,7 @@ async def test_list_by_ids_empty_input_returns_empty(db_session) -> None:
 @pytest.mark.service
 async def test_list_by_ids_unknown_ids_omitted(db_session) -> None:
     """list_by_ids silently omits ids that do not exist."""
-    result = await pull_requests.list_by_ids([uuid4(), uuid4()])
+    result = await tickets.list_by_ids([uuid4(), uuid4()])
     assert result == []
 
 
@@ -109,7 +109,7 @@ async def test_list_by_ids_partial_match(db_session) -> None:
     pr = await _insert_pr(db_session, org_id=org_id, external_id="org/repo#20", number=20)
     missing_id = uuid4()
 
-    result = await pull_requests.list_by_ids([pr.id, missing_id])
+    result = await tickets.list_by_ids([pr.id, missing_id])
 
     assert len(result) == 1
     assert result[0].id == pr.id

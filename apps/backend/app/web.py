@@ -60,7 +60,6 @@ from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
 from app.domain import vcs  # noqa: F401, E402
 from app.domain import lessons  # noqa: F401, E402
 from app.domain import coding_agent  # noqa: F401, E402
-from app.domain import pull_requests  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 

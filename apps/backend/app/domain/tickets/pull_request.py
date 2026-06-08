@@ -1,19 +1,87 @@
-"""PR upsert + state transitions."""
+"""PR mirror — row, value object, and service operations owned by `domain/tickets`.
+
+The `pull_requests` table is unchanged; only the module boundary moved.
+All five services (`upsert`, `update_state`, `get`, `get_by_external`,
+`list_by_ids`) live here as they are tightly coupled to the Ticket aggregate
+they back-link via FK.
+"""
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.audit_log import Actor, audit_for_pr
+from app.core.database import Base
 from app.core.database import session as db_session
-from app.domain.pull_requests.models import PullRequestRow
 from app.domain.vcs import VCSPullRequest
+
+# ---------------------------------------------------------------------------
+# Row
+# ---------------------------------------------------------------------------
+
+
+class PullRequestRow(Base):
+    __tablename__ = "pull_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
+    plugin_id: Mapped[str] = mapped_column(String, nullable=False)
+    external_id: Mapped[str] = mapped_column(String, nullable=False)
+    repo_external_id: Mapped[str] = mapped_column(String, nullable=False, server_default="")
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str | None] = mapped_column(String, nullable=True)
+    author_login: Mapped[str] = mapped_column(String, nullable=False)
+    author_type: Mapped[str] = mapped_column(String, nullable=False, default="user")
+    base_branch: Mapped[str] = mapped_column(String, nullable=False)
+    head_branch: Mapped[str] = mapped_column(String, nullable=False)
+    base_sha: Mapped[str] = mapped_column(String, nullable=False)
+    head_sha: Mapped[str] = mapped_column(String, nullable=False)
+    is_draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_fork: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="open")
+    html_url: Mapped[str] = mapped_column(String, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (UniqueConstraint("plugin_id", "external_id", name="uq_pull_requests_plugin_ext"),)
+
+
+# ---------------------------------------------------------------------------
+# Value object + type aliases
+# ---------------------------------------------------------------------------
 
 PRState = Literal["open", "closed", "merged"]
 
@@ -74,6 +142,11 @@ class PullRequestNotFoundError(LookupError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Audit payload models (private to this module)
+# ---------------------------------------------------------------------------
+
+
 class _PRSyncedPayload(BaseModel):
     changed_fields: list[str]
 
@@ -81,6 +154,11 @@ class _PRSyncedPayload(BaseModel):
 class _PRStateChangedPayload(BaseModel):
     from_state: str
     to_state: str
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
 
 
 async def upsert(

@@ -31,7 +31,7 @@ from sqlalchemy import desc, select, update
 
 from app.core.database import session as db_session
 from app.core.observability import spawn
-from app.domain import pull_requests, tickets
+from app.domain import tickets
 from app.domain.reviewer.constants import DEFAULT_EFFORT as _DEFAULT_EFFORT
 from app.domain.reviewer.constants import DEFAULT_MODEL as _DEFAULT_MODEL
 from app.domain.reviewer.lock import acquire_pr_lock
@@ -44,6 +44,7 @@ from app.domain.reviewer.trigger import (
     decide_trigger,
     humanize_skip,
 )
+from app.domain.tickets import get_pull_request
 from app.domain.vcs import get_plugin as get_vcs_plugin
 
 log = structlog.get_logger("reviewer.incremental_trigger")
@@ -72,7 +73,7 @@ async def start_incremental_review(
 
     Returns: `"scheduled"`, `"skipped:<reason>"`, or `"debounced:<seconds>"`.
     """
-    pr = await pull_requests.get(pr_id, org_id=org_id)
+    pr = await get_pull_request(pr_id, org_id=org_id)
     last_reviewed_sha = await _last_reviewed_sha(pr_id)
     in_flight_id = await _in_flight_review_id(pr_id)
     last_push_at = await _last_push_timestamp(pr_id)

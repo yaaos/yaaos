@@ -340,10 +340,9 @@ class PostFindings(_LocalReviewCommand):
         stdout_raw = inputs.get("stdout") or ""
 
         from app.domain import coding_agent  # noqa: PLC0415
-        from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
-        from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
+        from app.domain.tickets import PullRequestNotFoundError, get_pull_request  # noqa: PLC0415
 
         # Parse and validate stdout before touching any external state.
         if not stdout_raw:

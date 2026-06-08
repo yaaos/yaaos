@@ -40,7 +40,6 @@ from app.domain.mcp_proxy import (
 )
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -48,6 +47,7 @@ from app.domain.reviewer import (
     SqlAlchemyAggregateRepository,
 )
 from app.domain.tickets import create as create_ticket
+from app.domain.tickets import upsert as upsert_pr
 from app.domain.vcs import VCSPullRequest
 
 # Every test in this file drives the MCP proxy end-to-end (real Postgres via
