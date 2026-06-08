@@ -95,7 +95,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.intake"
@@ -194,6 +194,7 @@ expose = [
   "AgentEventKind",
   "AgentMetadata",
   "AgentRef",
+  "AgentRunSink",
   "AuthBlock",
   "ClaimRequest",
   "CleanupWorkspaceCommand",
@@ -224,6 +225,7 @@ expose = [
   "acknowledge_command_received",
   "bind_subscriber_registry",
   "claim_next",
+  "clear_run_sink",
   "compute_agent_liveness_transitions",
   "connection_status_for_org",
   "delete_identity_exchange_rate_limits",
@@ -233,6 +235,7 @@ expose = [
   "get_command_org_and_payload",
   "get_command_workflow_execution_id",
   "get_report_sink",
+  "get_run_sink",
   "get_subscriber_registry",
   "has_any_reachable_agent",
   "list_agents_for_org",
@@ -244,6 +247,7 @@ expose = [
   "record_workspace_event",
   "register_org_arn_lookup",
   "register_report_sink",
+  "register_run_sink",
   "requeue_stale_claimed",
   "retire_command",
   "revoke_all_for_agent",
@@ -668,6 +672,7 @@ expose = [
   "CodingAgentError",
   "CodingAgentPlugin",
   "CodingAgentRegistry",
+  "CodingAgentRunSinkImpl",
   "ExecSpec",
   "FindingAnchor",
   "FindingDraftList",
@@ -699,9 +704,13 @@ expose = [
   "assemble_verify_fix_prompt",
   "bind_coding_agent_registry",
   "build_invocation",
+  "create_run",
   "current_coding_agent_registry",
+  "finalize_run",
   "finding_output_schema",
   "get_plugin",
+  "get_run_id_for_command",
+  "get_run_id_for_workflow_step",
   "health_check_all",
   "incremental_review",
   "list_plugin_metas",

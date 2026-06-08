@@ -24,7 +24,7 @@ For the top-level review arc see [`docs/system-architecture.md`](../../../docs/s
 
 ## `publish_findings` — the canonical entry point
 
-`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], session)` lives in [`publish.py`](../app/domain/reviewer/publish.py):
+`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], run_id: UUID | None = None, session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). `run_id` links the review row to its `coding_agent_runs` row when provided; passed by `PostFindings.execute` after it resolves the preceding `CodeReview` step's run via `get_run_id_for_workflow_step`.
 
 1. Open a `Review` row for this run.
 2. For each `ReportedFinding`: validate `severity`/`confidence` raw strings against the `Severity`/`Confidence` `Literal` aliases — out-of-range raises (caught by `PostFindings` as the runtime gate above).
@@ -48,7 +48,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Data owned
 
-- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`. Run-metric columns live on the central coding-agent-run tables.
+- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`. `run_id` (nullable FK → `coding_agent_runs.id`) links the review to the run that produced it; NULL when no run row exists (e.g. zero-findings fast-path or pre-run-tracking rows).
 - `findings` — canonical schema: `severity, confidence, category, rationale, rule_violated, rule_source, suggested_fix, file (nullable), line (nullable), review_id (FK → reviews.id), finding_display_id`. Unique `(pr_id, finding_display_id)`.
 
 ## Vocabulary

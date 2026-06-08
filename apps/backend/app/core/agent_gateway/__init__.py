@@ -33,6 +33,12 @@ from app.core.agent_gateway.report_sink import (
     get_report_sink,
     register_report_sink,
 )
+from app.core.agent_gateway.run_sink import (
+    AgentRunSink,
+    clear_run_sink,
+    get_run_sink,
+    register_run_sink,
+)
 from app.core.agent_gateway.service import (
     acknowledge_command_received,
     claim_next,
@@ -103,6 +109,7 @@ __all__ = [
     "AgentEventKind",
     "AgentMetadata",
     "AgentRef",
+    "AgentRunSink",
     "AuthBlock",
     "ClaimRequest",
     "CleanupWorkspaceCommand",
@@ -132,6 +139,7 @@ __all__ = [
     "acknowledge_command_received",
     "bind_subscriber_registry",
     "claim_next",
+    "clear_run_sink",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
     "delete_identity_exchange_rate_limits",
@@ -141,6 +149,7 @@ __all__ = [
     "get_command_org_and_payload",
     "get_command_workflow_execution_id",
     "get_report_sink",
+    "get_run_sink",
     "get_subscriber_registry",
     "has_any_reachable_agent",
     "list_agents_for_org",
@@ -152,6 +161,7 @@ __all__ = [
     "record_workspace_event",
     "register_org_arn_lookup",
     "register_report_sink",
+    "register_run_sink",
     "requeue_stale_claimed",
     "retire_command",
     "revoke_all_for_agent",

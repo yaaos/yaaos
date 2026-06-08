@@ -9,6 +9,7 @@ mode; consumers (today: `domain/reviewer`) hand over domain context and read
 domain results.
 """
 
+from app.core.agent_gateway import register_run_sink as _register_run_sink
 from app.domain.coding_agent.invocation import InvocationMode, build_invocation
 from app.domain.coding_agent.prompts import (
     AnswerQuestionDto,
@@ -22,6 +23,13 @@ from app.domain.coding_agent.prompts import (
     finding_output_schema,
     schema_appendix,
 )
+from app.domain.coding_agent.run_service import (
+    create_run,
+    finalize_run,
+    get_run_id_for_command,
+    get_run_id_for_workflow_step,
+)
+from app.domain.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.domain.coding_agent.service import (
     CodingAgentRegistry,
     answer_question,
@@ -69,6 +77,8 @@ from app.domain.coding_agent.types import (
     VerifyFixResult,
 )
 
+_register_run_sink(CodingAgentRunSinkImpl())
+
 __all__ = [
     "ActivityEvent",
     "AnswerQuestionContext",
@@ -78,6 +88,7 @@ __all__ = [
     "CodingAgentError",
     "CodingAgentPlugin",
     "CodingAgentRegistry",
+    "CodingAgentRunSinkImpl",
     "ExecSpec",
     "FindingAnchor",
     "FindingDraftList",
@@ -109,9 +120,13 @@ __all__ = [
     "assemble_verify_fix_prompt",
     "bind_coding_agent_registry",
     "build_invocation",
+    "create_run",
     "current_coding_agent_registry",
+    "finalize_run",
     "finding_output_schema",
     "get_plugin",
+    "get_run_id_for_command",
+    "get_run_id_for_workflow_step",
     "health_check_all",
     "incremental_review",
     "list_plugin_metas",

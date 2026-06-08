@@ -88,6 +88,7 @@ async def publish_findings(
     pr_external_id: str,
     vcs_plugin_id: str,
     findings: list[ReportedFinding],
+    run_id: uuid.UUID | None = None,
     session: AsyncSession,
 ) -> tuple[Review, list[Finding]]:
     """Convert + persist `ReportedFinding`s and post them to the VCS plugin.
@@ -119,6 +120,7 @@ async def publish_findings(
         status="running",
         trigger_reason="pr_ready",
         scope_kind="full",
+        run_id=run_id,
     )
     session.add(review_row)
     await session.flush()

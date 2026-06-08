@@ -86,7 +86,11 @@ class CodeReview:
         from uuid import UUID as _UUID  # noqa: PLC0415
 
         from app.domain import coding_agent  # noqa: PLC0415
-        from app.domain.coding_agent import ReviewContext, finding_output_schema  # noqa: PLC0415
+        from app.domain.coding_agent import (  # noqa: PLC0415
+            ReviewContext,
+            create_run,
+            finding_output_schema,
+        )
 
         ws_id_raw = inputs.get("workspace_id")
         if not ws_id_raw:
@@ -139,6 +143,24 @@ class CodeReview:
             traceparent=ctx.traceparent or "",
             session=session,
             workflow_execution_id=_UUID(ctx.workflow_execution_id),
+        )
+
+        # Create the coding-agent run row in the same transaction so the row
+        # is durable iff the dispatch commits. Only InvokeClaudeCode commands
+        # get a run row; the `kind` from the invocation is the command_kind.
+        run_id = await create_run(
+            org_id=owner.org_id,
+            workflow_execution_id=_UUID(ctx.workflow_execution_id),
+            step_id=ctx.step_id,
+            agent_command_id=command_id,
+            command_kind=invocation.kind,
+            session=session,
+        )
+        log.info(
+            "code_review.run_created",
+            run_id=str(run_id),
+            command_id=str(command_id),
+            workflow_execution_id=ctx.workflow_execution_id,
         )
 
         claimed = await try_claim(
@@ -364,13 +386,23 @@ class PostFindings(_LocalReviewCommand):
             return Outcome.success(outputs={"admitted_count": 0})
 
         try:
+            from app.domain.coding_agent import get_run_id_for_workflow_step  # noqa: PLC0415
+
             async with db_session() as s:
+                # Look up the run created by the preceding CodeReview step so
+                # the review row can be linked via reviews.run_id.
+                run_id = await get_run_id_for_workflow_step(
+                    UUID(ctx.workflow_execution_id),
+                    "review",
+                    session=s,
+                )
                 _review, admitted = await publish_findings(
                     pr_id=ticket_ctx.pr_id,
                     org_id=ticket_ctx.org_id,
                     pr_external_id=pr_row.external_id,
                     vcs_plugin_id=pr_row.plugin_id,
                     findings=findings,
+                    run_id=run_id,
                     session=s,
                 )
                 await refresh_ticket_findings_summary(

@@ -49,6 +49,16 @@ class ReviewRow(Base):
     destination: Mapped[str] = mapped_column(String, nullable=False, server_default="vcs")
     scope_kind: Mapped[str] = mapped_column(String, nullable=False, server_default="full")
     commit_sha_at_start: Mapped[str | None] = mapped_column(String, nullable=True)
+    # FK → coding_agent_runs(id); nullable — reviews from non-review workflows
+    # (and rows created before this column existed) have no run. The legacy
+    # run-metric/activity columns (model, effort, tokens_in, tokens_out,
+    # duration_s, activity_log) coexist; they are still read by the
+    # review-jobs read path.
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("coding_agent_runs.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

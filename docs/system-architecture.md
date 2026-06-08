@@ -92,7 +92,8 @@ Three concepts span all apps:
 2. `route_workflow` picks up; `CheckShouldReview` (Local). `ProvisionWorkspace` (Workspace) parks workflow in `awaiting_agent`, dispatches via `core/agent_gateway.enqueue_command`.
 3. Agent long-polls, runs operation, reports via `POST /api/v1/commands/{id}/events`. Backend's `record_agent_event` validates stale-claim guard, resolves `command_id → agent_commands.workflow_execution_id`, enqueues `handle_agent_event`.
 4. `handle_agent_event` clears claim, enqueues `route_workflow` → `CodeReview → PostFindings → CleanupWorkspace`.
-5. Activity events from workspace flow over WebSocket only when a UI tab is subscribed.
+5. Every `InvokeClaudeCode` dispatch creates a `coding_agent_runs` row (`status=running`, started_at). The registered `CodingAgentRunSink` (in `domain/coding_agent`) fires on the matching terminal `AgentEvent` and writes `status`/`exit_code`/`duration_ms`. `reviews.run_id` links each review to its run. See [`apps/backend/docs/domain_coding_agent.md`](../apps/backend/docs/domain_coding_agent.md).
+6. Activity events from workspace flow over WebSocket only when a UI tab is subscribed.
 
 ### Test stack
 

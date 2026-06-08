@@ -627,6 +627,22 @@ async def record_agent_event(
     # workflow correlation simply retire).
     await retire_command(event.command_id, session=session)
 
+    # Fan out to the coding-agent run sink — only `InvokeClaudeCode` terminal
+    # events need a run row finalized. The sink filters on command_kind and
+    # is a no-op for all other kinds. The sink is optional (None when
+    # domain/coding_agent is not loaded), so it degrades gracefully.
+    from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
+
+    _run_sink = get_run_sink()
+    if _run_sink is not None:
+        await _run_sink.handle_terminal_event(
+            command_id=event.command_id,
+            command_kind=cmd_row.command_kind,
+            event_kind=event.kind.value,
+            outputs=dict(event.outputs),
+            session=session,
+        )
+
     # Lean workspace row creation for ProvisionWorkspace.
     #
     # The Go agent never sends workspace events (WorkspaceEvent is a

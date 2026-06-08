@@ -182,6 +182,8 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("046_drop_skill_manifest_columns", "drop_skill_manifest_columns"),
     ("047_drop_default_model", "drop_default_model"),
     ("048_add_skill_name_to_claude_code_repos", "add_skill_name_to_claude_code_repos"),
+    ("049_create_coding_agent_runs", "create_coding_agent_runs"),
+    ("050_reviews_run_id", "reviews_run_id"),
 )
 
 
@@ -197,6 +199,7 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.domain.tickets.models",
         "app.domain.lessons.models",
         "app.domain.reviewer.models",
+        "app.domain.coding_agent.models",
     ):
         importlib.import_module(mod)
     await conn.run_sync(Base.metadata.create_all)
@@ -1343,7 +1346,7 @@ async def _apply_drop_skill_manifest_columns(conn) -> None:  # type: ignore[no-u
 
     The skill-enumeration feature is retired. `claude_code_repos` keeps its
     identity columns (`id`, `org_id`, `repo_external_id`, `created_at`,
-    `updated_at`); the `skill_name` text field is added in a later phase.
+    `updated_at`) plus the per-repo `skill_name` text field.
 
     Idempotent: DROP COLUMN IF EXISTS.
     """
@@ -1368,6 +1371,35 @@ async def _apply_add_skill_name_to_claude_code_repos(conn) -> None:  # type: ign
     failing the review cleanly before dispatch. Idempotent: ADD COLUMN IF NOT EXISTS.
     """
     await conn.execute(text("ALTER TABLE claude_code_repos ADD COLUMN IF NOT EXISTS skill_name TEXT"))
+
+
+async def _apply_create_coding_agent_runs(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create `coding_agent_runs` — one row per `InvokeClaudeCode` execution.
+
+    Records status/exit_code/duration for every coding-agent run; the
+    token-usage columns (tokens_in/out) stay NULL.
+    Idempotent: creates the table only if it does not already exist.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.domain.coding_agent.models")
+    new_tables = [Base.metadata.tables["coding_agent_runs"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_reviews_run_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add nullable `run_id` FK to `reviews` → `coding_agent_runs(id)`.
+
+    Links each review row to its coding-agent run. Nullable — pre-existing
+    reviews have no run. The legacy run-metric/activity columns on `reviews`
+    (model, effort, tokens_in, tokens_out, duration_s, activity_log) are
+    untouched here; they coexist while the review-jobs read path still reads
+    them.
+    Idempotent: ADD COLUMN IF NOT EXISTS.
+    """
+    await conn.execute(
+        text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS run_id UUID REFERENCES coding_agent_runs(id)")
+    )
 
 
 async def _apply_shed_workspace_columns(conn) -> None:  # type: ignore[no-untyped-def]
@@ -1527,6 +1559,10 @@ async def _apply_pending() -> None:
                 await _apply_drop_default_model(conn)
             elif kind == "add_skill_name_to_claude_code_repos":
                 await _apply_add_skill_name_to_claude_code_repos(conn)
+            elif kind == "create_coding_agent_runs":
+                await _apply_create_coding_agent_runs(conn)
+            elif kind == "reviews_run_id":
+                await _apply_reviews_run_id(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

@@ -42,12 +42,50 @@ Each takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnA
 
 `app/domain/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
 
+## Run lifecycle
+
+`app/domain/coding_agent/models.py` owns the `coding_agent_runs` table. One row per `InvokeClaudeCode` agent command; created at dispatch and finalized when the terminal `AgentEvent` arrives.
+
+### Table — `coding_agent_runs`
+
+| Column | Purpose |
+|---|---|
+| `id` | UUIDv7 PK (`server_default=uuidv7()`). |
+| `org_id` | Soft FK (no DB constraint) — for org-scoped queries. |
+| `workflow_execution_id` | Soft FK — links the run to its workflow execution. |
+| `step_id` | Workflow step id (e.g. `"review"`). |
+| `agent_command_id` | FK to `agent_commands.id` — the exact command that ran. |
+| `command_kind` | Command kind string (e.g. `"InvokeClaudeCode"`). |
+| `model` | Model identifier from the exec spec (nullable). |
+| `effort` | Effort level from the exec spec (nullable). |
+| `status` | `running` → `success` or `failure`. |
+| `tokens_in` / `tokens_out` | Always NULL today; reserved for token-usage parsing. |
+| `duration_ms` | Wall-clock duration (ms) computed from `started_at → completed_at`. |
+| `exit_code` | Process exit code from the agent event outputs (nullable). |
+| `started_at` | Set at `create_run`. |
+| `completed_at` | Set at `finalize_run`. |
+
+Index: `(org_id, command_kind, created_at)` for dashboard-style aggregations.
+
+### Service functions
+
+- `create_run(*, org_id, workflow_execution_id, step_id, agent_command_id, command_kind, model=None, effort=None, session) -> UUID` — inserts with `status=running`, flushes, returns the server-minted run id. Called by `CodeReview.dispatch` in the same transaction so the row is durable iff the dispatch commits.
+- `finalize_run(run_id, *, usage, activity, exit_code, status, session)` — updates `status`, `exit_code`, `duration_ms`, `completed_at`. `usage` and `activity` are reserved for future use; callers pass `None` and the values are ignored.
+- `get_run_id_for_command(agent_command_id, *, session) -> UUID | None` — lookup by command id.
+- `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session) -> UUID | None` — lookup by `(workflow_execution_id, step_id)`.
+
+### `AgentRunSink` (IoC seam)
+
+`core/agent_gateway` defines the `AgentRunSink` Protocol and a single-slot registry (`register_run_sink` / `get_run_sink` / `clear_run_sink`) in `app/core/agent_gateway/run_sink.py`. This module registers `CodingAgentRunSinkImpl()` at import time via the `domain/coding_agent.__init__` side effect. `agent_gateway.record_agent_event` calls the registered sink on every terminal `AgentEvent`; the sink no-ops silently for non-`InvokeClaudeCode` command kinds. See [core_agent_gateway.md](core_agent_gateway.md).
+
 ## Data owned
 
-None. Registry is in-memory.
+- In-memory: plugin registry (`CodingAgentRegistry` in `ContextVar`).
+- Persistent: `coding_agent_runs` table (one row per `InvokeClaudeCode` command).
 
 ## How it's tested
 
 - `app/domain/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, `validate_config` forwarding, `health_check_all` exception-to-unhealthy.
 - `app/domain/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
+- `app/domain/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip, run-sink no-op for non-`InvokeClaudeCode`, `reviews.run_id` populated via `publish_findings`.
 - Plugin-specific behaviour in `app/plugins/<plugin>/test/`.
