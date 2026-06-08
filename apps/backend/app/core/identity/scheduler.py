@@ -1,15 +1,18 @@
-"""Periodic cleanup of expired sessions, unverified-TOTP secrets older
-than 24h, and audit-log entries older than `AUDIT_LOG_RETENTION`.
+"""Hourly purge of expired sessions, unverified-TOTP secrets older than
+24h, and audit-log entries older than `AUDIT_LOG_RETENTION`.
 
-Invitation expiry is swept by `domain/orgs`'s own startup loop.
+Invitation expiry is swept by `domain/orgs`'s own scheduled task.
 
-Single background loop owned by `core/identity`. Spawned in the FastAPI
-lifespan via the module's `RouteSpec.on_startup` hook (see `web.py`).
+Single `@scheduled` body registered with `core/tasks`; runs every hour
+on the minute (`0 * * * *`). Cluster-safe (per-tick atomic claim in
+`core/tasks`) — at most one worker enqueues the body each hour. The
+body itself is idempotent: every purge step is a bare `DELETE` filtered
+by a wall-clock cutoff, so a redelivery from the outbox-drain retry
+path is a no-op.
 """
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -17,10 +20,10 @@ from sqlalchemy import delete as sql_delete
 
 from app.core.audit_log import AUDIT_LOG_RETENTION
 from app.core.audit_log import purge_older_than as purge_audit_older_than
-from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.identity import sessions
 from app.core.identity.models import UserTotpSecretRow
+from app.core.tasks import scheduled
 
 log = structlog.get_logger("identity.cleanup")
 
@@ -90,24 +93,34 @@ async def _purge_old_audit_entries() -> int:
     return await purge_audit_older_than(datetime.now(UTC) - AUDIT_LOG_RETENTION)
 
 
-async def run_cleanup_loop() -> None:
-    """Forever-loop: every `yaaos_auth_cleanup_interval_seconds`, purge.
+async def run_identity_purge() -> None:
+    """Body of the hourly `identity_purge` `@scheduled` task. Runs each
+    of the three purge passes; logs combined counts when any row was
+    affected. Idempotent — re-running is a no-op.
 
-    Tests get this with the interval set to 1 second; production uses 3600.
+    Module-public so service tests can invoke the body directly without
+    going through the broker dispatch path.
     """
-    interval = get_settings().yaaos_auth_cleanup_interval_seconds
-    while True:
-        try:
-            sessions_purged = await _purge_expired_sessions()
-            totps_purged = await _purge_stale_unverified_totp_secrets()
-            audit_purged = await _purge_old_audit_entries()
-            if sessions_purged or totps_purged or audit_purged:
-                log.info(
-                    "identity.cleanup.ran",
-                    sessions_purged=sessions_purged,
-                    totps_purged=totps_purged,
-                    audit_purged=audit_purged,
-                )
-        except Exception:
-            log.exception("identity.cleanup.failed")
-        await asyncio.sleep(interval)
+    try:
+        sessions_purged = await _purge_expired_sessions()
+        totps_purged = await _purge_stale_unverified_totp_secrets()
+        audit_purged = await _purge_old_audit_entries()
+    except Exception:
+        log.exception("identity.cleanup.failed")
+        raise
+    if sessions_purged or totps_purged or audit_purged:
+        log.info(
+            "identity.cleanup.ran",
+            sessions_purged=sessions_purged,
+            totps_purged=totps_purged,
+            audit_purged=audit_purged,
+        )
+
+
+# Hourly at minute 0 — the cadence the spec mandates.
+identity_purge = scheduled(
+    name="identity_purge",
+    cron="0 * * * *",
+    queue="default",
+    max_retries=1,
+)(run_identity_purge)

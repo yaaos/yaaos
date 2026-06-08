@@ -1466,6 +1466,89 @@ async def _apply_create_coding_agent_activity(conn) -> None:  # type: ignore[no-
         )
 
 
+async def maintain_coding_agent_activity_partitions() -> None:
+    """Rolling create-ahead + drop maintenance for `coding_agent_activity`.
+
+    Creates child partitions for the current ISO-UTC week and the next two
+    weeks (3 partitions total, ~2-week create-ahead window), and drops
+    partitions whose week is older than 4 weeks before the current week
+    (the table's documented retention). Idempotent: `CREATE TABLE IF NOT
+    EXISTS` for create, `DROP TABLE IF EXISTS` for drop, repeated runs on
+    the same day are no-ops.
+
+    Raw partition DDL lives here (not in `domain/coding_agent`) because
+    `core/database` is the only module the table-access checker allows
+    raw SQL on the `coding_agent_activity` parent. The companion
+    `@scheduled` task in `domain/coding_agent` calls this function once a
+    day.
+
+    Partition naming + week alignment match the seeding migration
+    (`_apply_create_coding_agent_activity`): UTC Monday 00:00 week start,
+    `coding_agent_activity_pYYYYWW` using ISO-year-week.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    now = datetime.now(UTC)
+    today_midnight = datetime(now.year, now.month, now.day, tzinfo=UTC)
+    week_start = today_midnight - timedelta(days=today_midnight.weekday())
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        # Create-ahead: current week + next two (3 partitions, ~2-week window).
+        for offset in (0, 1, 2):
+            lower = week_start + timedelta(weeks=offset)
+            upper = lower + timedelta(weeks=1)
+            iso_year, iso_week, _ = lower.isocalendar()
+            partition_name = f"coding_agent_activity_p{iso_year:04d}{iso_week:02d}"
+            lower_lit = lower.strftime("%Y-%m-%d %H:%M:%S+00")
+            upper_lit = upper.strftime("%Y-%m-%d %H:%M:%S+00")
+            # Bounds and partition name are derived from server-side
+            # `datetime.now` + a fixed ISO-week format — no caller data ever
+            # reaches this branch, so f-string interpolation is injection-free
+            # (same reasoning as `_apply_create_coding_agent_activity`).
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    f"CREATE TABLE IF NOT EXISTS {partition_name} "
+                    f"PARTITION OF coding_agent_activity "
+                    f"FOR VALUES FROM ('{lower_lit}') TO ('{upper_lit}')"
+                )
+            )
+
+        # Drop: partitions whose week is more than 4 weeks before the current
+        # week. Enumerate via `pg_inherits` (children of the parent), parse the
+        # `pYYYYWW` suffix, drop those below the cutoff. `pg_inherits` join
+        # avoids `LIKE`-based name scraping and only returns actual children.
+        cutoff_lower = week_start - timedelta(weeks=4)
+        cutoff_iso_year, cutoff_iso_week, _ = cutoff_lower.isocalendar()
+        cutoff_key = cutoff_iso_year * 100 + cutoff_iso_week
+
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT c.relname FROM pg_inherits i "
+                    "JOIN pg_class c ON c.oid = i.inhrelid "
+                    "JOIN pg_class p ON p.oid = i.inhparent "
+                    "WHERE p.relname = 'coding_agent_activity'"
+                )
+            )
+        ).all()
+        for (name,) in rows:
+            # Expected shape: coding_agent_activity_pYYYYWW
+            suffix = name.removeprefix("coding_agent_activity_p")
+            if suffix == name or len(suffix) != 6 or not suffix.isdigit():
+                continue
+            key = int(suffix)
+            if key >= cutoff_key:
+                continue
+            # Identifier is a child of `coding_agent_activity` validated to match
+            # the `pYYYYWW` shape — no caller data, injection-free.
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    f"DROP TABLE IF EXISTS {name}"
+                )
+            )
+
+
 async def _apply_create_scheduled_runs(conn) -> None:  # type: ignore[no-untyped-def]
     """Create `scheduled_runs` — the per-tick dedup ledger for `core/tasks`.
 

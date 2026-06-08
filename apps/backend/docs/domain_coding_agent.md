@@ -88,7 +88,7 @@ Index: `(org_id, command_kind, created_at)` for dashboard-style aggregations.
 
 ### Table — `coding_agent_activity`
 
-Partitioned by RANGE on `created_at` (weekly child partitions, ~4-week TTL). This is the codebase's first partitioned table; the parent table and DDL live in [`core/database`](core_database.md). Maintenance (rolling create-ahead + drop) is a follow-up.
+Partitioned by RANGE on `created_at` (weekly child partitions, ~4-week TTL). This is the codebase's first partitioned table; the parent table and DDL live in [`core/database`](core_database.md). Maintenance — daily `@scheduled` task `coding_agent_activity_partition_maintenance` (cron `0 1 * * *`, in `domain/coding_agent/partition_maintenance.py`) — calls `core/database.maintain_coding_agent_activity_partitions()`: creates partitions for the current week + the next two and drops partitions whose week is more than 4 weeks before the current week. Idempotent: `CREATE TABLE IF NOT EXISTS` / `DROP TABLE IF EXISTS`. Raw partition DDL lives in `core/database` (the only module the table-access checker allows raw SQL against `coding_agent_activity`); this module owns scheduling only.
 
 | Column | Purpose |
 |---|---|

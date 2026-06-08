@@ -29,7 +29,7 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 **TOTP secret** — at most one per user. Base32 seed encrypted via [`core/secrets`](core_secrets.md); `verified_at` set only after the user proves possession.
 
-**Periodic cleanup** — `scheduler.run_cleanup_loop()` spawned in FastAPI lifespan every `YAAOS_AUTH_CLEANUP_INTERVAL_SECONDS` (default 1h): purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION` (15d). Invitation expiry is swept by [`domain/orgs`](domain_orgs.md)'s own startup loop.
+**Periodic cleanup** — hourly `@scheduled` task `identity_purge` (registered with [`core/tasks`](core_tasks.md) at module import; cron `0 * * * *`) purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION` (15d). Cluster-safe via `core/tasks`'s per-tick atomic claim. Body is idempotent (`DELETE … WHERE created_at < cutoff` is a no-op on repeat). Invitation expiry is swept by [`domain/orgs`](domain_orgs.md)'s own scheduled task.
 
 **Provider registry** — `register_provider(p)` overwrites on re-register (plugins may import multiple times in tests). Plugins: [`plugins/github`](plugins_github.md), [`plugins/oauth_test`](plugins_oauth_test.md).
 

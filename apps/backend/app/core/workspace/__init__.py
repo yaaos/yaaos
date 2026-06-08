@@ -29,7 +29,6 @@ from app.core.workspace.service import (
     is_workspace_provider_registered,
     list_workspace_providers,
     register_workspace_provider,
-    start_reaper,
     startup_recovery,
     update_workspace_status,
 )
@@ -112,7 +111,6 @@ __all__ = [
     "register_workspace_providers",
     "register_workspace_recovery_policies",
     "release_claim",
-    "start_reaper",
     "startup_recovery",
     "try_claim",
     "update_workspace_status",

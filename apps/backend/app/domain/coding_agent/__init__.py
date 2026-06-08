@@ -10,6 +10,11 @@ domain results.
 """
 
 from app.core.agent_gateway import register_run_sink as _register_run_sink
+
+# Import the partition-maintenance module for its `@scheduled` side effect —
+# registers the daily `coding_agent_activity_partition_maintenance` task with
+# the broker + scheduler registry at import time.
+from app.domain.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
 from app.domain.coding_agent.invocation import InvocationMode, build_invocation
 from app.domain.coding_agent.prompts import (
     AnswerQuestionDto,

@@ -1,20 +1,20 @@
-"""HTTP wiring for `core/identity` — the on-startup hook that spawns the
-periodic cleanup loop.
+"""HTTP wiring for `core/identity`.
+
+The periodic cleanup is registered as a `@scheduled` task in
+`scheduler.py` — imported here for its decorator side effect (`@scheduled`
+binds the broker task body + scheduler registry entry at import time).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.core.identity.scheduler import run_cleanup_loop
-from app.core.observability import spawn
+# Side-effect import: registers the hourly `identity_purge` @scheduled task
+# with the broker + scheduler registry.
+from app.core.identity import scheduler as _scheduler  # noqa: F401
 from app.core.webserver import RouteSpec, register_routes
 
 router = APIRouter()
 
 
-async def _start_cleanup() -> None:
-    spawn("identity.cleanup", run_cleanup_loop())
-
-
-register_routes(RouteSpec(module_name="identity", router=router, on_startup=[_start_cleanup]))
+register_routes(RouteSpec(module_name="identity", router=router))

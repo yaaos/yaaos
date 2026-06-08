@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, ActorKind, audit_for_workspace
 from app.core.database import session as get_session
-from app.core.observability import spawn
+from app.core.tasks import scheduled
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import (
     HealthStatus,
@@ -613,13 +612,20 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
     log.info("workspace.destroyed", workspace_id=str(row.id))
 
 
-async def _reaper_loop(interval_seconds: int) -> None:
-    while True:
-        try:
-            await _reaper_sweep_once()
-        except Exception:
-            log.exception("workspace.reaper_sweep_failed")
-        await asyncio.sleep(interval_seconds)
+async def run_workspace_reaper() -> None:
+    """Body of the per-minute `workspace_reaper` `@scheduled` task. Wraps
+    `_reaper_sweep_once` with a single-pass error log so a transient DB
+    or agent_gateway hiccup doesn't poison the broker retry path.
+    Idempotent — every sweep step reads fresh state from the DB.
+
+    Module-public so service tests can invoke the body directly without
+    going through the broker dispatch path.
+    """
+    try:
+        await _reaper_sweep_once()
+    except Exception:
+        log.exception("workspace.reaper_sweep_failed")
+        raise
 
 
 async def startup_recovery() -> None:
@@ -644,11 +650,6 @@ async def startup_recovery() -> None:
             .values(status=WorkspaceStatus.EXPIRED.value)
         )
         await s.commit()
-
-
-def start_reaper(interval_seconds: int) -> None:
-    """Spawn the reaper loop. Called from FastAPI's lifespan."""
-    spawn("workspace.reaper", _reaper_loop(interval_seconds))
 
 
 async def health_check_all() -> dict[str, HealthStatus]:
@@ -778,3 +779,13 @@ async def get_workspace_statuses(
         )
     ).all()
     return {row[0]: row[1] for row in rows}
+
+
+# Per-minute reaper. Cluster-safe via `core/tasks` per-tick claim — only one
+# worker enqueues the sweep each slot. Idempotent body; safe to redeliver.
+workspace_reaper = scheduled(
+    name="workspace_reaper",
+    cron="* * * * *",
+    queue="default",
+    max_retries=1,
+)(run_workspace_reaper)

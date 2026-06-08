@@ -101,7 +101,14 @@ Three concepts span all apps:
 
 ### Periodic work
 
-Cluster-safe recurring tasks run in every worker process via `core/tasks.scheduler_loop`. Schedules are declared at import time with `@scheduled(name, cron)` or `schedule_task(name, cron, task_ref=...)`. Per-tick `INSERT INTO scheduled_runs (schedule_id, fire_time) ... ON CONFLICT DO NOTHING` is the sole gate that decides which worker enqueues for a slot — no leader election, no SPOF. The dedup ledger is pruned daily (>7-day rows) by the `scheduled_runs_prune` `@scheduled` task in `core/tasks`. See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
+Cluster-safe recurring tasks run in every worker process via `core/tasks.scheduler_loop`. Schedules are declared at import time with `@scheduled(name, cron)` or `schedule_task(name, cron, task_ref=...)`. Per-tick `INSERT INTO scheduled_runs (schedule_id, fire_time) ... ON CONFLICT DO NOTHING` is the sole gate that decides which worker enqueues for a slot — no leader election, no SPOF. Registered schedules:
+
+- `scheduled_runs_prune` (daily, `0 0 * * *`, `core/tasks`) — deletes `scheduled_runs` rows >7 days old.
+- `identity_purge` (hourly, `0 * * * *`, `core/identity`) — purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION`.
+- `workspace_reaper` (per minute, `* * * * *`, `core/workspace`) — TTL expiry, idle-timeout, agent-loss detection, destroy retries.
+- `coding_agent_activity_partition_maintenance` (daily, `0 1 * * *`, `domain/coding_agent`) — creates the current ISO week + the next two partitions of `coding_agent_activity`, drops partitions >4 weeks old; raw partition DDL is in `core/database`.
+
+See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
 
 ## Cross-app conventions
 

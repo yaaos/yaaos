@@ -31,7 +31,7 @@ depends_on = ["app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.identity"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.tenancy", "app.core.webserver"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.llm"
@@ -91,11 +91,11 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.core.workspace"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.plugin_kit", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.plugin_kit", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.domain.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.plugin_kit", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
+depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.plugin_kit", "app.core.tasks", "app.core.workspace", "app.domain.lessons", "app.domain.vcs"]
 
 [[modules]]
 path = "app.domain.intake"
@@ -351,6 +351,7 @@ expose = [
   "ensure_schema_migrations_table",
   "get_engine",
   "get_sessionmaker",
+  "maintain_coding_agent_activity_partitions",
   "migrate",
   "ping",
   "session",
@@ -659,7 +660,6 @@ expose = [
   "register_workspace_providers",
   "register_workspace_recovery_policies",
   "release_claim",
-  "start_reaper",
   "startup_recovery",
   "try_claim",
   "update_workspace_status",
