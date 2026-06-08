@@ -2,7 +2,10 @@
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
+      "Bash(*)",
       "Bash",
+      "Skill(*)",
+      "Skill",
       "WebFetch",
       "WebSearch",
       "Read"
