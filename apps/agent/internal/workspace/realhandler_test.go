@@ -823,3 +823,95 @@ func TestRealHandler_ProvisionWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) 
 		t.Errorf("HEAD: want %s got %s", headSHA, strings.TrimSpace(string(gotSHA)))
 	}
 }
+
+// localBareRepoWithBase creates a fresh bare git repo with two commits on
+// `main` — a base commit and a head commit that adds a second file.
+// Returns the file:// URL, the base SHA, and the head SHA.
+func localBareRepoWithBase(t *testing.T) (cloneURL, baseSHA, headSHA string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH; install with `apk add git` to exercise real-clone tests")
+	}
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir work: %v", err)
+	}
+	bareDir := filepath.Join(tmp, "bare.git")
+
+	mustRun := func(cwd string, args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=yaaos",
+			"GIT_AUTHOR_EMAIL=yaaos@test",
+			"GIT_COMMITTER_NAME=yaaos",
+			"GIT_COMMITTER_EMAIL=yaaos@test",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, cwd, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	mustRun(workDir, "init", "--initial-branch=main")
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	mustRun(workDir, "add", ".")
+	mustRun(workDir, "commit", "-m", "base")
+	baseSHA = mustRun(workDir, "rev-parse", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(workDir, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	mustRun(workDir, "add", ".")
+	mustRun(workDir, "commit", "-m", "head")
+	headSHA = mustRun(workDir, "rev-parse", "HEAD")
+
+	mustRun(workDir, "clone", "--bare", workDir, bareDir)
+	return "file://" + bareDir, baseSHA, headSHA
+}
+
+// Regression: the agent must fetch base_sha into the shallow clone so
+// the review prompt's `git diff base_sha..HEAD` (two-dot) sees both
+// trees. Without this fetch, base_sha is unreachable under --depth=1 and
+// the diff fails — findings then drift to lines outside the PR diff and
+// GitHub's inline-comment API 422s them.
+func TestRealHandler_ProvisionWorkspace_RealGitClone_FetchesBaseSHA(t *testing.T) {
+	cloneURL, baseSHA, headSHA := localBareRepoWithBase(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-base")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.Repo.BaseSHA = baseSHA
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("real clone: %v", err)
+	}
+
+	// base_sha must be a reachable object inside the cloned dir.
+	cmdCat := exec.Command("git", "cat-file", "-e", baseSHA)
+	cmdCat.Dir = res.Path
+	if out, err := cmdCat.CombinedOutput(); err != nil {
+		t.Fatalf("base_sha not reachable after clone: %v\n%s", err, out)
+	}
+
+	// `git diff base..HEAD` (two-dot, mirroring the review prompt) must
+	// succeed and reflect the new file added in the head commit.
+	cmdDiff := exec.Command("git", "diff", "--name-only", baseSHA+"..HEAD")
+	cmdDiff.Dir = res.Path
+	out, err := cmdDiff.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git diff base..HEAD: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "feature.txt") {
+		t.Errorf("diff did not include feature.txt; got: %q", out)
+	}
+}
