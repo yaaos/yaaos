@@ -1325,13 +1325,20 @@ async def _apply_canonical_findings_schema(conn) -> None:  # type: ignore[no-unt
     Drops the ancillary tables that no longer exist in the domain model
     (`finding_observations`, `comment_threads`, `comment_messages`,
     `acknowledgment_decisions`), then drops and recreates `reviews` and
-    `findings` from the current lean `ReviewRow` / `FindingRow` models.
+    `findings` lean.
+
+    DDL is frozen at this migration's point in history — it deliberately
+    does NOT build the tables from the live `ReviewRow` / `FindingRow`
+    models. `reviews.run_id` (FK → `coding_agent_runs`) is omitted here;
+    `coding_agent_runs` does not exist yet at this point in the sequence,
+    so reflecting the live model would emit a dangling FK and fail on a
+    fresh DB. The later `reviews_run_id` migration adds `run_id` once
+    `coding_agent_runs` exists.
 
     Data loss is intentional — review history from the old schema is not
-    compatible and is discarded. Idempotent: each DROP uses IF EXISTS.
+    compatible and is discarded. Idempotent: each DROP uses IF EXISTS and
+    each CREATE uses IF NOT EXISTS.
     """
-    import importlib  # noqa: PLC0415
-
     # Drop ancillary tables (if they still exist from migration 008).
     await conn.execute(text("DROP TABLE IF EXISTS acknowledgment_decisions CASCADE"))
     await conn.execute(text("DROP TABLE IF EXISTS comment_messages CASCADE"))
@@ -1340,13 +1347,61 @@ async def _apply_canonical_findings_schema(conn) -> None:  # type: ignore[no-unt
     await conn.execute(text("DROP TABLE IF EXISTS findings CASCADE"))
     await conn.execute(text("DROP TABLE IF EXISTS reviews CASCADE"))
 
-    # Import reviewer models + pull_requests model so FK targets are in metadata.
-    importlib.import_module("app.domain.reviewer.models")
-    importlib.import_module("app.domain.tickets.pull_request")
-    new_tables = [
-        Base.metadata.tables[name] for name in ("reviews", "findings") if name in Base.metadata.tables
-    ]
-    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+    await conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS reviews (
+                id UUID PRIMARY KEY DEFAULT uuidv7(),
+                org_id UUID NOT NULL,
+                pr_id UUID NOT NULL REFERENCES pull_requests (id),
+                sequence_number INTEGER NOT NULL,
+                status VARCHAR NOT NULL,
+                trigger_reason VARCHAR NOT NULL DEFAULT 'pr_ready',
+                destination VARCHAR NOT NULL DEFAULT 'vcs',
+                scope_kind VARCHAR NOT NULL DEFAULT 'full',
+                commit_sha_at_start VARCHAR,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_reviews_pr_sequence UNIQUE (pr_id, sequence_number)
+            )
+            """
+        )
+    )
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reviews_org_id ON reviews (org_id)"))
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_reviews_pr_status_created ON reviews (pr_id, status, created_at)")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_reviews_pr_sequence ON reviews (pr_id, sequence_number)")
+    )
+
+    await conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS findings (
+                id UUID PRIMARY KEY DEFAULT uuidv7(),
+                org_id UUID NOT NULL,
+                pr_id UUID NOT NULL REFERENCES pull_requests (id),
+                review_id UUID NOT NULL REFERENCES reviews (id),
+                finding_display_id INTEGER NOT NULL,
+                category VARCHAR NOT NULL,
+                severity VARCHAR NOT NULL,
+                confidence VARCHAR NOT NULL,
+                rationale VARCHAR NOT NULL,
+                rule_violated VARCHAR NOT NULL,
+                rule_source VARCHAR NOT NULL,
+                suggested_fix VARCHAR NOT NULL,
+                file VARCHAR,
+                line INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_findings_pr_display_id UNIQUE (pr_id, finding_display_id)
+            )
+            """
+        )
+    )
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_findings_org ON findings (org_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_findings_pr ON findings (pr_id)"))
 
 
 async def _apply_drop_skill_manifest_columns(conn) -> None:  # type: ignore[no-untyped-def]
