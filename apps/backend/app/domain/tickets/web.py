@@ -18,9 +18,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, org_id_var
+from app.core.coding_agent import ActivityLog
 from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.tickets.service import (
@@ -43,6 +45,40 @@ def _org() -> UUID:
     if org_id is None:
         raise _err(400, "no_org_context")
     return org_id
+
+
+class WorkflowStepSummary(BaseModel):
+    """One step in a workflow run, projected for the ticket Activity tab."""
+
+    step_id: str
+    command_kind: str
+    state: str
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class WorkflowRunView(BaseModel):
+    """One workflow execution for a ticket, with its ordered step list."""
+
+    id: UUID
+    workflow_name: str
+    workflow_version: int
+    state: str
+    current_step_id: str | None
+    failure_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    steps: list[WorkflowStepSummary]
+
+
+class StepActivityResponse(BaseModel):
+    """Persisted coding-agent activity blob for one workflow step.
+
+    `activity` is null when the step ran no coding-agent invocation or the
+    weekly partition holding its row has aged out.
+    """
+
+    activity: ActivityLog | None
 
 
 @router.get("/dashboard")
@@ -237,14 +273,11 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
 
 
 @router.get("/{ticket_id}/workflow-runs")
-async def workflow_runs(ticket_id: UUID) -> list[dict[str, Any]]:
+async def workflow_runs(ticket_id: UUID) -> list[WorkflowRunView]:
     """All workflow runs for the ticket, oldest first, with their step lists.
 
-    One JSON object per run carries `id`, `workflow_name`, `workflow_version`,
-    `state`, `current_step_id`, `created_at`, `updated_at`, `failure_reason`,
-    and `steps[]`. Each step entry carries `step_id`, `command_kind`, `state`
-    (pending | running | done | failed | skipped), `started_at`, and
-    `completed_at`. Pure workflow vocabulary — no AgentCommand references.
+    Each step's `state` is pending | running | done | failed | skipped. Pure
+    workflow vocabulary — no AgentCommand references.
     """
     from app.core.database import session as _db_session  # noqa: PLC0415
     from app.core.workflow import list_run_views_for_ticket  # noqa: PLC0415
@@ -259,37 +292,37 @@ async def workflow_runs(ticket_id: UUID) -> list[dict[str, Any]]:
         runs = await list_run_views_for_ticket(ticket_id, session=s)
 
     return [
-        {
-            "id": str(r.id),
-            "workflow_name": r.workflow_name,
-            "workflow_version": r.workflow_version,
-            "state": r.state,
-            "current_step_id": r.current_step_id,
-            "created_at": r.created_at.isoformat(),
-            "updated_at": r.updated_at.isoformat(),
-            "failure_reason": r.failure_reason,
-            "steps": [
-                {
-                    "step_id": s.step_id,
-                    "command_kind": s.command_kind,
-                    "state": s.state,
-                    "started_at": s.started_at.isoformat() if s.started_at else None,
-                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                }
-                for s in r.steps
+        WorkflowRunView(
+            id=r.id,
+            workflow_name=r.workflow_name,
+            workflow_version=r.workflow_version,
+            state=r.state,
+            current_step_id=r.current_step_id,
+            failure_reason=r.failure_reason,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+            steps=[
+                WorkflowStepSummary(
+                    step_id=st.step_id,
+                    command_kind=st.command_kind,
+                    state=st.state,
+                    started_at=st.started_at,
+                    completed_at=st.completed_at,
+                )
+                for st in r.steps
             ],
-        }
+        )
         for r in runs
     ]
 
 
 @router.get("/{ticket_id}/activity/{execution_id}/{step_id}")
-async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> dict[str, Any]:
+async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> StepActivityResponse:
     """Return the persisted `ActivityLog` for one workflow step.
 
-    Returns `{activity: <log> | null}`. `null` means either the step never
-    ran a coding-agent invocation (non-`InvokeClaudeCode`) or the weekly
-    partition holding its activity row has aged out (4-week TTL).
+    `activity` is `null` when either the step never ran a coding-agent
+    invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
+    activity row has aged out (4-week TTL).
 
     Cross-tenant safety: 404s when the execution does not belong to the
     ticket (and therefore not to the caller's org).
@@ -310,7 +343,7 @@ async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> di
             raise HTTPException(status_code=404, detail="workflow execution not found")
         activity = await get_step_activity(execution_id, step_id, session=s)
 
-    return {"activity": activity.model_dump(mode="json") if activity is not None else None}
+    return StepActivityResponse(activity=activity)
 
 
 @router.get("/{ticket_id}/audit")

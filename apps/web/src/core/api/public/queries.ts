@@ -5,7 +5,15 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { type Lesson, type Ticket, apiFetch } from "./client";
+import {
+  type Lesson,
+  type StepActivityResponse,
+  type Ticket,
+  type WorkflowRunView,
+  apiFetch,
+} from "./client";
+
+export type { WorkflowRunView } from "./client";
 
 // ── Auth / session ────────────────────────────────────────────────────────────
 
@@ -304,47 +312,17 @@ export function useTicket(ticket_id: string) {
 
 // ── Workflow runs (step tree for the Activity tab) ───────────────────────────
 
-/** One step in a workflow run — state is pending|running|done|failed|skipped. */
-export interface WorkflowStepSummary {
-  step_id: string;
-  command_kind: string;
-  state: "pending" | "running" | "done" | "failed" | "skipped";
-  started_at: string | null;
-  completed_at: string | null;
-}
-
-/** One workflow execution for a ticket. */
-export interface WorkflowRunView {
-  id: string;
-  workflow_name: string;
-  workflow_version: string;
-  state: string;
-  current_step_id: string | null;
-  failure_reason: string | null;
-  created_at: string;
-  updated_at: string;
-  steps: WorkflowStepSummary[];
-}
-
 /**
  * All workflow runs for the ticket, oldest-first, with their step lists.
- * Invalidated by `workflow_state_changed` SSE events.
+ * `staleTime` is explicit because freshness is driven by `workflow_state_changed`
+ * SSE events, not focus-driven refetches.
  */
 export function useWorkflowRuns(ticket_id: string) {
   return useSuspenseQuery<WorkflowRunView[]>({
     queryKey: ["workflow", "runs", ticket_id],
     queryFn: () => apiFetch<WorkflowRunView[]>(`/api/tickets/${ticket_id}/workflow-runs`),
+    staleTime: 60_000,
   });
-}
-
-/**
- * Persisted activity blob for one workflow step. Only fetched for the
- * `CodeReview` (InvokeClaudeCode) step when the run is terminal (done/failed).
- * Returns `{activity: <log> | null}` — null when the step never had a run
- * or when the weekly partition has aged out.
- */
-export interface StepActivityResponse {
-  activity: Record<string, unknown> | null;
 }
 
 /**
@@ -392,6 +370,9 @@ export function useFindingsForTicket(ticket_id: string, includeTerminal = false)
           includeTerminal ? "?include_terminal=true" : ""
         }`,
       ),
+    // SSE `workflow_state_changed` is the primary freshness driver; this slow
+    // poll is a fallback for flaky SSE connections.
+    refetchInterval: 30_000,
   });
 }
 

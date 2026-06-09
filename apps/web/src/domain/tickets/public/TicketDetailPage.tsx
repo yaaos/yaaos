@@ -304,9 +304,7 @@ function StepLabel({
 
   if (isInvokeStep) {
     if (isRunning) {
-      return (
-        <LiveCodeReviewStep ticketId={ticketId} executionId={executionId} stepId={step.step_id} />
-      );
+      return <LiveCodeReviewStep executionId={executionId} />;
     }
     if (isDone) {
       return (
@@ -361,15 +359,7 @@ function StepLabel({
  * Opening this EventSource tells the backend's SubscriberRegistry to start
  * forwarding WorkspaceAgent activity batches for this execution.
  */
-function LiveCodeReviewStep({
-  ticketId: _ticketId,
-  executionId,
-  stepId: _stepId,
-}: {
-  ticketId: string;
-  executionId: string;
-  stepId: string;
-}) {
+function LiveCodeReviewStep({ executionId }: { executionId: string }) {
   const liveEvents = useWorkflowActivityStream(executionId);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -475,8 +465,7 @@ function StepActivityContent({
     );
   }
 
-  // The ActivityLog blob is an array of events at `activity.events`.
-  const events = Array.isArray(activity.events) ? (activity.events as unknown[]) : [];
+  const events = activity.events;
 
   if (events.length === 0) {
     return <p className="px-3 py-2 text-xs text-muted-foreground italic">No activity recorded.</p>;
@@ -484,20 +473,18 @@ function StepActivityContent({
 
   return (
     <div className="max-h-[400px] overflow-y-auto" data-testid="step-activity-blob">
-      {events.map((e, i) => {
-        const ev = e as { ts?: string; kind?: string; message?: string; detail?: unknown };
-        return (
-          <ActivityEventRow
-            key={`${ev.ts ?? i}-${ev.kind ?? i}`}
-            event={{
-              ts: ev.ts ?? "",
-              kind: ev.kind ?? "unknown",
-              message: ev.message ?? "",
-              detail: (ev.detail as Record<string, unknown>) ?? null,
-            }}
-          />
-        );
-      })}
+      {events.map((ev, i) => (
+        <ActivityEventRow
+          key={`${ev.seq}-${i}`}
+          event={{
+            ts: ev.ts,
+            kind: ev.kind,
+            // A blank message would render as an empty row; surface the gap.
+            message: ev.message || "(no message)",
+            detail: ev.detail ?? null,
+          }}
+        />
+      ))}
     </div>
   );
 }

@@ -51,9 +51,13 @@ export function FindingRow({ finding }: FindingRowProps) {
   };
 
   // Derive a short display headline from the first sentence of rationale
-  // (the canonical schema has no separate `title` field).
-  const headline =
-    finding.rationale.split(/[.!?]/)[0]?.trim() ?? finding.rule_violated ?? "Finding";
+  // (the canonical schema has no separate `title` field). Capped so a
+  // punctuation-less rationale can't blow up row density.
+  const headline = (
+    finding.rationale.split(/[.!?]/)[0]?.trim() ??
+    finding.rule_violated ??
+    "Finding"
+  ).slice(0, 120);
 
   return (
     <article

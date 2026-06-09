@@ -1347,9 +1347,9 @@ export interface paths {
          * Step Activity
          * @description Return the persisted `ActivityLog` for one workflow step.
          *
-         *     Returns `{activity: <log> | null}`. `null` means either the step never
-         *     ran a coding-agent invocation (non-`InvokeClaudeCode`) or the weekly
-         *     partition holding its activity row has aged out (4-week TTL).
+         *     `activity` is `null` when either the step never ran a coding-agent
+         *     invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
+         *     activity row has aged out (4-week TTL).
          *
          *     Cross-tenant safety: 404s when the execution does not belong to the
          *     ticket (and therefore not to the caller's org).
@@ -1447,11 +1447,8 @@ export interface paths {
          * Workflow Runs
          * @description All workflow runs for the ticket, oldest first, with their step lists.
          *
-         *     One JSON object per run carries `id`, `workflow_name`, `workflow_version`,
-         *     `state`, `current_step_id`, `created_at`, `updated_at`, `failure_reason`,
-         *     and `steps[]`. Each step entry carries `step_id`, `command_kind`, `state`
-         *     (pending | running | done | failed | skipped), `started_at`, and
-         *     `completed_at`. Pure workflow vocabulary — no AgentCommand references.
+         *     Each step's `state` is pending | running | done | failed | skipped. Pure
+         *     workflow vocabulary — no AgentCommand references.
          */
         get: operations["workflow_runs_api_tickets__ticket_id__workflow_runs_get"];
         put?: never;
@@ -1701,6 +1698,57 @@ export interface components {
         AcceptRequest: {
             /** Token */
             token: string;
+        };
+        /**
+         * ActivityEvent
+         * @description One captured event from a coding-agent run.
+         *
+         *     Pre-rendered by the plugin so the FE doesn't have to interpret raw
+         *     Claude Code stream-json shapes — `message` is the user-facing string
+         *     shown in the UI; `detail` is the raw event data for the expanded view.
+         *
+         *     `seq` is the monotonic 0-based index inside the run's `ActivityLog`,
+         *     assigned by `render_activity` after filtering null renders.
+         */
+        ActivityEvent: {
+            /**
+             * Detail
+             * @default {}
+             */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Message */
+            message: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /**
+         * ActivityLog
+         * @description Pre-rendered activity stream for one coding-agent run.
+         *
+         *     Produced once per run from the terminal stdout by
+         *     `CodingAgentPlugin.render_activity` — the same event sequence the
+         *     in-process path streams via `OnActivity`, captured durably for the
+         *     Activity tab. Persisted as a JSONB blob in the partitioned
+         *     `coding_agent_activity` table.
+         */
+        ActivityLog: {
+            /**
+             * Events
+             * @default []
+             */
+            events: components["schemas"]["ActivityEvent"][];
         };
         /** AgentEvent */
         AgentEvent: {
@@ -2214,6 +2262,16 @@ export interface components {
             install_url?: string | null;
             state?: components["schemas"]["VcsStateResponse"] | null;
         };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one workflow step.
+         *
+         *     `activity` is null when the step ran no coding-agent invocation or the
+         *     weekly partition holding its row has aged out.
+         */
+        StepActivityResponse: {
+            activity: components["schemas"]["ActivityLog"] | null;
+        };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
             /** Body */
@@ -2251,6 +2309,55 @@ export interface components {
             settings: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * WorkflowRunView
+         * @description One workflow execution for a ticket, with its ordered step list.
+         */
+        WorkflowRunView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Step Id */
+            current_step_id: string | null;
+            /** Failure Reason */
+            failure_reason: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** State */
+            state: string;
+            /** Steps */
+            steps: components["schemas"]["WorkflowStepSummary"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Workflow Version */
+            workflow_version: number;
+        };
+        /**
+         * WorkflowStepSummary
+         * @description One step in a workflow run, projected for the ticket Activity tab.
+         */
+        WorkflowStepSummary: {
+            /** Command Kind */
+            command_kind: string;
+            /** Completed At */
+            completed_at: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** State */
+            state: string;
+            /** Step Id */
+            step_id: string;
         };
         /** WorkspaceEvent */
         WorkspaceEvent: {
@@ -5067,9 +5174,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StepActivityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5223,9 +5328,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["WorkflowRunView"][];
                 };
             };
             /** @description Validation Error */

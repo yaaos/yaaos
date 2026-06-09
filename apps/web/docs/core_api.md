@@ -46,10 +46,12 @@ Private (non-`public/`): `generated/` (only `core/api` may import it).
 
 `client.ts` owns the type surface. Types sourced from the generated schema:
 - `Lesson` — alias of `components["schemas"]["Lesson"]`.
+- `WorkflowRunView` — alias of `components["schemas"]["WorkflowRunView"]`; the `workflow-runs` endpoint carries a `response_model`.
+- `StepActivityResponse` — alias of `components["schemas"]["StepActivityResponse"]` (`{activity: ActivityLog | null}`); the step-`activity` endpoint carries a `response_model`.
 
 Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 - `Ticket` — `pr_number`, `author_login`, `is_draft` enriched from the linked PR at read-time. Needs `response_model` on the tickets endpoints.
-- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used by `ActivityEventRow` for both the live activity stream and the persisted step-activity blob. JSONB column, no spec annotation.
+- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used by `ActivityEventRow` for the live activity stream (SSE — no OpenAPI). The persisted step-activity blob is now generated-typed via `StepActivityResponse`; `ActivityEventRow` maps onto this hand type at the call site.
 - `Notification` / `NotificationsPopover` — hand-typed in `queries.ts`; backend spec returns `unknown` for these endpoints.
 ### Query hooks
 

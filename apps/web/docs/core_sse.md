@@ -45,6 +45,7 @@ Status transitions:
 | Event `kind` | Invalidates |
 |---|---|
 | `ticket_status_changed` | `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]` |
+| `workflow_state_changed` | `["workflow", "runs", id]`, `["tickets", id]`, `["reviewer", "findings", id]` |
 | `review_requested` / `review_started` / `review_completed` / `review_failed` / `review_superseded` | `["tickets"]`, `["tickets", "dashboard"]` |
 | `finding_raised` / `finding_re_observed` / `finding_anchor_updated` / `finding_state_changed` / `finding_acknowledged` / `finding_resolution_detected` / `finding_stale_detected` | `["tickets"]`, `["tickets", "dashboard"]` |
 | `agent_liveness_changed` | `["agents"]` |

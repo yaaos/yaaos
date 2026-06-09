@@ -14,6 +14,57 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActivityEvent": {
+        "description": "One captured event from a coding-agent run.\n\nPre-rendered by the plugin so the FE doesn't have to interpret raw\nClaude Code stream-json shapes — `message` is the user-facing string\nshown in the UI; `detail` is the raw event data for the expanded view.\n\n`seq` is the monotonic 0-based index inside the run's `ActivityLog`,\nassigned by `render_activity` after filtering null renders.",
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Detail",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "kind",
+          "message"
+        ],
+        "title": "ActivityEvent",
+        "type": "object"
+      },
+      "ActivityLog": {
+        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced once per run from the terminal stdout by\n`CodingAgentPlugin.render_activity` — the same event sequence the\nin-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.",
+        "properties": {
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ActivityEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "title": "ActivityLog",
+        "type": "object"
+      },
       "AgentEvent": {
         "properties": {
           "attempt": {
@@ -1267,6 +1318,26 @@
         "title": "SetVcsResponse",
         "type": "object"
       },
+      "StepActivityResponse": {
+        "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityLog"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "StepActivityResponse",
+        "type": "object"
+      },
       "UpdateLessonRequest": {
         "properties": {
           "body": {
@@ -1384,6 +1455,130 @@
           "settings"
         ],
         "title": "VcsStateResponse",
+        "type": "object"
+      },
+      "WorkflowRunView": {
+        "description": "One workflow execution for a ticket, with its ordered step list.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_step_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Step Id"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepSummary"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workflow_name": {
+            "title": "Workflow Name",
+            "type": "string"
+          },
+          "workflow_version": {
+            "title": "Workflow Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_name",
+          "workflow_version",
+          "state",
+          "current_step_id",
+          "failure_reason",
+          "created_at",
+          "updated_at",
+          "steps"
+        ],
+        "title": "WorkflowRunView",
+        "type": "object"
+      },
+      "WorkflowStepSummary": {
+        "description": "One step in a workflow run, projected for the ticket Activity tab.",
+        "properties": {
+          "command_kind": {
+            "title": "Command Kind",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "command_kind",
+          "state",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "WorkflowStepSummary",
         "type": "object"
       },
       "WorkspaceEvent": {
@@ -7079,7 +7274,7 @@
     },
     "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
       "get": {
-        "description": "Return the persisted `ActivityLog` for one workflow step.\n\nReturns `{activity: <log> | null}`. `null` means either the step never\nran a coding-agent invocation (non-`InvokeClaudeCode`) or the weekly\npartition holding its activity row has aged out (4-week TTL).\n\nCross-tenant safety: 404s when the execution does not belong to the\nticket (and therefore not to the caller's org).",
+        "description": "Return the persisted `ActivityLog` for one workflow step.\n\n`activity` is `null` when either the step never ran a coding-agent\ninvocation (non-`InvokeClaudeCode`) or the weekly partition holding its\nactivity row has aged out (4-week TTL).\n\nCross-tenant safety: 404s when the execution does not belong to the\nticket (and therefore not to the caller's org).",
         "operationId": "step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get",
         "parameters": [
           {
@@ -7149,9 +7344,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Step Activity Api Tickets  Ticket Id  Activity  Execution Id   Step Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/StepActivityResponse"
                 }
               }
             },
@@ -7438,7 +7631,7 @@
     },
     "/api/tickets/{ticket_id}/workflow-runs": {
       "get": {
-        "description": "All workflow runs for the ticket, oldest first, with their step lists.\n\nOne JSON object per run carries `id`, `workflow_name`, `workflow_version`,\n`state`, `current_step_id`, `created_at`, `updated_at`, `failure_reason`,\nand `steps[]`. Each step entry carries `step_id`, `command_kind`, `state`\n(pending | running | done | failed | skipped), `started_at`, and\n`completed_at`. Pure workflow vocabulary — no AgentCommand references.",
+        "description": "All workflow runs for the ticket, oldest first, with their step lists.\n\nEach step's `state` is pending | running | done | failed | skipped. Pure\nworkflow vocabulary — no AgentCommand references.",
         "operationId": "workflow_runs_api_tickets__ticket_id__workflow_runs_get",
         "parameters": [
           {
@@ -7490,8 +7683,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/WorkflowRunView"
                   },
                   "title": "Response Workflow Runs Api Tickets  Ticket Id  Workflow Runs Get",
                   "type": "array"

@@ -161,6 +161,9 @@ function _handleEvent(evt: ServerEvent): void {
       if (tid) {
         _scheduleInvalidate(["workflow", "runs", tid]);
         _scheduleInvalidate(["tickets", tid]);
+        // Findings land as a workflow step completes; nothing else
+        // invalidates this key, so refresh it on every transition.
+        _scheduleInvalidate(["reviewer", "findings", tid]);
       }
       break;
     case "review_requested":

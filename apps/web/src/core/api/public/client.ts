@@ -16,6 +16,11 @@ import { getCurrentOrgSlug } from "./org-context";
 /** Lesson from backend schema. */
 export type Lesson = components["schemas"]["Lesson"];
 
+/** One workflow execution for a ticket, with its ordered step list. */
+export type WorkflowRunView = components["schemas"]["WorkflowRunView"];
+/** `GET /api/tickets/{id}/activity/...` — persisted step activity blob. */
+export type StepActivityResponse = components["schemas"]["StepActivityResponse"];
+
 // ── Activity event — shared by live stream + persisted step blob ──────────
 
 /**

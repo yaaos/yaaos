@@ -14,7 +14,7 @@ function run(workflow_name: string, state: string, id?: string): WorkflowRunView
   return {
     id: id ?? `wfx-${workflow_name}`,
     workflow_name,
-    workflow_version: "1",
+    workflow_version: 1,
     state,
     current_step_id: null,
     failure_reason: null,

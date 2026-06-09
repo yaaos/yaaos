@@ -55,7 +55,7 @@ const WORKFLOW_RUNS = [
   {
     id: "wfx-1",
     workflow_name: "pr_review_v1",
-    workflow_version: "1",
+    workflow_version: 1,
     state: "running",
     current_step_id: "step-check",
     failure_reason: null,
