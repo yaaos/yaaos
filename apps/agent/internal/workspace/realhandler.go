@@ -444,6 +444,12 @@ func safeJoin(base, rel string) (string, error) {
 //  2. If `head_sha` differs from what HEAD resolves to:
 //     `git fetch --depth=<history+1> origin <head_sha>` then
 //     `git checkout <head_sha>`.
+//  3. If `base_sha` is set on the wire:
+//     `git fetch --depth=1 origin <base_sha>` so the commit becomes a
+//     reachable object locally. The review prompt runs
+//     `git diff <base_sha>..HEAD` (two-dot range — compares the two
+//     trees; no walk of the commit graph between them is needed), so
+//     depth=1 of each endpoint is sufficient.
 //
 // Step 2 covers two cases the supervisor flow exercises: branch-name
 // supplied + HEAD has moved since the webhook fired (the wire's head_sha
@@ -495,6 +501,18 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 	}
 	if err := runGit(ctx, dest, "checkout", "--detach", repo.HeadSHA); err != nil {
 		return fmt.Errorf("checkout %s: %w", repo.HeadSHA, err)
+	}
+	// Fetch base_sha as a reachable object so the review prompt's
+	// `git diff base_sha..HEAD` (two-dot) finds both trees locally. No
+	// checkout — base only needs to be reachable as a revision. Same
+	// unshallowed-fetch fallback as the head path above.
+	if repo.BaseSHA != "" {
+		baseFetchArgs := []string{"fetch", "--depth=1", "origin", repo.BaseSHA}
+		if err := runGit(ctx, dest, baseFetchArgs...); err != nil {
+			if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
+				return fmt.Errorf("fetch base fallback: %w", err2)
+			}
+		}
 	}
 	return nil
 }
