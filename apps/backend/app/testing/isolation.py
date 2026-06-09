@@ -168,6 +168,22 @@ async def recovery_policies_isolation():
     _clear_recovery_policies_for_tests()
 
 
+@pytest_asyncio.fixture
+async def terminal_hooks_isolation():
+    """Clear all terminal hooks before and after the test.
+
+    Non-autouse: tests that register terminal hooks (e.g. the reviewer hook)
+    must request this fixture. Production registration is NOT active in tests —
+    the test is responsible for registering whatever hooks it needs after
+    requesting this fixture.
+    """
+    from app.core.workflow.terminal_hooks import _clear_terminal_hooks_for_tests  # noqa: PLC0415
+
+    _clear_terminal_hooks_for_tests()
+    yield
+    _clear_terminal_hooks_for_tests()
+
+
 @contextmanager
 def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
     """Context manager: install *plugin* for the duration of the block, then
@@ -194,6 +210,7 @@ __all__ = [
     "scheduler_registry_isolation",
     "scoped_vcs_plugin",
     "subscriber_registry_isolation",
+    "terminal_hooks_isolation",
     "workflow_context_provider_isolation",
     "workspace_providers_isolation",
 ]

@@ -58,6 +58,20 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 - `finding_display_id` — per-PR monotonic integer; rendered as `<category-prefix>-<id>` (`sec-3`, `arch-7`).
 - `Review` — one row per PR review run.
 
+## Ticket status — atomic flip on workflow terminal
+
+`register_reviewer_terminal_hooks()` (in `terminal_hook.py`) registers `_on_workflow_terminal` into [`core/workflow`](core_workflow.md)'s terminal-hook registry. Called once from both `web.py` and `worker.py` at startup.
+
+On every `pr_review_v1` terminal transition the hook calls [`tickets.transition_on_workflow_terminal`](domain_tickets.md) inside the engine's terminal-commit transaction:
+
+- `DONE → ticket "done"` (reason omitted)
+- `FAILED → ticket "failed"` (failure_reason threaded into the `ticket.status_changed` audit payload)
+- `CANCELLED → ticket "cancelled"` (reason omitted)
+
+Guard misses (ticket not found, ownership mismatch, already terminal) return silently — the hook never raises, so a guard miss never rolls back the workflow terminal write.
+
+The orphan sweep (`orphan_sweep.py`) is a safety net only — it handles never-dispatched tickets that slipped through before a workflow started. It does NOT handle normal workflow termination; the terminal hook covers that path atomically.
+
 ## Findings rollup
 
 After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_summary(ticket_id, pr_id, *, org_id, session)`. This recomputes `findings_count` + `max_severity` from the `findings` table and writes them to the ticket row via `tickets.update_findings_summary`. Tickets do not import reviewer — the dependency is one-way: reviewer → tickets.
@@ -67,6 +81,7 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
 ## How it's tested
 
 - **Service tests** (`@pytest.mark.service`):
+  - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
   - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema.
   - `test_pr_review_v1_e2e_service.py` — full pipeline (stub VCS + coding-agent + workspace).

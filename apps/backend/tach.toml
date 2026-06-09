@@ -931,6 +931,7 @@ expose = [
   "prefix_broken_creds_warning",
   "publish_findings",
   "refresh_ticket_findings_summary",
+  "register_reviewer_terminal_hooks",
   "start_incremental_review",
   "start_pr_review",
 ]

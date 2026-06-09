@@ -30,8 +30,8 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 | `pending` → `running` | workflow-step dispatch |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
-| `running` → `failed` | `fail(reason=...)` — orphan sweep, workflow failures |
-| `running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — workflow terminal hook path |
+| `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
+| `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — workflow terminal hook (primary path off `running`) |
 
 `complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` is Shape-a (caller's session, never commits) and is used by workflow terminal hooks.
 

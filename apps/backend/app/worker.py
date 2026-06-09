@@ -45,9 +45,11 @@ def main() -> int:
         register_workspace_providers,
         register_workspace_recovery_policies,
     )
+    from app.domain.reviewer import register_reviewer_terminal_hooks  # noqa: PLC0415
 
     register_workspace_providers()
     register_workspace_recovery_policies()
+    register_reviewer_terminal_hooks()
     assert_workflow_context_provider()
 
     import app.plugins.claude_code  # noqa: PLC0415
