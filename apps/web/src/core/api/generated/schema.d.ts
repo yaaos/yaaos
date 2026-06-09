@@ -268,23 +268,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude_code/api_key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Api Key */
-        post: operations["set_api_key_api_claude_code_api_key_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/claude_code/defaults": {
         parameters: {
             query?: never;
@@ -2222,14 +2205,6 @@ export interface components {
          * @enum {string}
          */
         Role: "owner" | "admin" | "builder";
-        /** SetApiKeyRequest */
-        SetApiKeyRequest: {
-            /**
-             * Api Key
-             * Format: password
-             */
-            api_key: string;
-        };
         /** SetKeyRequest */
         SetKeyRequest: {
             /** Value */
@@ -3051,41 +3026,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_api_key_api_claude_code_api_key_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetApiKeyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
                 };
             };
             /** @description Validation Error */
