@@ -1226,21 +1226,6 @@
         "title": "Role",
         "type": "string"
       },
-      "SetApiKeyRequest": {
-        "properties": {
-          "api_key": {
-            "format": "password",
-            "title": "Api Key",
-            "type": "string",
-            "writeOnly": true
-          }
-        },
-        "required": [
-          "api_key"
-        ],
-        "title": "SetApiKeyRequest",
-        "type": "object"
-      },
       "SetKeyRequest": {
         "properties": {
           "value": {
@@ -3056,51 +3041,6 @@
         "summary": "Totp Verify",
         "tags": [
           "sessions"
-        ]
-      }
-    },
-    "/api/claude_code/api_key": {
-      "post": {
-        "operationId": "set_api_key_api_claude_code_api_key_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetApiKeyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Set Api Key Api Claude Code Api Key Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Api Key",
-        "tags": [
-          "claude_code"
         ]
       }
     },

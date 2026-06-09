@@ -190,6 +190,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("053_drop_reviews_dead_columns", "drop_reviews_dead_columns"),
     ("054_coding_agent_runs_plugin_id", "coding_agent_runs_plugin_id"),
     ("055_agent_commands_completion_token_hash", "agent_commands_completion_token_hash"),
+    ("056_drop_claude_code_encrypted_api_key", "drop_claude_code_encrypted_api_key"),
 )
 
 
@@ -1707,6 +1708,17 @@ async def _apply_coding_agent_runs_plugin_id(conn) -> None:  # type: ignore[no-u
     )
 
 
+async def _apply_drop_claude_code_encrypted_api_key(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `claude_code_settings.encrypted_anthropic_api_key`.
+
+    The column was the secondary storage path for the Anthropic API key;
+    the canonical store is `byok_keys` (provider='anthropic'). Idempotent.
+    """
+    await conn.execute(
+        text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS encrypted_anthropic_api_key")
+    )
+
+
 async def _apply_agent_commands_completion_token_hash(conn) -> None:  # type: ignore[no-untyped-def]
     """Add `agent_commands.completion_token_hash` (text, nullable).
 
@@ -1844,6 +1856,8 @@ async def _apply_pending() -> None:
                 await _apply_coding_agent_runs_plugin_id(conn)
             elif kind == "agent_commands_completion_token_hash":
                 await _apply_agent_commands_completion_token_hash(conn)
+            elif kind == "drop_claude_code_encrypted_api_key":
+                await _apply_drop_claude_code_encrypted_api_key(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

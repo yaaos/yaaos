@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from cryptography.fernet import Fernet
-
 # Trigger-imports: importing each module's __init__ ensures `Base.metadata` is
 # fully populated so `truncate_all_tables` sees the complete schema regardless
 # of which HTTP routes have been mounted in the calling process. We import any
@@ -67,15 +65,15 @@ async def seed_github_install(
     vars (set on the test compose); no per-org credential row is needed.
 
     Deliberate side-effect: this seed path calls public service functions
-    (``github.record_app_install``, ``claude_code.set_api_key``,
+    (``github.record_app_install``, ``byok.set``,
     ``orgs.install_coding_agent``) so it emits the same audit rows and events
     that production writes would produce.
     """
+    from app.core import byok as byok_service  # noqa: PLC0415
+    from app.core.audit_log import Actor  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
-    from app.plugins.claude_code import set_api_key  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415
 
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
     if target_org_slug is not None:
         org = await get_org_by_slug(target_org_slug)
         if org is None:
@@ -90,16 +88,16 @@ async def seed_github_install(
             install_external_id="fake-install-1",
             account_login=org_login,
         )
-        await set_api_key(
-            s,
-            org_id=target_org_id,
-            encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
+        await byok_service.set(
+            target_org_id,
+            "anthropic",
+            "TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY",
+            actor=Actor.system(),
+            session=s,
         )
         # also write the OrgCodingAgentRow so the bespoke Coding Agent
         # settings page (claude_code's AgentEditor) renders against the
         # configured defaults instead of an empty-state placeholder.
-        from app.core.audit_log import Actor  # noqa: PLC0415
-
         await install_coding_agent(
             s,
             org_id=target_org_id,

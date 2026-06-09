@@ -54,7 +54,7 @@ Never branches on env vars. When `YAAOS_CODING_AGENT_STUB` is set, `app/web.py` 
 
 ## Data owned
 
-`claude_code_settings` — one row per org: `encrypted_anthropic_api_key`, `cli_path` (optional).
+`claude_code_settings` — one row per org: `cli_path` (optional). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
 
 `claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — the SKILL.md identifier the agent should invoke), `created_at`, `updated_at`.
 

@@ -58,6 +58,12 @@ echo "==> go build -tags agent_test (verify the identity-change seam compiles)"
 # CI verifies both build combinations compile.
 go build -tags agent_test ./...
 
+echo "==> go build -tags agent_dev (verify the audience-override seam compiles)"
+# The agent_dev tag swaps in the env-honoring audienceOverride (see
+# internal/supervisor/audience_seam_*.go). The dev compose builds with this tag;
+# CI verifies it compiles cleanly.
+go build -tags agent_dev ./...
+
 echo "==> go test -race"
 # Race detector requires cgo; force it on (alpine's golang image defaults
 # to CGO_ENABLED=0 for portability, and the prod Dockerfile sets it

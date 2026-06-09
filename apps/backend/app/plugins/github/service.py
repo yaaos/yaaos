@@ -414,6 +414,7 @@ class GitHubPlugin:
                     },
                     headers=headers,
                 )
+
             else:
                 resp = await client.post(
                     f"/repos/{owner}/{repo}/issues/{num}/comments",

@@ -7,31 +7,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, SecretStr
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from app.core.auth import Action, public_route
 from app.core.database import session as db_session
 from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
-from app.plugins.claude_code.service import _set_anthropic_key, bootstrap_anthropic_env, get_plugin
+from app.plugins.claude_code.service import get_plugin
 
 DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-# Default-deny: each route declares either `public_route` (# unscoped setup endpoints) or `require(action)` (settings UI endpoints).
+# Default-deny: each route declares either `public_route` (unscoped endpoints) or `require(action)` (settings UI endpoints).
 router = APIRouter()
-
-
-class SetApiKeyRequest(BaseModel):
-    api_key: SecretStr
-
-
-@router.post("/api_key", dependencies=[Depends(public_route)])
-async def set_api_key(req: SetApiKeyRequest) -> dict[str, str]:
-    if not req.api_key.get_secret_value().strip():
-        raise HTTPException(status_code=400, detail={"api_key": "must not be empty"})
-    await _set_anthropic_key(DEFAULT_ORG_ID, req.api_key)
-    return {"status": "saved"}
 
 
 @router.get("/health", dependencies=[Depends(public_route)])
@@ -129,10 +117,4 @@ async def set_repo_skill_route(repo_external_id: str, req: SetRepoSkillRequest) 
     return RepoSkillRow(repo_external_id=repo_external_id, skill_name=req.skill_name or None)
 
 
-register_routes(
-    RouteSpec(
-        module_name="claude_code",
-        router=router,
-        on_startup=[bootstrap_anthropic_env],
-    )
-)
+register_routes(RouteSpec(module_name="claude_code", router=router))

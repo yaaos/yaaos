@@ -19,10 +19,11 @@ from uuid import UUID
 
 import httpx
 import structlog
-from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import select
 
+from app.core import byok as _byok
+from app.core.auth import org_id_var
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
@@ -75,7 +76,6 @@ from app.core.coding_agent import (
 from app.core.coding_agent import (
     schema_appendix as _schema_appendix,
 )
-from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.workspace import Workspace, WorkspaceExecError
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
@@ -416,21 +416,15 @@ class ClaudeCodePlugin:
 
         return _validate(settings)
 
-    async def _load_settings_for_invocation(self) -> tuple[SecretStr | None, str | None]:
-        """Returns (decrypted_api_key, cli_path). Timeout is a constant — see
-        `_DEFAULT_TIMEOUT_SECONDS`. Per-call override via `agent_config["timeout_seconds"]`."""
+    async def _load_settings_for_invocation(self, org_id: UUID) -> tuple[SecretStr | None, str | None]:
+        """Returns (api_key, cli_path). API key read from byok_keys; cli_path from claude_code_settings."""
         async with db_session() as s:
-            row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
-        if row is None:
-            return None, None
-        api_key: SecretStr | None = None
-        if row.encrypted_anthropic_api_key:
-            try:
-                fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-                api_key = SecretStr(fernet.decrypt(row.encrypted_anthropic_api_key).decode())
-            except InvalidToken:
-                log.warning("claude_code.api_key_decrypt_failed")
-        return api_key, row.cli_path
+            plaintext = await _byok.get(org_id, "anthropic", session=s)
+            row = (
+                await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
+            ).scalar_one_or_none()
+        api_key = SecretStr(plaintext) if plaintext else None
+        return api_key, row.cli_path if row else None
 
     async def review(
         self,
@@ -509,17 +503,23 @@ class ClaudeCodePlugin:
         set — `answer_question` uses a read-only repo + git list with no Task.
         (Reply path coerces the result; same error shape applies.)
         """
-        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        org_id = org_id_var.get()
+        if org_id is None:
+            return ReviewResult(
+                status=InvocationStatus.AGENT_ERROR,
+                error_message="no org context — cannot load BYOK key",
+            )
+        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
         if not api_key:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
-                error_message="ANTHROPIC_API_KEY not set in claude_code_settings",
+                error_message="ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents",
             )
         cli_path = cli_path_setting or shutil.which("claude")
         if not cli_path:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
-                error_message="claude binary not found on PATH or in claude_code_settings.cli_path",
+                error_message="claude binary not found on PATH",
             )
 
         env = os.environ.copy()
@@ -843,8 +843,8 @@ class ClaudeCodePlugin:
     ) -> Invocation:
         """Build the `Invocation` for a remote PR review.
 
-        Resolves the per-repo skill name from `claude_code_repos`, decrypts
-        the Anthropic key from `claude_code_settings`, assembles the prompt
+        Resolves the per-repo skill name from `claude_code_repos`, reads
+        the Anthropic key from `byok_keys`, assembles the prompt
         (review instructions + output schema appendix), and returns the
         complete exec spec. The Anthropic key goes in `exec.env` — the
         accepted carve-out for wire-bound exec.
@@ -861,9 +861,9 @@ class ClaudeCodePlugin:
                 "set it in Coding Agents settings before dispatching a review"
             )
 
-        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        api_key, cli_path_setting = await self._load_settings_for_invocation(ctx.org_id)
         if not api_key:
-            raise CodingAgentError("ANTHROPIC_API_KEY not set in claude_code_settings")
+            raise CodingAgentError("ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents")
         cli_path = cli_path_setting or "claude"
 
         # Assemble the review prompt + the canonical output-schema appendix.
@@ -1011,7 +1011,10 @@ class ClaudeCodePlugin:
         return ValidationResult(valid=not errors, errors=errors)
 
     async def health_check(self) -> HealthStatus:
-        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        org_id = org_id_var.get()
+        if org_id is None:
+            return HealthStatus(healthy=False, message="no org context", checked_at=_utcnow())
+        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
         if not api_key:
             return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
         cli_path = cli_path_setting or shutil.which("claude")
@@ -1123,105 +1126,16 @@ def _invalidate_auth_cache() -> None:
 async def _onboarding_anthropic_key_set(org_id: UUID) -> bool:
     """Settings contributor — returns True iff a working key is present.
 
-    "Set" means: there's an encrypted row in the DB AND the key actually
-    authenticates against Anthropic. A saved-but-invalid key (e.g., a typo or a
-    rotated/revoked credential) does not satisfy the prereq — the onboarding
-    stepper would otherwise stay green when reviews would fail.
-
-    The auth probe is cached by `_probe_anthropic_auth` (5-minute TTL per key
-    fingerprint), so a 5-second polling dashboard makes at most one HTTP call
-    per 5 minutes per key.
+    "Set" means: there's a byok row AND the key actually authenticates.
+    A saved-but-invalid key does not satisfy the prereq.
+    The auth probe is cached (5-min TTL per fingerprint).
     """
     async with db_session() as s:
-        row = (
-            await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-    if row is None or row.encrypted_anthropic_api_key is None:
+        plaintext = await _byok.get(org_id, "anthropic", session=s)
+    if not plaintext:
         return False
-    try:
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        api_key = SecretStr(fernet.decrypt(row.encrypted_anthropic_api_key).decode())
-    except InvalidToken:
-        return False
-    healthy, _ = await _probe_anthropic_auth(api_key)
+    healthy, _ = await _probe_anthropic_auth(SecretStr(plaintext))
     return healthy
-
-
-async def set_api_key(session, *, org_id: UUID, encrypted_anthropic_api_key: bytes) -> None:
-    """Write or update the ``claude_code_settings`` row for *org_id*.
-
-    Accepts a pre-encrypted value (callers use ``cryptography.fernet.Fernet``
-    to encrypt). A second call updates rather than duplicates — upserts on
-    ``org_id`` which is UNIQUE.
-
-    Shape (a) — takes ``session`` first positional; never commits. Caller
-    composes with sibling writes inside one ``async with db_session()`` block.
-    See ``apps/backend/docs/patterns.md`` § Service-fn session-handling convention.
-    """
-    row = (
-        await session.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-    ).scalar_one_or_none()
-    if row is None:
-        row = ClaudeCodeSettingsRow(
-            org_id=org_id,
-            encrypted_anthropic_api_key=encrypted_anthropic_api_key,
-        )
-        session.add(row)
-    else:
-        row.encrypted_anthropic_api_key = encrypted_anthropic_api_key
-    await session.flush()
-
-
-async def _set_anthropic_key(org_id: UUID, raw_key: SecretStr) -> None:
-    """Encrypt + upsert the Anthropic key on `claude_code_settings`."""
-    plaintext = raw_key.get_secret_value()
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-    enc = fernet.encrypt(plaintext.encode())
-    async with db_session() as s:
-        row = (
-            await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-        if row is None:
-            row = ClaudeCodeSettingsRow(
-                org_id=org_id,
-                encrypted_anthropic_api_key=enc,
-            )
-            s.add(row)
-        else:
-            row.encrypted_anthropic_api_key = enc
-        await s.commit()
-    # Rotation should never serve a stale "healthy" verdict from the previous key.
-    _invalidate_auth_cache()
-    # Make the key visible to `core/llm` (LangChain `init_chat_model` resolves
-    # auth via `ANTHROPIC_API_KEY`) immediately — fresh onboarding shouldn't
-    # require a backend restart before the classifier can authenticate.
-    os.environ["ANTHROPIC_API_KEY"] = plaintext
-
-
-async def bootstrap_anthropic_env() -> None:
-    """Populate `ANTHROPIC_API_KEY` from the encrypted DB row at app startup.
-
-    `core/llm` (LangChain `init_chat_model`) authenticates from the process env;
-    yaaos stores the key encrypted in `claude_code_settings`. Without this hook,
-    a freshly-booted container can't make direct LLM calls (e.g., classifier)
-    until the next time `_set_anthropic_key` runs. Pre-onboarding (no row yet)
-    is a normal state — the hook silently no-ops and the classifier surfaces
-    its own "key not set" error if it ever runs.
-    """
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return  # Already populated (e.g., Braintrust gateway, test env).
-    async with db_session() as s:
-        row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
-    if row is None or row.encrypted_anthropic_api_key is None:
-        log.info("claude_code.bootstrap_env.no_key", reason="pre_onboarding")
-        return
-    try:
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        os.environ["ANTHROPIC_API_KEY"] = fernet.decrypt(row.encrypted_anthropic_api_key).decode()
-    except InvalidToken:
-        log.warning("claude_code.bootstrap_env.decrypt_failed")
-        return
-    log.info("claude_code.bootstrap_env.loaded")
 
 
 def bootstrap() -> None:
@@ -1238,8 +1152,3 @@ def bootstrap() -> None:
 
 def get_plugin() -> ClaudeCodePlugin:
     return _plugin
-
-
-def get_set_anthropic_key():
-    """Public accessor for the credential setter — used by the plugin's web routes."""
-    return _set_anthropic_key

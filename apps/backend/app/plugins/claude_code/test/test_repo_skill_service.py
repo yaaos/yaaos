@@ -115,7 +115,7 @@ async def test_build_review_invocation_raises_when_skill_name_is_empty_string() 
 class _FakePlugin(ClaudeCodePlugin):
     """Subclass that overrides `_load_settings_for_invocation` to return a fake key."""
 
-    async def _load_settings_for_invocation(self):
+    async def _load_settings_for_invocation(self, org_id):  # type: ignore[override]
         return SecretStr("sk-ant-fake-key"), None
 
 

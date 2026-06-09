@@ -490,6 +490,9 @@ func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityEx
 	// fail fast here with a descriptive error rather than letting the backend
 	// surface an opaque audience_mismatch.
 	audience := hostFromURL(s.cfg.BaseURL)
+	if override := audienceOverride(); override != "" {
+		audience = override
+	}
 	if audience == "" {
 		return nil, fmt.Errorf("identity: cannot derive audience: BaseURL %q has no host", s.cfg.BaseURL)
 	}

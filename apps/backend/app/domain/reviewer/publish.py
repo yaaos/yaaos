@@ -113,7 +113,7 @@ async def publish_findings(
 
     review_id = uuid.uuid7()
     review_row = ReviewRow(
-        id=review_id,
+        id=review_id,  # nosemgrep: uuid-pk-no-explicit-id-in-row-constructor
         org_id=org_id,
         pr_id=pr_id,
         sequence_number=sequence_number,
@@ -158,7 +158,7 @@ async def publish_findings(
             updated_at=now,
         )
         row = FindingRow(
-            id=f.id,
+            id=f.id,  # nosemgrep: uuid-pk-no-explicit-id-in-row-constructor
             org_id=org_id,
             pr_id=pr_id,
             review_id=review_id,

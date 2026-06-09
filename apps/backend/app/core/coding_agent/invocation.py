@@ -111,8 +111,8 @@ def _exec_block(
     subprocess. Pure function — no I/O, no DB reads. The agent reads the
     returned dict and exec's it via `workspace.RunStreaming`.
 
-    Caller supplies `anthropic_api_key` (loaded from `claude_code_settings`
-    or per-org config). Empty key produces an exec block with no API key
+    Caller supplies `anthropic_api_key` (loaded from `byok_keys` per org).
+    Empty key produces an exec block with no API key
     in `env` — the subprocess will fail to authenticate; that's the
     backend caller's signal to surface the missing-credentials error
     before dispatching.
