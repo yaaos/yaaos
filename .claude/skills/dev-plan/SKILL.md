@@ -126,6 +126,16 @@ Rules the template encodes:
 - **Incremental file writes** — write `plan.md` only after the slice gate is cleared.
 - **Bail clause.** If the plan can't be made concrete (architecture too vague, slicing impossible without rework), say so — do not write a hollow plan. Bounce back to `/dev-architect`.
 
+## Sync to yaaos-plan
+
+After `plan.md` is written, commit and push the **entire ticket directory** to the `yaaos-plan` repo (the symlinked `plan/` is a checkout of `yaaos-plan`). Planning is now complete for this ticket; this is the sync point that makes it available on every machine (e.g. the box where `/dev-implement` runs).
+
+- Single `main`, no branching. Operate on the plan repo via the symlink: `git -C plan ...`.
+- Stage the whole ticket dir — `git -C plan add ticket/<slug>`. The plan repo's `.gitignore` excludes the implementation-local artifacts (`impl-log.md`, `.ci-phase-*.log`), so they never sync.
+- Commit message: `<slug>: <one-line what this ticket plans>`. Slugs and planning vocabulary are fine here — `yaaos-plan` IS the planning repo (the no-planning-vocab rule binds the *code* repo, not this one).
+- Reconcile before pushing in case another machine advanced `main`: `git -C plan pull --rebase origin main`, then `git -C plan push origin main`.
+- If push or rebase hits a real conflict, stop and surface it — don't force.
+
 ## Output to user at end
 
-If file was written: one-line confirmation with path. Nothing else. No next-skill suggestion (no-handoff rule).
+If file was written: one-line confirmation with path, plus the `yaaos-plan` push result (commit SHA + branch). Nothing else. No next-skill suggestion (no-handoff rule).

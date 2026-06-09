@@ -1,6 +1,6 @@
 # yaaos docs
 
-Present-tense documentation for shipped code. Future-tense planning lives in [`/plan/`](../plan/).
+Present-tense documentation for shipped code.
 
 ## System-wide
 

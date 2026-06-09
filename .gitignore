@@ -255,7 +255,6 @@ apps/e2e/tmp/
 # Design artifacts
 **/design/
 
-# Ticket planning workspace — local only; never committed.
-# Used by dev-intent / dev-plan / dev-implement / dev-debug skills.
-plan/ticket/
-plan/notes/
+# Planning workspace — `plan` is a symlink to the separate yaaos-plan repo.
+# Never committed here; recreate per worktree. Used by the dev-* skills.
+/plan
