@@ -182,17 +182,21 @@ tasks:
     tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
     # backend (web + worker images), web (SPA baked into the image), the
-    # three fake-* services, the compose file itself, and workspace
-    # lockfiles. Agent-only changes don't trigger this; agent isn't part
-    # of the e2e stack.
+    # three fake-* services, the local WorkspaceAgent + its mock-aws STS
+    # endpoint (both built by docker-compose.test.yml), the compose file
+    # itself, and workspace lockfiles. Every build context the compose
+    # references must be in this filter — RWX only materializes filtered
+    # paths into the task workspace, so a missing context fails the build.
     filter:
       - apps/backend/**
       - apps/web/**
       - apps/e2e/**
+      - apps/agent/**
       - apps/fake-github/**
       - apps/fake-linear/**
       - apps/fake-notion/**
       - docker/docker-compose.test.yml
+      - docker/mock-aws/**
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
