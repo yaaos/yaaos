@@ -16,13 +16,21 @@ base:
   config: rwx/base 1.0.2
   arch: arm64
 
+# Coalesce rapid pushes per branch: a new push cancels any older run for the
+# same branch that's still waiting in the queue. In-flight runs keep going —
+# we don't want `cancel-running` interrupting `deploy-prod` mid-flytcl.
+concurrency-pools:
+  - id: yaaos/yaaos:${{ init.branch }}
+    capacity: 1
+    on-overflow: cancel-waiting
+
 # Tool-cache vault. Each install-running task (web-ci, e2e-ci) declares
 # its own tool-cache name; RWX preserves the post-install workspace
 # state across runs of that same task so `pnpm install` and Playwright's
 # browser download don't re-download on every push. The vault scopes
 # what reads/writes the cache.
 #
-# The `yaaos` vault is configured for `JackKora/yaaos:*` (every branch
+# The `yaaos` vault is configured for `yaaos/yaaos:*` (every branch
 # can read AND write), so feature-branch pushes also benefit from and
 # contribute to the cache. The RWX-default pattern of scoping to `main`
 # (read-only for feature branches) exists to guard against malicious
@@ -46,7 +54,7 @@ tasks:
   - key: code
     call: git/clone 2.0.7
     with:
-      repository: https://github.com/JackKora/yaaos.git
+      repository: https://github.com/yaaos/yaaos.git
       ref: ${{ init.commit-sha }}
 
   - key: docs-ci
