@@ -34,6 +34,10 @@ from app.core.workflow.service import (
     start_step,
     unregister_workflow,
 )
+from app.core.workflow.terminal_hooks import (
+    get_terminal_hooks,
+    register_terminal_hook,
+)
 from app.core.workflow.types import (
     TERMINAL_STATES,
     CommandCategory,
@@ -83,6 +87,7 @@ __all__ = [
     "get_engine",
     "get_execution_summary",
     "get_recovery_policy",
+    "get_terminal_hooks",
     "handle_agent_event",
     "list_active_execution_ids",
     "list_all_execution_states",
@@ -90,6 +95,7 @@ __all__ = [
     "list_hitl_history",
     "list_run_views_for_ticket",
     "register_recovery_policy",
+    "register_terminal_hook",
     "register_workflow",
     "registered_recovery_labels",
     "request_cancel",

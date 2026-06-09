@@ -548,6 +548,53 @@ async def fail(ticket_id: UUID, *, reason: str, org_id: UUID) -> None:
     await _transition(ticket_id, new_status="failed", org_id=org_id, reason=reason)
 
 
+async def _apply_transition(
+    s: AsyncSession,
+    row: TicketRow,
+    *,
+    new_status: TicketStatus,
+    reason: str | None,
+    org_id: UUID,
+) -> None:
+    """Apply a status transition on an already-loaded row, within the caller's
+    session. Fires audit, SSE, and notification outbox — all stashed on the
+    session and flushed atomically with the caller's commit. Does not commit."""
+    prev = row.status
+    await s.execute(update(TicketRow).where(TicketRow.id == row.id).values(status=new_status))
+    await audit_for_ticket(
+        row.id,
+        "ticket.status_changed",
+        _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
+        actor=Actor.system(),
+        org_id=org_id,
+        session=s,
+    )
+    members = await list_active_member_ids(s, org_id)
+    publish_general_after_commit(
+        s,
+        org_id=org_id,
+        kind=GeneralEventKind.TICKET_STATUS_CHANGED,
+        payload={
+            "ticket_id": str(row.id),
+            "new_status": new_status,
+            "previous_status": prev,
+        },
+    )
+    specs = build_status_change_specs(
+        ticket_id=row.id,
+        org_id=org_id,
+        ticket_title=row.title,
+        member_user_ids=members,
+        new_status=new_status,
+    )
+    if specs:
+        await enqueue(
+            fanout,
+            args={"specs": [s.to_dict() for s in specs]},
+            session=s,
+        )
+
+
 async def _transition(
     ticket_id: UUID,
     *,
@@ -563,38 +610,40 @@ async def _transition(
             raise TicketNotFoundError(str(ticket_id))
         if row.status in ("done", "cancelled", "failed"):
             raise InvalidTicketTransition(f"ticket {ticket_id} is terminal ({row.status}); cannot transition")
-        prev = row.status
-        await s.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(status=new_status))
-        await audit_for_ticket(
-            ticket_id,
-            "ticket.status_changed",
-            _TicketStatusChangedPayload(from_status=prev, to_status=new_status, reason=reason),
-            actor=Actor.system(),
-            org_id=org_id,
-            session=s,
-        )
-        members = await list_active_member_ids(s, org_id)
-        publish_general_after_commit(
-            s,
-            org_id=org_id,
-            kind=GeneralEventKind.TICKET_STATUS_CHANGED,
-            payload={
-                "ticket_id": str(ticket_id),
-                "new_status": new_status,
-                "previous_status": prev,
-            },
-        )
-        specs = build_status_change_specs(
-            ticket_id=ticket_id,
-            org_id=org_id,
-            ticket_title=row.title,
-            member_user_ids=members,
-            new_status=new_status,
-        )
-        if specs:
-            await enqueue(
-                fanout,
-                args={"specs": [s.to_dict() for s in specs]},
-                session=s,
-            )
+        await _apply_transition(s, row, new_status=new_status, reason=reason, org_id=org_id)
         await s.commit()
+
+
+async def transition_on_workflow_terminal(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    workflow_execution_id: UUID,
+    to_status: TicketStatus,
+    reason: str | None,
+    session: AsyncSession,
+) -> bool:
+    """Flip a ticket to a terminal status only when the calling workflow
+    execution still owns it and it is not already terminal. Shape-a:
+    takes the caller's session, never commits.
+
+    Returns True when the transition was applied; False on any guard miss:
+    - ticket not found or wrong org
+    - `current_workflow_execution_id` does not match `workflow_execution_id`
+      (a newer execution has superseded this one)
+    - ticket is already in a terminal state (`done`, `cancelled`, `failed`)
+
+    Never raises on guard misses — the caller (a workflow terminal hook)
+    shares the engine's transaction; raising would roll back the workflow commit.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_workflow_execution_id != workflow_execution_id:
+        return False
+    if row.status in ("done", "cancelled", "failed"):
+        return False
+    await _apply_transition(session, row, new_status=to_status, reason=reason, org_id=org_id)
+    return True

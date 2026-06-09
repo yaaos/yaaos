@@ -34,6 +34,7 @@ from app.domain.tickets.service import (
     list_running_older_than,
     list_tickets,
     set_workflow_execution,
+    transition_on_workflow_terminal,
     update_findings_summary,
     upsert_ticket_for_pr,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "list_running_older_than",
     "list_tickets",
     "set_workflow_execution",
+    "transition_on_workflow_terminal",
     "update_findings_summary",
     "update_state",
     "upsert",

@@ -13,7 +13,8 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 - **Two signals fire atomically with every transition commit:** `core/sse.publish_general_after_commit` (SPA) and `core/tasks.enqueue` (durable outbox). Rolled-back transactions emit neither.
 - **Notification policy lives here, not in `core/notifications`.** `build_status_change_specs` decides which statuses generate notifications, which type to assign, and what title to show. It returns `list[NotificationSpec]`; the caller enqueues `core/notifications.fanout`. `plugins/github` uses the same helper — no plugin owns notification policy.
 - **`(org_id, source, source_external_id)` UNIQUE** collapses concurrent webhook deliveries. `upsert_ticket_for_pr` uses `INSERT … ON CONFLICT DO NOTHING`; the race loser gets `(None, False)` and exits.
-- **Terminal states have no outbound transitions.** Enforced in code (`_transition` raises `InvalidTicketTransition`), not a DB CHECK.
+- **Terminal states have no outbound transitions** for the unconditional helpers. `complete`/`fail`/`abandon` go through `_transition`, which raises `InvalidTicketTransition`. The guarded `transition_on_workflow_terminal` returns `False` instead of raising — safe inside a caller's transaction.
+- **`_apply_transition` is the shared side-effect kernel.** Both `_transition` (Shape-b) and `transition_on_workflow_terminal` (Shape-a) delegate to it. It fires audit + SSE + notification outbox atomically within the caller's session without committing.
 - **Workspace ≠ ticket.** The reviewer opens one workspace per coordinator call; it is anonymous from the ticket's perspective — no FK, no column.
 - **`findings_count` + `max_severity` are denormalized, not live-aggregated.** Reviewer writes them via `update_findings_summary` after each review run and on ack/push-back. `list_tickets` reads them directly from the row — no cross-module import from tickets → reviewer.
 - **All ticket reads are org-scoped.** Use `get(ticket_id, org_id=...)` — the unscoped `get_by_id` helper has been removed.
@@ -29,9 +30,10 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 | `pending` → `running` | workflow-step dispatch |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
-| `running` → `failed` | `fail(reason=...)` — orphan sweep, future workflow failures |
+| `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
+| `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — workflow terminal hook (primary path off `running`) |
 
-`complete` / `abandon` / `fail` all go through `_transition` in `service.py`.
+`complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` is Shape-a (caller's session, never commits) and is used by workflow terminal hooks.
 
 ## Data owned
 
@@ -43,6 +45,7 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 
 - `test/test_service.py` — `upsert_ticket_for_pr` (create + race-loser), `attach_pr_to_ticket`, `set_workflow_execution`, `list_tickets` reads row-backed rollup + DB sort.
 - `test/test_status_change_producer_service.py` — `notifications.fanout` outbox row, SSE after commit, no SSE on rollback.
+- `test/test_transition_on_workflow_terminal_service.py` (`@pytest.mark.service`) — all guard branches for `transition_on_workflow_terminal`: owner + running → flips + audit row + returns True; non-owner → no-op + False; already terminal → idempotent + False; missing ticket / wrong org → False + no raise; no commit inside fn.
 - `test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
 - `test/test_pr_upsert_session.py` — session-ownership (insert + update, FK safety, missing ticket_id guard).
 - `test/test_pull_request_service.py` (`@pytest.mark.service`) — `list_by_ids`: full match, empty input, unknown ids, partial match.

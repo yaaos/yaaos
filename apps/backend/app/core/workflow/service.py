@@ -37,6 +37,7 @@ from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.recovery import get_recovery_policy
+from app.core.workflow.terminal_hooks import get_terminal_hooks
 from app.core.workflow.types import (
     TERMINAL_STATES,
     CommandCategory,
@@ -139,8 +140,7 @@ async def _start_step_impl(
 
         # Cancellation check — set the row terminal and exit before dispatch.
         if wfx.cancel_requested:
-            wfx.state = WorkflowState.CANCELLED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
             log.info(
                 "workflow.start_step.cancelled_pre_dispatch", workflow_execution_id=workflow_execution_id
             )
@@ -165,8 +165,7 @@ async def _start_step_impl(
                 workflow_execution_id=workflow_execution_id,
                 step_id=step_id,
             )
-            wfx.state = WorkflowState.FAILED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
             await s.commit()
             return
 
@@ -178,8 +177,7 @@ async def _start_step_impl(
                 workflow_execution_id=workflow_execution_id,
                 command_kind=step.command_kind,
             )
-            wfx.state = WorkflowState.FAILED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
             await s.commit()
             return
 
@@ -233,8 +231,7 @@ async def _start_step_impl(
                     workflow_execution_id=workflow_execution_id,
                     outcome_kind=outcome.kind.value,
                 )
-                wfx.state = WorkflowState.FAILED.value
-                _publish_state_changed(s, wfx)
+                await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
                 await s.commit()
                 return
             s.add(
@@ -405,8 +402,7 @@ async def _route_workflow_impl(
             return
 
         if wfx.cancel_requested:
-            wfx.state = WorkflowState.CANCELLED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
             log.info(
                 "workflow.route_workflow.cancelled_at_route",
                 workflow_execution_id=workflow_execution_id,
@@ -436,8 +432,7 @@ async def _route_workflow_impl(
                 workflow_execution_id=workflow_execution_id,
                 step_id=completed_step_id,
             )
-            wfx.state = WorkflowState.FAILED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
             await s.commit()
             return
 
@@ -522,8 +517,7 @@ async def _route_workflow_impl(
             if _has_finalizer_fired(wfx) and completed_step_id == wf.finalizer_step_id:
                 target = TerminalAction.FAIL_WORKFLOW
             else:
-                wfx.state = WorkflowState.DONE.value
-                _publish_state_changed(s, wfx)
+                await _enter_terminal_state(s, wfx, WorkflowState.DONE)
                 await s.commit()
                 return
         if target is TerminalAction.FAIL_WORKFLOW:
@@ -556,8 +550,7 @@ async def _route_workflow_impl(
             )
             failed_step_id = _pop_pending_failure_step(wfx) or completed_step_id
             wfx.failure_reason = failure_reason
-            wfx.state = WorkflowState.FAILED.value
-            _publish_state_changed(s, wfx)
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
             # Write the durable cross-cutting audit row.
             from app.core.audit_log import Actor, audit  # noqa: PLC0415
 
@@ -1232,6 +1225,34 @@ def _publish_state_changed(session: AsyncSession, wfx: WorkflowExecutionRow) -> 
             "state": wfx.state,
         },
     )
+
+
+async def _enter_terminal_state(
+    session: AsyncSession,
+    wfx: WorkflowExecutionRow,
+    new_state: WorkflowState,
+) -> None:
+    """Set the execution to a terminal state, publish the SSE event, and
+    await all registered terminal hooks inside the current transaction.
+
+    All terminal transitions in the engine funnel through here so hooks
+    are guaranteed to fire exactly once per terminal write. Hooks run in
+    registration order. A raising hook rolls back the transaction — the
+    caller must not commit before this returns.
+    """
+    wfx.state = new_state.value
+    _publish_state_changed(session, wfx)
+    org_id = _workflow_org_id(wfx)
+    for hook in get_terminal_hooks():
+        await hook(
+            workflow_execution_id=wfx.id,
+            workflow_name=wfx.workflow_name,
+            ticket_id=wfx.ticket_id,
+            org_id=org_id,
+            terminal_state=new_state,
+            failure_reason=wfx.failure_reason,
+            session=session,
+        )
 
 
 def _queue_appended_steps(wfx: WorkflowExecutionRow, steps: list[Step]) -> None:
