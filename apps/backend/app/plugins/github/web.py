@@ -113,8 +113,8 @@ async def repositories() -> dict[str, object]:
     Returns `{repositories: [{full_name, html_url, private}], total_count}`
     when the App is installed; an empty list when it isn't.
     """
+    from app.core import vcs as vcs_mod  # noqa: PLC0415
     from app.core.auth import org_id_var  # noqa: PLC0415
-    from app.domain import vcs as vcs_mod  # noqa: PLC0415
     from app.plugins.github.service import get_plugin as get_github_plugin  # noqa: PLC0415
 
     org_id = org_id_var.get() or DEFAULT_ORG_ID

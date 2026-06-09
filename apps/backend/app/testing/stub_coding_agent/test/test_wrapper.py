@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
-from app.core.plugin_kit import PluginMeta
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
     InvocationStatus,
@@ -19,39 +19,14 @@ from app.domain.coding_agent import (
     list_registered_plugins,
     register_plugin,
 )
-from app.domain.vcs import Diff, VCSPullRequest
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,
 )
 
 
-def _make_pr() -> VCSPullRequest:
-    now = datetime.now(UTC)
-    return VCSPullRequest(
-        plugin_id="github",
-        external_id="acme/web#1",
-        repo_external_id="acme/web",
-        number=1,
-        title="Test",
-        body=None,
-        author_login="alice",
-        author_type="user",
-        base_branch="main",
-        head_branch="feat",
-        base_sha="b",
-        head_sha="h",
-        is_draft=False,
-        is_fork=False,
-        state="open",
-        html_url="http://x",
-        created_at=now,
-        updated_at=now,
-    )
-
-
 class _DummyPlugin:
-    meta = PluginMeta(id="dummy", type="coding_agent", display_name="Dummy")
+    plugin_id = "dummy"
 
     async def review(self, *args, **kwargs) -> ReviewResult:
         raise AssertionError("real review must not be called when wrapped")
@@ -76,16 +51,22 @@ class _FakeWorkspace:
 @pytest.mark.asyncio
 async def test_review_returns_canned_success() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    ctx = ReviewContext(pr=_make_pr(), diff=Diff(raw="", files=[]))
+    ctx = ReviewContext(
+        org_id=UUID(int=1),
+        repo_external_id="acme/web",
+        pr_external_id="acme/web#1",
+        head_sha="h",
+        base_sha="b",
+    )
     result = await stub.review(_FakeWorkspace(), ctx)
     assert result.status == InvocationStatus.SUCCESS
     assert result.state == "COMMENT"
     # One synthetic finding lets UI specs exercise the finding-expansion
     # and Teach-yaaos flow without needing a real LLM. See service.review.
     assert len(result.findings) == 1
-    # ReviewResult.findings is `FindingDraft`, not vcs.Finding.
-    assert result.findings[0].anchor.file_path == "src/example.ts"
-    assert result.findings[0].rule_id == "stub/sample-suggestion"
+    # ReviewResult.findings carries canonical ReportedFinding shape.
+    assert result.findings[0].file == "src/example.ts"
+    assert result.findings[0].rule_violated == "stub/sample-suggestion"
     assert result.telemetry.tokens_in == 1000
 
 
@@ -104,10 +85,9 @@ async def test_health_check_always_healthy_in_stub_mode() -> None:
     assert "stub" in h.message.lower()
 
 
-def test_meta_mirrors_wrapped() -> None:
+def test_plugin_id_mirrors_wrapped() -> None:
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    assert stub.meta.id == "dummy"
-    assert stub.meta.display_name == "Dummy"
+    assert stub.plugin_id == "dummy"
 
 
 def test_wrap_all_is_idempotent() -> None:

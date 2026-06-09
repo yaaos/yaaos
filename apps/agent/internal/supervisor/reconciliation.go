@@ -2,7 +2,7 @@
 //
 // On supervisor restart, workspace directories left over from a previous
 // run (process crash, pod replace, OOM-kill) get reattributed via the
-// `.workspace-id` manifest file `RealHandler.CreateWorkspace` writes into
+// `.workspace-id` manifest file `RealHandler.ProvisionWorkspace` writes into
 // each tempdir at create time. The startup scan reports each as
 // `status="unknown"` in the first heartbeat; the backend
 // responds with a `forgotten_workspaces` list naming the ones it no

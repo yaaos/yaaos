@@ -49,7 +49,7 @@ _SCHEMA_TO_CLASS: dict[str, tuple[str, set[str]]] = {
     "HeartbeatResponse": ("HeartbeatResponse", set()),
     "ClaimRequest": ("ClaimRequest", set()),
     "CommandBase": ("_CommandBase", set()),
-    "CreateWorkspaceCommand": ("CreateWorkspaceCommand", set()),
+    "ProvisionWorkspaceCommand": ("ProvisionWorkspaceCommand", set()),
     "WriteFilesCommand": ("WriteFilesCommand", set()),
     "RefreshWorkspaceAuthCommand": ("RefreshWorkspaceAuthCommand", set()),
     "InvokeClaudeCodeCommand": ("InvokeClaudeCodeCommand", set()),

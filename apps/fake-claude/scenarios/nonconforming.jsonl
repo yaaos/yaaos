@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fake-nonconforming-session"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here is some prose that is not the schema the backend expects."}]}}
+{"type":"result","subtype":"success","result":"not-a-json-object","is_error":false}

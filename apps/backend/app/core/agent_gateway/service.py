@@ -17,6 +17,9 @@ the row to `done`.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -37,10 +40,10 @@ from app.core.agent_gateway.types import (
     AgentEvent,
     CleanupWorkspaceCommand,
     ConfigUpdateCommand,
-    CreateWorkspaceCommand,
     HeartbeatRequest,
     HeartbeatResponse,
     InvokeClaudeCodeCommand,
+    ProvisionWorkspaceCommand,
     RefreshWorkspaceAuthCommand,
     StaleClaimError,
     WorkspaceEvent,
@@ -67,7 +70,7 @@ MAX_ATTEMPT: int = 5
 # to a typed AgentCommand. Built once at import time — `claim_next` is a hot path.
 _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
     Annotated[
-        CreateWorkspaceCommand
+        ProvisionWorkspaceCommand
         | WriteFilesCommand
         | RefreshWorkspaceAuthCommand
         | InvokeClaudeCodeCommand
@@ -86,11 +89,18 @@ async def enqueue_command(
     command: AgentCommand,
     *,
     session: AsyncSession,
+    workflow_execution_id: UUID | None = None,
 ) -> None:
     """Insert an AgentCommand row in `pending` status.
 
-    Called by `RemoteAgentWorkspaceProvider` inside the workflow engine's
-    start_step transaction — the insert is atomic with `try_claim`.
+    Called by the workflow engine's Workspace branch (via
+    `WorkflowCommand.dispatch`) inside `start_step`'s transaction — the insert
+    is atomic with the engine's state transition to `awaiting_agent`.
+
+    `workflow_execution_id` is stamped on the row so the terminal-event
+    ingestion path can resolve `command_id → workflow` directly, without a
+    workspace-row lookup. NULL only for agent-scoped commands that do not
+    correlate to a workflow (e.g. `ConfigUpdate`).
 
     The DB-minted UUIDv7 PK serves as the idempotency key and FIFO sort key.
     `agent_id` is left NULL at enqueue time; it is stamped by `claim_next`.
@@ -98,7 +108,7 @@ async def enqueue_command(
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
     # workspace_id is NULL for org-scoped commands (ConfigUpdate,
-    # CreateWorkspace before an agent is assigned).
+    # ProvisionWorkspace before an agent is assigned).
     workspace_id: UUID | None = getattr(command, "workspace_id", None)
     if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
         workspace_id = None
@@ -110,6 +120,7 @@ async def enqueue_command(
         id=command.command_id,
         org_id=org_id,
         workspace_id=workspace_id,
+        workflow_execution_id=workflow_execution_id,
         command_kind=str(command.kind),
         payload=command.model_dump(mode="json"),
         status="pending",
@@ -139,6 +150,55 @@ async def pin_command_to_agent(
         update(AgentCommandRow).where(AgentCommandRow.id == command_id).values(agent_id=agent_id)
     )
     await session.flush()
+
+
+async def get_command_org_and_payload(
+    command_id: UUID,
+    *,
+    session: AsyncSession,
+) -> tuple[UUID, dict] | None:
+    """Return `(org_id, payload)` for the given `agent_commands` row, or None
+    when the row is not found. Used by the workspace sink to seed the lean
+    `workspaces` row on the agent's first workspace event.
+
+    Pure read — no writes. Caller owns session lifecycle.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    row = (
+        (await session.execute(select(AgentCommandRow).where(AgentCommandRow.id == command_id)))
+        .scalars()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    return (row.org_id, dict(row.payload) if row.payload else {})
+
+
+async def get_command_workflow_execution_id(
+    command_id: UUID,
+    *,
+    session: AsyncSession,
+) -> UUID | None:
+    """Return `workflow_execution_id` for the given `agent_commands` row, or
+    None when the row is not found or has no workflow correlation (agent-scoped
+    commands like ConfigUpdate have NULL there).
+
+    Pure read — no writes. Used by `core/workspace` failsafe-6 to synthesize
+    a terminal failure event for in-flight commands.
+
+    Caller owns session lifecycle.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    row = (
+        await session.execute(
+            select(AgentCommandRow.workflow_execution_id).where(AgentCommandRow.id == command_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return row[0]
 
 
 def _build_config_update() -> ConfigUpdateCommand:
@@ -184,8 +244,8 @@ async def claim_next(
       bootstraps.
     - `configured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across the
       eligible set (FIFO by UUIDv7 id):
-        * A pending unassigned CreateWorkspace (status=pending, agent_id NULL,
-          kind=CreateWorkspace), when `new_workspaces > 0`.
+        * A pending unassigned ProvisionWorkspace (status=pending, agent_id NULL,
+          kind=ProvisionWorkspace), when `new_workspaces > 0`.
         * A pending command pinned to this agent for a workspace in
           `workspace_ids` (status=pending, agent_id=this agent, workspace_id ∈
           workspace_ids).
@@ -205,7 +265,7 @@ async def claim_next(
     now = datetime.now(UTC)
     row: AgentCommandRow | None = None
 
-    # Try unassigned CreateWorkspace first (capacity for new workspaces).
+    # Try unassigned ProvisionWorkspace first (capacity for new workspaces).
     if new_workspaces > 0:
         row = (
             (
@@ -213,7 +273,7 @@ async def claim_next(
                     select(AgentCommandRow)
                     .where(
                         AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind == AgentCommandKind.CREATE_WORKSPACE,
+                        AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
                         AgentCommandRow.agent_id.is_(None),
                     )
                     .order_by(AgentCommandRow.id)
@@ -225,7 +285,7 @@ async def claim_next(
             .one_or_none()
         )
 
-    # If no CreateWorkspace, try the oldest pending command pinned to this agent
+    # If no ProvisionWorkspace, try the oldest pending command pinned to this agent
     # for any of the named workspaces.
     if row is None and workspace_ids:
         row = (
@@ -267,7 +327,7 @@ async def claim_next(
                             select(AgentCommandRow)
                             .where(
                                 AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind == AgentCommandKind.CREATE_WORKSPACE,
+                                AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
                                 AgentCommandRow.agent_id.is_(None),
                             )
                             .order_by(AgentCommandRow.id)
@@ -299,13 +359,22 @@ async def claim_next(
         if row is None:
             return None
 
-    # Stamp agent_id + claimed_at on the single selected row.
+    # Stamp agent_id + claimed_at on the single selected row, and mint the
+    # per-command completion capability token. We persist only the sha256 hash;
+    # the raw token is returned to the claiming agent exactly once (injected into
+    # the command DTO below) and never stored — bearer-token discipline applied
+    # to `agent_commands`.
+    raw = secrets.token_urlsafe(32)
     row.agent_id = agent_id
     row.status = "claimed"
     row.claimed_at = now
+    row.completion_token_hash = hashlib.sha256(raw.encode()).hexdigest()
     await session.flush()
 
-    return _row_to_command(row)
+    # Inject the raw token into the returned DTO without re-persisting it to
+    # `row.payload`. `_CommandBase` is frozen, so `model_copy(update=...)` returns
+    # a new typed instance of the concrete subtype carrying the token on the wire.
+    return _row_to_command(row).model_copy(update={"completion_token": raw})
 
 
 async def acknowledge_command_received(
@@ -451,8 +520,29 @@ async def record_heartbeat(
     if not reported_ids:
         return HeartbeatResponse(reconciled_at=datetime.now(UTC), forgotten_workspaces=())
 
+    # Exclude workspace IDs that are still being provisioned (an in-flight
+    # ProvisionWorkspace command exists but the workspace row hasn't been
+    # created yet). The workspace row is written lazily on the first workspace
+    # event from the agent; before that the row is absent, so reconciliation
+    # would incorrectly mark these as forgotten and kill the subprocess mid-clone.
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    provisioning_rows = (
+        await session.execute(
+            select(AgentCommandRow.workspace_id).where(
+                AgentCommandRow.workspace_id.in_(reported_ids),
+                AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
+                AgentCommandRow.status.in_(["pending", "claimed", "delivered"]),
+            )
+        )
+    ).all()
+    provisioning_ids: set[UUID] = {r[0] for r in provisioning_rows if r[0] is not None}
+
+    # Only reconcile the IDs that are not currently being provisioned.
+    reconcile_ids = reported_ids - provisioning_ids
+
     sink = get_report_sink()
-    forgotten_ids = await sink.reconcile_heartbeat(reported_ids, session)
+    forgotten_ids = await sink.reconcile_heartbeat(reconcile_ids, session)
 
     return HeartbeatResponse(
         reconciled_at=datetime.now(UTC),
@@ -466,24 +556,51 @@ async def record_heartbeat(
 async def record_agent_event(
     event: AgentEvent,
     *,
+    agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> None:
-    """Apply the stale-claim guard against the workspace, then — if the
-    event is terminal — enqueue `workflow.handle_agent_event` via the
-    outbox in the same transaction.
+    """Resolve the workflow correlation directly from `agent_commands.workflow_execution_id`,
+    then — if the event is terminal — enqueue `workflow.handle_agent_event` via
+    the outbox in the same transaction.
 
     A `received` non-terminal event flips the command row from
     `claimed` to `delivered`, cancelling the lease requeue.
 
-    Raises `StaleClaimError` when the workspace's `current_command_id`
-    no longer matches; the endpoint maps this to `410 Gone`.
+    Raises `StaleClaimError` when the command row no longer exists (already
+    retired by an earlier terminal event); the endpoint maps this to `410 Gone`.
+
+    Workflow correlation is independent of the workspace row — the engine
+    stamps `workflow_execution_id` on the command at enqueue time. An agent
+    can therefore report a terminal event for a workspace that has been torn
+    down (`failure-report-precedes-disposal`), and the workflow still resumes.
+
+    Enforces a per-command completion-capability-token check before any side
+    effect: the token minted at `claim_next` is stored as
+    `agent_commands.completion_token_hash` (sha256; raw never persisted) and
+    echoed back on the event's `completion_token`. The presented token is
+    re-hashed and compared constant-time against the stored hash; a mismatch
+    raises `StaleClaimError` (mapped to 410). Authorization binds to the COMMAND,
+    not to the worker's mutable `(org_id, agent_id)` — so an agent whose identity
+    legitimately rotated on re-auth still completes its in-flight command. When
+    `completion_token_hash` is NULL (command never went through `claim_next`,
+    e.g. test-seeded rows) verification is skipped.
+
+    `agent_id` — the `workspace_agents.id` of the reporting bearer — is passed
+    to the sink's `materialise_provision_success` when a `ProvisionWorkspace`
+    command completes successfully (the Go agent never sends workspace events,
+    so the lean row is materialised by the sink instead). The gateway no longer
+    synthesizes a WorkspaceEvent on this path.
 
     Required `session`; caller commits.
     """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
     from app.core.agent_gateway.types import AgentEventKind  # noqa: PLC0415
 
-    # Handle `received` before the stale-claim guard — the guard looks at
-    # the workspace, but `received` only updates the command row lease.
+    # Handle `received` before the row lookup — `received` only updates the
+    # command row lease and does not require workflow correlation. It is fine
+    # that this early-returning branch does not verify the completion token: it
+    # bumps the lease only (no claim release, materialisation, or workflow
+    # resume), and a mismatched token would simply replay through the reaper.
     if event.kind == AgentEventKind.RECEIVED:
         await acknowledge_command_received(event.command_id, session=session)
         log.info(
@@ -492,36 +609,103 @@ async def record_agent_event(
         )
         return
 
-    # Look up the workspace holding this command. The single-flight claim
-    # writes `current_command_id` + `current_holder_workflow_id` on the
-    # workspace; delegates to the registered sink so workspace-state access
-    # stays inside core/workspace.
-    sink = get_report_sink()
-    holder_workflow_id = await sink.resolve_claim(event.command_id, session)
-    if holder_workflow_id is None:
-        raise StaleClaimError(f"no workspace holds command {event.command_id}")
+    # Resolve workflow correlation directly from the command row — no
+    # workspace-row dependency for the resumption path.
+    cmd_row = (
+        (await session.execute(select(AgentCommandRow).where(AgentCommandRow.id == event.command_id)))
+        .scalars()
+        .one_or_none()
+    )
+    if cmd_row is None:
+        raise StaleClaimError(f"no agent_commands row for {event.command_id}")
+
+    # Completion-capability-token check — the churn-proof replacement for the
+    # org/agent ownership guard. Authorization binds to the COMMAND via the
+    # one-time token minted at claim, not to the worker's mutable identity (which
+    # legitimately rotates on re-auth). Run BEFORE any claim release, run-sink
+    # call, lean-row materialisation, or workflow enqueue. Constant-time compare;
+    # the token is never logged. Skipped when the command never went through
+    # `claim_next` (NULL hash — e.g. test-seeded rows).
+    if cmd_row.completion_token_hash is not None:
+        presented = hashlib.sha256((event.completion_token or "").encode()).hexdigest()
+        if not hmac.compare_digest(presented, cmd_row.completion_token_hash):
+            raise StaleClaimError(f"command {event.command_id} completion token mismatch")
+
+    holder_workflow_id = cmd_row.workflow_execution_id
 
     if not event.is_terminal():
         # Non-terminal events (progress) skip workflow-engine resumption —
         # only `completed_*` events resume the workflow state machine.
         # Republish to the org-scoped workspace-activity channel so the SPA's
-        # SSE live-tail picks them up.
+        # SSE live-tail picks them up. Skipped when the command has no
+        # workflow correlation (agent-scoped ConfigUpdate has no live-tail
+        # subscriber to fan out to).
         log.info(
             "agent.event.progress",
             command_id=str(event.command_id),
         )
-        from app.core.auth import require_org_context  # noqa: PLC0415
-        from app.core.sse import publish_workspace_activity  # noqa: PLC0415
+        if holder_workflow_id is not None:
+            from app.core.auth import require_org_context  # noqa: PLC0415
+            from app.core.sse import publish_workspace_activity  # noqa: PLC0415
 
-        await publish_workspace_activity(
-            org_id=require_org_context(),
-            workflow_execution_id=holder_workflow_id,
-            payload=event.model_dump(mode="json"),
-        )
+            await publish_workspace_activity(
+                org_id=require_org_context(),
+                workflow_execution_id=holder_workflow_id,
+                payload=event.model_dump(mode="json"),
+            )
         return
 
-    # Terminal — retire the command row and enqueue the workflow handler.
+    # Terminal — release the single-flight workspace claim BEFORE routing to
+    # the next step or finalizer, so the next `try_claim` sees
+    # `current_command_id IS NULL` (failure-report-precedes-disposal).
+    # No-op when no workspace row holds this command (e.g. ProvisionWorkspace
+    # before the lean row exists, or agent-scoped commands).
+    await get_report_sink().release_command_claim(event.command_id, session)
+
+    # Retire the command row and enqueue the workflow handler
+    # (only when there is a workflow to resume; agent-scoped commands without
+    # workflow correlation simply retire).
     await retire_command(event.command_id, session=session)
+
+    # Fan out to the coding-agent run sink — only `InvokeClaudeCode` terminal
+    # events need a run row finalized. The sink filters on command_kind and
+    # is a no-op for all other kinds. The sink is optional (None when
+    # domain/coding_agent is not loaded), so it degrades gracefully.
+    from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
+
+    _run_sink = get_run_sink()
+    if _run_sink is not None:
+        await _run_sink.handle_terminal_event(
+            command_id=event.command_id,
+            command_kind=cmd_row.command_kind,
+            event_kind=event.kind.value,
+            outputs=dict(event.outputs),
+            session=session,
+        )
+
+    # Lean workspace row materialisation for ProvisionWorkspace.
+    #
+    # The Go agent never sends workspace events (WorkspaceEvent is a
+    # backend-side type — see openapi_drift_test.go). The control plane
+    # therefore materialises the row on the terminal `completed_success` for
+    # the ProvisionWorkspace command. The gateway does not synthesize a
+    # WorkspaceEvent or pick a "kind"; it delegates to the sink, which owns all
+    # workspace-state shaping (provider id, TTL, spec). The sink is idempotent
+    # — a row already present is left untouched.
+    if (
+        agent_id is not None
+        and cmd_row.command_kind == AgentCommandKind.PROVISION_WORKSPACE
+        and cmd_row.workspace_id is not None
+        and event.kind == AgentEventKind.COMPLETED_SUCCESS
+    ):
+        await get_report_sink().materialise_provision_success(
+            command_id=event.command_id,
+            agent_id=agent_id,
+            session=session,
+        )
+
+    if holder_workflow_id is None:
+        return
 
     from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
@@ -530,7 +714,8 @@ async def record_agent_event(
         args={
             "workflow_execution_id": str(holder_workflow_id),
             "agent_command_id": str(event.command_id),
-            "outcome_label": event.outcome_label or "success",
+            "outcome_label": event.outcome_label
+            or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
             "outputs": dict(event.outputs),
             "traceparent": event.traceparent,
         },
@@ -541,6 +726,7 @@ async def record_agent_event(
 async def record_workspace_event(
     event: WorkspaceEvent,
     *,
+    agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> None:
     """Update the workspace mirror from an agent-reported state change.
@@ -549,12 +735,17 @@ async def record_workspace_event(
     applies the stale-claim guard and the kind→status map, returning an
     outcome VO. agent_gateway maps `accepted=False` to `StaleClaimError`
     so the endpoint can return `410 Gone`.
+
+    `agent_id` is the bearer's `WorkspaceAgentRow.id`. Passed to the sink so
+    lean row creation (on the agent's first workspace event) can stamp
+    `owning_agent_id` correctly.
     """
     sink = get_report_sink()
     report = WorkspaceEventReport(
         workspace_id=event.workspace_id,
         command_id=event.command_id,
         kind=event.kind,
+        agent_id=agent_id,
     )
     outcome = await sink.apply_workspace_event(report, session)
     if not outcome.accepted:

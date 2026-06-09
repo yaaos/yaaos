@@ -1,68 +1,82 @@
 import type { FindingRow as FindingRowData } from "@core/api/public/queries";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
 import { FindingRow } from "../FindingRow";
 
-/** Minimal fixture shaped like the wire `FindingRow`. */
+/**
+ * Smoke tests for FindingRow. The component is non-interactive — no Ack or
+ * Push-back actions. Tests cover severity/confidence chip rendering, file:line
+ * display, headline derivation from rationale, and suggested fix.
+ */
 function fixture(overrides: Partial<FindingRowData> = {}): FindingRowData {
   return {
     id: "f1",
-    state: "open",
-    severity: "major",
-    rule_id: "x/null-deref",
-    title: "x could be None",
-    body: "caller may pass None",
-    rationale: "raises NoneType",
-    confidence: 90,
-    first_seen_review_id: "r1",
-    last_observed_review_id: "r1",
-    file_path: "src/foo.py",
-    line_start: 10,
-    line_end: 10,
+    finding_display_id: 1,
+    category: "nullability",
+    severity: "should_fix",
+    confidence: "plausible",
+    rationale: "caller may pass None which raises NoneType. This is bad.",
+    rule_violated: "x/null-deref",
+    rule_source: "yaaos-baseline",
+    suggested_fix: "Add a guard clause before line 10.",
+    file: "src/foo.py",
+    line: 10,
+    review_id: "r1",
     ...overrides,
   };
 }
 
 describe("FindingRow", () => {
-  it("renders severity, title, file:line", () => {
+  it("renders severity chip + headline derived from rationale first sentence", () => {
     render(<FindingRow finding={fixture()} />);
-    expect(screen.getByText(/Major/i)).toBeInTheDocument();
-    expect(screen.getByText("x could be None")).toBeInTheDocument();
+    expect(screen.getByTestId("finding-severity-f1")).toHaveTextContent(/should fix/i);
+    // Headline is derived from the first sentence of rationale (text content only).
+    // Note: the full rationale also renders in a <p> below; use queryAllBy to
+    // confirm at least one match exists without failing on multiple.
+    const matches = screen.getAllByText(/caller may pass None/i);
+    expect(matches.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders confidence chip", () => {
+    render(<FindingRow finding={fixture({ confidence: "verified" })} />);
+    expect(screen.getByTestId("finding-confidence-f1")).toHaveTextContent(/verified/i);
+  });
+
+  it("renders file:line when present", () => {
+    render(<FindingRow finding={fixture()} />);
     expect(screen.getByText("src/foo.py:10")).toBeInTheDocument();
   });
 
-  it("Ack button invokes onAck with the finding id when state is open", () => {
-    const onAck = vi.fn();
-    render(<FindingRow finding={fixture()} onAck={onAck} />);
-    fireEvent.click(screen.getByTestId("finding-ack-f1"));
-    expect(onAck).toHaveBeenCalledWith("f1");
+  it("omits file:line when file is null", () => {
+    render(<FindingRow finding={fixture({ file: null, line: null })} />);
+    expect(screen.queryByText(/foo.py/)).toBeNull();
   });
 
-  it("push-back: requires ≥10 char reason; submit fires with id + reason", () => {
-    const onPushBack = vi.fn();
-    render(<FindingRow finding={fixture()} onPushBack={onPushBack} />);
-    fireEvent.click(screen.getByTestId("finding-pushback-toggle-f1"));
-    const reason = screen.getByTestId("finding-pushback-reason-f1");
-    const submit = screen.getByTestId("finding-pushback-submit-f1");
-
-    expect(submit).toBeDisabled();
-    fireEvent.change(reason, { target: { value: "too short" } });
-    expect(submit).toBeDisabled();
-
-    fireEvent.change(reason, { target: { value: "this is a proper reason" } });
-    expect(submit).not.toBeDisabled();
-    fireEvent.click(submit);
-    expect(onPushBack).toHaveBeenCalledWith({
-      finding_id: "f1",
-      reason: "this is a proper reason",
-    });
+  it("renders suggested fix when present", () => {
+    render(<FindingRow finding={fixture()} />);
+    expect(screen.getByText(/Add a guard clause before line 10/)).toBeInTheDocument();
   });
 
-  it("hides action buttons + shows state label when finding is not open", () => {
-    render(<FindingRow finding={fixture({ state: "acknowledged" })} />);
-    expect(screen.queryByTestId("finding-ack-f1")).toBeNull();
-    expect(screen.queryByTestId("finding-pushback-toggle-f1")).toBeNull();
-    expect(screen.getByText("Acked")).toBeInTheDocument();
+  it("renders rule_violated + rule_source in footer", () => {
+    render(<FindingRow finding={fixture()} />);
+    expect(screen.getByText("x/null-deref")).toBeInTheDocument();
+    expect(screen.getByText("yaaos-baseline")).toBeInTheDocument();
+  });
+
+  it("renders blocker chip with destructive styling", () => {
+    render(<FindingRow finding={fixture({ severity: "blocker" })} />);
+    expect(screen.getByTestId("finding-severity-f1")).toHaveTextContent(/blocker/i);
+  });
+
+  it("renders nit chip", () => {
+    render(<FindingRow finding={fixture({ severity: "nit" })} />);
+    expect(screen.getByTestId("finding-severity-f1")).toHaveTextContent(/nit/i);
+  });
+
+  it("has no Ack or Push-back interactive elements", () => {
+    const { container } = render(<FindingRow finding={fixture()} />);
+    expect(container.querySelector("[data-testid^='finding-ack-']")).toBeNull();
+    expect(container.querySelector("[data-testid^='finding-pushback-']")).toBeNull();
   });
 });

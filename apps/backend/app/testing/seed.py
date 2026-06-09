@@ -77,15 +77,13 @@ async def seed_workspace(
     *,
     org_id: UUID,
     provider_id: str,
-    plugin_state: dict,
     sha: str,
+    agent_id: UUID,
     current_command_id: UUID | None = None,
-    current_holder_workflow_id: UUID | None = None,
-    agent_id: UUID | None = None,
     status: str | None = None,
     caller_session: AsyncSession | None = None,
 ) -> str:
-    """Insert a workspace row in `active` state with caller-supplied plugin_state.
+    """Insert a workspace row for test purposes.
 
     For cross-module tests that need a workspace in the DB without going through
     the full provision flow. Returns the workspace id string.
@@ -94,10 +92,10 @@ async def seed_workspace(
     (no commit — the caller commits). When omitted a new session is opened and
     committed immediately.
 
-    `current_command_id` and `current_holder_workflow_id` are optional — set
-    them when the test needs to simulate a claimed workspace (agent_gateway tests).
-    `agent_id` sets the owning agent (`WorkspaceRow.agent_id`) — set it when the
-    test exercises per-agent ownership authz.
+    `agent_id` (required) sets the owning agent (`WorkspaceRow.owning_agent_id`) —
+    required because the column is NOT NULL.
+    `current_command_id` is optional — set it when the test needs to simulate a
+    claimed workspace (agent_gateway tests).
     """
     from app.core.database import session as get_session  # noqa: PLC0415
     from app.core.workspace.models import WorkspaceRow  # noqa: PLC0415
@@ -113,9 +111,7 @@ async def seed_workspace(
             spec={"sha": sha},
             status=status or WorkspaceStatus.ACTIVE.value,
             expires_at=_utcnow() + timedelta(hours=1),
-            plugin_state=plugin_state,
             current_command_id=current_command_id,
-            current_holder_workflow_id=current_holder_workflow_id,
             owning_agent_id=agent_id,
         )
 

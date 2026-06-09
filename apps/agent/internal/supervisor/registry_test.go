@@ -145,8 +145,8 @@ func TestRegistry_KnownIDs_AllStates(t *testing.T) {
 // ── Dispatch registry effects ───────────────────────────────────────────────
 
 // TestDispatch_Create_RegistryActiveAndPathSet proves that a successful
-// CreateWorkspace dispatch installs an Active record and sets the path from
-// CreateResult.
+// ProvisionWorkspace dispatch installs an Active record and sets the path from
+// ProvisionResult.
 func TestDispatch_Create_RegistryActiveAndPathSet(t *testing.T) {
 	p := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer p.CloseAll(context.Background())
@@ -166,7 +166,7 @@ func TestDispatch_Create_RegistryActiveAndPathSet(t *testing.T) {
 	if snap[0].CurrentCommandID != "" {
 		t.Errorf("current_command_id should be cleared after dispatch, got %q", snap[0].CurrentCommandID)
 	}
-	// StubHandler.CloneWorkspace returns path="/stub/ws-1" — verify it's set.
+	// StubHandler.ProvisionWorkspace returns path="/stub/ws-1" — verify it's set.
 	paths := p.Paths()
 	if paths["ws-1"] == "" {
 		t.Errorf("path should be set after create; paths=%v", paths)

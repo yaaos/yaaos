@@ -1,36 +1,36 @@
 # plugins/claude_code
 
-> Wraps the Claude Code CLI as a `domain/coding_agent.CodingAgentPlugin`. Owns parent dispatcher prompt, subagent installer, output parsing, and Anthropic credentials.
+> Wraps the Claude Code CLI as a `core/coding_agent.CodingAgentPlugin`. Owns output parsing and Anthropic credentials.
 
 ## Scope
 
-Implements `CodingAgentPlugin` (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, `health_check`). Spawns one parent reviewer per run; the parent dispatches `yaaos-*` subagents via the Task tool and synthesizes findings. Returns `FindingDraft`s — the reviewer aggregate handles admission and conversion to `vcs.Finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — in-process methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) and remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`), plus `validate_config` and `health_check`. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 ## Module architecture
 
 Singleton holds no decrypted credentials — settings loaded per-invocation so key rotation takes effect immediately.
 
-### Subagent installer (`installer.py`)
-
-`install_subagents()` reads the six markdown files in `app/domain/coding_agent/reviewers/` and writes them to `$HOME/.claude/agents/yaaos-*.md` with YAML frontmatter prepended. Idempotent; called from `bootstrap()`. The `yaaos-` prefix prevents collisions with any repo's own agents while leaving a deliberate override seam.
-
 ### Prompt files
 
-Per-mode prompts live in `prompts/` (`full_review.md`, `incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`). Loaded once at import via `_load_prompt(name)`. The `.md` files are the versioned source of truth.
+Per-mode prompts live in `prompts/` (`incremental_review.md`, `verify_fix.md`, `stale_check.md`, `answer_question.md`). Loaded once at import via `_load_prompt(name)`. The `.md` files are the versioned source of truth.
 
-### `review` — six-step pipeline
+### `build_review_invocation` — remote-dispatch exec spec
 
-1. **MCP context** (`_materialize_mcp_config`) — if `ReviewContext.agent_config["mcp"]` is set, writes `.mcp.json` into the workspace. Each provider becomes an HTTP MCP server pointing at `domain/mcp_proxy`. Returns per-server `--allowed-tools` additions.
+Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Reads `skill_name` for the repo via `resolve_skill` — raises `CodingAgentError` if absent or empty. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (review instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind=<skill_name>, exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
 
-2. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles the `claude --print --output-format=stream-json --verbose --permission-mode=bypassPermissions` command with allowed tools: `Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task` + restricted Bash git commands. `Task` enables subagent dispatch. Bash is read-only git so the agent diffs itself rather than consuming inlined diffs. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`; overridable via `agent_config["timeout_seconds"]`.
+### `parse_review_output` — stream-json parse
 
-3. **Assemble prompt** (`_assemble_review_prompt`) — parent-dispatcher prompt instructs parallel Task dispatches, finding verification, and a single merged JSON output. Diff is **not** inlined — agent runs `git diff base_sha..HEAD` itself. `ctx.prior_yaaos_comment_bodies` is intentionally excluded; the aggregate handles dedup. `_schema_appendix` appends `_FindingDraftList.model_json_schema()` as a strict output constraint.
+Receives raw stdout from the agent's terminal event. Finds the terminal `type=result` event, extracts `result`, validates against `_FindingDraftList`. Raises `ValueError` on any failure — `PostFindings` gates on this and returns `schema_invalid` failure when it raises.
 
-4. **Run via workspace** — workspace owns subprocess lifecycle (SIGTERM → 2s → SIGKILL). `WorkspaceExecError` → `AGENT_ERROR`; `timed_out=True` → `TIMEOUT`.
+### `review` — in-process pipeline (retained)
 
-5. **Parse stream-json events** — `--output-format=stream-json --verbose` emits per-line JSON. Plugin dispatches each to `on_activity` (persisted + broadcast by `domain/reviewer`). Partial stream on timeout/error is the primary diagnostic. `_render_activity` maps known event shapes to `ActivityEvent`; unknown types are logged + skipped.
+Retained for future re-introduction. Builds the same argv/prompt as `build_review_invocation` but runs via the workspace `run_coding_agent_cli` call directly.
 
-6. **Strict-parse response** — JSON → `_FindingDraftList`. No markdown-fence fallback. Failure → `PARSE_FAILURE`. `_compute_state_v2`: empty → `APPROVED`; any `blocker`/`major` → `CHANGES_REQUESTED`; else `COMMENT`.
+1. **Load settings + build argv** (`_prepare_invocation`) — decrypts Anthropic key; assembles argv. Default timeout `_DEFAULT_TIMEOUT_SECONDS = 1200`.
+2. **Assemble prompt** — review instructions + schema appendix.
+3. **Run via workspace** — `WorkspaceExecError` → `AGENT_ERROR`; `timed_out=True` → `TIMEOUT`.
+4. **Parse stream-json events** — `_render_activity` maps known event shapes to `ActivityEvent`; unknown types skipped.
+5. **Strict-parse response** — JSON → `_FindingDraftList`. `_compute_state_v2`: empty → `APPROVED`; any `blocker` → `CHANGES_REQUESTED`; else `COMMENT`.
 
 ### `answer_question`
 
@@ -54,13 +54,27 @@ Never branches on env vars. When `YAAOS_CODING_AGENT_STUB` is set, `app/web.py` 
 
 ## Data owned
 
-`claude_code_settings` — one row per org: `encrypted_anthropic_api_key`, `default_model` (optional), `cli_path` (optional).
+`claude_code_settings` — one row per org: `cli_path` (optional). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
+
+`claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — the SKILL.md identifier the agent should invoke), `created_at`, `updated_at`.
+
+## HTTP routes
+
+All under `/api/claude_code/`:
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/repos` | `CODING_AGENT_READ` | Live VCS repos joined with stored `skill_name`. Repo list comes from `core/vcs.list_installation_repos("github", org_id)` — never a direct github-plugin import. Returns `{repos: [{repo_external_id, skill_name}]}`. Repos in the live list but absent from DB included with `skill_name=null`; repos in DB but gone from the live list omitted. |
+| `GET` | `/repos/{repo_external_id:path}` | `CODING_AGENT_READ` | Read skill name for one repo. `:path` type handles `owner/repo` slash. |
+| `PUT` | `/repos/{repo_external_id:path}` | `CODING_AGENT_WRITE` | Write skill name for one repo; creates the row if absent. |
 
 ## How it's tested
 
 Unit tests in `app/plugins/claude_code/test/`:
-- `test_prompt_and_state.py` — prompt assembly and verdict computation.
-- `test_installer.py` — installer writes frontmatter, is idempotent, leaves unrelated files alone.
+- `test_prompt_and_state.py` — verdict computation.
 - `test_stream_parsing.py` — `_parse_stream_events` handles well-formed streams, garbage interleaved with valid JSON, and partial streams (timeout case).
+- `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
+- `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
+- `test_repo_skill_service.py` — service tests (`@pytest.mark.service`): `resolve_skill`/`set_repo_skill` round-trips against real Postgres; unit tests: `build_review_invocation` raises when skill absent/empty, uses resolved skill name as `Invocation.kind`.
 
 CLI subprocess + envelope parsing + Anthropic auth probe exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1`.

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -16,21 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, ActorKind, audit_for_workspace
 from app.core.database import session as get_session
-from app.core.observability import spawn
+from app.core.tasks import scheduled
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import (
-    CodingAgentCliResult,
     HealthStatus,
-    OnStreamLine,
-    Workspace,
     WorkspaceClaimState,
     WorkspaceCommandState,
     WorkspaceError,
     WorkspaceInfo,
     WorkspaceNotFoundError,
+    WorkspaceOwner,
     WorkspaceProvider,
-    WorkspaceProvisionError,
-    WorkspaceSpec,
     WorkspaceStatus,
 )
 
@@ -89,13 +83,13 @@ class WorkspaceRegistry:
         self._providers: dict[str, WorkspaceProvider] = {}
 
     def register(self, provider: WorkspaceProvider) -> None:
-        if provider.meta.id in self._providers:
-            raise ValueError(f"workspace provider {provider.meta.id!r} already registered")
-        self._providers[provider.meta.id] = provider
+        if provider.plugin_id in self._providers:
+            raise ValueError(f"workspace provider {provider.plugin_id!r} already registered")
+        self._providers[provider.plugin_id] = provider
 
     def replace(self, provider: WorkspaceProvider) -> None:
         """Overwrite-or-insert; used by stub helpers."""
-        self._providers[provider.meta.id] = provider
+        self._providers[provider.plugin_id] = provider
 
     def get(self, provider_id: str) -> WorkspaceProvider:
         try:
@@ -106,7 +100,7 @@ class WorkspaceRegistry:
     def get_or_none(self, provider_id: str) -> WorkspaceProvider | None:
         """Return the provider for `provider_id`, or None if not registered.
         Used in paths where an unknown provider id is a warning-level event,
-        not an exception (e.g. get_workspace, _attempt_destroy)."""
+        not an exception (e.g. _attempt_destroy)."""
         return self._providers.get(provider_id)
 
     def is_registered(self, provider_id: str) -> bool:
@@ -162,46 +156,6 @@ def list_workspace_providers() -> list[WorkspaceProvider]:
     return current_workspace_registry().list()
 
 
-class _WorkspaceImpl:
-    """Concrete Workspace that satisfies the Protocol.
-
-    Holds an opaque `plugin_state` privately (not exposed to consumers) and
-    delegates `run_coding_agent_cli` to the provider that produced the state.
-    """
-
-    def __init__(self, id: str, provider: WorkspaceProvider, plugin_state: dict[str, Any]) -> None:
-        self.id = id
-        self._provider = provider
-        self._plugin_state = plugin_state
-
-    async def info(self) -> WorkspaceInfo:
-        return await _read_info(UUID(self.id))
-
-    async def run_coding_agent_cli(
-        self,
-        argv: list[str],
-        *,
-        env: dict[str, str] | None = None,
-        stdin: bytes | None = None,
-        timeout_seconds: int | None = None,
-        on_stream_line: OnStreamLine | None = None,
-    ) -> CodingAgentCliResult:
-        return await self._provider.run_coding_agent_cli(
-            self._plugin_state,
-            argv,
-            env=env,
-            stdin=stdin,
-            timeout_seconds=timeout_seconds,
-            on_stream_line=on_stream_line,
-        )
-
-    async def read_text(self, path: str) -> str | None:
-        return await self._provider.read_text(self._plugin_state, path)
-
-    async def write_text(self, path: str, content: str) -> None:
-        await self._provider.write_text(self._plugin_state, path, content)
-
-
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -230,84 +184,6 @@ def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
     )
 
 
-async def create_workspace(
-    provider_id: str,
-    spec: WorkspaceSpec,
-    *,
-    org_id: UUID,
-) -> Workspace:
-    """Provision a workspace via the named provider. Row is created in 'creating';
-    flipped to 'active' after the plugin's provision() returns.
-    """
-    provider = get_provider(provider_id)
-    expires_at = _utcnow() + timedelta(seconds=spec.resource_caps.wallclock_seconds)
-
-    # Stamp org_id onto the spec so the provider can request auth tokens for
-    # the right org via vcs. The spec passed in may or may not already have it;
-    # we always overwrite to keep the parameter authoritative.
-    spec = spec.model_copy(update={"org_id": org_id})
-
-    async with get_session() as s:
-        row = WorkspaceRow(
-            org_id=org_id,
-            provider_id=provider_id,
-            spec=spec.model_dump(mode="json"),
-            status=WorkspaceStatus.CREATING.value,
-            expires_at=expires_at,
-        )
-        s.add(row)
-        await s.flush()
-        ws_id = row.id
-        await s.commit()
-
-    try:
-        plugin_state = await provider.provision(spec)
-    except Exception as e:
-        async with get_session() as s:
-            await s.execute(
-                update(WorkspaceRow)
-                .where(WorkspaceRow.id == ws_id)
-                .values(
-                    status=WorkspaceStatus.DESTROY_FAILED.value,
-                    last_destroy_error=f"provision failed: {e}",
-                )
-            )
-            await _audit_transition(
-                s,
-                workspace_id=ws_id,
-                org_id=org_id,
-                from_state=WorkspaceStatus.CREATING.value,
-                to_state=WorkspaceStatus.DESTROY_FAILED.value,
-                reason="provision_failed",
-                error=str(e),
-            )
-            await s.commit()
-        raise WorkspaceProvisionError(str(e)) from e
-
-    async with get_session() as s:
-        await s.execute(
-            update(WorkspaceRow)
-            .where(WorkspaceRow.id == ws_id)
-            .values(
-                status=WorkspaceStatus.ACTIVE.value,
-                activated_at=_utcnow(),
-                plugin_state=plugin_state,
-            )
-        )
-        await _audit_transition(
-            s,
-            workspace_id=ws_id,
-            org_id=org_id,
-            from_state=WorkspaceStatus.CREATING.value,
-            to_state=WorkspaceStatus.ACTIVE.value,
-            reason="provisioned",
-        )
-        await s.commit()
-
-    log.info("workspace.created", workspace_id=str(ws_id), provider_id=provider_id)
-    return _WorkspaceImpl(id=str(ws_id), provider=provider, plugin_state=plugin_state)
-
-
 async def close_workspace(workspace_id: UUID) -> None:
     """Mark the workspace expired so the reaper picks it up. Idempotent."""
     async with get_session() as s:
@@ -315,7 +191,7 @@ async def close_workspace(workspace_id: UUID) -> None:
             await s.execute(
                 select(WorkspaceRow).where(
                     WorkspaceRow.id == workspace_id,
-                    WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+                    WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
                 )
             )
         ).scalar_one_or_none()
@@ -339,69 +215,21 @@ async def close_workspace(workspace_id: UUID) -> None:
     log.info("workspace.closed", workspace_id=str(workspace_id))
 
 
-@asynccontextmanager
-async def with_workspace(
-    provider_id: str,
-    spec: WorkspaceSpec,
-    *,
-    org_id: UUID,
-):
-    """Context manager that provisions then closes (flips to expired) on exit."""
-    ws = await create_workspace(provider_id, spec, org_id=org_id)
-    try:
-        yield ws
-    finally:
-        try:
-            await close_workspace(UUID(ws.id))
-        except Exception:
-            log.exception("workspace.close_failed", workspace_id=ws.id)
-
-
 async def get_workspace_info(workspace_id: UUID) -> WorkspaceInfo:
     return await _read_info(workspace_id)
-
-
-async def get_workspace(workspace_id: UUID) -> Workspace | None:
-    """Load a live `Workspace` handle for `workspace_id`, or None if the
-    row is missing / not active. Substrate for Workspace WorkflowCommand
-    bodies that take a `workspace_id` input (e.g. CodeReview) and need to
-    run a coding-agent CLI against the existing workspace.
-
-    Returns None when:
-    - the row doesn't exist
-    - the row's `plugin_state` is unset (workspace failed to provision)
-    - the row's provider isn't registered (deployment-level misconfig —
-      caller surfaces this as a workflow failure)
-    """
-    async with get_session() as s:
-        row = (
-            await s.execute(select(WorkspaceRow).where(WorkspaceRow.id == workspace_id))
-        ).scalar_one_or_none()
-    if row is None or row.plugin_state is None:
-        return None
-    provider = current_workspace_registry().get_or_none(row.provider_id)
-    if provider is None:
-        log.warning(
-            "workspace.get_workspace.provider_not_registered",
-            workspace_id=str(workspace_id),
-            provider_id=row.provider_id,
-        )
-        return None
-    return _WorkspaceImpl(id=str(row.id), provider=provider, plugin_state=row.plugin_state)
 
 
 async def _seed_workspace_for_tests(
     *,
     org_id: UUID,
     provider_id: str,
-    plugin_state: dict,
     sha: str,
     current_command_id: UUID | None = None,
-    current_holder_workflow_id: UUID | None = None,
+    owning_agent_id: UUID | None = None,
     status: str | None = None,
     caller_session: AsyncSession | None = None,
 ) -> str:
-    """Insert a workspace row in `active` state with caller-supplied plugin_state.
+    """Insert a workspace row in `active` state for test purposes.
 
     For cross-module tests that need a workspace in the DB without going through
     the full provision flow. Returns the workspace id string.
@@ -410,8 +238,8 @@ async def _seed_workspace_for_tests(
     (no commit — the caller commits). When omitted a new session is opened and
     committed immediately.
 
-    `current_command_id` and `current_holder_workflow_id` are optional — set
-    them when the test needs to simulate a claimed workspace (agent_gateway tests).
+    `current_command_id` is optional — set it when the test needs to simulate
+    a claimed workspace (agent_gateway tests).
     """
     from datetime import timedelta  # noqa: PLC0415
 
@@ -422,9 +250,8 @@ async def _seed_workspace_for_tests(
             spec={"sha": sha},
             status=status or WorkspaceStatus.ACTIVE.value,
             expires_at=_utcnow() + timedelta(hours=1),
-            plugin_state=plugin_state,
             current_command_id=current_command_id,
-            current_holder_workflow_id=current_holder_workflow_id,
+            owning_agent_id=owning_agent_id,
         )
 
     if caller_session is not None:
@@ -443,7 +270,7 @@ async def _seed_workspace_for_tests(
 
 
 async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> int:
-    """Flip every active/creating workspace for the org to expired. Returns count.
+    """Flip every active workspace for the org to expired. Returns count.
 
     Used by Org Settings Disconnect / mode-switch. `reason` propagates to
     the audit row (`disconnect`, `mode_switch`, `arn_change`) so the
@@ -455,9 +282,7 @@ async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> i
                 await s.execute(
                     select(WorkspaceRow).where(
                         WorkspaceRow.org_id == org_id,
-                        WorkspaceRow.status.in_(
-                            [WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]
-                        ),
+                        WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
                     )
                 )
             )
@@ -577,15 +402,13 @@ async def _reaper_sweep_once() -> None:
 
         await requeue_stale_claimed(session=s)
 
-        # 2. Find rows to destroy.
+        # 2. Find expired rows to destroy.
         rows = (
             (
                 await s.execute(
                     select(WorkspaceRow)
                     .where(
-                        WorkspaceRow.status.in_(
-                            [WorkspaceStatus.EXPIRED.value, WorkspaceStatus.CREATING.value]
-                        ),
+                        WorkspaceRow.status == WorkspaceStatus.EXPIRED.value,
                         WorkspaceRow.destroy_attempts < 3,
                     )
                     .limit(50)
@@ -608,9 +431,10 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     sibling pods keep their bearers and their workspaces untouched.
 
     For each expired workspace that holds an in-flight `current_command_id`,
-    a synthetic terminal-failure event is enqueued via `HANDLE_AGENT_EVENT`
-    so the owning WorkflowExecution resumes (fails the step) rather than
-    hanging in AWAITING_AGENT indefinitely.
+    the owning workflow execution is resolved from `agent_commands.workflow_execution_id`
+    (the durable correlation column). A synthetic terminal-failure event is enqueued
+    via `HANDLE_AGENT_EVENT` so the WorkflowExecution resumes (fails the step)
+    rather than hanging in AWAITING_AGENT indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
@@ -619,11 +443,16 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     `compute_agent_liveness_transitions`) and eagerly by the graceful-shutdown
     DELETE handler (with the single agent's ID).
     """
-    from app.core.agent_gateway import revoke_all_for_agent  # noqa: PLC0415
+    from app.core.agent_gateway import (  # noqa: PLC0415
+        get_command_workflow_execution_id,
+        revoke_all_for_agent,
+    )
     from app.core.tasks import enqueue  # noqa: PLC0415
     from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
-    # Active/Creating workspaces whose owning pod is in the offline set.
+    # Active workspaces whose owning pod is in the offline set.
+    # CREATING is excluded: lean-created rows enter ACTIVE on first event;
+    # no workspace row ever enters CREATING in the lean lifecycle.
     candidate_rows = (
         await s.execute(
             select(
@@ -632,10 +461,9 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
                 WorkspaceRow.status,
                 WorkspaceRow.owning_agent_id,
                 WorkspaceRow.current_command_id,
-                WorkspaceRow.current_holder_workflow_id,
             ).where(
                 WorkspaceRow.owning_agent_id.in_(offline_agent_ids),
-                WorkspaceRow.status.in_([WorkspaceStatus.ACTIVE.value, WorkspaceStatus.CREATING.value]),
+                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
             )
         )
     ).all()
@@ -647,7 +475,7 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
         return
 
     expired_count = 0
-    for ws_id, org_id, status, _owning_agent_id, current_command_id, holder_workflow_id in candidate_rows:
+    for ws_id, org_id, status, _owning_agent_id, current_command_id in candidate_rows:
         await s.execute(
             update(WorkspaceRow).where(WorkspaceRow.id == ws_id).values(status=WorkspaceStatus.EXPIRED.value)
         )
@@ -663,19 +491,22 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
 
         # Synthesize a terminal failure for any in-flight command so the
         # owning WorkflowExecution resumes (fails its step) rather than
-        # waiting forever in AWAITING_AGENT.
-        if current_command_id is not None and holder_workflow_id is not None:
-            await enqueue(
-                HANDLE_AGENT_EVENT,
-                args={
-                    "workflow_execution_id": str(holder_workflow_id),
-                    "agent_command_id": str(current_command_id),
-                    "outcome_label": "failure",
-                    "outputs": {},
-                    "traceparent": None,
-                },
-                session=s,
-            )
+        # waiting forever in AWAITING_AGENT. Correlation comes from
+        # agent_commands.workflow_execution_id — no workspace-row column needed.
+        if current_command_id is not None:
+            holder_workflow_id = await get_command_workflow_execution_id(current_command_id, session=s)
+            if holder_workflow_id is not None:
+                await enqueue(
+                    HANDLE_AGENT_EVENT,
+                    args={
+                        "workflow_execution_id": str(holder_workflow_id),
+                        "agent_command_id": str(current_command_id),
+                        "outcome_label": "failure",
+                        "outputs": {},
+                        "traceparent": None,
+                    },
+                    session=s,
+                )
 
     # Revoke each offline pod's bearers — that pod re-exchanges when it returns.
     for owning_agent_id in offline_agent_ids:
@@ -734,7 +565,7 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
         await s.commit()
 
     try:
-        await provider.destroy(row.plugin_state or {})
+        await provider.destroy()
     except Exception as e:
         log.warning("workspace.destroy_failed", workspace_id=str(row.id), error=str(e))
         async with get_session() as s:
@@ -781,24 +612,36 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
     log.info("workspace.destroyed", workspace_id=str(row.id))
 
 
-async def _reaper_loop(interval_seconds: int) -> None:
-    while True:
-        try:
-            await _reaper_sweep_once()
-        except Exception:
-            log.exception("workspace.reaper_sweep_failed")
-        await asyncio.sleep(interval_seconds)
+async def run_workspace_reaper() -> None:
+    """Body of the per-minute `workspace_reaper` `@scheduled` task. Wraps
+    `_reaper_sweep_once` with a single-pass error log so a transient DB
+    or agent_gateway hiccup doesn't poison the broker retry path.
+    Idempotent — every sweep step reads fresh state from the DB.
+
+    Module-public so service tests can invoke the body directly without
+    going through the broker dispatch path.
+    """
+    try:
+        await _reaper_sweep_once()
+    except Exception:
+        log.exception("workspace.reaper_sweep_failed")
+        raise
 
 
 async def startup_recovery() -> None:
-    """Flip any non-terminal workspace from a prior process to 'expired'."""
+    """Flip any non-terminal workspace from a prior process to 'expired'.
+
+    Lean-created rows enter ACTIVE on the agent's first workspace event —
+    no row ever enters CREATING in the current lifecycle, so CREATING is
+    absent from the recovery list. ACTIVE and DESTROYING are the states
+    a crashed process may leave behind.
+    """
     async with get_session() as s:
         await s.execute(
             update(WorkspaceRow)
             .where(
                 WorkspaceRow.status.in_(
                     [
-                        WorkspaceStatus.CREATING.value,
                         WorkspaceStatus.ACTIVE.value,
                         WorkspaceStatus.DESTROYING.value,
                     ]
@@ -807,11 +650,6 @@ async def startup_recovery() -> None:
             .values(status=WorkspaceStatus.EXPIRED.value)
         )
         await s.commit()
-
-
-def start_reaper(interval_seconds: int) -> None:
-    """Spawn the reaper loop. Called from FastAPI's lifespan."""
-    spawn("workspace.reaper", _reaper_loop(interval_seconds))
 
 
 async def health_check_all() -> dict[str, HealthStatus]:
@@ -825,6 +663,29 @@ async def health_check_all() -> dict[str, HealthStatus]:
     return out
 
 
+async def get_workspace_owner(
+    workspace_id: UUID,
+    session: AsyncSession,
+) -> WorkspaceOwner | None:
+    """Return the `(org_id, owning_agent_id)` projection for `workspace_id`,
+    or None if the row is missing.
+
+    Used by Workspace WorkflowCommand `dispatch` bodies that need to enqueue
+    an AgentCommand pinned to the workspace's owning agent without crossing
+    the module boundary via a raw Row.
+    """
+    row = (
+        await session.execute(
+            select(WorkspaceRow.id, WorkspaceRow.org_id, WorkspaceRow.owning_agent_id).where(
+                WorkspaceRow.id == workspace_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return WorkspaceOwner(workspace_id=row[0], org_id=row[1], owning_agent_id=row[2])
+
+
 async def get_workspace_claim_state(
     command_id: UUID,
     session: AsyncSession,
@@ -833,13 +694,13 @@ async def get_workspace_claim_state(
     None if no workspace is currently claimed by that command.
 
     Used by `core/agent_gateway` to apply the stale-claim guard and locate the
-    workflow-execution holder without crossing the module boundary via a raw Row.
+    workspace owner without crossing the module boundary via a raw Row.
+    Workflow-execution correlation lives on `agent_commands.workflow_execution_id`.
     """
     row = (
         await session.execute(
             select(
                 WorkspaceRow.id,
-                WorkspaceRow.current_holder_workflow_id,
                 WorkspaceRow.status,
                 WorkspaceRow.owning_agent_id,
             ).where(WorkspaceRow.current_command_id == command_id)
@@ -849,9 +710,8 @@ async def get_workspace_claim_state(
         return None
     return WorkspaceClaimState(
         workspace_id=row[0],
-        current_holder_workflow_id=row[1],
-        status=row[2],
-        owning_agent_id=row[3],
+        status=row[1],
+        owning_agent_id=row[2],
     )
 
 
@@ -919,3 +779,13 @@ async def get_workspace_statuses(
         )
     ).all()
     return {row[0]: row[1] for row in rows}
+
+
+# Per-minute reaper. Cluster-safe via `core/tasks` per-tick claim — only one
+# worker enqueues the sweep each slot. Idempotent body; safe to redeliver.
+workspace_reaper = scheduled(
+    name="workspace_reaper",
+    cron="* * * * *",
+    queue="default",
+    max_retries=1,
+)(run_workspace_reaper)

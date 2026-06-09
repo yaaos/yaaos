@@ -10,42 +10,42 @@ import (
 
 // Per-kind default timeouts, owned by the command type.
 const (
-	defaultCreateWorkspaceTimeout      = 5 * time.Minute
+	defaultProvisionWorkspaceTimeout   = 5 * time.Minute
 	defaultWriteFilesTimeout           = 30 * time.Second
 	defaultRefreshWorkspaceAuthTimeout = 30 * time.Second
 	defaultCleanupWorkspaceTimeout     = 30 * time.Second
 	defaultInvokeClaudeCodeTimeout     = 15 * time.Minute
 )
 
-// ── CreateWorkspaceCommand ────────────────────────────────────────────────────
+// ── ProvisionWorkspaceCommand ─────────────────────────────────────────────────
 
-// CreateWorkspaceCommand clones a repo into a fresh temp dir and registers the
+// ProvisionWorkspaceCommand clones a repo into a fresh temp dir and registers the
 // workspace. It implements WorkspaceCommand.
-type CreateWorkspaceCommand struct {
-	Proto protocol.CreateWorkspaceCommand
+type ProvisionWorkspaceCommand struct {
+	Proto protocol.ProvisionWorkspaceCommand
 }
 
 // Header implements Command.
-func (c *CreateWorkspaceCommand) Header() protocol.CommandHeader {
+func (c *ProvisionWorkspaceCommand) Header() protocol.CommandHeader {
 	return c.Proto.CommandHeader
 }
 
 // Timeout implements Command. Git clone may be slow for large repos.
-func (c *CreateWorkspaceCommand) Timeout() time.Duration {
-	return defaultCreateWorkspaceTimeout
+func (c *ProvisionWorkspaceCommand) Timeout() time.Duration {
+	return defaultProvisionWorkspaceTimeout
 }
 
-// Execute calls ops.CloneWorkspace and returns a CreateResult. The result's
-// Path field is what the supervisor's registry keys on.
-func (c *CreateWorkspaceCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
-	return ops.CloneWorkspace(ctx, &c.Proto)
+// Execute calls ops.ProvisionWorkspace and returns a ProvisionResult. The
+// result's Path field is what the supervisor's registry keys on.
+func (c *ProvisionWorkspaceCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
+	return ops.ProvisionWorkspace(ctx, &c.Proto)
 }
 
 // MarshalWire returns the flat JSON representation of this command.
-func (c *CreateWorkspaceCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
+func (c *ProvisionWorkspaceCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
 
 // SetTraceparent implements Command.
-func (c *CreateWorkspaceCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
+func (c *ProvisionWorkspaceCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
 
 // ── WriteFilesCommand ─────────────────────────────────────────────────────────
 

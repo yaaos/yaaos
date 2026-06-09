@@ -39,26 +39,6 @@ export const INTEGRATIONS_FIXTURE = [
   },
 ];
 
-export const PLUGINS_AVAILABLE_VCS = [
-  {
-    id: "github",
-    type: "vcs",
-    display_name: "GitHub",
-    description: "GitHub App integration",
-    docs_url: "https://docs.github.com",
-  },
-];
-
-export const PLUGINS_AVAILABLE_CODING_AGENT = [
-  {
-    id: "claude_code",
-    type: "coding_agent",
-    display_name: "Claude Code",
-    description: "Anthropic CLI",
-    docs_url: null,
-  },
-];
-
 export const GITHUB_INSTALLATION_FIXTURE = {
   app_configured: true,
   installed: false,
@@ -139,14 +119,6 @@ export const settingsHandlers = [
   }),
   http.delete("/api/mcp-proxy/:provider", () => HttpResponse.json({ removed: true })),
   http.post("/api/mcp-proxy/:provider/validate", () => HttpResponse.json({ valid: true })),
-
-  // Plugins available
-  http.get("/api/plugins/available", ({ request }) => {
-    const type = new URL(request.url).searchParams.get("type");
-    if (type === "coding_agent")
-      return HttpResponse.json({ plugins: PLUGINS_AVAILABLE_CODING_AGENT });
-    return HttpResponse.json({ plugins: PLUGINS_AVAILABLE_VCS });
-  }),
 
   // GitHub installation + repos
   http.get("/api/github/installation", () => HttpResponse.json(GITHUB_INSTALLATION_FIXTURE)),

@@ -13,11 +13,11 @@ import (
 	"time"
 )
 
-// CommandKind enumerates the five AgentCommand kinds.
+// CommandKind enumerates the AgentCommand kinds.
 type CommandKind string
 
 const (
-	KindCreateWorkspace      CommandKind = "CreateWorkspace"
+	KindProvisionWorkspace   CommandKind = "ProvisionWorkspace"
 	KindWriteFiles           CommandKind = "WriteFiles"
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
@@ -32,9 +32,13 @@ type CommandHeader struct {
 	WorkspaceID string      `json:"workspace_id"`
 	Traceparent string      `json:"traceparent"`
 	Kind        CommandKind `json:"kind"`
+	// CompletionToken is a one-time backend-minted capability the agent
+	// echoes on every AgentEvent it posts for this command. The backend
+	// verifies it by hash before accepting the event.
+	CompletionToken string `json:"completion_token,omitempty"`
 }
 
-// RepoRef matches the spec's nested `repo` object on CreateWorkspace.
+// RepoRef matches the spec's nested `repo` object on ProvisionWorkspace.
 type RepoRef struct {
 	PluginID   string `json:"plugin_id"`
 	ExternalID string `json:"external_id"`
@@ -44,14 +48,14 @@ type RepoRef struct {
 	BranchName string `json:"branch_name,omitempty"`
 }
 
-// AuthBlock matches the spec's CreateWorkspace auth + RefreshWorkspaceAuth
+// AuthBlock matches the spec's ProvisionWorkspace auth + RefreshWorkspaceAuth
 // new_token (the latter doesn't reuse this — just shape parallel).
 type AuthBlock struct {
 	Kind  string `json:"kind"` // github_installation | oauth
 	Token string `json:"token"`
 }
 
-type CreateWorkspaceCommand struct {
+type ProvisionWorkspaceCommand struct {
 	CommandHeader
 	Repo           RepoRef   `json:"repo"`
 	History        int       `json:"history"`
@@ -116,6 +120,9 @@ type AgentEvent struct {
 	Attempt       int            `json:"attempt,omitempty"`
 	ReportedAt    time.Time      `json:"reported_at"`
 	Traceparent   string         `json:"traceparent"`
+	// CompletionToken echoes the originating command's CompletionToken so the
+	// backend can authorize this event by hash.
+	CompletionToken string `json:"completion_token,omitempty"`
 }
 
 // ── Identity / heartbeat / claim ───────────────────────────────────────
@@ -169,7 +176,7 @@ type HeartbeatResponse struct {
 type ClaimRequest struct {
 	WaitSeconds   int      `json:"wait_seconds"`
 	Lifecycle     string   `json:"lifecycle"`      // "unconfigured" | "configured"
-	NewWorkspaces int      `json:"new_workspaces"` // capacity for new CreateWorkspace commands
+	NewWorkspaces int      `json:"new_workspaces"` // capacity for new ProvisionWorkspace commands
 	WorkspaceIDs  []string `json:"workspace_ids"`  // idle Active workspaces awaiting a command
 }
 

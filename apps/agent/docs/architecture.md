@@ -65,7 +65,7 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
 - `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`. See [activity.md](activity.md).
 - `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap.
-- `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`).
+- `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`). `NewWithStepsAndDeadline` allows custom step lists with the same deadline ceiling (used for the env-tunable STS surface).
 - `internal/observability/` — OTel SDK bootstrap, metric instrument declarations, standard dimension helpers (`SetStandardDimensions`, `StandardAttrs`). See [observability.md](observability.md).
 
 ## Wire-protocol internals
@@ -77,6 +77,10 @@ Supervisor maintains a bidirectional WS to `/api/v1/agent/activity` when `Config
 ### Live progress streaming
 
 `RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the workflow engine — only `completed_*` events resume it.
+
+### Per-command completion token
+
+Each command header carries a one-time backend-minted `completion_token`. The agent echoes it on every AgentEvent it posts for that command (`received`, `progress`, terminal `completed_*`); the backend verifies it by hash before accepting the event. The token rides the supervisor→child IPC hop via the embedded `CommandHeader` and is threaded onto every constructed `AgentEvent` (workspace terminal + progress, supervisor-synthesized failures, AgentCommand success). The agent never inspects or stores it — pure pass-through. See [protocol.md § Completion token](protocol.md).
 
 ### Workspace registry and lifecycle
 
@@ -93,7 +97,7 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 
 ### Per-command timeouts
 
-`Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` reads `Limits.WallclockSeconds` from the wire; all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `CreateWorkspace` can respawn.
+`Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` reads `Limits.WallclockSeconds` from the wire; all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `ProvisionWorkspace` can respawn.
 
 ### Credential redaction
 
@@ -130,6 +134,17 @@ The supervisor runs these goroutines concurrently after identity exchange:
 - **WS reconnect loop** (optional) — waits on `wsReadLoopDone`, sleeps on the WS backoff schedule, re-dials.
 
 No goroutine shares mutable state without a lock or atomic. The `Pool` guards all workspace-record mutations with a `sync.Mutex`. `Conductor.SubscriptionSet` and `WorkspaceMapping` each have their own independent locks. `observability.SetStandardDimensions` is guarded by `stdDimsMu`.
+
+**Backoff is env-tunable on two independent surfaces.** Both take a comma-separated list of positive integers (seconds, e.g. `2,2,2,2,2`) parsed by the shared `parseBackoffSeconds`; unset or malformed → a WARN and a fall back to the prod ramp (`1m/3m/5m/15m/60m`).
+
+- `YAAOS_AGENT_STS_BACKOFF_SECONDS` overrides the STS identity-exchange step list. The 1 h deadline cap applies regardless of the step list.
+- `YAAOS_AGENT_OPS_BACKOFF_SECONDS` overrides the operational surfaces — `claimBackoff`, `heartbeatBackoff`, and `wsBackoff`. These are **indefinite** (no deadline cap): a transient blip must not kill a running pod. The env is parsed once at `supervisor.New`; each surface gets its own schedule, so a malformed value WARNs once, not three times.
+
+**Mid-command re-auth.** A 401/403 response on a terminal-event post (in `postTerminalEvent`) triggers `reauthIfUnauthorized` before retrying — identical to the claim-loop and heartbeat paths. The `reauthMu` serializes concurrent re-auth attempts across all goroutines; a goroutine that loses the TryLock falls back to the normal backoff sleep and retries after the winner has updated the shared bearer. Error classification (`classifyConnErr`) matches both the numeric HTTP codes (`: 401 `, `: 403 `) and the text form returned by `ClaimCommand` and `doJSON` (`: unauthorized`).
+
+**`YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE=1`.** Test-only env var, honored **only in `-tags agent_test` builds**: lets the agent accept a different `agent_id`/`org_id` after a DB wipe (e.g. `resetStack()` in the e2e suite). The acceptance decision is the single `acceptIdentityChange()` seam — two files split on the `agent_test` build tag (`identity_seam_off.go` returns `false` unconditionally; `identity_seam_on.go` reads the env var). The production binary compiles the off variant, so it has no code path that reads the env var and **cannot** be configured to continue under a changed identity. Both reauth surfaces — `reauthIfUnauthorized` and the scheduled `runOneRefreshCycle` — route through the seam, so the rule is identical on both. The e2e agent container builds with the `agent_test` tag (`BUILD_TAGS` arg in `apps/agent/Dockerfile`, set in `docker/docker-compose.test.yml`).
+
+**`YAAOS_AGENT_AUDIENCE_OVERRIDE`.** Dev-only env var, honored **only in `-tags agent_dev` builds**: overrides the STS claim audience that `exchangeIdentity` would otherwise derive from `hostFromURL(BaseURL)`. Needed in local dev stacks where the agent reaches the backend over an internal Docker service name (e.g. `web:8080`) but the backend's `YAAOS_PUBLIC_ORIGIN` is a host-mapped address (e.g. `localhost:8080`) so browser-facing OAuth/email links resolve from the developer's machine. The override is the single `audienceOverride()` seam — two files split on the `agent_dev` build tag (`audience_seam_off.go` returns `""` unconditionally; `audience_seam_on.go` reads the env var). The production binary compiles the off variant and has no code path that reads the env var. The dev compose sets `BUILD_TAGS: agent_dev` and `YAAOS_AGENT_AUDIENCE_OVERRIDE: localhost:8080`; the e2e compose is unaffected (it already aligns both sides via `YAAOS_PUBLIC_ORIGIN: http://web:8080`).
 
 ## Testing model
 

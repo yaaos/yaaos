@@ -30,7 +30,7 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AuthBlock,
     CleanupWorkspaceCommand,
-    CreateWorkspaceCommand,
+    ProvisionWorkspaceCommand,
     RepoRef,
     WriteFilesCommand,
     WriteFilesEntry,
@@ -40,8 +40,8 @@ from app.testing.seed import seed_agent
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_create_cmd(workspace_id: UUID | None = None) -> CreateWorkspaceCommand:
-    return CreateWorkspaceCommand(
+def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceCommand:
+    return ProvisionWorkspaceCommand(
         command_id=uuid4(),
         workspace_id=workspace_id or uuid4(),
         traceparent="00-aabbccdd-1122-01",
@@ -84,6 +84,68 @@ async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
     return UUID(str(result["id"]))
 
 
+# ── Completion capability token ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_claim_mints_completion_token_and_stores_only_hash(db_session) -> None:
+    """`claim_next` mints a per-command completion token: the raw value is
+    injected on the returned DTO; only its sha256 hash is persisted on the row.
+    The raw token is never written to the persisted payload."""
+    import hashlib  # noqa: PLC0415
+
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+    cmd = _make_provision_cmd()
+    await enqueue_command(org_id=org_id, command=cmd, session=db_session)
+    await db_session.flush()
+
+    claimed = await claim_next(
+        agent_id,
+        lifecycle="configured",
+        new_workspaces=1,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert claimed is not None
+    assert claimed.command_id == cmd.command_id
+    token = claimed.completion_token
+    assert token, "claim_next must inject the raw completion token on the DTO"
+
+    row = (
+        await db_session.execute(select(AgentCommandRow).where(AgentCommandRow.id == cmd.command_id))
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.status == "claimed"
+    # Only the hash is persisted; it matches sha256 of the raw token.
+    assert row.completion_token_hash == hashlib.sha256(token.encode()).hexdigest()
+    # The raw token is never persisted in the payload.
+    assert token not in str(row.payload)
+    assert row.payload.get("completion_token") in (None, "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_unconfigured_claim_carries_no_completion_token(db_session) -> None:
+    """The `unconfigured` lifecycle returns a ConfigUpdate built in-memory with
+    no DB row — it carries no completion token."""
+    agent_id = await _make_agent(db_session)
+    claimed = await claim_next(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert claimed is not None
+    assert claimed.kind == AgentCommandKind.CONFIG_UPDATE
+    # ConfigUpdateCommand has no completion_token field at all (separate base).
+    assert getattr(claimed, "completion_token", None) is None
+
+
 # ── Enqueue + durable persistence ──────────────────────────────────────────
 
 
@@ -92,7 +154,7 @@ async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
 async def test_enqueue_inserts_pending_row(db_session) -> None:
     """enqueue_command writes a pending row; the row is visible in the DB."""
     org_id = uuid4()
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -102,7 +164,7 @@ async def test_enqueue_inserts_pending_row(db_session) -> None:
     assert row is not None
     assert row.status == "pending"
     assert row.agent_id is None
-    assert row.command_kind == AgentCommandKind.CREATE_WORKSPACE
+    assert row.command_kind == AgentCommandKind.PROVISION_WORKSPACE
 
 
 @pytest.mark.asyncio
@@ -112,7 +174,7 @@ async def test_enqueue_then_simulated_restart_command_still_claimable(db_session
     the row remains in the DB and is claimable via claim_next."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -139,7 +201,7 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
     ws_id = uuid4()
-    cmd = _make_create_cmd(ws_id)
+    cmd = _make_provision_cmd(ws_id)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -170,13 +232,13 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_claim_next_returns_one_create_workspace(db_session) -> None:
-    """claim_next returns exactly one CreateWorkspace command per call."""
+async def test_claim_next_returns_one_provision_workspace(db_session) -> None:
+    """claim_next returns exactly one ProvisionWorkspace command per call."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
     # Enqueue 3 creates.
     for _ in range(3):
-        await enqueue_command(org_id=org_id, command=_make_create_cmd(), session=db_session)
+        await enqueue_command(org_id=org_id, command=_make_provision_cmd(), session=db_session)
     await db_session.flush()
 
     command = await claim_next(
@@ -188,7 +250,7 @@ async def test_claim_next_returns_one_create_workspace(db_session) -> None:
         session=db_session,
     )
     assert command is not None
-    assert command.kind == AgentCommandKind.CREATE_WORKSPACE
+    assert command.kind == AgentCommandKind.PROVISION_WORKSPACE
 
     # Only one row must be in `claimed` — the other two remain `pending`.
     from sqlalchemy import func  # noqa: PLC0415
@@ -295,7 +357,7 @@ async def test_lease_received_event_flips_claimed_to_delivered(db_session) -> No
     """A `received` event from the agent flips status claimed → delivered."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -322,7 +384,7 @@ async def test_lease_no_received_within_30s_requeues_to_pending(db_session) -> N
     """A claimed command with no received event after 30s is requeued to pending."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -350,7 +412,7 @@ async def test_lease_terminal_event_retires_command_to_done(db_session) -> None:
     """A terminal AgentEvent causes the command row to transition to done."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -377,7 +439,7 @@ async def test_lease_attempt_cap_raises_loud_terminal_failure(db_session) -> Non
     """When attempt reaches the cap, the reaper marks done (terminal failure)."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 
@@ -414,7 +476,7 @@ async def test_redelivered_received_event_is_idempotent(db_session) -> None:
     """Posting received twice for the same command is a no-op on the second call."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 

@@ -51,8 +51,8 @@ func readEvents(t *testing.T, out *bytes.Buffer) []protocol.AgentEvent {
 
 func TestRun_HappyPath_EachKindEmitsSuccess(t *testing.T) {
 	var in bytes.Buffer
-	in.Write(frameCmd(t, protocol.KindCreateWorkspace, map[string]any{
-		"command_id":   "c-create",
+	in.Write(frameCmd(t, protocol.KindProvisionWorkspace, map[string]any{
+		"command_id":   "c-provision",
 		"workspace_id": "ws-1",
 		"traceparent":  "tp-1",
 		"repo":         map[string]any{"plugin_id": "github", "external_id": "x/y", "clone_url": "url", "head_sha": "h"},
@@ -88,7 +88,7 @@ func TestRun_HappyPath_EachKindEmitsSuccess(t *testing.T) {
 	if len(events) != 4 {
 		t.Fatalf("want 4 events, got %d", len(events))
 	}
-	for i, want := range []string{"c-create", "c-write", "c-invoke", "c-cleanup"} {
+	for i, want := range []string{"c-provision", "c-write", "c-invoke", "c-cleanup"} {
 		if events[i].CommandID != want {
 			t.Errorf("event %d command_id: want %q got %q", i, want, events[i].CommandID)
 		}
@@ -178,12 +178,12 @@ func TestRun_ContextCancelled_StopsBetweenCommands(t *testing.T) {
 }
 
 func TestStubHandler_OutputsCarryWorkspaceID(t *testing.T) {
-	cmd := &protocol.CreateWorkspaceCommand{
+	cmd := &protocol.ProvisionWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{WorkspaceID: "ws-x"},
 	}
-	res, err := workspacetest.StubHandler{}.CloneWorkspace(context.Background(), cmd)
+	res, err := workspacetest.StubHandler{}.ProvisionWorkspace(context.Background(), cmd)
 	if err != nil {
-		t.Fatalf("CloneWorkspace: %v", err)
+		t.Fatalf("ProvisionWorkspace: %v", err)
 	}
 	// The stub sets path and reports not-reused.
 	if res.Reused {

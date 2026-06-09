@@ -4,9 +4,9 @@ Covers:
 - CleanupWorkspace: missing workspace_id (idempotent success), invalid
   uuid (failure), happy-path close that flips the WorkspaceRow status
   to `expired`, unknown id (idempotent).
-- ProvisionWorkspace: no provider registered (failure), ticket not found
-  (failure), happy-path creates a WorkspaceRow via the registered stub
-  provider with spec built from the ticket context.
+- ProvisionWorkspace: execute() always returns failure (the engine always
+  takes the Workspace-category dispatch path, never calls execute()).
+  The dispatch() path is covered by test_lean_lifecycle_service.py.
 - RefreshWorkspaceAuth: execute() returns success (engine dispatches the
   AgentCommand on the remote path; inline returns success).
 """
@@ -14,18 +14,11 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import pytest
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
 from app.core.workflow import CommandContext
-from app.core.workspace import (
-    WorkspaceTicketContext,
-    register_workflow_context_provider,
-    register_workspace_provider,
-)
 from app.core.workspace.commands import CleanupWorkspace, ProvisionWorkspace, RefreshWorkspaceAuth
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceStatus
@@ -54,12 +47,16 @@ async def test_cleanup_with_invalid_workspace_id_fails() -> None:
 
 
 async def test_cleanup_flips_row_to_expired(db_session) -> None:  # type: ignore[no-untyped-def]
+    from app.testing.seed import seed_agent  # noqa: PLC0415
+
     org_id = uuid4()
     ws_id = uuid4()
+    agent = await seed_agent(org_id=org_id, session=db_session)
     db_session.add(
         WorkspaceRow(
             id=ws_id,
             org_id=org_id,
+            owning_agent_id=agent["id"],
             provider_id="remote_agent",
             spec={"sha": "deadbeef"},
             status=WorkspaceStatus.ACTIVE.value,
@@ -87,112 +84,13 @@ async def test_cleanup_unknown_workspace_succeeds_silently(db_session) -> None: 
 # ── ProvisionWorkspace ─────────────────────────────────────────────────
 
 
-class _StubContextProvider:
-    """Stub WorkflowContextProvider that returns a fixed context (or None)."""
-
-    def __init__(self, context: WorkspaceTicketContext | None) -> None:
-        self._context = context
-
-    async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        del ticket_id
-        return self._context
-
-
-class _StubWorkspaceProvider:
-    """Tiny WorkspaceProvider stub. Doesn't clone anything — just returns
-    a fake plugin_state so create_workspace() succeeds end-to-end."""
-
-    meta = PluginMeta(id="stub_ws", type="workspace", display_name="stub-workspace")
-
-    async def provision(self, spec):  # type: ignore[no-untyped-def]
-        return {"working_dir": "/tmp/stub", "sha": spec.sha}
-
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
-        return None
-
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
-        return None
-
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
-        raise NotImplementedError
-
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
-        return None
-
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
-        return None
-
-
-@pytest.fixture
-def _stub_workspace_plugin(workspace_providers_isolation):
-    register_workspace_provider(_StubWorkspaceProvider())
-
-
-async def test_provision_fails_when_no_provider_registered(
-    workspace_providers_isolation, workflow_context_provider_isolation
-) -> None:
-    """No provider registered → ProvisionWorkspace returns failure so the
-    workflow fails loudly rather than silently skipping provision."""
-    register_workflow_context_provider(
-        _StubContextProvider(
-            context=WorkspaceTicketContext(
-                org_id=uuid4(),
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "abc"},
-            )
-        )
-    )
+async def test_provision_execute_always_returns_failure() -> None:
+    """ProvisionWorkspace.execute() always returns failure — the engine takes
+    the Workspace-category dispatch path and never calls execute() in production.
+    This guard surfaces mistaken direct calls immediately."""
     outcome = await ProvisionWorkspace().execute({}, _ctx())
     assert outcome.label == "failure"
-    assert "no workspace provider" in (outcome.failure_reason or "")
-
-
-async def test_provision_fails_when_ticket_not_found(
-    workspace_providers_isolation, workflow_context_provider_isolation
-) -> None:
-    register_workspace_provider(_StubWorkspaceProvider())
-    register_workflow_context_provider(_StubContextProvider(context=None))
-    outcome = await ProvisionWorkspace().execute({}, _ctx())
-    assert outcome.label == "failure"
-    assert "not found" in (outcome.failure_reason or "")
-
-
-async def test_provision_creates_workspace_with_spec(
-    db_session, _stub_workspace_plugin, workflow_context_provider_isolation
-) -> None:  # type: ignore[no-untyped-def]
-    ticket_id = uuid4()
-    org_id = uuid4()
-    register_workflow_context_provider(
-        _StubContextProvider(
-            context=WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeefcafef00d", "base_sha": "babecafe"},
-            )
-        )
-    )
-    ctx = CommandContext(
-        workflow_execution_id=str(uuid4()),
-        ticket_id=str(ticket_id),
-        step_id="provision",
-        attempt=0,
-    )
-    outcome = await ProvisionWorkspace().execute({}, ctx)
-    assert outcome.label == "success"
-    workspace_id = outcome.outputs.get("workspace_id")
-    assert workspace_id is not None
-
-    row = (
-        await db_session.execute(select(WorkspaceRow).where(WorkspaceRow.id == UUID(workspace_id)))
-    ).scalar_one()
-    assert row.org_id == org_id
-    assert row.provider_id == "stub_ws"
-    assert row.status == WorkspaceStatus.ACTIVE.value
-    assert row.spec["sha"] == "deadbeefcafef00d"
-    assert row.spec["base_sha"] == "babecafe"
+    assert "not the dispatch path" in (outcome.failure_reason or "")
 
 
 # ── RefreshWorkspaceAuth ────────────────────────────────────────────────

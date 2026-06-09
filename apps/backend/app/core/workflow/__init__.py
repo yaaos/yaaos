@@ -15,6 +15,8 @@ from app.core.workflow.service import (
     HitlHistoryEntry,
     WorkflowEngine,
     WorkflowExecutionSummary,
+    WorkflowRunView,
+    WorkflowStepSummary,
     bind_engine,
     get_awaiting_human_execution,
     get_engine,
@@ -24,6 +26,7 @@ from app.core.workflow.service import (
     list_all_execution_states,
     list_executions_for_ticket,
     list_hitl_history,
+    list_run_views_for_ticket,
     register_workflow,
     request_cancel,
     resume_hitl,
@@ -47,6 +50,7 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkspaceWorkflowCommand,
 )
 
 __all__ = [
@@ -70,7 +74,10 @@ __all__ = [
     "WorkflowExecutionNotFoundError",
     "WorkflowExecutionSummary",
     "WorkflowNotFoundError",
+    "WorkflowRunView",
     "WorkflowState",
+    "WorkflowStepSummary",
+    "WorkspaceWorkflowCommand",
     "bind_engine",
     "get_awaiting_human_execution",
     "get_engine",
@@ -81,6 +88,7 @@ __all__ = [
     "list_all_execution_states",
     "list_executions_for_ticket",
     "list_hitl_history",
+    "list_run_views_for_ticket",
     "register_recovery_policy",
     "register_workflow",
     "registered_recovery_labels",

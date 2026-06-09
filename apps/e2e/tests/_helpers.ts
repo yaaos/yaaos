@@ -60,6 +60,23 @@ export async function seedGithubInstall(
   });
 }
 
+/** Seed the `skill_name` for a connected repo so `build_review_invocation`
+ *  can resolve a non-null skill handle. Required before dispatching a real
+ *  review in e2e specs (otherwise the review step fails with "skill_name
+ *  not configured").
+ */
+export async function seedRepoSkill(opts: {
+  orgSlug: string;
+  repoExternalId: string;
+  skillName: string;
+}): Promise<void> {
+  await jsonPost(`${YAAOS_URL}/api/testing/seed/repo_skill`, {
+    org_slug: opts.orgSlug,
+    repo_external_id: opts.repoExternalId,
+    skill_name: opts.skillName,
+  });
+}
+
 /** Insert a single lesson via the testing surface. For specs that need a
  *  pre-existing lesson as a *precondition*, not as the thing under test.
  */
@@ -209,6 +226,63 @@ export async function seedCompareDiverged(beforeSha: string, afterSha: string): 
 export async function postedComments(): Promise<Array<Record<string, unknown>>> {
   const r = await fetch(`${FAKE_GITHUB_URL}/__test/posted_comments`);
   return (await r.json()) as Array<Record<string, unknown>>;
+}
+
+/**
+ * Return the HEAD SHA of a fake-github bare repo. Cross-plane e2e specs pass
+ * this as `headSha` in `prPayload` so the agent's `git checkout --detach <sha>`
+ * resolves against the real bare repo that fake-github serves via git HTTP.
+ */
+export async function gitHeadSha(owner: string, repo: string): Promise<string> {
+  const r = await fetch(`${FAKE_GITHUB_URL}/__test/git_head_sha/${owner}/${repo}`);
+  if (!r.ok) {
+    throw new Error(`gitHeadSha ${owner}/${repo} → ${r.status}: ${await r.text()}`);
+  }
+  const body = (await r.json()) as { sha: string; error?: string };
+  if (!body.sha) {
+    throw new Error(`gitHeadSha ${owner}/${repo}: empty sha (${body.error ?? "unknown"})`);
+  }
+  return body.sha;
+}
+
+/**
+ * Return the most-recent workflow run state for the ticket matching `title`
+ * on `orgSlug`. Returns `null` when the ticket or runs aren't found yet, or
+ * when the most recent run is still in a non-terminal state.
+ *
+ * Used by failure-path specs to assert the workflow actually completed with
+ * a `failed` state (vs never having started at all).
+ *
+ * Uses `GET /api/tickets/:id/workflow-runs` which is the canonical source of
+ * truth for workflow lifecycle state.
+ */
+export async function ticketJobStatus(
+  orgSlug: string,
+  title: string,
+  request: APIRequestContext,
+): Promise<string | null> {
+  const listResp = await request.get(`${YAAOS_URL}/api/tickets?q=${encodeURIComponent(title)}`, {
+    headers: { "X-Org-Slug": orgSlug },
+  });
+  if (!listResp.ok()) return null;
+  const body = (await listResp.json()) as { items: Array<{ id: string; title: string }> };
+  const list = body.items ?? [];
+  const ticket = list.find((t) => t.title === title);
+  if (!ticket) return null;
+
+  const runsResp = await request.get(`${YAAOS_URL}/api/tickets/${ticket.id}/workflow-runs`, {
+    headers: { "X-Org-Slug": orgSlug },
+  });
+  if (!runsResp.ok()) return null;
+  const runs = (await runsResp.json()) as Array<{ state: string }>;
+  if (runs.length === 0) return null;
+  // Most recent run is last (API returns oldest-first).
+  const latestRun = runs[runs.length - 1];
+  if (!latestRun) return null;
+  // Return `null` while still running; surface the state once terminal.
+  const terminalStates = ["done", "failed", "cancelled"];
+  if (!terminalStates.includes(latestRun.state)) return null;
+  return latestRun.state;
 }
 
 /**

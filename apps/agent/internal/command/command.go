@@ -4,7 +4,7 @@
 //
 // Two command families:
 //   - WorkspaceCommand — executed in the workspace child process via WorkspaceOps;
-//     the five workspace kinds belong here.
+//     the workspace kinds belong here.
 //   - AgentCommand — executed in the supervisor via AgentOps; ConfigUpdateCommand
 //     is the only kind today.
 //
@@ -80,12 +80,12 @@ func Decode(raw []byte) (Command, error) {
 		return nil, fmt.Errorf("command: probe kind: %w", err)
 	}
 	switch probe.Kind {
-	case protocol.KindCreateWorkspace:
-		var v protocol.CreateWorkspaceCommand
+	case protocol.KindProvisionWorkspace:
+		var v protocol.ProvisionWorkspaceCommand
 		if err := json.Unmarshal(raw, &v); err != nil {
-			return nil, fmt.Errorf("command: decode CreateWorkspace: %w", err)
+			return nil, fmt.Errorf("command: decode ProvisionWorkspace: %w", err)
 		}
-		return &CreateWorkspaceCommand{Proto: v}, nil
+		return &ProvisionWorkspaceCommand{Proto: v}, nil
 	case protocol.KindWriteFiles:
 		var v protocol.WriteFilesCommand
 		if err := json.Unmarshal(raw, &v); err != nil {

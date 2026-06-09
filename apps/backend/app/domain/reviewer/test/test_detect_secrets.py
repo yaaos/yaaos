@@ -6,8 +6,8 @@ scans added lines (so a removed secret doesn't trigger).
 
 from __future__ import annotations
 
+from app.core.vcs import Diff
 from app.domain.reviewer.secrets_detection import detect_secrets as _detect_secrets
-from app.domain.vcs import Diff
 
 
 def _diff(raw: str) -> Diff:

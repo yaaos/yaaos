@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# fake-claude — stand-in for the real `claude` binary used inside the agent
+# container during e2e tests. Replays a canned stream-json scenario to stdout
+# and exits 0 (happy) or non-zero (failure scenarios).
+#
+# Scenario selection (evaluated in order, first match wins):
+#   1. Repo-slug match: if the CWD is a git checkout, the script reads the
+#      `origin` remote URL and extracts the basename (without .git). Each
+#      e2e spec seeds a distinct repo per scenario so the agent container
+#      stays up across tests with no env flip:
+#        acme/review-happy        → happy
+#        acme/review-nonconforming → nonconforming
+#        acme/review-agentfail    → agentfail
+#   2. $FAKE_CLAUDE_SCENARIO env var (fallback; default "happy").
+#
+# The agent's RealHandler.RunClaude reads each newline-framed JSON object as a
+# stream-json progress line; the final object is the terminal review payload
+# the backend's CodeReview parser consumes. This binary never reads stdin
+# (the real claude does, but the fake ignores it) and never inspects argv.
+set -euo pipefail
+
+SCENARIOS_DIR="${FAKE_CLAUDE_SCENARIOS_DIR:-/opt/fake-claude/scenarios}"
+
+# Determine scenario from git remote origin URL (repo-slug switch).
+# If the CWD has an 'origin' remote, extract the last two path components
+# (owner/repo) from the URL to get the repo slug, then map to a scenario.
+_repo_slug=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  _remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  if [[ -n "${_remote_url}" ]]; then
+    # Strip trailing .git, then take the last two path components.
+    _trimmed="${_remote_url%.git}"
+    # Works for both http://host/owner/repo and git://host/owner/repo
+    _repo_slug="${_trimmed##*/}"            # basename → repo
+    _owner_repo="${_trimmed%/*}"            # strip basename
+    _owner="${_owner_repo##*/}"             # parent basename → owner
+    _repo_slug="${_owner}/${_repo_slug}"    # owner/repo
+  fi
+fi
+
+case "${_repo_slug}" in
+  "acme/review-happy")
+    SCENARIO="happy"
+    ;;
+  "acme/review-nonconforming")
+    SCENARIO="nonconforming"
+    ;;
+  "acme/review-agentfail")
+    SCENARIO="agentfail"
+    ;;
+  *)
+    # Fallback: use the env var (allows single-scenario override for other tests).
+    SCENARIO="${FAKE_CLAUDE_SCENARIO:-happy}"
+    ;;
+esac
+
+SCENARIO_FILE="${SCENARIOS_DIR}/${SCENARIO}.jsonl"
+
+if [[ ! -f "${SCENARIO_FILE}" ]]; then
+  echo "fake-claude: scenario file not found: ${SCENARIO_FILE}" >&2
+  exit 2
+fi
+
+# Drain stdin (real claude reads the prompt; fake discards it).
+cat >/dev/null || true
+
+# Agentfail scenario carries a sentinel first line "#EXIT:<code>"; honour it
+# before streaming any output (the exit code is the contract, not the stream).
+first_line="$(head -n1 "${SCENARIO_FILE}" 2>/dev/null || true)"
+if [[ "${first_line}" =~ ^\#EXIT:([0-9]+) ]]; then
+  # Stream the scenario (minus the sentinel line) then exit with the code.
+  tail -n +2 "${SCENARIO_FILE}"
+  exit "${BASH_REMATCH[1]}"
+fi
+
+# Stream the scenario verbatim to stdout. Each line is a complete JSON object
+# the agent will emit as a progress AgentEvent.
+cat "${SCENARIO_FILE}"
+
+exit 0

@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     # this to point at fake-github so the browser-side redirect chain works
     # without leaving the docker network.
     github_web_base_url: str = "https://github.com"
+    # GitHub *git* base URL — the origin the workspace agent clones from
+    # (`<github_git_base_url>/<owner>/<repo>.git`). Normally identical to the web
+    # base (real github.com serves both), but the test stack splits the
+    # browser-facing host (`localhost:58081`, where Playwright follows OAuth
+    # redirects) from the docker-internal host (`fake-github:8080`, where the
+    # agent container can actually reach the git server). Unset → defaults to
+    # web-base. Mirrors the `yaaos_github_oauth_token_url` host-split below.
+    github_git_base_url: str = ""
 
     # core/llm gateway. Both unset = direct provider calls via ANTHROPIC_API_KEY.
     braintrust_api_key: SecretStr | None = None

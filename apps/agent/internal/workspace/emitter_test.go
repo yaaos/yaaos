@@ -39,7 +39,7 @@ func TestEmitterFromContext_DefaultIsNoop(t *testing.T) {
 func TestEncoderEmitter_WritesProgressFrames(t *testing.T) {
 	var buf bytes.Buffer
 	enc := ipc.NewEncoder(&buf)
-	e := newEncoderEmitter(enc, "c-1", "tp-1", nil)
+	e := newEncoderEmitter(enc, "c-1", "tp-1", "tok-123", nil)
 
 	ok := e.Progress(map[string]any{"stream_line": "{\"type\":\"tool_use\"}"})
 	if !ok {
@@ -58,6 +58,9 @@ func TestEncoderEmitter_WritesProgressFrames(t *testing.T) {
 	}
 	if ev.Traceparent != "tp-1" {
 		t.Errorf("traceparent: want tp-1 got %q", ev.Traceparent)
+	}
+	if ev.CompletionToken != "tok-123" {
+		t.Errorf("completion_token: want tok-123 got %q", ev.CompletionToken)
 	}
 	if ev.Outputs["stream_line"] != "{\"type\":\"tool_use\"}" {
 		t.Errorf("outputs.stream_line: got %v", ev.Outputs["stream_line"])
@@ -84,12 +87,13 @@ func TestRun_MultiEventEmission_ProgressThenTerminal(t *testing.T) {
 	// that order.
 	var in bytes.Buffer
 	cmdBytes, _ := json.Marshal(map[string]any{
-		"command_id":   "c-invoke",
-		"workspace_id": "ws-1",
-		"traceparent":  "tp-1",
-		"kind":         "InvokeClaudeCode",
-		"invocation":   map[string]any{},
-		"limits":       map[string]any{"wallclock_seconds": 60},
+		"command_id":       "c-invoke",
+		"workspace_id":     "ws-1",
+		"traceparent":      "tp-1",
+		"completion_token": "tok-invoke",
+		"kind":             "InvokeClaudeCode",
+		"invocation":       map[string]any{},
+		"limits":           map[string]any{"wallclock_seconds": 60},
 	})
 	in.Write(cmdBytes)
 	in.WriteByte('\n')
@@ -120,6 +124,9 @@ func TestRun_MultiEventEmission_ProgressThenTerminal(t *testing.T) {
 		if events[i].CommandID != "c-invoke" {
 			t.Errorf("event %d: command_id mismatch", i)
 		}
+		if events[i].CompletionToken != "tok-invoke" {
+			t.Errorf("event %d: completion_token want tok-invoke got %q", i, events[i].CompletionToken)
+		}
 		// Outputs.i may decode as float64 via json.Unmarshal — accept both.
 		if got := events[i].Outputs["i"]; got != float64(i) && got != i {
 			t.Errorf("event %d: outputs.i want %d got %v", i, i, got)
@@ -127,6 +134,9 @@ func TestRun_MultiEventEmission_ProgressThenTerminal(t *testing.T) {
 	}
 	if events[3].Kind != protocol.EventCompletedSuccess {
 		t.Errorf("terminal: want completed_success got %q", events[3].Kind)
+	}
+	if events[3].CompletionToken != "tok-invoke" {
+		t.Errorf("terminal: completion_token want tok-invoke got %q", events[3].CompletionToken)
 	}
 	// Terminal outputs come from InvokeResult.ToWire() — assert the
 	// workspace_id field which is always present.
@@ -141,7 +151,7 @@ func TestEncoderEmitter_ConcurrentProgressIsSafe(t *testing.T) {
 	// goroutines hammering Progress + assert each frame is parseable.
 	var buf bytes.Buffer
 	enc := ipc.NewEncoder(&buf)
-	e := newEncoderEmitter(enc, "c-1", "tp-1", nil)
+	e := newEncoderEmitter(enc, "c-1", "tp-1", "", nil)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {

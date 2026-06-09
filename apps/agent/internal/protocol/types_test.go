@@ -31,9 +31,9 @@ func TestAgentEventRoundTrip(t *testing.T) {
 // structs (used directly by command.Decode) correctly round-trip through JSON.
 // These are the types command.Decode unmarshals into.
 func TestConcreteCommandStructsRoundTrip(t *testing.T) {
-	t.Run("CreateWorkspace", func(t *testing.T) {
+	t.Run("ProvisionWorkspace", func(t *testing.T) {
 		body := `{
-			"kind": "CreateWorkspace",
+			"kind": "ProvisionWorkspace",
 			"command_id": "11111111-1111-1111-1111-111111111111",
 			"workspace_id": "22222222-2222-2222-2222-222222222222",
 			"traceparent": "00-aabbcc-1122-01",
@@ -48,7 +48,7 @@ func TestConcreteCommandStructsRoundTrip(t *testing.T) {
 			"ttl_seconds": 600,
 			"max_idle_seconds": 600
 		}`
-		var cmd CreateWorkspaceCommand
+		var cmd ProvisionWorkspaceCommand
 		if err := json.Unmarshal([]byte(body), &cmd); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}

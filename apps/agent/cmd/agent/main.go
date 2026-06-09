@@ -148,7 +148,7 @@ func runWorkspace() error {
 	//
 	// Mounts the RealHandler: tempdir lifecycle + file writes + auth
 	// refresh + cleanup all do real work. See workspace/realhandler.go's
-	// doc for the scope of CreateWorkspace and InvokeClaudeCode.
+	// doc for the scope of ProvisionWorkspace and InvokeClaudeCode.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	handler := workspace.NewRealHandler(workspace.RealHandlerConfig{

@@ -1,9 +1,6 @@
 """Claude Code CLI wrapper. Implements `domain/coding_agent.CodingAgentPlugin`.
 
 Vendor-only: this module talks to Anthropic's Claude Code CLI and nothing else.
-It spawns ONE parent reviewer per PR review. The parent dispatches yaaos-*
-subagents (installed by `installer.py` into `~/.claude/agents/`) via the Task
-tool, then synthesizes their findings by re-reading cited code.
 
 Test-mode (stub/replay) wrapping is handled by the `testing/` layer's
 `StubCodingAgentPlugin` — see `app.testing.stub_coding_agent`. The bootstrap
@@ -22,65 +19,65 @@ from uuid import UUID
 
 import httpx
 import structlog
-from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import select
 
-from app.core.config import get_settings
-from app.core.database import session as db_session
-from app.core.plugin_kit import PluginMeta
-from app.core.workspace import Workspace, WorkspaceExecError
-from app.domain.coding_agent import (
+from app.core import byok as _byok
+from app.core.auth import org_id_var
+from app.core.coding_agent import (
     ActivityEvent,
+    ActivityLog,
     AnswerQuestionContext,
     AnswerQuestionResult,
-    FindingAnchor,
-    FindingDraft,
+    CodingAgentError,
+    ExecSpec,
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
+    Invocation,
     InvocationStatus,
     InvocationTelemetry,
     OnActivity,
+    ReportedFinding,
     ReviewContext,
     ReviewResult,
     StaleCheckContext,
     StaleCheckResult,
+    Usage,
     ValidationResult,
     VerifyFixContext,
     VerifyFixResult,
     register_plugin,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     AnswerQuestionDto as _AnswerQuestionDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     FindingDraftList as _FindingDraftList,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     StaleCheckDto as _StaleCheckDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     VerifyFixDto as _VerifyFixDto,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_answer_question_prompt as _assemble_answer_question_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
 )
-from app.domain.coding_agent import (
-    assemble_review_prompt as _assemble_review_prompt,
-)
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_stale_check_prompt as _assemble_stale_check_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     assemble_verify_fix_prompt as _assemble_verify_fix_prompt,
 )
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     schema_appendix as _schema_appendix,
 )
+from app.core.database import session as db_session
+from app.core.workspace import Workspace, WorkspaceExecError
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")
@@ -389,11 +386,11 @@ def _summarize_tool_input(tool: str, inp: dict[str, Any]) -> str:
 # ── Verdict ───────────────────────────────────────────────────────────────────
 
 
-def _compute_state_v2(findings: list[FindingDraft]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
-    """Severity tiers — `blocker`/`major` request changes."""
+def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
+    """Severity tiers — only `blocker` requests changes."""
     if not findings:
         return "APPROVED"
-    if any(f.severity in {"blocker", "major"} for f in findings):
+    if any(f.severity == "blocker" for f in findings):
         return "CHANGES_REQUESTED"
     return "COMMENT"
 
@@ -402,13 +399,7 @@ def _compute_state_v2(findings: list[FindingDraft]) -> Literal["APPROVED", "CHAN
 
 
 class ClaudeCodePlugin:
-    meta = PluginMeta(
-        id="claude_code",
-        type="coding_agent",
-        display_name="Claude Code",
-        description="Wraps Anthropic's Claude Code CLI to run code reviews and replies.",
-        docs_url="https://docs.claude.com/en/docs/claude-code",
-    )
+    plugin_id = "claude_code"
 
     def install_url(self, org_id: UUID) -> str | None:
         """No out-of-band install — Claude Code settings are pure form. The
@@ -417,36 +408,23 @@ class ClaudeCodePlugin:
         return None
 
     def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        """Full Pydantic validation: orchestrator + agents shape, enums on
-        model/version/effort, agent count 1..8, name uniqueness within
-        agents. See `settings_schema.validate_settings`. Accepts an empty
-        dict and substitutes defaults so the picker's `POST /api/coding-
-        agents` install path doesn't have to pre-populate settings."""
-        from app.plugins.claude_code.defaults import get_defaults  # noqa: PLC0415
+        """Pydantic validation: `{mcp_proxy_ids}` shape.
+        See `settings_schema.validate_settings`. Accepts an empty dict."""
         from app.plugins.claude_code.settings_schema import (  # noqa: PLC0415
             validate_settings as _validate,
         )
 
-        if not settings:
-            d = get_defaults()
-            settings = {"orchestrator": d["orchestrator"], "agents": d["agents"]}
         return _validate(settings)
 
-    async def _load_settings_for_invocation(self) -> tuple[SecretStr | None, str | None]:
-        """Returns (decrypted_api_key, cli_path). Timeout is a constant — see
-        `_DEFAULT_TIMEOUT_SECONDS`. Per-call override via `agent_config["timeout_seconds"]`."""
+    async def _load_settings_for_invocation(self, org_id: UUID) -> tuple[SecretStr | None, str | None]:
+        """Returns (api_key, cli_path). API key read from byok_keys; cli_path from claude_code_settings."""
         async with db_session() as s:
-            row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
-        if row is None:
-            return None, None
-        api_key: SecretStr | None = None
-        if row.encrypted_anthropic_api_key:
-            try:
-                fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-                api_key = SecretStr(fernet.decrypt(row.encrypted_anthropic_api_key).decode())
-            except InvalidToken:
-                log.warning("claude_code.api_key_decrypt_failed")
-        return api_key, row.cli_path
+            plaintext = await _byok.get(org_id, "anthropic", session=s)
+            row = (
+                await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
+            ).scalar_one_or_none()
+        api_key = SecretStr(plaintext) if plaintext else None
+        return api_key, row.cli_path if row else None
 
     async def review(
         self,
@@ -454,16 +432,25 @@ class ClaudeCodePlugin:
         context: ReviewContext,
         on_activity: OnActivity | None = None,
     ) -> ReviewResult:
-        mcp_tools = await _materialize_mcp_config(workspace, context.agent_config.get("mcp"))
-        prep = await self._prepare_invocation(context.agent_config, extra_allowed_tools=mcp_tools)
+        # This in-process path is retained for future re-introduction but not
+        # called in the remote-dispatch model. The remote path uses
+        # build_review_invocation + dispatch_invoke_claude_code.
+        prep = await self._prepare_invocation({})
         if isinstance(prep, ReviewResult):
             return prep
         argv, env, timeout = prep
 
-        # Full review emits the FindingDraft schema — same shape as
-        # incremental review. The reviewer module handles admission +
-        # posting in one place.
-        full_prompt = _assemble_review_prompt(context) + _schema_appendix(_FindingDraftList)
+        import json as _json  # noqa: PLC0415
+
+        schema_str = _json.dumps(context.output_schema, indent=2)
+        full_prompt = (
+            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "
+            f"Base: {context.base_sha}, Head: {context.head_sha}.\n\n"
+            "## Output Format (STRICT)\n\n"
+            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+            f"{schema_str}\n"
+        )
 
         envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
         if isinstance(envelope, ReviewResult):
@@ -471,35 +458,34 @@ class ClaudeCodePlugin:
         agent_text, telemetry = envelope
 
         try:
-            parsed_dict = json.loads(agent_text)
+            parsed_dict = _json.loads(agent_text)
             parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (json.JSONDecodeError, ValidationError) as e:
+        except (_json.JSONDecodeError, ValidationError) as e:
             return ReviewResult(
                 status=InvocationStatus.PARSE_FAILURE,
                 telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
                 error_message=f"agent response didn't match _FindingDraftList: {e}",
             )
 
-        drafts = [
-            FindingDraft(
+        findings = [
+            ReportedFinding(
+                file=d.file,
+                line=d.line,
+                category=d.category,
                 severity=d.severity,
-                rule_id=d.rule_id,
-                title=d.title,
-                body=d.body,
-                concrete_failure_scenario=d.concrete_failure_scenario,
                 confidence=d.confidence,
                 rationale=d.rationale,
-                anchor=FindingAnchor(file_path=d.file_path, line_start=d.line_start, line_end=d.line_end),
-                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
+                rule_violated=d.rule_violated,
+                rule_source=d.rule_source,
+                suggested_fix=d.suggested_fix,
             )
             for d in parsed.findings
         ]
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
-            findings=drafts,
-            state=_compute_state_v2(drafts),
+            findings=findings,
+            state=_compute_state_v2(findings),
             summary_body=None,
-            lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
 
@@ -517,17 +503,23 @@ class ClaudeCodePlugin:
         set — `answer_question` uses a read-only repo + git list with no Task.
         (Reply path coerces the result; same error shape applies.)
         """
-        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        org_id = org_id_var.get()
+        if org_id is None:
+            return ReviewResult(
+                status=InvocationStatus.AGENT_ERROR,
+                error_message="no org context — cannot load BYOK key",
+            )
+        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
         if not api_key:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
-                error_message="ANTHROPIC_API_KEY not set in claude_code_settings",
+                error_message="ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents",
             )
         cli_path = cli_path_setting or shutil.which("claude")
         if not cli_path:
             return ReviewResult(
                 status=InvocationStatus.AGENT_ERROR,
-                error_message="claude binary not found on PATH or in claude_code_settings.cli_path",
+                error_message="claude binary not found on PATH",
             )
 
         env = os.environ.copy()
@@ -549,12 +541,8 @@ class ClaudeCodePlugin:
             _MODEL,
             "--effort",
             _EFFORT,
-            # Task is required so the parent reviewer can dispatch yaaos-* subagents.
-            # Bash is restricted to read-only git commands so subagents can run
-            # `git diff <base_sha>..HEAD` themselves instead of yaaos inlining
-            # the entire diff into the prompt (saves tens of thousands of
-            # tokens on big PRs and avoids duplicating the diff across N
-            # subagent task briefs).
+            # Task is available for skill dispatch. Bash is restricted to
+            # read-only git commands.
             "--allowed-tools="
             + (
                 allowed_tools_override
@@ -711,23 +699,23 @@ class ClaudeCodePlugin:
                 error_message=f"agent response didn't match _FindingDraftList: {e}",
             )
 
-        drafts = [
-            FindingDraft(
+        findings = [
+            ReportedFinding(
+                file=d.file,
+                line=d.line,
+                category=d.category,
                 severity=d.severity,
-                rule_id=d.rule_id,
-                title=d.title,
-                body=d.body,
-                concrete_failure_scenario=d.concrete_failure_scenario,
                 confidence=d.confidence,
                 rationale=d.rationale,
-                anchor=FindingAnchor(file_path=d.file_path, line_start=d.line_start, line_end=d.line_end),
-                duplicate_of_rule_ids=d.duplicate_of_rule_ids,
+                rule_violated=d.rule_violated,
+                rule_source=d.rule_source,
+                suggested_fix=d.suggested_fix,
             )
             for d in parsed.findings
         ]
         return IncrementalReviewResult(
             status=InvocationStatus.SUCCESS,
-            findings=drafts,
+            findings=findings,
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
 
@@ -845,6 +833,173 @@ class ClaudeCodePlugin:
             telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
         )
 
+    # ── Remote-dispatch methods (Shape B) ────────────────────────────────
+
+    async def build_review_invocation(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: Any,
+    ) -> Invocation:
+        """Build the `Invocation` for a remote PR review.
+
+        Resolves the per-repo skill name from `claude_code_repos`, reads
+        the Anthropic key from `byok_keys`, assembles the prompt
+        (review instructions + output schema appendix), and returns the
+        complete exec spec. The Anthropic key goes in `exec.env` — the
+        accepted carve-out for wire-bound exec.
+
+        Raises `CodingAgentError` when the skill name is unconfigured or the
+        Anthropic key is absent — the review step fails cleanly before dispatch.
+        """
+        from app.plugins.claude_code.repos import resolve_skill  # noqa: PLC0415
+
+        skill_name = await resolve_skill(ctx.org_id, ctx.repo_external_id, session=session)
+        if not skill_name:
+            raise CodingAgentError(
+                f"skill_name not configured for repo {ctx.repo_external_id!r} — "
+                "set it in Coding Agents settings before dispatching a review"
+            )
+
+        api_key, cli_path_setting = await self._load_settings_for_invocation(ctx.org_id)
+        if not api_key:
+            raise CodingAgentError("ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents")
+        cli_path = cli_path_setting or "claude"
+
+        # Assemble the review prompt + the canonical output-schema appendix.
+        # `ctx.output_schema` is the snapshot frozen at dispatch; we pass it
+        # directly so the prompt matches what the caller will validate against.
+        import json as _json  # noqa: PLC0415
+
+        schema_str = _json.dumps(ctx.output_schema, indent=2)
+        prompt = (
+            f"Review the pull request. Base SHA: {ctx.base_sha}. Head SHA: {ctx.head_sha}.\n"
+            f"Run `git diff {ctx.base_sha}..HEAD` to inspect changes.\n\n"
+            "## Output Format (STRICT)\n\n"
+            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+            f"{schema_str}\n"
+        )
+
+        argv = (
+            cli_path,
+            "--print",
+            "--output-format=stream-json",
+            "--verbose",
+            "--permission-mode=bypassPermissions",
+            "--model",
+            _MODEL,
+            "--effort",
+            _EFFORT,
+            "--allowed-tools="
+            "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
+            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
+        )
+        env = {"ANTHROPIC_API_KEY": api_key.get_secret_value()}
+        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
+
+        return Invocation(
+            kind=skill_name,
+            exec=ExecSpec(argv=argv, stdin=prompt, env=env),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=_DEFAULT_TIMEOUT_SECONDS),
+        )
+
+    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+        """Parse the agent's stream-json stdout into `ReportedFinding` objects.
+
+        Finds the terminal `type=result` event, extracts the `result` field,
+        and parses the JSON payload against `FindingDraftList`. Raises
+        `ValueError` on any parse failure so `PostFindings` can gate on it.
+        """
+        events = _parse_stream_events(stdout)
+        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        if result_event is None:
+            raise ValueError("no 'type=result' event found in stdout")
+        raw_result = result_event.get("result", "")
+        if not isinstance(raw_result, str):
+            raise ValueError(f"result field is not a string: {type(raw_result)}")
+        try:
+            parsed_dict = json.loads(raw_result)
+            parsed = _FindingDraftList.model_validate(parsed_dict)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise ValueError(f"agent output did not match FindingDraftList: {exc}") from exc
+        return [
+            ReportedFinding(
+                file=d.file,
+                line=d.line,
+                category=d.category,
+                severity=d.severity,
+                confidence=d.confidence,
+                rationale=d.rationale,
+                rule_violated=d.rule_violated,
+                rule_source=d.rule_source,
+                suggested_fix=d.suggested_fix,
+            )
+            for d in parsed.findings
+        ]
+
+    async def review_preflight_steps(
+        self,
+        ctx: ReviewContext,
+        *,
+        session: Any,
+    ) -> tuple[str, ...]:
+        """Return WorkflowCommand kinds to insert before the review step.
+
+        Returns `()` — the per-repo skill name model has no preflight steps.
+        """
+        del ctx, session
+        return ()
+
+    def parse_usage(self, stdout: str) -> Usage:
+        """Extract token usage + duration from the terminal `type=result` event.
+
+        Reads the last `type=result` event and pulls `usage.input_tokens`,
+        `usage.output_tokens`, and `duration_ms`. Missing fields surface
+        as `None`. A stream with no terminal `result` event returns an
+        empty `Usage()` — never raises so callers can finalize a run row
+        even when the agent crashed mid-stream.
+        """
+        events = _parse_stream_events(stdout)
+        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        if result_event is None:
+            return Usage()
+        usage_blob = result_event.get("usage") or {}
+        tokens_in: int | None = None
+        tokens_out: int | None = None
+        if isinstance(usage_blob, dict):
+            raw_in = usage_blob.get("input_tokens")
+            raw_out = usage_blob.get("output_tokens")
+            if isinstance(raw_in, int):
+                tokens_in = raw_in
+            if isinstance(raw_out, int):
+                tokens_out = raw_out
+        duration_raw = result_event.get("duration_ms")
+        duration_ms: int | None = duration_raw if isinstance(duration_raw, int) else None
+        return Usage(tokens_in=tokens_in, tokens_out=tokens_out, duration_ms=duration_ms)
+
+    def render_activity(self, stdout: str) -> ActivityLog:
+        """Pre-render the full activity stream from terminal stdout.
+
+        Walks every parseable stream-json event, drops null renders (events
+        with no useful UI representation), and assigns monotonic `seq`
+        starting from 0. Returns an empty `ActivityLog` for stdout with
+        no parseable events.
+        """
+        events = _parse_stream_events(stdout)
+        rendered: list[ActivityEvent] = []
+        seq = 0
+        for raw_event in events:
+            ev = _render_activity(raw_event)
+            if ev is None:
+                continue
+            # `_render_activity` returns a new ActivityEvent with `seq=0`
+            # (the default); stamp the monotonic index here.
+            rendered.append(ev.model_copy(update={"seq": seq}))
+            seq += 1
+        return ActivityLog(events=tuple(rendered))
+
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         errors: list[str] = []
         if "timeout_seconds" in agent_config:
@@ -856,7 +1011,10 @@ class ClaudeCodePlugin:
         return ValidationResult(valid=not errors, errors=errors)
 
     async def health_check(self) -> HealthStatus:
-        api_key, cli_path_setting = await self._load_settings_for_invocation()
+        org_id = org_id_var.get()
+        if org_id is None:
+            return HealthStatus(healthy=False, message="no org context", checked_at=_utcnow())
+        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
         if not api_key:
             return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
         cli_path = cli_path_setting or shutil.which("claude")
@@ -968,132 +1126,29 @@ def _invalidate_auth_cache() -> None:
 async def _onboarding_anthropic_key_set(org_id: UUID) -> bool:
     """Settings contributor — returns True iff a working key is present.
 
-    "Set" means: there's an encrypted row in the DB AND the key actually
-    authenticates against Anthropic. A saved-but-invalid key (e.g., a typo or a
-    rotated/revoked credential) does not satisfy the prereq — the onboarding
-    stepper would otherwise stay green when reviews would fail.
-
-    The auth probe is cached by `_probe_anthropic_auth` (5-minute TTL per key
-    fingerprint), so a 5-second polling dashboard makes at most one HTTP call
-    per 5 minutes per key.
+    "Set" means: there's a byok row AND the key actually authenticates.
+    A saved-but-invalid key does not satisfy the prereq.
+    The auth probe is cached (5-min TTL per fingerprint).
     """
     async with db_session() as s:
-        row = (
-            await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-    if row is None or row.encrypted_anthropic_api_key is None:
+        plaintext = await _byok.get(org_id, "anthropic", session=s)
+    if not plaintext:
         return False
-    try:
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        api_key = SecretStr(fernet.decrypt(row.encrypted_anthropic_api_key).decode())
-    except InvalidToken:
-        return False
-    healthy, _ = await _probe_anthropic_auth(api_key)
+    healthy, _ = await _probe_anthropic_auth(SecretStr(plaintext))
     return healthy
-
-
-async def set_api_key(session, *, org_id: UUID, encrypted_anthropic_api_key: bytes) -> None:
-    """Write or update the ``claude_code_settings`` row for *org_id*.
-
-    Accepts a pre-encrypted value (callers use ``cryptography.fernet.Fernet``
-    to encrypt). A second call updates rather than duplicates — upserts on
-    ``org_id`` which is UNIQUE.
-
-    Shape (a) — takes ``session`` first positional; never commits. Caller
-    composes with sibling writes inside one ``async with db_session()`` block.
-    See ``apps/backend/docs/patterns.md`` § Service-fn session-handling convention.
-    """
-    row = (
-        await session.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-    ).scalar_one_or_none()
-    if row is None:
-        row = ClaudeCodeSettingsRow(
-            org_id=org_id,
-            encrypted_anthropic_api_key=encrypted_anthropic_api_key,
-        )
-        session.add(row)
-    else:
-        row.encrypted_anthropic_api_key = encrypted_anthropic_api_key
-    await session.flush()
-
-
-async def _set_anthropic_key(org_id: UUID, raw_key: SecretStr) -> None:
-    """Encrypt + upsert the Anthropic key on `claude_code_settings`."""
-    plaintext = raw_key.get_secret_value()
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-    enc = fernet.encrypt(plaintext.encode())
-    async with db_session() as s:
-        row = (
-            await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-        ).scalar_one_or_none()
-        if row is None:
-            row = ClaudeCodeSettingsRow(
-                org_id=org_id,
-                encrypted_anthropic_api_key=enc,
-            )
-            s.add(row)
-        else:
-            row.encrypted_anthropic_api_key = enc
-        await s.commit()
-    # Rotation should never serve a stale "healthy" verdict from the previous key.
-    _invalidate_auth_cache()
-    # Make the key visible to `core/llm` (LangChain `init_chat_model` resolves
-    # auth via `ANTHROPIC_API_KEY`) immediately — fresh onboarding shouldn't
-    # require a backend restart before the classifier can authenticate.
-    os.environ["ANTHROPIC_API_KEY"] = plaintext
-
-
-async def bootstrap_anthropic_env() -> None:
-    """Populate `ANTHROPIC_API_KEY` from the encrypted DB row at app startup.
-
-    `core/llm` (LangChain `init_chat_model`) authenticates from the process env;
-    yaaos stores the key encrypted in `claude_code_settings`. Without this hook,
-    a freshly-booted container can't make direct LLM calls (e.g., classifier)
-    until the next time `_set_anthropic_key` runs. Pre-onboarding (no row yet)
-    is a normal state — the hook silently no-ops and the classifier surfaces
-    its own "key not set" error if it ever runs.
-    """
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return  # Already populated (e.g., Braintrust gateway, test env).
-    async with db_session() as s:
-        row = (await s.execute(select(ClaudeCodeSettingsRow).limit(1))).scalar_one_or_none()
-    if row is None or row.encrypted_anthropic_api_key is None:
-        log.info("claude_code.bootstrap_env.no_key", reason="pre_onboarding")
-        return
-    try:
-        fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
-        os.environ["ANTHROPIC_API_KEY"] = fernet.decrypt(row.encrypted_anthropic_api_key).decode()
-    except InvalidToken:
-        log.warning("claude_code.bootstrap_env.decrypt_failed")
-        return
-    log.info("claude_code.bootstrap_env.loaded")
 
 
 def bootstrap() -> None:
     from app.core.byok import register_validator as _byok_register_validator  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor  # noqa: PLC0415
     from app.plugins.claude_code.byok_validator import validate_anthropic_key  # noqa: PLC0415
-    from app.plugins.claude_code.installer import install_subagents  # noqa: PLC0415
 
     register_plugin(_plugin)
     register_onboarding_contributor("anthropic_key_set", _onboarding_anthropic_key_set)
     # BYOK: the `/api/api-keys/anthropic/validate` endpoint dispatches to this
     # callable so core/byok stays free of provider-specific HTTP.
     _byok_register_validator("anthropic", validate_anthropic_key)
-    # Install yaaos-* subagent definitions so the parent reviewer can dispatch
-    # them via the Task tool. Static files, idempotent — fine to run on every
-    # backend startup. Future Docker-workspace isolation will move this per-
-    # workspace; today there's one HOME shared by all reviews.
-    try:
-        install_subagents()
-    except OSError as e:
-        log.warning("claude_code.subagent_install_failed", error=str(e))
 
 
 def get_plugin() -> ClaudeCodePlugin:
     return _plugin
-
-
-def get_set_anthropic_key():
-    """Public accessor for the credential setter — used by the plugin's web routes."""
-    return _set_anthropic_key

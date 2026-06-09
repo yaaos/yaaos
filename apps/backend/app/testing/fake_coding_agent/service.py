@@ -13,18 +13,16 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.core.plugin_kit import PluginMeta
-from app.core.workspace import Workspace
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     AnswerQuestionContext,
     AnswerQuestionResult,
-    FindingDraft,
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
     InvocationStatus,
     InvocationTelemetry,
     OnActivity,
+    ReportedFinding,
     ReviewContext,
     ReviewResult,
     StaleCheckContext,
@@ -33,6 +31,7 @@ from app.domain.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.workspace import Workspace
 
 _TELEMETRY = InvocationTelemetry(tokens_in=0, tokens_out=0, latency_ms=0)
 
@@ -43,10 +42,10 @@ class FakeCodingAgentPlugin:
     `verify_fix_still_present`, etc.) on the registered instance."""
 
     def __init__(self, plugin_id: str = "claude_code") -> None:
-        self.meta = PluginMeta(id=plugin_id, type="coding_agent", display_name=f"fake-{plugin_id}")
+        self.plugin_id = plugin_id
         # Overridable per-instance return values.
-        self.review_findings: list[FindingDraft] = []
-        self.incremental_findings: list[FindingDraft] = []
+        self.review_findings: list[ReportedFinding] = []
+        self.incremental_findings: list[ReportedFinding] = []
         self.verify_fix_still_present: bool = False
         self.verify_fix_confidence: float = 0.95
         self.stale_still_applies: bool = True
@@ -173,7 +172,7 @@ def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[
     Binds a fresh registry copy with the fake substituted; restores the prior
     binding on exit. Never mutates the canonical registry dict.
     """
-    from app.domain.coding_agent import (  # noqa: PLC0415
+    from app.core.coding_agent import (  # noqa: PLC0415
         bind_coding_agent_registry,
         current_coding_agent_registry,
     )

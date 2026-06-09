@@ -30,7 +30,7 @@ from app.domain.orgs import (
 
 @pytest.fixture(autouse=True)
 def _ensure_claude_code_registered() -> None:
-    from app.domain.coding_agent import registered_plugin_ids  # noqa: PLC0415
+    from app.core.coding_agent import registered_plugin_ids  # noqa: PLC0415
     from app.plugins.claude_code import bootstrap  # noqa: PLC0415
 
     if "claude_code" not in registered_plugin_ids():

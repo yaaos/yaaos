@@ -1,11 +1,11 @@
-"""Translate GitHub webhook payloads to domain/vcs VCSEvent instances."""
+"""Translate GitHub webhook payloads to core/vcs VCSEvent instances."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
 
-from app.domain.vcs import (
+from app.core.vcs import (
     CommentCreated,
     PullRequestClosed,
     PullRequestReadyForReview,

@@ -18,6 +18,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
 
+from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
@@ -154,19 +155,44 @@ async def test_delete_identity_revokes_bearer_and_sets_offline(db_session) -> No
 @pytest.mark.service
 async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(db_session) -> None:
     """DELETE expires agent-owned ACTIVE workspaces and enqueues a terminal
-    failure for each in-flight current_command_id."""
+    failure for each in-flight current_command_id.
+
+    Workflow-execution correlation lives on agent_commands.workflow_execution_id;
+    the test seeds both the workspace row and the agent_commands row so
+    failsafe_agent_loss can resolve the workflow_execution_id without reading
+    the shed workspaces.current_holder_workflow_id column.
+    """
     org, agent = await _seed_org_and_agent(db_session)
 
     command_id = uuid4()
     workflow_exec_id = uuid4()
+    workspace_id = uuid4()
 
+    # Enqueue the agent_commands row so failsafe_agent_loss can resolve
+    # workflow_execution_id from agent_commands (not from the shed
+    # workspaces.current_holder_workflow_id column).
+    cmd = CleanupWorkspaceCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent="",
+    )
+    await enqueue_command(
+        org_id=org.org_id,
+        command=cmd,
+        session=db_session,
+        workflow_execution_id=workflow_exec_id,
+    )
+    await db_session.flush()
+
+    # Seed the workspace row holding the command claim.
+    # failsafe_agent_loss finds workspaces by owning_agent_id, reads current_command_id,
+    # and resolves workflow_execution_id via agent_commands (PK=command_id) — not from
+    # the shed workspaces.current_holder_workflow_id column.
     ws_id_str = await seed_workspace(
         org_id=org.org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="abc",
         current_command_id=command_id,
-        current_holder_workflow_id=workflow_exec_id,
         agent_id=agent["id"],
         caller_session=db_session,
     )

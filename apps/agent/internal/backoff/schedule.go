@@ -87,6 +87,20 @@ func NewWithDeadline(maxElapsed time.Duration) *Schedule {
 	return &Schedule{steps: defaultSteps, rng: rand.Float64, maxElapsed: maxElapsed}
 }
 
+// NewWithStepsAndDeadline returns a Schedule with a caller-supplied step list
+// and a max-elapsed deadline cap. The deadline ceiling prevents a short
+// test-injected ramp from busy-looping on persistent failures.
+// The last step pins forever within the deadline window.
+// If steps is empty, the default ramp is used.
+func NewWithStepsAndDeadline(steps []time.Duration, maxElapsed time.Duration) *Schedule {
+	if len(steps) == 0 {
+		steps = defaultSteps
+	}
+	s := make([]time.Duration, len(steps))
+	copy(s, steps)
+	return &Schedule{steps: s, rng: rand.Float64, maxElapsed: maxElapsed}
+}
+
 // Peek returns the next scheduled delay (jittered) WITHOUT advancing
 // the counter. Use to drive the `connection.backoff_seconds` gauge.
 func (s *Schedule) Peek() time.Duration {

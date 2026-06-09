@@ -86,6 +86,16 @@ services:
       # Install-picker URL — the BROWSER follows this redirect, so it must
       # be the host-mapped fake-github URL, not the docker service name.
       GITHUB_WEB_BASE_URL: http://localhost:58081
+      # Git clone origin — the AGENT container clones from this, so it must be
+      # the docker-internal service name (the host-mapped web URL above is
+      # unreachable from inside the agent network).
+      GITHUB_GIT_BASE_URL: http://fake-github:8080
+      # Agent identity exchange: bootstrap_owner stamps the seeded org's
+      # registered_iam_arn + aws_region from these so the real agent container's
+      # STS-derived ARN (from mock-aws, YAAOS_DEV_SEED_ARN below) matches an org
+      # and identity exchange succeeds. Must equal mock-aws's YAAOS_DEV_SEED_ARN.
+      YAAOS_DEV_SEED_ARN: arn:aws:iam::000000000000:role/yaaos-test
+      YAAOS_DEV_SEED_REGION: us-east-1
       # The platform yaaos GitHub App credentials. App ID + slug + webhook
       # secret match what fake-github exposes via `/app` and signs outbound
       # webhooks with (see apps/fake-github/app/test_secrets.py).
@@ -117,7 +127,15 @@ services:
       NOTION_API_BASE_URL: http://fake-notion:8080
       YAAOS_OAUTH_NOTION_CLIENT_ID: fake-notion-client-id
       YAAOS_OAUTH_NOTION_CLIENT_SECRET: fake-notion-client-secret
-      YAAOS_CODING_AGENT_STUB: "1"
+      # STS host override: the agent signs GetCallerIdentity requests targeting
+      # mock-aws (http://mock-aws:4566/). The backend's STS verifier must
+      # allowlist this host so it replays the signed request there instead of
+      # rejecting it as endpoint_disallowed. The dev compose does the same.
+      YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
+      # No YAAOS_CODING_AGENT_STUB: the cross-plane review e2e runs the REAL
+      # claude_code plugin (build_review_invocation + parse_review_output) end
+      # to end against the real Go agent + fake-claude. The Anthropic key is
+      # seeded fake by seed_github_install; fake-claude never validates it.
       YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
@@ -162,6 +180,8 @@ services:
       YAAOS_PUBLIC_ORIGIN: http://web:8080
       GITHUB_API_BASE_URL: http://fake-github:8080
       GITHUB_WEB_BASE_URL: http://localhost:58081
+      # Git clone origin — docker-internal so the agent container can reach it.
+      GITHUB_GIT_BASE_URL: http://fake-github:8080
       YAAOS_GITHUB_APP_ID: "12345"
       YAAOS_GITHUB_APP_SLUG: yaaos-test
       YAAOS_GITHUB_APP_PRIVATE_KEY: test-private-key
@@ -171,7 +191,8 @@ services:
       YAAOS_GITHUB_OAUTH_TOKEN_URL: http://fake-github:8080/login/oauth/access_token
       LINEAR_API_BASE_URL: http://fake-linear:8080
       NOTION_API_BASE_URL: http://fake-notion:8080
-      YAAOS_CODING_AGENT_STUB: "1"
+      # No YAAOS_CODING_AGENT_STUB — see the web service block. The worker runs
+      # the real claude_code review path against the agent + fake-claude.
       YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
@@ -182,3 +203,61 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Local mock of AWS IMDS + STS for agent identity exchange.
+  # The agent reads IMDS creds from this service and STS-replays to it;
+  # the backend replays the same signed request here to derive the ARN.
+  mock-aws:
+    build:
+      context: ./mock-aws
+      dockerfile: Dockerfile
+    environment:
+      YAAOS_DEV_SEED_ARN: arn:aws:iam::000000000000:role/yaaos-test
+      YAAOS_DEV_SEED_INSTANCE_ID: test-task-00000000
+      PORT: "4566"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/latest/meta-data/iam/security-credentials/ -T 2 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Local WorkspaceAgent — uses real STS identity exchange against mock-aws.
+  # `fake-claude` is bind-mounted in at /usr/local/bin/claude so RunClaude
+  # invokes the canned-scenario binary instead of a real Anthropic CLI.
+  agent:
+    build:
+      context: ../apps/agent
+      dockerfile: Dockerfile
+      args:
+        # Compile the identity-change seam so the agent honors
+        # YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE below. The production image omits
+        # this arg, so that env var is inert there. See apps/agent/Dockerfile.
+        BUILD_TAGS: agent_test
+    environment:
+      YAAOS_BACKEND_URL: http://web:8080
+      YAAOS_AGENT_VERSION: test
+      AWS_EC2_METADATA_SERVICE_ENDPOINT: http://mock-aws:4566
+      YAAOS_STS_ENDPOINT_URL: http://mock-aws:4566/
+      YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
+      FAKE_CLAUDE_SCENARIOS_DIR: /opt/fake-claude/scenarios
+      FAKE_CLAUDE_SCENARIO: happy
+      # Fast STS backoff so the test agent re-authenticates within seconds
+      # after the org-ARN seed completes. Prod leaves this unset → 1m/3m/… ramp.
+      YAAOS_AGENT_STS_BACKOFF_SECONDS: "2,2,2,2,2"
+      # Fast ops backoff (claim, heartbeat, WS) so the agent recovers quickly
+      # after a resetStack() DB wipe. Prod leaves this unset → 1m/3m/… ramp.
+      YAAOS_AGENT_OPS_BACKOFF_SECONDS: "2,2,2,2,2"
+      # Allow the agent to accept a new identity after a DB wipe (test only).
+      # After resetStack() truncates workspace_agents the agent re-authenticates
+      # with a fresh agent_id; without this flag it would detect the mismatch
+      # and exit. Never set in production.
+      YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE: "1"
+    volumes:
+      - ../apps/fake-claude/claude:/usr/local/bin/claude:ro
+      - ../apps/fake-claude/scenarios:/opt/fake-claude/scenarios:ro
+    depends_on:
+      web:
+        condition: service_started
+      mock-aws:
+        condition: service_healthy
+

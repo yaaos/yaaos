@@ -127,8 +127,14 @@ class AgentCommandRow(Base):
     marked done with a terminal-failure outcome.
 
     `org_id` and `workspace_id` are informational indexes — `workspace_id` is
-    NULL for org-scoped commands (e.g. ConfigUpdate, CreateWorkspace before an
+    NULL for org-scoped commands (e.g. ConfigUpdate, ProvisionWorkspace before an
     agent is assigned). `agent_id` is stamped at claim time, not enqueue time.
+
+    `workflow_execution_id` carries the workflow this command resumes when its
+    terminal event arrives. NULL only for agent-scoped commands without
+    workflow correlation (e.g. ConfigUpdate). The event-ingestion path resolves
+    `command_id → workflow_execution_id` directly without a workspace lookup —
+    workflow correlation does not depend on a workspace row existing.
     """
 
     __tablename__ = "agent_commands"
@@ -137,15 +143,23 @@ class AgentCommandRow(Base):
         PgUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")
     )
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    # workspace_id is NULL for org-scoped commands (ConfigUpdate, CreateWorkspace).
+    # workspace_id is NULL for org-scoped commands (ConfigUpdate, ProvisionWorkspace).
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
-    # command_kind discriminates CreateWorkspace (org-scoped) from workspace-pinned commands.
+    # workflow_execution_id is the workflow whose terminal event this command
+    # resumes. NULL only for agent-scoped commands (e.g. ConfigUpdate) — every
+    # workflow-driven dispatch stamps it inside the engine's `start_step`
+    # transaction so reconciliation can resolve command_id → workflow without
+    # a workspace row.
+    workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # command_kind discriminates ProvisionWorkspace (org-scoped) from workspace-pinned commands.
     command_kind: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # status lifecycle: pending → claimed → delivered → done
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     # agent_id is stamped at claim time. NULL until claimed.
     agent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # sha256 of the per-command completion capability token minted at claim; raw never stored.
+    completion_token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # attempt counts re-queues; capped to prevent infinite retry.
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -156,6 +170,6 @@ class AgentCommandRow(Base):
     __table_args__ = (
         # Fast lookup for the agent's capacity-pull claim (FIFO via UUIDv7 id).
         Index("ix_agent_commands_agent_status_id", "agent_id", "status", "id"),
-        # Fast lookup for unassigned CreateWorkspace commands (org-scoped claim).
+        # Fast lookup for unassigned ProvisionWorkspace commands (org-scoped claim).
         Index("ix_agent_commands_status_kind_id", "status", "command_kind", "id"),
     )

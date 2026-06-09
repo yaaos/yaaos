@@ -2,7 +2,7 @@
 
 Verifies:
 - Unconfigured claim returns ConfigUpdateCommand with default max_workspaces.
-- Configured claim returns a CreateWorkspace command when new_workspaces > 0.
+- Configured claim returns a ProvisionWorkspace command when new_workspaces > 0.
 - Configured claim with workspace_ids returns the pending command for a named workspace.
 - Unconfigured claim leaves DB rows untouched.
 """
@@ -24,7 +24,7 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AuthBlock,
     ConfigUpdateCommand,
-    CreateWorkspaceCommand,
+    ProvisionWorkspaceCommand,
     RepoRef,
     WriteFilesCommand,
     WriteFilesEntry,
@@ -46,8 +46,8 @@ def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
     )
 
 
-def _make_create_cmd(workspace_id: UUID | None = None) -> CreateWorkspaceCommand:
-    return CreateWorkspaceCommand(
+def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceCommand:
+    return ProvisionWorkspaceCommand(
         command_id=uuid4(),
         workspace_id=workspace_id or uuid4(),
         traceparent="00-aabb-1122-01",
@@ -121,11 +121,11 @@ async def test_unconfigured_claim_returns_config_update_when_queue_empty(db_sess
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_configured_claim_returns_create_workspace(db_session) -> None:
-    """Configured claim with new_workspaces=1 returns one CreateWorkspace."""
+async def test_configured_claim_returns_provision_workspace(db_session) -> None:
+    """Configured claim with new_workspaces=1 returns one ProvisionWorkspace."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    cmd = _make_create_cmd()
+    cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
 

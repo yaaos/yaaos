@@ -18,7 +18,7 @@ import (
 //
 // See apps/agent/docs/command.md for the layer contract.
 type WorkspaceOps interface {
-	CloneWorkspace(ctx context.Context, cmd *protocol.CreateWorkspaceCommand) (CreateResult, error)
+	ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (ProvisionResult, error)
 	WriteFiles(ctx context.Context, cmd *protocol.WriteFilesCommand) (WriteFilesResult, error)
 	RefreshAuth(ctx context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (RefreshResult, error)
 	RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (InvokeResult, error)

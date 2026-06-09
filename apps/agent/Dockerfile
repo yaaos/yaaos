@@ -41,12 +41,20 @@ RUN if [ -f go.sum ]; then go mod download; fi
 COPY cmd cmd
 COPY internal internal
 
+# Build tags. Empty for production (the default). The e2e/test stack passes
+# BUILD_TAGS=agent_test so the agent honors YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE
+# (the identity-change seam); the production image never sets it, so that code
+# path is not compiled in. See internal/supervisor/identity_seam_*.go.
+ARG BUILD_TAGS=""
+
 # Static binary. CGO_ENABLED=0 keeps the binary glibc/musl-agnostic so it
 # runs cleanly on the Debian runtime stage. -trimpath removes local build
 # paths from the binary so customers don't see /home/<runner>/... in
-# stack traces.
+# stack traces. ${BUILD_TAGS:+-tags ${BUILD_TAGS}} adds -tags only when the
+# arg is non-empty.
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
+    ${BUILD_TAGS:+-tags ${BUILD_TAGS}} \
     -ldflags '-s -w' \
     -o /out/agent \
     ./cmd/agent
@@ -54,7 +62,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ── Stage 2: runtime ───────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-# `git` is required: the agent shells out to it for CreateWorkspace
+# `git` is required: the agent shells out to it for ProvisionWorkspace
 # (HTTPS clone with installation-token auth), and the Claude Code CLI
 # the agent later spawns also depends on it. `ca-certificates` lets the
 # clone reach GitHub over HTTPS. `nodejs` + `npm` are required to install

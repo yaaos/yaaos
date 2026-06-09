@@ -1,11 +1,9 @@
 import { getCurrentOrgSlug } from "@core/api/public/org-context";
-import { type PluginMeta, useAvailablePlugins } from "@core/api/public/queries";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
 import { PageHeader } from "@shared/components/public/layout/page-header";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Skeleton } from "@shared/components/ui/skeleton";
-import { PluginPicker } from "@shared/plugin_picker/public/PluginPicker";
 import { Link } from "@tanstack/react-router";
 import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
@@ -46,17 +44,12 @@ export function CodingAgentsSettingsPage() {
 
 function CodingAgentsContent() {
   const { data: installs } = useCodingAgents();
-  const { data: plugins } = useAvailablePlugins("coding_agent");
   const slug = getCurrentOrgSlug();
   const install = useInstallCodingAgent();
   const uninstall = useUninstallCodingAgent();
   const [picking, setPicking] = useState(false);
 
   const installedIds = new Set(installs.map((i) => i.plugin_id));
-
-  const onPick = (p: PluginMeta) => {
-    install.mutate({ plugin_id: p.id, settings: {} }, { onSuccess: () => setPicking(false) });
-  };
 
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
@@ -74,7 +67,7 @@ function CodingAgentsContent() {
       {picking && (
         <section className="rounded-lg border border-border bg-card" data-testid="ca-picker-card">
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Add a coding agent</h3>
+            <h3 className="text-sm font-semibold">Add Claude Code</h3>
             <Button
               variant="ghost"
               size="sm"
@@ -85,12 +78,21 @@ function CodingAgentsContent() {
             </Button>
           </header>
           <div className="px-4 py-4">
-            <PluginPicker
-              plugins={plugins}
-              isInstalled={(p) => installedIds.has(p.id)}
-              onPick={onPick}
-              testIdPrefix="ca-picker"
-            />
+            <p className="text-muted-foreground mb-3 text-xs">
+              Claude Code runs code reviews and replies using Anthropic's Claude Code CLI.
+            </p>
+            <Button
+              data-testid="ca-picker-add-claude_code"
+              disabled={installedIds.has("claude_code") || install.isPending}
+              onClick={() =>
+                install.mutate(
+                  { plugin_id: "claude_code", settings: {} },
+                  { onSuccess: () => setPicking(false) },
+                )
+              }
+            >
+              {installedIds.has("claude_code") ? "Installed" : "Add"}
+            </Button>
             {install.isError && (
               <p className="mt-3 text-xs text-destructive" data-testid="ca-install-err">
                 {(install.error as Error)?.message || "Failed"}

@@ -32,12 +32,12 @@ func realHandlerWithNoopClone(t *testing.T) *RealHandler {
 	})
 }
 
-func newCreate(workspaceID string) *protocol.CreateWorkspaceCommand {
-	return &protocol.CreateWorkspaceCommand{
+func newProvision(workspaceID string) *protocol.ProvisionWorkspaceCommand {
+	return &protocol.ProvisionWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{
-			CommandID:   "c-create-" + workspaceID,
+			CommandID:   "c-provision-" + workspaceID,
 			WorkspaceID: workspaceID,
-			Kind:        protocol.KindCreateWorkspace,
+			Kind:        protocol.KindProvisionWorkspace,
 		},
 		Repo: protocol.RepoRef{
 			PluginID:   "github",
@@ -49,9 +49,9 @@ func newCreate(workspaceID string) *protocol.CreateWorkspaceCommand {
 	}
 }
 
-func TestRealHandler_CloneWorkspace_AllocatesTempDir(t *testing.T) {
+func TestRealHandler_ProvisionWorkspace_AllocatesTempDir(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	res, err := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	res, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -60,6 +60,9 @@ func TestRealHandler_CloneWorkspace_AllocatesTempDir(t *testing.T) {
 	}
 	if _, err := os.Stat(res.Path); err != nil {
 		t.Errorf("tempdir not created: %v", err)
+	}
+	if res.WorkspaceID != "ws-1" {
+		t.Errorf("workspace_id: want ws-1 got %q", res.WorkspaceID)
 	}
 	if res.Repo != "acme/web" {
 		t.Errorf("repo: want acme/web got %q", res.Repo)
@@ -75,13 +78,13 @@ func TestRealHandler_CloneWorkspace_AllocatesTempDir(t *testing.T) {
 	}
 }
 
-func TestRealHandler_CloneWorkspace_CloneFailureTearsDownTempDir(t *testing.T) {
+func TestRealHandler_ProvisionWorkspace_CloneFailureTearsDownTempDir(t *testing.T) {
 	root := t.TempDir()
 	failClone := func(context.Context, string, protocol.RepoRef, protocol.AuthBlock, int) error {
 		return errors.New("network exploded")
 	}
 	h := NewRealHandler(RealHandlerConfig{Root: root, CloneFunc: failClone})
-	_, err := h.CloneWorkspace(context.Background(), newCreate("ws-fail"))
+	_, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-fail"))
 	if err == nil {
 		t.Fatal("want error on clone failure")
 	}
@@ -101,13 +104,13 @@ func TestRealHandler_CloneWorkspace_CloneFailureTearsDownTempDir(t *testing.T) {
 	}
 }
 
-func TestRealHandler_CloneWorkspace_IdempotentOnSecondCall(t *testing.T) {
+func TestRealHandler_ProvisionWorkspace_IdempotentOnSecondCall(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	res1, err := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	res1, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	if err != nil {
 		t.Fatalf("create #1: %v", err)
 	}
-	res2, err := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	res2, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	if err != nil {
 		t.Fatalf("create #2: %v", err)
 	}
@@ -121,7 +124,7 @@ func TestRealHandler_CloneWorkspace_IdempotentOnSecondCall(t *testing.T) {
 
 func TestRealHandler_WriteFiles_WritesEntries(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	res1, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	res1, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := res1.Path
 
 	files := []protocol.WriteFilesEntry{
@@ -166,7 +169,7 @@ func TestRealHandler_WriteFiles_UnknownWorkspace_Errors(t *testing.T) {
 
 func TestRealHandler_WriteFiles_RejectsPathEscape(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	cases := []string{
 		"../escape.txt",
@@ -187,7 +190,7 @@ func TestRealHandler_WriteFiles_RejectsPathEscape(t *testing.T) {
 
 func TestRealHandler_RefreshAuth_UpdatesToken(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 	if got := h.slots["ws-1"].authTok.Value(); got != "tok-abc" {
 		t.Fatalf("initial token wrong: got %q", got)
 	}
@@ -220,7 +223,7 @@ func TestRealHandler_RefreshAuth_UnknownWorkspace_Errors(t *testing.T) {
 
 func TestRealHandler_Cleanup_RemovesTempDirAndSlot(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	res1, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	res1, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := res1.Path
 
 	res, err := h.Cleanup(context.Background(), &protocol.CleanupWorkspaceCommand{
@@ -258,7 +261,7 @@ func TestRealHandler_RunClaude_HappyPath_EchoesStdin(t *testing.T) {
 		t.Skip("cat not on PATH; subprocess test needs a POSIX shell env")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	// Build an invocation whose exec block runs `cat` — echoes stdin to
 	// stdout. Lets us verify the whole pipe: argv resolved, stdin piped,
@@ -298,7 +301,7 @@ func TestRealHandler_RunClaude_EnvOverridesParent(t *testing.T) {
 		t.Skip("sh not on PATH; subprocess test needs a POSIX shell")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -324,7 +327,7 @@ func TestRealHandler_RunClaude_CwdIsWorkspacePath(t *testing.T) {
 		t.Skip("pwd not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := cr.Path
 
 	rawInv, _ := json.Marshal(map[string]any{
@@ -353,7 +356,7 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 		t.Skip("sh not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -379,7 +382,7 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 
 func TestRealHandler_RunClaude_MissingArgv_Errors(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 	rawInv, _ := json.Marshal(map[string]any{"exec": map[string]any{"argv": []string{}}})
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-1"},
@@ -395,7 +398,7 @@ func TestRealHandler_RunClaude_MissingArgv_Errors(t *testing.T) {
 
 func TestRealHandler_RunClaude_MalformedInvocation_Errors(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-1"},
 		Invocation:    []byte("{not json"),
@@ -418,11 +421,11 @@ func TestRealHandler_RunClaude_UnknownWorkspace_Errors(t *testing.T) {
 	}
 }
 
-func TestRealHandler_FullLifecycle_CreateWriteCleanup(t *testing.T) {
-	// End-to-end: drive a fresh workspace through Create → WriteFiles →
+func TestRealHandler_FullLifecycle_ProvisionWriteCleanup(t *testing.T) {
+	// End-to-end: drive a fresh workspace through Provision → WriteFiles →
 	// Cleanup and assert the file lands then disappears.
 	h := realHandlerWithNoopClone(t)
-	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := cr.Path
 	h.WriteFiles(context.Background(), &protocol.WriteFilesCommand{ //nolint:errcheck
 		CommandHeader: protocol.CommandHeader{CommandID: "c-w", WorkspaceID: "ws-1"},
@@ -663,7 +666,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		func(opts RunStreamingOptions) { capturedOpts = opts },
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	_ = cr
 
 	emitter := &recordingEmitter{}
@@ -730,7 +733,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T
 		nil,
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
@@ -752,7 +755,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_RunFuncReturnsError_PropagatesAsComma
 	// propagate it wrapped as a command error — no panic, no lost error.
 	fake := fakeRunFunc(nil, errors.New("subprocess startup failed"), nil)
 	h := realHandlerWithFakeRun(t, fake)
-	h.CloneWorkspace(context.Background(), newCreate("ws-1")) //nolint:errcheck
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
@@ -778,7 +781,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_CwdIsWorkspacePath(t *testing.T) {
 		func(opts RunStreamingOptions) { capturedDir = opts.Dir },
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	cr, _ := h.CloneWorkspace(context.Background(), newCreate("ws-1"))
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 
 	h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{ //nolint:errcheck
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
@@ -789,11 +792,11 @@ func TestRealHandler_RunClaude_FakeRunFunc_CwdIsWorkspacePath(t *testing.T) {
 	}
 }
 
-func TestRealHandler_CloneWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) {
+func TestRealHandler_ProvisionWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) {
 	cloneURL, headSHA := localBareRepo(t)
 
 	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
-	cmd := newCreate("ws-real")
+	cmd := newProvision("ws-real")
 	cmd.Repo.CloneURL = cloneURL
 	cmd.Repo.HeadSHA = headSHA
 	cmd.Repo.BranchName = "main"
@@ -801,7 +804,7 @@ func TestRealHandler_CloneWorkspace_RealGitClone_LandsHeadSHA(t *testing.T) {
 	// File URLs aren't authenticated — empty token to skip auth injection.
 	cmd.Auth = protocol.AuthBlock{}
 
-	res, err := h.CloneWorkspace(context.Background(), cmd)
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("real clone: %v", err)
 	}

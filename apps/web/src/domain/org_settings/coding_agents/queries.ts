@@ -38,21 +38,3 @@ export function useUninstallCodingAgent() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["coding-agents"] }),
   });
 }
-
-export function useUpdateCodingAgentSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      pluginId,
-      settings,
-    }: {
-      pluginId: string;
-      settings: Record<string, unknown>;
-    }) =>
-      apiFetch<CodingAgentInstall>(`/api/coding-agents/${encodeURIComponent(pluginId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ settings }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["coding-agents"] }),
-  });
-}

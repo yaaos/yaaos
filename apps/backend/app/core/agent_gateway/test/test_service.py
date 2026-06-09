@@ -13,9 +13,9 @@ from app.core.agent_gateway import (
     AgentEvent,
     AgentEventKind,
     AuthBlock,
-    CreateWorkspaceCommand,
     HeartbeatRequest,
     HeartbeatWorkspaceEntry,
+    ProvisionWorkspaceCommand,
     RepoRef,
     StaleClaimError,
     WorkspaceEvent,
@@ -25,7 +25,6 @@ from app.core.agent_gateway import (
     record_heartbeat,
     record_workspace_event,
 )
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
@@ -45,29 +44,29 @@ class _MinimalWorkspaceProvider:
     """Stub WorkspaceProvider so `list_workspace_providers()` returns exactly
     one entry when Workspace commands dispatch through the engine in tests."""
 
-    meta = PluginMeta(id="gw_test_stub", type="workspace", display_name="gw-test-stub")
+    plugin_id = "gw_test_stub"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def health_check(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+    async def read_text(self, path):  # type: ignore[no-untyped-def]
         return None
 
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
         return None
 
 
-def _make_create_command() -> CreateWorkspaceCommand:
-    return CreateWorkspaceCommand(
+def _make_provision_command() -> ProvisionWorkspaceCommand:
+    return ProvisionWorkspaceCommand(
         command_id=uuid4(),
         workspace_id=uuid4(),
         traceparent="00-aabbccdd-1122-01",
@@ -85,18 +84,46 @@ def _make_create_command() -> CreateWorkspaceCommand:
 
 
 async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dict:
+    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
+    from app.testing.seed import seed_agent  # noqa: PLC0415
+
     cmd_id = uuid4()
     wfx_id = uuid4()
     org_id = uuid4()
+    agent = await seed_agent(org_id=org_id, session=db_session)
     ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
-        current_holder_workflow_id=wfx_id if claimed_by_command else None,
+        agent_id=agent["id"],
         caller_session=db_session,
     )
+    if claimed_by_command:
+        # Persist the matching `agent_commands` row pre-stamped with the
+        # workflow_execution_id. `record_agent_event` resolves correlation
+        # purely from this row — no workspace-row lookup is involved.
+        provision = ProvisionWorkspaceCommand(
+            command_id=cmd_id,
+            workspace_id=UUID(ws_id),
+            traceparent="00-aabbccdd-1122-01",
+            repo=RepoRef(
+                plugin_id="github",
+                external_id="123",
+                clone_url="https://github.com/me/repo.git",
+                head_sha="deadbeef",
+            ),
+            history=1,
+            auth=AuthBlock(kind="github_installation", token="redacted"),
+            ttl_seconds=600,
+            max_idle_seconds=600,
+        )
+        await enqueue_command(
+            org_id=org_id,
+            command=provision,
+            session=db_session,
+            workflow_execution_id=wfx_id,
+        )
     return {"id": ws_id, "org_id": org_id, "command_id": cmd_id, "workflow_id": wfx_id}
 
 
@@ -135,7 +162,10 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
     """A terminal AgentEvent for a Workspace step causes the workflow to
     advance: record_agent_event enqueues handle_agent_event, and draining
     that task drives the workflow to DONE."""
+    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
     from app.core.tasks import get_broker  # noqa: PLC0415
+
+    test_org_id = uuid4()
 
     class _NoopWs:
         kind = "NoopWs"
@@ -145,6 +175,17 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
             del inputs, ctx
             return Outcome.success()
+
+        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+            del inputs
+            cmd = _make_provision_command()
+            await enqueue_command(
+                org_id=test_org_id,
+                command=cmd,
+                session=session,
+                workflow_execution_id=UUID(ctx.workflow_execution_id),
+            )
+            return cmd.command_id
 
     with scoped_engine() as eng:
         eng.register_command(_NoopWs())
@@ -192,15 +233,21 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
-        # Seed the workspace row pointing at this execution so record_agent_event
-        # can look up the workspace by command_id.
+        # Seed a workspace row so the terminal event's `workspace_id` output
+        # references a real row. Workflow correlation is independent — the
+        # engine stamps `workflow_execution_id` on the agent_commands row at
+        # dispatch time, and `record_agent_event` resolves the workflow via
+        # that column rather than via the workspace.
+        from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
+
+        _ws_org_id = uuid4()
+        _ws_agent = await _seed_agent(org_id=_ws_org_id, session=db_session)
         seeded_ws_id = await _seed_workspace_for_tests(
-            org_id=uuid4(),
+            org_id=_ws_org_id,
             provider_id="remote_agent",
-            plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=UUID(exec_id),
+            agent_id=_ws_agent["id"],
             caller_session=db_session,
         )
 
@@ -212,7 +259,13 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             reported_at=datetime.now(UTC),
             traceparent="00-aabbccdd-1122-01",
         )
-        await record_agent_event(event, session=db_session)
+        # The ownership guard reads the org contextvar, so wrap in org_context
+        # (mirrors the agent_gateway event endpoint).
+        from app.core.audit_log import ActorKind  # noqa: PLC0415
+        from app.core.auth import org_context  # noqa: PLC0415
+
+        async with org_context(test_org_id, ActorKind.WORKSPACE):
+            await record_agent_event(event, session=db_session)
         await db_session.commit()
 
         # Drain handle_agent_event + route_workflow → workflow reaches DONE.
@@ -232,7 +285,10 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
 async def test_progress_event_does_not_advance_workflow(db_session) -> None:
     """A PROGRESS AgentEvent does not advance the workflow — the execution
     stays in AWAITING_AGENT after the event is processed."""
+    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
     from app.core.tasks import get_broker  # noqa: PLC0415
+
+    ws_org_id = uuid4()
 
     class _NoopWs2:
         kind = "NoopWs2"
@@ -242,6 +298,17 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
             del inputs, ctx
             return Outcome.success()
+
+        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+            del inputs
+            cmd = _make_provision_command()
+            await enqueue_command(
+                org_id=ws_org_id,
+                command=cmd,
+                session=session,
+                workflow_execution_id=UUID(ctx.workflow_execution_id),
+            )
+            return cmd.command_id
 
     with scoped_engine() as eng:
         eng.register_command(_NoopWs2())
@@ -288,14 +355,15 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
-        ws_org_id = uuid4()
+        from app.testing.seed import seed_agent as _seed_agent2  # noqa: PLC0415
+
+        _ws_agent2 = await _seed_agent2(org_id=ws_org_id, session=db_session)
         await _seed_workspace_for_tests(
             org_id=ws_org_id,
             provider_id="remote_agent",
-            plugin_state={},
             sha="deadbeef",
             current_command_id=cmd_id,
-            current_holder_workflow_id=UUID(exec_id),
+            agent_id=_ws_agent2["id"],
             caller_session=db_session,
         )
 
@@ -405,8 +473,8 @@ async def test_workspace_event_ready_transitions_to_active(db_session) -> None:
     cmd_id = ws["command_id"]
     ws_id = UUID(ws["id"])
 
-    # Demote status to creating so we can observe the transition.
-    await update_workspace_status(ws_id, "creating", db_session)
+    # Demote status so we can observe the ready→active transition.
+    await update_workspace_status(ws_id, "expired", db_session)
     await db_session.flush()
 
     event = WorkspaceEvent(

@@ -13,7 +13,7 @@
 ## Runtime topology
 
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
-- Claude Code CLI baked into the image; spawned once per review inside the ticket's workspace. The parent reviewer dispatches `yaaos-*` subagents via the Task tool. Subagent definitions are markdown files installed into `~/.claude/agents/` at bootstrap. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
+- Claude Code CLI baked into the workspace agent image; spawned once per review inside the ticket's workspace. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
 - OTel collector optional; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is gated on `VITE_OTEL_COLLECTOR_ENDPOINT`.
 
@@ -25,7 +25,7 @@
 2. `domain/intake.web` looks up the `github` IntakeType and calls `handle()`.
 3. The intake type verifies HMAC, parses payload, and (for opened/reopened/ready_for_review) inserts a race-safe ticket + PR row and starts a `pr_review_v1` workflow via `core/workflow` — single transaction.
 4. Workflow engine routes `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`. Each step is a `WorkflowCommand` under `domain/reviewer/commands/`.
-5. `ProvisionWorkspace`, `CodeReview`, and `CleanupWorkspace` are Workspace-category commands — each parks the workflow in `awaiting_agent` and dispatches an AgentCommand over the wire to the remote WorkspaceAgent; the terminal AgentEvent resumes routing. `PostFindings` runs admission then posts a single `vcs.Review` to GitHub.
+5. `ProvisionWorkspace`, `CodeReview`, and `CleanupWorkspace` are Workspace-category commands — each parks the workflow in `awaiting_agent` and dispatches an AgentCommand over the wire to the remote WorkspaceAgent; the terminal AgentEvent resumes routing. `PostFindings` persists each `Finding` then posts each one to GitHub via `vcs.post_finding` (named primitive args — no finding value object crosses the `vcs` boundary). The `CodeReview` step reads the per-repo **skill name** from `claude_code_repos.skill_name` via `plugins/claude_code.resolve_skill` — if absent, the step fails before dispatching an AgentCommand.
 
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
@@ -61,7 +61,7 @@ See per-module deep dives: [`plugins_github`](../apps/backend/docs/plugins_githu
 
 Per-org, per-review. Coding-agent CLIs call hosted MCP servers (Linear, Notion) through a yaaos-owned proxy — authorization in one place, every JSON-RPC method writes an audit row.
 
-Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`, sha256 → `mcp_review_tokens`), builds an MCP payload (`integrations.known_providers()` filtered to enabled + non-failed), injects `{token, base_url, servers}` into `agent_config["mcp"]`. The workspace writes `.mcp.json`; the CLI calls `mcp__linear__get_issue`; the proxy at `POST /api/mcp/{review_id}/linear` verifies the sha256 bearer, resolves `org_id`, enforces the write-tool allowlist, decrypts the org's access token, forwards to upstream, audits the call. Token revoked before workspace teardown.
+Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`, sha256 → `mcp_review_tokens`), builds an MCP payload (`integrations.known_providers()` filtered to enabled + non-failed), threads `{token, base_url, servers}` into the coding-agent invocation so the CLI has MCP server config. The workspace writes `.mcp.json`; the CLI calls `mcp__linear__get_issue`; the proxy at `POST /api/mcp/{review_id}/linear` verifies the sha256 bearer, resolves `org_id`, enforces the write-tool allowlist, decrypts the org's access token, forwards to upstream, audits the call. Token revoked before workspace teardown.
 
 **Attribution.** Manual UI review → `actor_kind=user`. Webhook review → `actor_kind=system`. Reviews always execute as the org service account, never as the triggering developer.
 
@@ -75,7 +75,7 @@ Flow: `reviewer.queue` mints a per-review token (raw `secrets.token_urlsafe(32)`
 
 Three concepts span all apps:
 
-- **Workflow engine** (`core/workflow`) — typed `Workflow` definitions driven by three taskiq task bodies over `core/tasks` + `core/outbox`. Workspace commands park in `awaiting_agent` and resume on terminal AgentEvent. Five workflows: `pr_review_v1`, `incremental_review_v1`, `verify_fix_v1`, `stale_check_v1`, `answer_question_v1`. See [`core_workflow.md`](../apps/backend/docs/core_workflow.md).
+- **Workflow engine** (`core/workflow`) — typed `Workflow` definitions driven by three taskiq task bodies over `core/tasks` + `core/outbox`. Workspace commands park in `awaiting_agent` and resume on terminal AgentEvent. One workflow today: `pr_review_v1` (the PR review path, [`domain/reviewer`](../apps/backend/docs/domain_reviewer.md)). See [`core_workflow.md`](../apps/backend/docs/core_workflow.md).
 - **Workspace provider abstraction** (`core/workspace`) — `RemoteAgentWorkspaceProvider` dispatches via wire protocol to the customer-deployed Go agent. Single-flight claim via `try_claim`/`release_claim`. See [`core_workspace.md`](../apps/backend/docs/core_workspace.md).
 - **WorkspaceAgent** (`apps/agent/`) — customer-deployed Go binary; holds source code locally. Five HTTPS endpoints + one bidirectional WebSocket under `/api/v1/`. Agent identity on operational channels is bearer-derived — no `{agent_id}` path segment. Full protocol contract: [`docs/workspace-agent-protocol.md`](../docs/workspace-agent-protocol.md).
   - `POST /api/v1/agent/identity` — SigV4-signed STS → 1-hour bearer. Replays the customer's `GetCallerIdentity` against AWS STS (or mock-aws in dev/test); audience-checks `X-Yaaos-Audience`; canonicalizes ARN; derives `instance_id` from role-session-name; matches against `orgs.registered_iam_arn`; issues bearer via `bearer_tokens` ledger (sha256 stored, plaintext returned once). Region mismatch (verified ARN matched org, wrong region) writes an `identity_exchange_failed` audit row on the org.
@@ -90,13 +90,25 @@ Three concepts span all apps:
 
 1. GitHub webhook → `POST /api/intake/github_pr` verifies HMAC, dedups via `X-Github-Delivery`, creates ticket, starts `pr_review_v1`. Records `traceparent` so downstream tasks share the trace.
 2. `route_workflow` picks up; `CheckShouldReview` (Local). `ProvisionWorkspace` (Workspace) parks workflow in `awaiting_agent`, dispatches via `core/agent_gateway.enqueue_command`.
-3. Agent long-polls, runs operation, reports via `POST /api/v1/commands/{id}/events`. Backend's `record_agent_event` validates stale-claim guard, resolves `command_id → workspaces → current_holder_workflow_id`, enqueues `handle_agent_event`.
+3. Agent long-polls, runs operation, reports via `POST /api/v1/commands/{id}/events`. Backend's `record_agent_event` validates stale-claim guard, resolves `command_id → agent_commands.workflow_execution_id`, enqueues `handle_agent_event`.
 4. `handle_agent_event` clears claim, enqueues `route_workflow` → `CodeReview → PostFindings → CleanupWorkspace`.
-5. Activity events from workspace flow over WebSocket only when a UI tab is subscribed.
+5. Every `InvokeClaudeCode` dispatch creates a `coding_agent_runs` row (`status=running`, started_at). The registered `CodingAgentRunSink` (in `core/coding_agent`) fires on the matching terminal `AgentEvent`, calls the `claude_code` plugin's `parse_usage` + `render_activity` against the captured stdout, writes `status`/`exit_code`/`tokens_in`/`tokens_out`/`duration_ms` onto the run row, and persists the rendered `ActivityLog` JSONB to the partitioned `coding_agent_activity` table (weekly partitions, ~4-week TTL). `reviews.run_id` links each review to its run. See [`apps/backend/docs/core_coding_agent.md`](../apps/backend/docs/core_coding_agent.md).
+6. Activity events from workspace flow over WebSocket only when a UI tab is subscribed.
 
 ### Test stack
 
 `docker-compose.test.yml`: Postgres + `apps/fake-github` + backend with `GITHUB_API_BASE_URL=http://fake-github:8080` and `YAAOS_CODING_AGENT_STUB=1`. Plugins stubbed via `app/testing/`. E2E specs drive preconditions via `POST /api/testing/reset` + `seed/*`.
+
+### Periodic work
+
+Cluster-safe recurring tasks run in every worker process via `core/tasks.scheduler_loop`. Schedules are declared at import time with `@scheduled(name, cron)` or `schedule_task(name, cron, task_ref=...)`. Per-tick `INSERT INTO scheduled_runs (schedule_id, fire_time) ... ON CONFLICT DO NOTHING` is the sole gate that decides which worker enqueues for a slot — no leader election, no SPOF. Registered schedules:
+
+- `scheduled_runs_prune` (daily, `0 0 * * *`, `core/tasks`) — deletes `scheduled_runs` rows >7 days old.
+- `identity_purge` (hourly, `0 * * * *`, `core/identity`) — purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION`.
+- `workspace_reaper` (per minute, `* * * * *`, `core/workspace`) — TTL expiry, idle-timeout, agent-loss detection, destroy retries.
+- `coding_agent_activity_partition_maintenance` (daily, `0 1 * * *`, `core/coding_agent`) — creates the current ISO week + the next two partitions of `coding_agent_activity`, drops partitions >4 weeks old; raw partition DDL is in `core/database`.
+
+See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
 
 ## Cross-app conventions
 
@@ -136,7 +148,7 @@ All at-rest secrets go through [`core/secrets`](../apps/backend/docs/core_secret
 
 ### Persistence (new tables)
 
-`workflow_executions`, `pending_human_decisions`, `outbox_entries`, `workspace_agents`, `bearer_tokens`. Existing tables extended: `tickets` (type, idempotency_key, payload, current_workflow_execution_id), `workspaces` (current_command_id, current_holder_workflow_id, max_idle_seconds, agent_id), `orgs` (registered_iam_arn, aws_region). Activity events are never persisted — they exist only in flight from WebSocket → `core/sse` → SSE → UI.
+`workflow_executions`, `pending_human_decisions`, `outbox_entries`, `workspace_agents`, `bearer_tokens`. Existing tables extended: `tickets` (type, idempotency_key, payload, current_workflow_execution_id), `workspaces` (current_command_id, max_idle_seconds, owning_agent_id), `orgs` (registered_iam_arn, aws_region). Activity events are never persisted — they exist only in flight from WebSocket → `core/sse` → SSE → UI.
 
 ### Committed OpenAPI artifacts
 

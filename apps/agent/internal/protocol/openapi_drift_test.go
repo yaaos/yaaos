@@ -62,7 +62,7 @@ var schemaToStruct = map[string]struct {
 	"HeartbeatResponse":           {reflect.TypeOf(HeartbeatResponse{}), nil},
 	"ClaimRequest":                {reflect.TypeOf(ClaimRequest{}), nil},
 	"CommandBase":                 {reflect.TypeOf(CommandHeader{}), nil},
-	"CreateWorkspaceCommand":      {reflect.TypeOf(CreateWorkspaceCommand{}), nil},
+	"ProvisionWorkspaceCommand":   {reflect.TypeOf(ProvisionWorkspaceCommand{}), nil},
 	"WriteFilesCommand":           {reflect.TypeOf(WriteFilesCommand{}), nil},
 	"RefreshWorkspaceAuthCommand": {reflect.TypeOf(RefreshWorkspaceAuthCommand{}), nil},
 	"InvokeClaudeCodeCommand":     {reflect.TypeOf(InvokeClaudeCodeCommand{}), nil},
@@ -239,7 +239,7 @@ func TestOpenAPIDrift_AgentCommandKindsMatchSpecMapping(t *testing.T) {
 	spec := loadSpec(t)
 	yamlKinds := spec.Components.Schemas["AgentCommand"].Discriminator.Mapping
 	goKinds := map[string]struct{}{
-		string(KindCreateWorkspace):      {},
+		string(KindProvisionWorkspace):   {},
 		string(KindWriteFiles):           {},
 		string(KindRefreshWorkspaceAuth): {},
 		string(KindInvokeClaudeCode):     {},

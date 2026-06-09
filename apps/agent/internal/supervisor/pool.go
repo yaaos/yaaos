@@ -3,7 +3,7 @@
 // The supervisor receives a stream of commands from the backend (interleaved
 // across workspaces by the claim-loop fan-in); the pool routes each command
 // to the right long-lived `agent workspace` child process based on
-// `workspace_id`, spawning a new one on the first CreateWorkspace command,
+// `workspace_id`, spawning a new one on the first ProvisionWorkspace command,
 // serializing commands per workspace, and reaping the runner after
 // CleanupWorkspace.
 //
@@ -57,7 +57,7 @@ type WorkspaceRunner interface {
 }
 
 // SpawnFunc creates a new runner for the given workspace id. The pool
-// calls this exactly once per workspace (on the `CreateWorkspace` arrival).
+// calls this exactly once per workspace (on the `ProvisionWorkspace` arrival).
 type SpawnFunc func(ctx context.Context, workspaceID string) (WorkspaceRunner, error)
 
 // WorkspaceState is the liveness axis of a registry record.
@@ -84,7 +84,7 @@ var ErrUnknownWorkspace = errors.New("no workspace runner")
 var ErrAtCap = errors.New("cap reached")
 
 // errSlotTaken is returned by reserveActiveSlot when another concurrent
-// CreateWorkspace dispatch already reserved (or owns) an Active record for
+// ProvisionWorkspace dispatch already reserved (or owns) an Active record for
 // the same workspace_id. The loser of that race must not spawn a second
 // runner — it falls through to using the winner's record.
 var errSlotTaken = errors.New("active slot already reserved")
@@ -94,7 +94,7 @@ var errSlotTaken = errors.New("active slot already reserved")
 // and by its own slotMu for serializing Send calls to the same runner.
 type workspaceRecord struct {
 	state            WorkspaceState
-	path             string // on-disk workspace directory; set after CreateWorkspace
+	path             string // on-disk workspace directory; set after ProvisionWorkspace
 	currentCommandID string // "" when idle
 	runner           WorkspaceRunner
 	slotMu           sync.Mutex // serializes Send calls to this runner
@@ -158,7 +158,7 @@ func (p *Pool) createActive(id string, runner WorkspaceRunner) {
 	}
 }
 
-// reserveActiveSlot atomically claims an Active slot for a CreateWorkspace
+// reserveActiveSlot atomically claims an Active slot for a ProvisionWorkspace
 // dispatch. The existence check, cap check, and placeholder insert all happen
 // under a single Pool.mu critical section — concurrent same-id creates cannot
 // both pass, and concurrent creates across ids cannot both pass a stale count.
@@ -355,7 +355,7 @@ func (p *Pool) ActiveIDs() []string {
 func (p *Pool) IdleIDs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var out []string
+	out := make([]string, 0)
 	for id, rec := range p.registry {
 		if rec.state == StateActive && rec.currentCommandID == "" {
 			out = append(out, id)
@@ -368,14 +368,14 @@ func (p *Pool) IdleIDs() []string {
 
 // Dispatch routes one WorkspaceCommand to the right runner and returns the
 // event the runner emits. If no registry record exists and the command is
-// CreateWorkspace, the pool spawns a runner and inserts an Active record.
+// ProvisionWorkspace, the pool spawns a runner and inserts an Active record.
 // Any other kind for an unknown workspace is a protocol violation — Dispatch
 // returns a synthetic `completed_failure` event so the supervisor can still
 // ack the command.
 //
 // Registry effects per kind:
 //
-//   - CreateWorkspace  → createActiveCapped (cap enforced atomically), setPath from CreateResult.Path
+//   - ProvisionWorkspace  → createActiveCapped (cap enforced atomically), setPath from ProvisionResult.Path
 //   - other kinds      → require existing Active record; failure → completed_failure
 //   - CleanupWorkspace → remove on success
 //   - all kinds        → setCommandID around Execute, clearCommandID on completion
@@ -402,7 +402,7 @@ func (p *Pool) Dispatch(ctx context.Context, cmd command.WorkspaceCommand, onPro
 
 	// Find or create a registry record.
 	//
-	// CreateWorkspace reserves an Active slot atomically (existence + cap +
+	// ProvisionWorkspace reserves an Active slot atomically (existence + cap +
 	// placeholder insert under one Pool.mu critical section), then spawns the
 	// runner outside the lock and assigns it. Two concurrent same-id creates
 	// cannot both reserve — the loser gets errSlotTaken and falls through to
@@ -411,7 +411,7 @@ func (p *Pool) Dispatch(ctx context.Context, cmd command.WorkspaceCommand, onPro
 	// Non-create commands require an already-sendable record (Active + a
 	// non-nil runner). A reserved-but-not-yet-spawned placeholder is NOT
 	// sendable, so no command can ever observe a record whose runner is nil.
-	isCreate := header.Kind == protocol.KindCreateWorkspace
+	isCreate := header.Kind == protocol.KindProvisionWorkspace
 	if isCreate {
 		switch err := p.reserveActiveSlot(workspaceID, maxWorkspaces); {
 		case err == nil:
@@ -483,9 +483,9 @@ func (p *Pool) Dispatch(ctx context.Context, cmd command.WorkspaceCommand, onPro
 		return ev
 	}
 
-	// For CreateWorkspace, set the path from the event outputs so the
+	// For ProvisionWorkspace, set the path from the event outputs so the
 	// janitor knows where to find the directory.
-	if header.Kind == protocol.KindCreateWorkspace {
+	if header.Kind == protocol.KindProvisionWorkspace {
 		if ev.Kind == protocol.EventCompletedSuccess {
 			if pathVal, ok := ev.Outputs["path"]; ok {
 				if pathStr, ok := pathVal.(string); ok && pathStr != "" {
@@ -522,11 +522,12 @@ func (p *Pool) CloseAll(ctx context.Context) {
 
 func failureEvent(header protocol.CommandHeader, reason string) protocol.AgentEvent {
 	return protocol.AgentEvent{
-		CommandID:     header.CommandID,
-		Kind:          protocol.EventCompletedFailure,
-		FailureReason: reason,
-		Traceparent:   header.Traceparent,
-		ReportedAt:    time.Now().UTC(),
+		CommandID:       header.CommandID,
+		Kind:            protocol.EventCompletedFailure,
+		FailureReason:   reason,
+		Traceparent:     header.Traceparent,
+		ReportedAt:      time.Now().UTC(),
+		CompletionToken: header.CompletionToken,
 	}
 }
 

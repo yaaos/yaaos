@@ -1,8 +1,8 @@
 """HTTP coverage for GET /api/tickets/{ticket_id}.
 
 Asserts the extended-projection shape: status (5-state collapsed vocab),
-findings_count, max_severity, builder, and the stages array when a
-workflow_execution exists.
+findings_count, max_severity, and builder. Workflow-run data is served
+by the dedicated /workflow-runs endpoint.
 """
 
 from __future__ import annotations
@@ -79,9 +79,9 @@ async def test_detail_returns_status_meta_fields(seeded) -> None:
     assert body["status"] == "running"
     assert body["findings_count"] == 0
     assert body["builder_kind"] in {"user", "system"}
-    # `stages` is present when the workflow row exists.
-    # Bare ticket → empty list (not missing) so the SPA can safely .map.
-    assert "stages" in body
+    # `stages` is NOT in the detail payload — workflow-run data lives at
+    # GET /api/tickets/{id}/workflow-runs.
+    assert "stages" not in body
 
 
 @pytest.mark.service

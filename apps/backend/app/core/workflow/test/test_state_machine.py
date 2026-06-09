@@ -24,7 +24,6 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
@@ -123,8 +122,13 @@ class _AppendOnce:
 
 
 class _WorkspaceStub:
-    """Workspace-category command whose dispatch start_step stubs.
-    Provided here so the workspace branch of start_step is exercised."""
+    """Workspace-category command exercised by the engine's Workspace branch.
+
+    `dispatch` returns a fresh UUID without writing an agent_commands row;
+    these tests inject the terminal AgentEvent directly via `HANDLE_AGENT_EVENT`
+    (bypassing `record_agent_event` and therefore the column lookup), so a
+    durable row is not needed.
+    """
 
     kind = "DoOnAgent"
     category = CommandCategory.WORKSPACE
@@ -134,29 +138,33 @@ class _WorkspaceStub:
         del inputs, ctx
         return Outcome.success()
 
+    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
+        return uuid4()
+
 
 class _MinimalWorkspaceProvider:
     """Minimal WorkspaceProvider stub so `list_workspace_providers()` returns
     exactly one entry when Workspace commands are dispatched in tests."""
 
-    meta = PluginMeta(id="test_stub", type="workspace", display_name="test-stub")
+    plugin_id = "test_stub"
 
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+    async def health_check(self) -> None:  # type: ignore[no-untyped-def]
         return None
 
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+    async def read_text(self, path):  # type: ignore[no-untyped-def]
         return None
 
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
         return None
 
 
@@ -819,6 +827,45 @@ async def test_ticket_payload_resolved_in_step_inputs(db_session) -> None:
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.DONE.value
+
+
+@pytest.mark.asyncio
+async def test_finalizer_runs_then_workflow_records_failed(db_session) -> None:
+    """A workflow with a declared finalizer step must end in FAILED (not DONE)
+    when an earlier step fails.
+
+    The finalizer step (cleanup) has ``transitions={"success": COMPLETE_WORKFLOW}``
+    on the normal happy path.  When it runs as the failure-path finalizer it
+    must NOT flip the execution to DONE — the pending failure context from the
+    failing step must win instead.
+    """
+    failing = _FailingLocal("Work")
+    cleanup = _RecordingLocal("Cleanup")
+    wf = Workflow(
+        name="finalizer-1",
+        version=1,
+        steps=(
+            Step(id="work", command_kind="Work"),
+            Step(
+                id="cleanup",
+                command_kind="Cleanup",
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+        ),
+        entry_step_id="work",
+        finalizer_step_id="cleanup",
+    )
+    eng = _engine_with(failing, cleanup, workflow=wf)
+    exec_id = await eng.start(workflow_name="finalizer-1", ticket_id=_ticket_id(), session=db_session)
+    await db_session.commit()
+    await _drain_workflow_outbox(db_session)
+
+    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
+    # The finalizer must have run exactly once.
+    assert len(cleanup.calls) == 1
+    # The workflow must end in FAILED, not DONE.
+    assert wfx.state == WorkflowState.FAILED.value
+    assert wfx.failure_reason == "planned-failure"
 
 
 @pytest.mark.asyncio

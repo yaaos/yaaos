@@ -21,7 +21,7 @@ These are orthogonal. A live workspace with no in-flight command has `state=Acti
 
 | State | `status` in heartbeat | Runner | When entered |
 |---|---|---|---|
-| `Active` | `"running"` | non-nil once spawned | `reserveActiveSlot` + `assignRunner` on CreateWorkspace |
+| `Active` | `"running"` | non-nil once spawned | `reserveActiveSlot` + `assignRunner` on ProvisionWorkspace |
 | `Defunct` | `"exited"` | closed (was non-nil) | `markDefunct` on unexpected child exit |
 | `Orphaned` | `"unknown"` | nil | `seedOrphan` at startup scan |
 
@@ -33,12 +33,12 @@ Each edge is a named Pool mutator — no direct state writes.
 
 | From | To | Mutator | Trigger |
 |---|---|---|---|
-| (absent / Defunct / Orphaned) | Active | `reserveActiveSlot` (placeholder) then `assignRunner` (runner) | CreateWorkspace dispatch |
+| (absent / Defunct / Orphaned) | Active | `reserveActiveSlot` (placeholder) then `assignRunner` (runner) | ProvisionWorkspace dispatch |
 | (absent) | Orphaned | `seedOrphan` | startup scan finds leftover dir |
 | Active | Defunct | `markDefunct` | runner Send returns an error (child exited or timed out) |
 | any | (removed) | `remove` | CleanupWorkspace succeeds, backend forgotten-workspaces janitor completes, or spawn fails after reservation |
 
-`createActive` (runner supplied at insert) remains the direct mutator used by tests and orphan-free seeding; the production CreateWorkspace path uses the `reserveActiveSlot` + `assignRunner` pair so the cap check and the at-most-one-runner guard are one atomic step.
+`createActive` (runner supplied at insert) remains the direct mutator used by tests and orphan-free seeding; the production ProvisionWorkspace path uses the `reserveActiveSlot` + `assignRunner` pair so the cap check and the at-most-one-runner guard are one atomic step.
 
 Busy-ness transitions:
 - `setCommandID(id, cmd)` — called when Dispatch begins Send
@@ -57,7 +57,7 @@ An Orphaned record has a nil runner and a path set from the startup scan. It is 
 
 ## Defunct record shape
 
-A Defunct record has a closed runner (kept in the struct but not used for Sends). It stays in `KnownIDs` — the directory is protected until the backend reaps it. A subsequent `CreateWorkspace` for the same id replaces the Defunct record with a fresh Active one (`createActive` overwrites the registry entry).
+A Defunct record has a closed runner (kept in the struct but not used for Sends). It stays in `KnownIDs` — the directory is protected until the backend reaps it. A subsequent `ProvisionWorkspace` for the same id replaces the Defunct record with a fresh Active one (`createActive` overwrites the registry entry).
 
 ## Lifecycle gate
 
@@ -70,4 +70,4 @@ The lifecycle is derived from the `config` atomic pointer in the supervisor; the
 
 `Pool.Dispatch` enforces the cap atomically under the pool mutex via `reserveActiveSlot`. The cap counts **Active records only** — Defunct and Orphaned records do not count toward it. The existence check, cap check, and placeholder insert are one operation under `Pool.mu`, so concurrent claim-workers cannot both pass a stale count, and concurrent same-id creates cannot both reserve (the loser gets `errSlotTaken` and never spawns).
 
-The supervisor reads `config.Load().MaxWorkspaces` and passes it as `maxWorkspaces` to `Pool.Dispatch`. The pool itself is config-agnostic — the supervisor supplies the int. A `CreateWorkspace` that would exceed the cap returns `completed_failure "cap reached"`.
+The supervisor reads `config.Load().MaxWorkspaces` and passes it as `maxWorkspaces` to `Pool.Dispatch`. The pool itself is config-agnostic — the supervisor supplies the int. A `ProvisionWorkspace` that would exceed the cap returns `completed_failure "cap reached"`.

@@ -1,10 +1,12 @@
 """HTTP routes for tickets.
 
-| Method | Path                            | Action          |
-|--------|---------------------------------|-----------------|
-| GET    | `/api/tickets`                  | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}`      | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}/audit`| `TICKETS_READ`  |
+| Method | Path                                                                       | Action          |
+|--------|----------------------------------------------------------------------------|-----------------|
+| GET    | `/api/tickets`                                                             | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}`                                                 | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/audit`                                           | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/workflow-runs`                                   | `TICKETS_READ`  |
+| GET    | `/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}`               | `TICKETS_READ`  |
 
 Org context arrives via `X-Org-Slug` (RouteSecurity.ORG_SCOPED).
 """
@@ -16,9 +18,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, org_id_var
+from app.core.coding_agent import ActivityLog
 from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.tickets.service import (
@@ -41,6 +45,40 @@ def _org() -> UUID:
     if org_id is None:
         raise _err(400, "no_org_context")
     return org_id
+
+
+class WorkflowStepSummary(BaseModel):
+    """One step in a workflow run, projected for the ticket Activity tab."""
+
+    step_id: str
+    command_kind: str
+    state: str
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class WorkflowRunView(BaseModel):
+    """One workflow execution for a ticket, with its ordered step list."""
+
+    id: UUID
+    workflow_name: str
+    workflow_version: int
+    state: str
+    current_step_id: str | None
+    failure_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    steps: list[WorkflowStepSummary]
+
+
+class StepActivityResponse(BaseModel):
+    """Persisted coding-agent activity blob for one workflow step.
+
+    `activity` is null when the step ran no coding-agent invocation or the
+    weekly partition holding its row has aged out.
+    """
+
+    activity: ActivityLog | None
 
 
 @router.get("/dashboard")
@@ -69,7 +107,7 @@ async def dashboard() -> dict[str, Any]:
     needs_attention: list[Ticket] = [
         t
         for t in items
-        if t.findings_count > 0 and t.status == "done" and t.max_severity in ("medium", "high")
+        if t.findings_count > 0 and t.status == "done" and t.max_severity in ("should_fix", "blocker")
     ]
 
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -202,43 +240,21 @@ async def hitl_history(ticket_id: UUID) -> list[dict[str, Any]]:
 
 @router.get("/{ticket_id}")
 async def detail(ticket_id: UUID) -> dict[str, Any]:
-    """Per-ticket detail with the enrichment: `stages[]` (projected from
-    `workflow_executions`) + `builder` (the trigger identity).
+    """Per-ticket detail with the enrichment: `builder` (the trigger identity).
 
     Returns the Ticket pydantic fields plus:
-    - `stages: [{name, state, attempt_count, current_attempt, started_at,
-       completed_at, workflow_execution_id}]` — one entry per workflow run
-       on the ticket, newest first.
     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
        when the ticket's PR has an `author_login`; `kind="system"` when
        yaaos triggered the run with no human attribution.
-    """
-    from app.core.database import session as _db_session  # noqa: PLC0415
-    from app.core.workflow import list_executions_for_ticket  # noqa: PLC0415
 
+    Workflow-run data is served by the dedicated
+    `GET /api/tickets/{id}/workflow-runs` endpoint.
+    """
     org_id = _org()
     try:
         ticket = await get(ticket_id, org_id=org_id)
     except TicketNotFoundError:
         raise HTTPException(status_code=404, detail="ticket not found")
-
-    async with _db_session() as s:
-        wfx_summaries = await list_executions_for_ticket(ticket_id, session=s)
-
-    stages = [
-        {
-            "name": w.workflow_name,
-            "state": w.state,
-            "attempt_count": 1,  # POC: one attempt per execution row.
-            "current_attempt": 1,
-            "started_at": w.created_at.isoformat() if w.created_at else None,
-            "completed_at": (
-                w.updated_at.isoformat() if w.state in ("done", "failed", "cancelled") else None
-            ),
-            "workflow_execution_id": str(w.id),
-        }
-        for w in wfx_summaries
-    ]
 
     builder: dict[str, Any] = (
         {
@@ -252,9 +268,82 @@ async def detail(ticket_id: UUID) -> dict[str, Any]:
     )
 
     payload = ticket.model_dump(mode="json")
-    payload["stages"] = stages
     payload["builder"] = builder
     return payload
+
+
+@router.get("/{ticket_id}/workflow-runs")
+async def workflow_runs(ticket_id: UUID) -> list[WorkflowRunView]:
+    """All workflow runs for the ticket, oldest first, with their step lists.
+
+    Each step's `state` is pending | running | done | failed | skipped. Pure
+    workflow vocabulary — no AgentCommand references.
+    """
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow import list_run_views_for_ticket  # noqa: PLC0415
+
+    org_id = _org()
+    try:
+        await get(ticket_id, org_id=org_id)
+    except TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        runs = await list_run_views_for_ticket(ticket_id, session=s)
+
+    return [
+        WorkflowRunView(
+            id=r.id,
+            workflow_name=r.workflow_name,
+            workflow_version=r.workflow_version,
+            state=r.state,
+            current_step_id=r.current_step_id,
+            failure_reason=r.failure_reason,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+            steps=[
+                WorkflowStepSummary(
+                    step_id=st.step_id,
+                    command_kind=st.command_kind,
+                    state=st.state,
+                    started_at=st.started_at,
+                    completed_at=st.completed_at,
+                )
+                for st in r.steps
+            ],
+        )
+        for r in runs
+    ]
+
+
+@router.get("/{ticket_id}/activity/{execution_id}/{step_id}")
+async def step_activity(ticket_id: UUID, execution_id: UUID, step_id: str) -> StepActivityResponse:
+    """Return the persisted `ActivityLog` for one workflow step.
+
+    `activity` is `null` when either the step never ran a coding-agent
+    invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
+    activity row has aged out (4-week TTL).
+
+    Cross-tenant safety: 404s when the execution does not belong to the
+    ticket (and therefore not to the caller's org).
+    """
+    from app.core.coding_agent import get_step_activity  # noqa: PLC0415
+    from app.core.database import session as _db_session  # noqa: PLC0415
+    from app.core.workflow import get_execution_summary  # noqa: PLC0415
+
+    org_id = _org()
+    try:
+        await get(ticket_id, org_id=org_id)
+    except TicketNotFoundError:
+        raise HTTPException(status_code=404, detail="ticket not found")
+
+    async with _db_session() as s:
+        wfx = await get_execution_summary(execution_id, session=s)
+        if wfx is None or wfx.ticket_id != ticket_id:
+            raise HTTPException(status_code=404, detail="workflow execution not found")
+        activity = await get_step_activity(execution_id, step_id, session=s)
+
+    return StepActivityResponse(activity=activity)
 
 
 @router.get("/{ticket_id}/audit")

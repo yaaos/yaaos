@@ -49,14 +49,31 @@ trap - EXIT
 echo "==> golangci-lint run"
 golangci-lint run ./...
 
-echo "==> go build"
+echo "==> go build (production, untagged)"
 go build ./...
+
+echo "==> go build -tags agent_test (verify the identity-change seam compiles)"
+# The agent_test tag swaps in the env-honoring acceptIdentityChange (see
+# internal/supervisor/identity_seam_*.go). The e2e image builds with this tag;
+# CI verifies both build combinations compile.
+go build -tags agent_test ./...
+
+echo "==> go build -tags agent_dev (verify the audience-override seam compiles)"
+# The agent_dev tag swaps in the env-honoring audienceOverride (see
+# internal/supervisor/audience_seam_*.go). The dev compose builds with this tag;
+# CI verifies it compiles cleanly.
+go build -tags agent_dev ./...
 
 echo "==> go test -race"
 # Race detector requires cgo; force it on (alpine's golang image defaults
 # to CGO_ENABLED=0 for portability, and the prod Dockerfile sets it
 # explicitly for the static binary build).
 CGO_ENABLED=1 go test -race ./...
+
+echo "==> go test -race -tags agent_test (identity-change seam tests)"
+# reauth_test.go is tagged agent_test: it exercises acceptIdentityChange, which
+# only honors YAAOS_AGENT_ACCEPT_IDENTITY_CHANGE under this tag.
+CGO_ENABLED=1 go test -race -tags agent_test ./internal/supervisor/...
 
 echo "==> govulncheck"
 govulncheck ./...

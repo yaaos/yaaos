@@ -1,9 +1,8 @@
-"""The five reviewer workflows + their commands register against
-`core/workflow.get_engine()` at `domain/reviewer` import.
+"""Reviewer workflows + commands register against `core/workflow.get_engine()`
+at `domain/reviewer` import.
 
-These tests don't run the workflows end-to-end. They assert that the
-registry shape lines up with the workflow definitions so a typo in a
-step's `command_kind` is caught at the seam.
+These tests assert the registry shape so a typo in a step's `command_kind`
+is caught at the seam.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from app.domain.reviewer.workflows import ALL_WORKFLOWS
 
 
 @pytest.fixture(autouse=True)
-def _ensure_registered() -> None:
+def _ensure_registered() -> None:  # type: ignore[no-untyped-def]
     """Tests in this file run after `domain.reviewer` has been imported (the
     `web.py` import chain pulls it in). A previous test may have replaced the
     workflow engine singleton. Re-import the module to re-trigger registration."""
@@ -31,16 +30,17 @@ def _ensure_registered() -> None:
     yield
 
 
-def test_all_five_workflows_registered() -> None:
+def test_pr_review_v1_workflow_registered() -> None:
     engine = get_engine()
-    expected = {
-        "pr_review_v1",
-        "incremental_review_v1",
-        "verify_fix_v1",
-        "stale_check_v1",
-        "answer_question_v1",
-    }
-    assert expected.issubset(set(engine.registered_workflow_names()))
+    assert "pr_review_v1" in set(engine.registered_workflow_names())
+
+
+def test_no_deleted_workflows_registered() -> None:
+    """Deleted workflows must not be registered."""
+    engine = get_engine()
+    deleted = {"incremental_review_v1", "verify_fix_v1", "stale_check_v1", "answer_question_v1"}
+    registered = set(engine.registered_workflow_names())
+    assert not (deleted & registered), f"deleted workflows still registered: {deleted & registered}"
 
 
 def test_each_workflow_step_resolves_to_a_registered_command() -> None:
@@ -60,7 +60,7 @@ def test_each_workflow_step_resolves_to_a_registered_command() -> None:
 def test_lifecycle_commands_registered() -> None:
     """The three workspace-lifecycle commands ship in `core/workspace/commands.py`
     and register via the reviewer bootstrap. Verify they're present so future
-    Workspace-category review commands can rely on `ProvisionWorkspace` /
+    workspace-category review commands can rely on `ProvisionWorkspace` /
     `CleanupWorkspace` / `RefreshWorkspaceAuth` being available."""
     engine = get_engine()
     for kind in ("ProvisionWorkspace", "CleanupWorkspace", "RefreshWorkspaceAuth"):

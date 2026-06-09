@@ -18,7 +18,7 @@ from app.core.agent_gateway import (
 )
 from app.core.workspace.remote_provider import (
     RemoteAgentWorkspaceProvider,
-    dispatch_create_workspace,
+    dispatch_provision_workspace,
 )
 from app.testing.seed import seed_agent
 
@@ -137,19 +137,19 @@ async def test_connection_status_lost_when_heartbeat_stale(db_session) -> None:
     assert status["pod_count"] == 1
 
 
-# ── dispatch_create_workspace ─────────────────────────────────────────
+# ── dispatch_provision_workspace ─────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_dispatch_create_workspace_enqueues_pending_row(db_session) -> None:
-    """dispatch_create_workspace enqueues a pending row claimable by any agent."""
+async def test_dispatch_provision_workspace_enqueues_pending_row(db_session) -> None:
+    """dispatch_provision_workspace enqueues a pending row claimable by any agent."""
     from app.core.agent_gateway import claim_next  # noqa: PLC0415
 
     org_id = uuid4()
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
     workspace_id = uuid4()
 
-    result = await dispatch_create_workspace(
+    result = await dispatch_provision_workspace(
         org_id,
         workspace_id,
         repo=RepoRef(

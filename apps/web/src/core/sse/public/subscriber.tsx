@@ -37,6 +37,8 @@ import type { ServerEvent } from "./types";
  * Translation table (`kind` → which query prefixes to invalidate):
  * - `ticket_status_changed` → ["tickets"], ["tickets", ticket_id],
  *   ["tickets", ticket_id, "audit"], ["reviewer", "metrics"]
+ * - `workflow_state_changed` → ["workflow", "runs", ticket_id],
+ *   ["tickets", ticket_id] (status pill re-read)
  * - `review_requested` | `review_started` | `review_completed` |
  *   `review_failed` | `review_superseded` → ["tickets"], ["tickets", "dashboard"]
  * - `finding_raised` | `finding_re_observed` | `finding_anchor_updated` |
@@ -151,6 +153,18 @@ function _handleEvent(evt: ServerEvent): void {
         _scheduleInvalidate(["tickets", tid, "audit"]);
       }
       _scheduleInvalidate(["reviewer", "metrics"]);
+      break;
+    case "workflow_state_changed":
+      // Invalidate the workflow-run query for the specific ticket so the
+      // Activity tab step tree and stage band refresh on every transition.
+      // Also invalidate the ticket query so the status pill stays current.
+      if (tid) {
+        _scheduleInvalidate(["workflow", "runs", tid]);
+        _scheduleInvalidate(["tickets", tid]);
+        // Findings land as a workflow step completes; nothing else
+        // invalidates this key, so refresh it on every transition.
+        _scheduleInvalidate(["reviewer", "findings", tid]);
+      }
       break;
     case "review_requested":
     case "review_started":

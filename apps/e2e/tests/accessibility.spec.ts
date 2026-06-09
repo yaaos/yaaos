@@ -67,9 +67,9 @@ test.describe("a11y — anchor pages", () => {
   test("Coding Agent detail has no WCAG AA violations", async ({ page, request }) => {
     await loginAsOwner(page, request);
     await page.goto(`${YAAOS_URL}/orgs/acme/settings/coding-agents/claude_code`);
-    // Wait for the AgentEditor's testid to confirm the bespoke UI mounted
+    // Wait for the uninstall button to confirm the bespoke UI mounted
     // (not the "not installed" placeholder).
-    await expect(page.getByTestId("cc-save")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("cc-uninstall-button")).toBeVisible({ timeout: 10_000 });
     await expectNoViolations(page);
   });
 });

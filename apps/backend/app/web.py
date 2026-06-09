@@ -25,7 +25,7 @@ observability.configure(role="app")
 from app.core import webserver  # noqa: E402
 
 # 4. Core modules whose plugins are domain-facing.
-from app.core import audit_log, workspace  # noqa: F401, E402
+from app.core import audit_log, coding_agent, vcs, workspace  # noqa: F401, E402
 
 # 4a. workflow engine + agent gateway. Workflow engine registers the
 # three taskiq task names at import; agent_gateway registers `/v1/*` routes.
@@ -54,13 +54,9 @@ from app.domain.orgs import audit_web as _orgs_audit_web  # noqa: F401, E402
 from app.domain.orgs import sso_web as _orgs_sso_web  # noqa: F401, E402
 from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
 
-# 5. Domain modules — order: types first (vcs, lessons), then coding_agent
-#    (which references vcs + lessons types), then leaf domain modules,
+# 5. Domain modules — order: types first (lessons), then leaf domain modules,
 #    then domain modules that depend on others.
-from app.domain import vcs  # noqa: F401, E402
 from app.domain import lessons  # noqa: F401, E402
-from app.domain import coding_agent  # noqa: F401, E402
-from app.domain import pull_requests  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 
@@ -70,14 +66,14 @@ from app.domain import reviewer  # noqa: F401, E402
 # if the wiring is wrong, rather than surfacing as a mid-flow None.
 from app.core.workspace import (  # noqa: E402
     assert_workflow_context_provider,
+    register_workspace_providers,
     register_workspace_recovery_policies,
 )
 
+register_workspace_providers()
 register_workspace_recovery_policies()
 assert_workflow_context_provider()
 from app.domain import intake  # noqa: F401, E402
-from app.domain import plugins as _domain_plugins  # noqa: F401, E402
-from app.domain.plugins import web as _domain_plugins_web  # noqa: F401, E402
 from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402
@@ -133,9 +129,16 @@ app = webserver.create_app()
 if __name__ == "__main__":
     import uvicorn
 
+    # Pass the already-built `app` OBJECT, not the "app.web:app" import string.
+    # A string makes uvicorn re-import this module — but it's already running as
+    # `__main__`, and `app.web` is a distinct sys.modules entry, so the whole
+    # composition root above would execute a SECOND time (every module-level
+    # registration double-firing). Serving the object boots the bootstrap once.
+    # Trade-off: no uvicorn reload/multi-worker (both need an import string) —
+    # the backend runs single-process per container, so neither is used.
     settings = get_settings()
     uvicorn.run(
-        "app.web:app",
+        app,
         host="0.0.0.0",
         port=settings.yaaos_port,
         ws_ping_interval=30,

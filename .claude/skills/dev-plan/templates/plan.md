@@ -9,6 +9,7 @@ Each phase block is the contract with a fresh subagent. Restate load-bearing fac
 ## Phase 1 — <goal>
 
 - **Goal:** <one line; what's true after>
+- **Size:** mechanical | many-decision | mixed — <one-line why; for `mixed`, name the seam it was/​wasn't split along>
 - **Context to load:**
   - `apps/<app>/docs/<layer>_<module>.md` — <one-line why>
   - `<path>:<line>` — <function / pattern to reuse, one-line why>

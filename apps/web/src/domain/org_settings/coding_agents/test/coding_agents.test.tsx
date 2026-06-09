@@ -30,23 +30,6 @@ const CLAUDE_CODE = {
   updated_at: "2026-05-20T00:00:00Z",
 };
 
-const PLUGINS_CA = [
-  {
-    id: "claude_code",
-    type: "coding_agent",
-    display_name: "Claude Code",
-    description: "Anthropic CLI",
-    docs_url: null,
-  },
-  {
-    id: "other",
-    type: "coding_agent",
-    display_name: "Other Agent",
-    description: null,
-    docs_url: null,
-  },
-];
-
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
@@ -54,7 +37,6 @@ function wrap(node: React.ReactNode) {
 
 function setupCommon() {
   server.use(
-    http.get("/api/plugins/available", () => HttpResponse.json({ plugins: PLUGINS_CA })),
     http.get("/api/auth/me", () =>
       HttpResponse.json({
         user: { id: "u", display_name: "u", primary_email: "u@x", emails: [] },
@@ -76,14 +58,23 @@ describe("CodingAgentsSettingsPage (MSW)", () => {
     expect(screen.getByTestId("ca-add")).toBeInTheDocument();
   });
 
-  it("Add opens the picker with installed plugins disabled", async () => {
+  it("Add opens the install card with claude_code disabled when already installed", async () => {
+    server.use(http.get("/api/coding-agents", () => HttpResponse.json([CLAUDE_CODE])));
+    render(wrap(<CodingAgentsSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("ca-add")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("ca-add"));
+    await waitFor(() => expect(screen.getByTestId("ca-picker-card")).toBeInTheDocument());
+    expect(screen.getByTestId("ca-picker-add-claude_code")).toBeDisabled();
+  });
+
+  it("Add installs claude_code when not yet installed", async () => {
     let installBody: unknown = null;
     server.use(
-      http.get("/api/coding-agents", () => HttpResponse.json([CLAUDE_CODE])),
+      http.get("/api/coding-agents", () => HttpResponse.json([])),
       http.post("/api/coding-agents", async ({ request }) => {
         installBody = await request.json();
         return HttpResponse.json({
-          plugin_id: "other",
+          plugin_id: "claude_code",
           settings: {},
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -94,10 +85,9 @@ describe("CodingAgentsSettingsPage (MSW)", () => {
     await waitFor(() => expect(screen.getByTestId("ca-add")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("ca-add"));
     await waitFor(() => expect(screen.getByTestId("ca-picker-card")).toBeInTheDocument());
-    expect(screen.getByTestId("ca-picker-add-claude_code")).toBeDisabled();
-    expect(screen.getByTestId("ca-picker-add-other")).not.toBeDisabled();
-    fireEvent.click(screen.getByTestId("ca-picker-add-other"));
-    await waitFor(() => expect(installBody).toMatchObject({ plugin_id: "other" }));
+    expect(screen.getByTestId("ca-picker-add-claude_code")).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId("ca-picker-add-claude_code"));
+    await waitFor(() => expect(installBody).toMatchObject({ plugin_id: "claude_code" }));
   });
 
   it("Remove confirmation flow gates the uninstall mutation", async () => {

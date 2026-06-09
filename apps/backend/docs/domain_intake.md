@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing. Coordinates writes to `tickets`, `pull_requests`, `reviewer`, `core/audit_log` via plugin-supplied handlers.
+Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing. Coordinates writes to `tickets` (including the PR mirror in `pull_requests`), `reviewer`, `core/audit_log` via plugin-supplied handlers.
 
 Does NOT own: any tables. All writes flow through other modules' services.
 

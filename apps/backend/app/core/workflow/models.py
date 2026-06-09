@@ -31,6 +31,9 @@ class WorkflowExecutionRow(Base):
     step_state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     cancel_requested: Mapped[bool] = mapped_column(nullable=False, default=False)
     otel_trace_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Short failure label written on terminal-fail; queryable for the run-view UI.
+    # Values: schema_invalid | agent_failure | timeout | provision_failed | command_error
+    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

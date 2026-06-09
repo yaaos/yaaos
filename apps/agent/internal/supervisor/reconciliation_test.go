@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// plantWorkspace mimics what `workspace.RealHandler.CreateWorkspace` does
+// plantWorkspace mimics what `workspace.RealHandler.ProvisionWorkspace` does
 // on disk: an `os.MkdirTemp`-style tempdir with a `.workspace-id`
 // manifest file at the top.
 func plantWorkspace(t *testing.T, root, workspaceID string) string {

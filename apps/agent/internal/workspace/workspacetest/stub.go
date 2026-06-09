@@ -14,11 +14,12 @@ import (
 // and pipe plumbing without standing up a real workspace.
 type StubHandler struct{}
 
-func (StubHandler) CloneWorkspace(_ context.Context, cmd *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
-	return command.CreateResult{
-		Path:   "/stub/" + cmd.WorkspaceID,
-		Repo:   cmd.Repo.ExternalID,
-		Reused: false,
+func (StubHandler) ProvisionWorkspace(_ context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
+	return command.ProvisionResult{
+		WorkspaceID: cmd.WorkspaceID,
+		Path:        "/stub/" + cmd.WorkspaceID,
+		Repo:        cmd.Repo.ExternalID,
+		Reused:      false,
 	}, nil
 }
 

@@ -18,27 +18,28 @@ from typing import Any
 
 import structlog
 
-from app.core.workspace import Workspace
-from app.domain.coding_agent import (
+from app.core.coding_agent import (
     ActivityEvent,
+    ActivityLog,
     AnswerQuestionContext,
     AnswerQuestionResult,
-    FindingAnchor,
-    FindingDraft,
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
     InvocationStatus,
     InvocationTelemetry,
     OnActivity,
+    ReportedFinding,
     ReviewContext,
     ReviewResult,
     StaleCheckContext,
     StaleCheckResult,
+    Usage,
     ValidationResult,
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.workspace import Workspace
 
 log = structlog.get_logger("testing.stub_coding_agent")
 
@@ -90,7 +91,7 @@ class StubCodingAgentPlugin:
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
-        self.meta = wrapped.meta
+        self.plugin_id = wrapped.plugin_id
 
     async def review(
         self,
@@ -107,26 +108,24 @@ class StubCodingAgentPlugin:
                     await on_activity(event)
                 except Exception:
                     log.exception("stub_coding_agent.on_activity_failed")
-        # Emit one synthetic FindingDraft so e2e flows
+        # Emit one synthetic ReportedFinding so e2e flows
         # that depend on findings have something to act against.
-        finding = FindingDraft(
-            severity="minor",
-            rule_id="stub/sample-suggestion",
-            title="[stub] sample suggestion",
-            body="Stub finding. Used by e2e specs that exercise the finding-expansion + Teach-yaaos flow.",
-            concrete_failure_scenario=(
-                "Stub plugin always emits this finding so e2e specs can exercise the durable-findings flow."
-            ),
-            confidence=90,
+        finding = ReportedFinding(
+            file="src/example.ts",
+            line=1,
+            category="correctness",
+            severity="nit",
+            confidence="speculative",
             rationale="Stub plugin: emitted for e2e coverage.",
-            anchor=FindingAnchor(file_path="src/example.ts", line_start=1, line_end=1),
+            rule_violated="stub/sample-suggestion",
+            rule_source="stub",
+            suggested_fix="No action needed — this is a stub finding.",
         )
         return ReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=[finding],
             state="COMMENT",
             summary_body="[stub] yaaos review",
-            lesson_ids_consulted=[lesson.id for lesson in context.lessons],
             telemetry=_STUB_TELEMETRY,
         )
 
@@ -137,20 +136,19 @@ class StubCodingAgentPlugin:
         on_activity: OnActivity | None = None,
     ) -> IncrementalReviewResult:
         del workspace, context, on_activity
-        # One synthetic FindingDraft with `concrete_failure_scenario` populated
-        # so it survives the reviewer aggregate's schema check.
         return IncrementalReviewResult(
             status=InvocationStatus.SUCCESS,
             findings=[
-                FindingDraft(
-                    severity="minor",
-                    rule_id="stub/incremental",
-                    title="[stub] incremental finding",
-                    body="Stub incremental finding for e2e flows.",
-                    concrete_failure_scenario="N/A — stub plugin output.",
-                    confidence=90,
+                ReportedFinding(
+                    file="src/example.ts",
+                    line=1,
+                    category="correctness",
+                    severity="nit",
+                    confidence="speculative",
                     rationale="Stub plugin: emitted for e2e coverage.",
-                    anchor=FindingAnchor(file_path="src/example.ts", line_start=1, line_end=1),
+                    rule_violated="stub/incremental",
+                    rule_source="stub",
+                    suggested_fix="No action needed — this is a stub finding.",
                 )
             ],
             telemetry=_STUB_TELEMETRY,
@@ -201,6 +199,55 @@ class StubCodingAgentPlugin:
             telemetry=_STUB_TELEMETRY,
         )
 
+    async def build_review_invocation(self, ctx: ReviewContext, *, session: Any) -> Any:
+        """Returns a minimal stub `Invocation` so service tests that exercise
+        `CodeReview.dispatch` don't need a real API key or DB settings row.
+        """
+        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
+        from app.core.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
+
+        del ctx, session
+        return Invocation(
+            kind="code-review",
+            exec=ExecSpec(argv=("claude", "--print"), stdin="stub prompt", env={}),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=60),
+        )
+
+    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+        """Parse the stream-json stdout — delegates to the real plugin if available,
+        otherwise returns an empty list so tests that don't care about findings pass.
+        """
+        if hasattr(self._wrapped, "parse_review_output"):
+            return self._wrapped.parse_review_output(stdout)
+        return []
+
+    def parse_usage(self, stdout: str) -> Usage:
+        """Delegate to the wrapped plugin's `parse_usage` when present; otherwise
+        return a stub `Usage` matching `_STUB_TELEMETRY` so finalize_run still
+        writes deterministic token counts in offline tests.
+        """
+        if hasattr(self._wrapped, "parse_usage"):
+            return self._wrapped.parse_usage(stdout)
+        return Usage(
+            tokens_in=_STUB_TELEMETRY.tokens_in,
+            tokens_out=_STUB_TELEMETRY.tokens_out,
+            duration_ms=_STUB_TELEMETRY.latency_ms,
+        )
+
+    def render_activity(self, stdout: str) -> ActivityLog:
+        """Delegate to the wrapped plugin's `render_activity` when present;
+        otherwise emit the canned-activity sequence with monotonic `seq` so
+        finalize_run persists a non-empty blob in offline tests.
+        """
+        if hasattr(self._wrapped, "render_activity"):
+            return self._wrapped.render_activity(stdout)
+        events = tuple(ev.model_copy(update={"seq": i}) for i, ev in enumerate(_canned_activity()))
+        return ActivityLog(events=events)
+
+    async def review_preflight_steps(self, ctx: ReviewContext, *, session: Any) -> tuple[str, ...]:
+        del ctx, session
+        return ()
+
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         return await self._wrapped.validate_config(agent_config)
 
@@ -220,7 +267,7 @@ def wrap_all_registered_plugins() -> int:
     Binds a fresh registry with wrapped entries; never mutates the canonical
     registry dict.
     """
-    from app.domain.coding_agent import (  # noqa: PLC0415
+    from app.core.coding_agent import (  # noqa: PLC0415
         CodingAgentRegistry,
         bind_coding_agent_registry,
         current_coding_agent_registry,

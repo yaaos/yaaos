@@ -184,7 +184,6 @@ async def test_workspace_event_rejects_foreign_owner(db_session) -> None:
     ws_id = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_b,
@@ -217,7 +216,6 @@ async def test_workspace_event_allows_owner(db_session) -> None:
     ws_id = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_a,
@@ -249,10 +247,8 @@ async def test_command_event_rejects_foreign_owner(db_session) -> None:
     await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
-        plugin_state={},
         sha="deadbeef",
         current_command_id=cmd_id,
-        current_holder_workflow_id=uuid4(),
         agent_id=agent_b,
         caller_session=db_session,
     )

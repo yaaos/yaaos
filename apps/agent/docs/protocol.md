@@ -5,8 +5,8 @@
 ## Scope
 
 **Owns:**
-- All concrete command wire structs: `CreateWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`.
-- `CommandHeader` — embedded in every concrete command; carries `command_id`, `workspace_id`, `traceparent`, `kind`.
+- All concrete command wire structs: `ProvisionWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`, `ConfigUpdateCommand`.
+- `CommandHeader` — embedded in every concrete command; carries `command_id`, `workspace_id`, `traceparent`, `kind`, `completion_token`.
 - `CommandKind` constants.
 - Event types: `AgentEvent`, `EventKind` constants.
 - Identity, heartbeat, and claim HTTP types.
@@ -38,7 +38,7 @@
 ## Vocabulary
 
 - **Wire struct** — a Go struct whose JSON tags exactly match the backend OpenAPI spec fields for one command kind or event.
-- **CommandHeader** — the three routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`.
+- **CommandHeader** — the routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`, plus the `completion_token` capability the agent echoes on its events.
 - **Leaf** — a package with no internal imports; safe for any layer to import without cycles.
 
 ## Endpoint URLs
@@ -56,8 +56,12 @@
 
 `ClaimRequest` carries:
 - `lifecycle` — `"unconfigured"` (delivers only `ConfigUpdate`) or `"configured"`.
-- `new_workspaces` — `max_workspaces − active count`; the backend returns up to this many unassigned `CreateWorkspace` rows.
+- `new_workspaces` — `max_workspaces − active count`; the backend returns up to this many unassigned `ProvisionWorkspace` rows.
 - `workspace_ids` — idle Active workspaces; the backend returns one pending command per named workspace.
+
+## Completion token
+
+Each command header carries a one-time backend-minted `completion_token` (omitted when empty). The agent echoes it on **every** AgentEvent it posts for that command — `received`, `progress`, and the terminal `completed_*` — so the backend authorizes the event by hashing the token. It round-trips through `command.Decode` automatically (embedded in `CommandHeader`) and is threaded onto every constructed `AgentEvent`: the workspace child's terminal + progress events, and supervisor-synthesized events (timeout / cap / unknown-kind failures, AgentCommand success). The agent never inspects or stores it.
 
 ## `received` EventKind
 

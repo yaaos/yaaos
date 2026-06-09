@@ -31,7 +31,7 @@ A fresh agent (or any restarted agent instance) enters the `unconfigured` lifecy
 
 **Configured:**
 - Claim requests carry `lifecycle="configured"`, `new_workspaces` (capacity for new workspaces), and `workspace_ids` (idle Active workspaces awaiting a command).
-- The backend draws a batch from `agent_commands`: up to `new_workspaces` unassigned `CreateWorkspace` rows + one pending row per named `workspace_id`.
+- The backend draws a batch from `agent_commands`: up to `new_workspaces` unassigned `ProvisionWorkspace` rows + one pending row per named `workspace_id`.
 - A process restart returns to `unconfigured` (the atomic pointer is not persisted).
 
 ## Claim routing — capacity-pull
@@ -41,7 +41,7 @@ The `ClaimRequest` body:
 - `workspace_ids` — idle Active workspaces (Active registry records with no in-flight command).
 
 `claim_next` returns **exactly one** command per call via a single `FOR UPDATE SKIP LOCKED LIMIT 1` across the eligible set (FIFO by UUIDv7 id):
-1. A pending unassigned `CreateWorkspace` row (when `new_workspaces > 0`).
+1. A pending unassigned `ProvisionWorkspace` row (when `new_workspaces > 0`).
 2. The oldest pending row pinned to this agent for any `workspace_id` in `workspace_ids`.
 
 Returns 204 when nothing eligible. Each concurrent claim worker gets at most one row per call, leaving no rows stranded in `claimed` limbo from batch over-claim.

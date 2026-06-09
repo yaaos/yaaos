@@ -1,6 +1,6 @@
 """Webhook payload → VCSEvent translation."""
 
-from app.domain.vcs import (
+from app.core.vcs import (
     PullRequestClosed,
     PullRequestReadyForReview,
     PullRequestSynchronized,

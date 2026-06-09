@@ -23,17 +23,17 @@ Protocols define seams; plugins implement them. Registration happens at import t
 
 | Protocol | Hosted in | Implemented by |
 |---|---|---|
-| `VCSPlugin` | `domain/vcs` | `plugins/github` |
-| `CodingAgentPlugin` | `domain/coding_agent` | `plugins/claude_code` |
+| `VCSPlugin` | `core/vcs` | `plugins/github` |
+| `CodingAgentPlugin` | `core/coding_agent` | `plugins/claude_code` |
 | `WorkspaceProvider` | `core/workspace` | `core/workspace/remote_provider` (`remote_agent`) |
 
-Each plugin exposes `meta: PluginMeta` (`id`, `type`, `display_name`, `description`, `docs_url`). The `id` is the registry key, URL prefix, and canonical accessor.
+Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL prefix, and canonical accessor.
 
 ## Structural patterns
 
 - **Workflow engine** — every review run passes through [`core/workflow`](core_workflow.md); commands are typed Pydantic steps dispatched by category (Workspace / Local / HITL).
 - **`PRReviewAggregate`** — durable layer in [`domain/reviewer`](domain_reviewer.md); survives restarts; owns `Review` / `Finding` state across runs.
-- **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `meta.id`; per-test isolation binds a fresh copy so tests never share state.
+- **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `plugin_id`; per-test isolation binds a fresh copy so tests never share state.
 - **Two process lifecycles** — web (`app/web.py`) and worker (`app/worker.py`); each registers shutdown hooks independently via `app.core.shutdown_registry`.
 - **Composition roots** — `app/web.py` and `app/worker.py` own all side-effect imports; bootstrap order is load-bearing (see [`patterns.md § Bootstrap composition order`](patterns.md#bootstrap-composition-order)).
 
@@ -42,10 +42,7 @@ Each plugin exposes `meta: PluginMeta` (`id`, `type`, `display_name`, `descripti
 Each flow is a labeled hop-list. Module docs have the detail.
 
 **Review lifecycle** (PR ready → findings posted):
-`plugins/github` webhook → [`domain/intake`](domain_intake.md) filter → [`domain/reviewer`](domain_reviewer.md) `start_pr_review` → `core/workflow` dispatch → [`domain/coding_agent`](domain_coding_agent.md) → admission → [`domain/vcs`](domain_vcs.md) `post_review`
-
-**Push → incremental review**:
-`plugins/github` push event → `domain/intake` → `domain/reviewer` incremental path → `core/workflow` → `domain/coding_agent` `incremental_review` → admission → `domain/vcs` `post_review`
+`plugins/github` webhook → [`domain/intake`](domain_intake.md) filter → ticket created → `engine.start("pr_review_v1", ticket_id=…)` → [`core/workflow`](core_workflow.md) drives `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace` → [`domain/reviewer.publish_findings`](domain_reviewer.md) validates the canonical schema and posts via [`core/vcs`](core_vcs.md). The skill owns all filtering — there is no admission pipeline.
 
 **Session / auth chain** (inbound request):
 [`core/auth`](core_auth.md) middleware classify → [`core/sessions`](core_sessions.md) `require(Action.X)` → [`core/tenancy`](core_tenancy.md) `resolve_auth_org` → handler

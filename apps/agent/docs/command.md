@@ -8,7 +8,7 @@
 - `Command` interface — the polymorphic root every command kind implements.
 - Two command families: `WorkspaceCommand` (5 kinds, executed in workspace children) and `AgentCommand` (1 kind today, executed in the supervisor).
 - `WorkspaceOps` and `AgentOps` capability seams — caller-owned interfaces the command types call at execution time.
-- Typed result structs (`CreateResult`, `WriteFilesResult`, `RefreshResult`, `InvokeResult`, `CleanupResult`, `ConfigUpdateResult`) + `ExecResult` for subprocess outcomes.
+- Typed result structs (`ProvisionResult`, `WriteFilesResult`, `RefreshResult`, `InvokeResult`, `CleanupResult`, `ConfigUpdateResult`) + `ExecResult` for subprocess outcomes.
 - `AgentConfig` — the typed config struct `ConfigUpdateCommand` carries.
 - `Decode(raw []byte) (Command, error)` — the one surviving kind-switch (factory).
 
@@ -37,7 +37,7 @@
 ## Gotchas
 
 - `AgentCommand` (the interface here) is unrelated to the now-deleted `protocol.AgentCommand` union struct. Same term, different concept.
-- `CreateResult.Path` carries the workspace path the supervisor registry keys on; don't rename it.
+- `ProvisionResult.Path` carries the workspace path the supervisor registry keys on; don't rename it.
 - `InvokeResult.ToWire()` includes both `stdout` (full, for the backend's CodeReview parser) and `stdout_excerpt` (display-friendly, truncated at 16 KiB). Both keys are load-bearing — the backend reads `stdout`, operators read `stdout_excerpt`.
 - `secret.Secret` fields (`AgentConfig.OTLPToken`) print as `[REDACTED]` under all fmt/json paths. Use `.Value()` only at the OTLP-exporter install site.
 - When embedding a `WorkspaceCommand` to override `Timeout()` in tests, `MarshalWire()` is inherited automatically via embedding — no need to reimplement it.
@@ -69,3 +69,4 @@
 6. Add one `case` to `Decode` in `command.go`.
 7. The compiler lists any unimplemented interface methods.
 8. Add tests in `command_test.go` (Decode round-trip) and `execute_test.go` (Execute against a fake ops).
+

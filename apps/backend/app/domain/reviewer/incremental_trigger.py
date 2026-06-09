@@ -31,7 +31,8 @@ from sqlalchemy import desc, select, update
 
 from app.core.database import session as db_session
 from app.core.observability import spawn
-from app.domain import pull_requests, tickets
+from app.core.vcs import get_plugin as get_vcs_plugin
+from app.domain import tickets
 from app.domain.reviewer.constants import DEFAULT_EFFORT as _DEFAULT_EFFORT
 from app.domain.reviewer.constants import DEFAULT_MODEL as _DEFAULT_MODEL
 from app.domain.reviewer.lock import acquire_pr_lock
@@ -44,7 +45,7 @@ from app.domain.reviewer.trigger import (
     decide_trigger,
     humanize_skip,
 )
-from app.domain.vcs import get_plugin as get_vcs_plugin
+from app.domain.tickets import get_pull_request
 
 log = structlog.get_logger("reviewer.incremental_trigger")
 
@@ -72,7 +73,7 @@ async def start_incremental_review(
 
     Returns: `"scheduled"`, `"skipped:<reason>"`, or `"debounced:<seconds>"`.
     """
-    pr = await pull_requests.get(pr_id, org_id=org_id)
+    pr = await get_pull_request(pr_id, org_id=org_id)
     last_reviewed_sha = await _last_reviewed_sha(pr_id)
     in_flight_id = await _in_flight_review_id(pr_id)
     last_push_at = await _last_push_timestamp(pr_id)
@@ -282,15 +283,18 @@ async def _in_flight_review_id(pr_id: UUID) -> UUID | None:
 
 
 async def _last_push_timestamp(pr_id: UUID) -> datetime | None:
+    # `created_at` is the review row's insert timestamp — used as the proxy for
+    # "when was the last incremental review scheduled" since the standalone
+    # `scheduled_at` column was dropped in favor of `created_at`.
     async with db_session() as s:
         row = (
             await s.execute(
-                select(ReviewRow.scheduled_at)
+                select(ReviewRow.created_at)
                 .where(
                     ReviewRow.pr_id == pr_id,
                     ReviewRow.trigger_reason.in_(["push_incremental", "pr_synchronized"]),
                 )
-                .order_by(desc(ReviewRow.scheduled_at))
+                .order_by(desc(ReviewRow.created_at))
                 .limit(1)
             )
         ).first()

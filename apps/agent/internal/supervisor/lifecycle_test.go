@@ -3,7 +3,7 @@
 // Tests cover:
 //   - Unconfigured agent rejects WorkspaceCommands with completed_failure "agent unconfigured".
 //   - After ConfigUpdateCommand, WorkspaceCommands succeed.
-//   - CreateWorkspace past the cap returns completed_failure "cap reached".
+//   - ProvisionWorkspace past the cap returns completed_failure "cap reached".
 //   - Concurrent createActive calls at the cap admit exactly max_workspaces (race-detector).
 package supervisor
 

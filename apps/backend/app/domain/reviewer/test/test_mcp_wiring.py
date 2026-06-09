@@ -15,10 +15,10 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.oauth import ProviderConfig
+from app.core.vcs import VCSPullRequest
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import get_token_by_hash, hash_token
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -28,7 +28,7 @@ from app.domain.reviewer import (
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import create as create_ticket
-from app.domain.vcs import VCSPullRequest
+from app.domain.tickets import upsert as upsert_pr
 
 
 def _stub_config() -> ProviderConfig:

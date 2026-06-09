@@ -268,23 +268,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude_code/api_key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Api Key */
-        post: operations["set_api_key_api_claude_code_api_key_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/claude_code/defaults": {
         parameters: {
             query?: never;
@@ -294,9 +277,8 @@ export interface paths {
         };
         /**
          * Defaults Endpoint
-         * @description Code defaults for the orchestrator + sub-agents, plus the model /
-         *     version / effort dropdown enums. Imported at request time so a code
-         *     change to `defaults.py` surfaces on the next request — never cached.
+         * @description Model / effort dropdown enums for the Claude Code settings UI.
+         *     Imported at request time so a code change surfaces on the next request.
          */
         get: operations["defaults_endpoint_api_claude_code_defaults_get"];
         put?: never;
@@ -317,6 +299,61 @@ export interface paths {
         /** Health */
         get: operations["health_api_claude_code_health_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/claude_code/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Repos
+         * @description List repos connected to the org, joined with each repo's stored skill name.
+         *
+         *     Joins the live GitHub repo list (from the VCS install) with stored
+         *     `claude_code_repos` rows. Repos present in GitHub but absent from the DB
+         *     are included with `skill_name=null`. Repos in the DB but absent from the
+         *     GitHub list are omitted — the admin must reconnect via GitHub App settings.
+         */
+        get: operations["list_repos_api_claude_code_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/claude_code/repos/{repo_external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repo Skill
+         * @description Read the stored skill name for one repo.
+         *
+         *     `repo_external_id` contains a `/` (`owner/repo`) so the path segment uses
+         *     `:path` to avoid the `%2F`-decoded-before-routing 405 bug.
+         */
+        get: operations["get_repo_skill_api_claude_code_repos__repo_external_id__get"];
+        /**
+         * Set Repo Skill Route
+         * @description Write the skill name for one repo. Creates the identity row if absent.
+         *
+         *     `repo_external_id` contains a `/` (`owner/repo`) so the path segment uses
+         *     `:path` to avoid the `%2F`-decoded-before-routing 405 bug.
+         */
+        put: operations["set_repo_skill_route_api_claude_code_repos__repo_external_id__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -950,28 +987,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/plugins/available": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Available Endpoint
-         * @description Enumerate registered plugins of the requested type. The settings UI
-         *     consumes this for the VCS + Coding Agents pickers — no plugin id is
-         *     hardcoded in the frontend.
-         */
-        get: operations["list_available_endpoint_api_plugins_available_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/reviewer/cancel": {
         parameters: {
             query?: never;
@@ -992,26 +1007,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/conversations/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Conversations By Ticket
-         * @description All-Conversations cross-cut for the ticket's PR.
-         */
-        get: operations["conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/reviewer/findings/by-ticket/{ticket_id}": {
         parameters: {
             query?: never;
@@ -1021,91 +1016,9 @@ export interface paths {
         };
         /**
          * Findings By Ticket
-         * @description List open + acknowledged findings for the ticket's PR.
+         * @description List findings for the ticket's PR in the canonical schema.
          */
         get: operations["findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/ack": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ack Finding
-         * @description : SPA "Ack" button. Marks the finding as `intentional` —
-         *     Builder sees this and accepts it for future reviews.
-         */
-        post: operations["ack_finding_api_reviewer_findings__finding_id__ack_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/push-back": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Push Back Finding
-         * @description : SPA "Push back" button. Marks the finding as `wontfix` and
-         *     records the Builder's reason in the audit trail.
-         */
-        post: operations["push_back_finding_api_reviewer_findings__finding_id__push_back_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/{finding_id}/thread": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Thread By Finding
-         * @description Thread messages + ack banner for one finding.
-         */
-        get: operations["thread_by_finding_api_reviewer_findings__finding_id__thread_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Jobs By Ticket
-         * @description Per-ticket review history.
-         */
-        get: operations["jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1128,30 +1041,6 @@ export interface paths {
         get: operations["metrics_api_reviewer_metrics_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/rereview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rereview Ticket
-         * @description Re-review a ticket — drives `pr_review_v1` via the workflow engine.
-         *
-         *     The SPA's only contract with this endpoint is the `scheduled_count`
-         *     field; the response carries `workflow_execution_id` so the caller can
-         *     poll workflow state if desired.
-         */
-        post: operations["rereview_ticket_api_reviewer_rereview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1411,18 +1300,44 @@ export interface paths {
         };
         /**
          * Detail
-         * @description Per-ticket detail with the enrichment: `stages[]` (projected from
-         *     `workflow_executions`) + `builder` (the trigger identity).
+         * @description Per-ticket detail with the enrichment: `builder` (the trigger identity).
          *
          *     Returns the Ticket pydantic fields plus:
-         *     - `stages: [{name, state, attempt_count, current_attempt, started_at,
-         *        completed_at, workflow_execution_id}]` — one entry per workflow run
-         *        on the ticket, newest first.
          *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
          *        when the ticket's PR has an `author_login`; `kind="system"` when
          *        yaaos triggered the run with no human attribution.
+         *
+         *     Workflow-run data is served by the dedicated
+         *     `GET /api/tickets/{id}/workflow-runs` endpoint.
          */
         get: operations["detail_api_tickets__ticket_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Step Activity
+         * @description Return the persisted `ActivityLog` for one workflow step.
+         *
+         *     `activity` is `null` when either the step never ran a coding-agent
+         *     invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
+         *     activity row has aged out (4-week TTL).
+         *
+         *     Cross-tenant safety: 404s when the execution does not belong to the
+         *     ticket (and therefore not to the caller's org).
+         */
+        get: operations["step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1498,6 +1413,29 @@ export interface paths {
          *     state immediately after the resume.
          */
         post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{ticket_id}/workflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Workflow Runs
+         * @description All workflow runs for the ticket, oldest first, with their step lists.
+         *
+         *     Each step's `state` is pending | running | done | failed | skipped. Pure
+         *     workflow vocabulary — no AgentCommand references.
+         */
+        get: operations["workflow_runs_api_tickets__ticket_id__workflow_runs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1744,6 +1682,57 @@ export interface components {
             /** Token */
             token: string;
         };
+        /**
+         * ActivityEvent
+         * @description One captured event from a coding-agent run.
+         *
+         *     Pre-rendered by the plugin so the FE doesn't have to interpret raw
+         *     Claude Code stream-json shapes — `message` is the user-facing string
+         *     shown in the UI; `detail` is the raw event data for the expanded view.
+         *
+         *     `seq` is the monotonic 0-based index inside the run's `ActivityLog`,
+         *     assigned by `render_activity` after filtering null renders.
+         */
+        ActivityEvent: {
+            /**
+             * Detail
+             * @default {}
+             */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Message */
+            message: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /**
+         * ActivityLog
+         * @description Pre-rendered activity stream for one coding-agent run.
+         *
+         *     Produced once per run from the terminal stdout by
+         *     `CodingAgentPlugin.render_activity` — the same event sequence the
+         *     in-process path streams via `OnActivity`, captured durably for the
+         *     Activity tab. Persisted as a JSONB blob in the partitioned
+         *     `coding_agent_activity` table.
+         */
+        ActivityLog: {
+            /**
+             * Events
+             * @default []
+             */
+            events: components["schemas"]["ActivityEvent"][];
+        };
         /** AgentEvent */
         AgentEvent: {
             /**
@@ -1756,6 +1745,8 @@ export interface components {
              * Format: uuid
              */
             command_id: string;
+            /** Completion Token */
+            completion_token?: string | null;
             /** Failure Reason */
             failure_reason?: string | null;
             kind: components["schemas"]["AgentEventKind"];
@@ -2138,11 +2129,6 @@ export interface components {
              */
             updated_at: string;
         };
-        /** ListAvailableResponse */
-        ListAvailableResponse: {
-            /** Plugins */
-            plugins: components["schemas"]["PluginMetaPayload"][];
-        };
         /** MemberView */
         MemberView: {
             /** Display Name */
@@ -2186,19 +2172,6 @@ export interface components {
             /** Enabled */
             enabled?: boolean | null;
         };
-        /** PluginMetaPayload */
-        PluginMetaPayload: {
-            /** Description */
-            description?: string | null;
-            /** Display Name */
-            display_name: string;
-            /** Docs Url */
-            docs_url?: string | null;
-            /** Id */
-            id: string;
-            /** Type */
-            type: string;
-        };
         /** ProviderStatus */
         ProviderStatus: {
             /** Last Used At */
@@ -2212,85 +2185,15 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
         };
-        /** RereviewRequest */
-        RereviewRequest: {
-            /**
-             * Ticket Id
-             * Format: uuid
-             */
-            ticket_id: string;
-        };
         /**
-         * ReviewJob
-         * @description Read-side projection of a `review_jobs` row.
-         *
-         *     The SPA reads this via the `jobs_by_ticket` endpoint in
-         *     `reviewer/web.py`. The workflow-engine path doesn't emit this
-         *     shape — `workflow_executions` rows are the canonical job record.
+         * RepoSkillRow
+         * @description One entry in the repos list — the repo identifier and its stored skill name.
          */
-        ReviewJob: {
-            /** Activity Log */
-            activity_log: {
-                [key: string]: unknown;
-            }[];
-            /** Completed At */
-            completed_at: string | null;
-            /** Current Step */
-            current_step: string | null;
-            /** Destination */
-            destination: string;
-            /** Duration S */
-            duration_s: number | null;
-            /** Effort */
-            effort: string | null;
-            /** Error Message */
-            error_message: string | null;
-            /** Findings */
-            findings: {
-                [key: string]: unknown;
-            }[] | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Last Heartbeat At */
-            last_heartbeat_at: string | null;
-            /** Lessons Applied */
-            lessons_applied: string[] | null;
-            /** Model */
-            model: string | null;
-            /**
-             * Org Id
-             * Format: uuid
-             */
-            org_id: string;
-            /**
-             * Pr Id
-             * Format: uuid
-             */
-            pr_id: string;
-            /** Prompt Hash */
-            prompt_hash: string | null;
-            /** Review External Id */
-            review_external_id: string | null;
-            /**
-             * Scheduled At
-             * Format: date-time
-             */
-            scheduled_at: string;
-            /** Skip Reason */
-            skip_reason: string | null;
-            /** Started At */
-            started_at: string | null;
-            /** Status */
-            status: string;
-            /** Tokens In */
-            tokens_in: number | null;
-            /** Tokens Out */
-            tokens_out: number | null;
-            /** Trigger Reason */
-            trigger_reason: string;
+        RepoSkillRow: {
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Skill Name */
+            skill_name: string | null;
         };
         /**
          * Role
@@ -2302,18 +2205,15 @@ export interface components {
          * @enum {string}
          */
         Role: "owner" | "admin" | "builder";
-        /** SetApiKeyRequest */
-        SetApiKeyRequest: {
-            /**
-             * Api Key
-             * Format: password
-             */
-            api_key: string;
-        };
         /** SetKeyRequest */
         SetKeyRequest: {
             /** Value */
             value: string;
+        };
+        /** SetRepoSkillRequest */
+        SetRepoSkillRequest: {
+            /** Skill Name */
+            skill_name?: string | null;
         };
         /** SetVcsRequest */
         SetVcsRequest: {
@@ -2336,6 +2236,16 @@ export interface components {
             /** Install Url */
             install_url?: string | null;
             state?: components["schemas"]["VcsStateResponse"] | null;
+        };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one workflow step.
+         *
+         *     `activity` is null when the step ran no coding-agent invocation or the
+         *     weekly partition holding its row has aged out.
+         */
+        StepActivityResponse: {
+            activity: components["schemas"]["ActivityLog"] | null;
         };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
@@ -2374,6 +2284,55 @@ export interface components {
             settings: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * WorkflowRunView
+         * @description One workflow execution for a ticket, with its ordered step list.
+         */
+        WorkflowRunView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Step Id */
+            current_step_id: string | null;
+            /** Failure Reason */
+            failure_reason: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** State */
+            state: string;
+            /** Steps */
+            steps: components["schemas"]["WorkflowStepSummary"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Workflow Version */
+            workflow_version: number;
+        };
+        /**
+         * WorkflowStepSummary
+         * @description One step in a workflow run, projected for the ticket Activity tab.
+         */
+        WorkflowStepSummary: {
+            /** Command Kind */
+            command_kind: string;
+            /** Completed At */
+            completed_at: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** State */
+            state: string;
+            /** Step Id */
+            step_id: string;
         };
         /** WorkspaceEvent */
         WorkspaceEvent: {
@@ -2509,10 +2468,14 @@ export interface components {
             /** Display Name */
             display_name?: string | null;
         };
-        /** _PushBackRequest */
-        _PushBackRequest: {
-            /** Reason */
-            reason: string;
+        /** _RepoSkillRequest */
+        _RepoSkillRequest: {
+            /** Org Slug */
+            org_slug: string;
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Skill Name */
+            skill_name: string;
         };
         /** _SamlSignRequest */
         _SamlSignRequest: {
@@ -3076,41 +3039,6 @@ export interface operations {
             };
         };
     };
-    set_api_key_api_claude_code_api_key_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetApiKeyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     defaults_endpoint_api_claude_code_defaults_get: {
         parameters: {
             query?: never;
@@ -3164,6 +3092,115 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    list_repos_api_claude_code_repos_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_skill_api_claude_code_repos__repo_external_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                repo_external_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSkillRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_repo_skill_route_api_claude_code_repos__repo_external_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                repo_external_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetRepoSkillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSkillRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4516,42 +4553,6 @@ export interface operations {
             };
         };
     };
-    list_available_endpoint_api_plugins_available_get: {
-        parameters: {
-            query: {
-                /** @description Plugin type to enumerate */
-                type: "vcs" | "coding_agent";
-            };
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListAvailableResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     cancel_jobs_api_reviewer_cancel_post: {
         parameters: {
             query: {
@@ -4576,43 +4577,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
                 };
             };
             /** @description Validation Error */
@@ -4665,156 +4629,6 @@ export interface operations {
             };
         };
     };
-    ack_finding_api_reviewer_findings__finding_id__ack_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    push_back_finding_api_reviewer_findings__finding_id__push_back_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_PushBackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    thread_by_finding_api_reviewer_findings__finding_id__thread_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewJob"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     metrics_api_reviewer_metrics_get: {
         parameters: {
             query?: never;
@@ -4827,45 +4641,6 @@ export interface operations {
             };
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rereview_ticket_api_reviewer_rereview_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RereviewRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5316,6 +5091,43 @@ export interface operations {
             };
         };
     };
+    step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+                execution_id: string;
+                step_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StepActivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     audit_api_tickets__ticket_id__audit_get: {
         parameters: {
             query?: {
@@ -5422,6 +5234,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workflow_runs_api_tickets__ticket_id__workflow_runs_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Slug"?: string | null;
+            };
+            path: {
+                ticket_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunView"][];
                 };
             };
             /** @description Validation Error */

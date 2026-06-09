@@ -356,9 +356,9 @@ components:
           minimum: 0
           default: 0
           description: |
-            Capacity for new CreateWorkspace commands: max_workspaces − current
+            Capacity for new ProvisionWorkspace commands: max_workspaces − current
             active count. The backend returns up to this many unassigned
-            CreateWorkspace rows.
+            ProvisionWorkspace rows.
         workspace_ids:
           type: array
           items:
@@ -371,7 +371,7 @@ components:
 
     AgentCommand:
       oneOf:
-        - $ref: '#/components/schemas/CreateWorkspaceCommand'
+        - $ref: '#/components/schemas/ProvisionWorkspaceCommand'
         - $ref: '#/components/schemas/WriteFilesCommand'
         - $ref: '#/components/schemas/RefreshWorkspaceAuthCommand'
         - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
@@ -380,7 +380,7 @@ components:
       discriminator:
         propertyName: kind
         mapping:
-          CreateWorkspace: '#/components/schemas/CreateWorkspaceCommand'
+          ProvisionWorkspace: '#/components/schemas/ProvisionWorkspaceCommand'
           WriteFiles: '#/components/schemas/WriteFilesCommand'
           RefreshWorkspaceAuth: '#/components/schemas/RefreshWorkspaceAuthCommand'
           InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
@@ -400,8 +400,16 @@ components:
         traceparent:
           type: string
           description: W3C trace context the agent restores when emitting child spans.
+        completion_token:
+          type: string
+          nullable: true
+          description: |
+            Per-command completion capability token minted by the control plane
+            at claim. The agent echoes it back on the terminal/progress AgentEvent;
+            the backend verifies it (constant-time) before any side effect.
+            Treated as a secret — never logged in cleartext.
 
-    CreateWorkspaceCommand:
+    ProvisionWorkspaceCommand:
       allOf:
         - $ref: '#/components/schemas/CommandBase'
         - type: object
@@ -409,7 +417,7 @@ components:
           properties:
             kind:
               type: string
-              enum: [CreateWorkspace]
+              enum: [ProvisionWorkspace]
             repo:
               type: object
               required: [plugin_id, external_id, clone_url, head_sha]
@@ -651,6 +659,13 @@ components:
           format: date-time
         traceparent:
           type: string
+        completion_token:
+          type: string
+          nullable: true
+          description: |
+            Echoed back from the command's `completion_token`. Verified
+            (constant-time) against the stored per-command hash before any side
+            effect. Treated as a secret — never logged in cleartext.
 
     WorkspaceEvent:
       type: object

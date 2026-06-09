@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
+from app.git_backend import bootstrap_repos, router as git_router
 from app.seeds import (
     default_installation_repositories,
     default_seeded_diffs,
@@ -27,6 +28,11 @@ WEBHOOK_SECRET_BYTES = os.environ.get("GITHUB_WEBHOOK_SECRET", WEBHOOK_SECRET).e
 
 app = FastAPI(title="fake-github")
 
+# Git HTTP smart-protocol routes for ProvisionWorkspace clone support.
+# Mounted before the API routes so /{owner}/{repo}/info/refs doesn't clash
+# with the PR/repo REST routes (those all use deeper paths).
+app.include_router(git_router)
+
 
 @app.on_event("startup")
 async def _seed() -> None:
@@ -35,6 +41,8 @@ async def _seed() -> None:
     state.seeded_files.update(default_seeded_files())
     if not state.installation_repositories:
         state.installation_repositories.extend(default_installation_repositories())
+    # Create bare git repos for the scenario repos used by cross-plane e2e specs.
+    bootstrap_repos()
 
 
 # ── GitHub-compatible endpoints ────────────────────────────────────────────────

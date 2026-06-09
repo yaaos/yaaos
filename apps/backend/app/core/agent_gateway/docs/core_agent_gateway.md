@@ -20,7 +20,7 @@ Every bearer endpoint authenticates by ledger lookup (`bearers.verify`) and runs
 
 - **Unconfigured claim** — the agent sends `lifecycle="unconfigured"`. The backend returns a single `ConfigUpdateCommand` (built from the global default — no DB row claimed). No workspace commands are dequeued regardless of queue depth. The agent accumulates queued commands while bootstrapping.
 - **Configured claim** (`claim_next`) — the agent sends `lifecycle="configured"`, `new_workspaces` (capacity for new workspaces), and `workspace_ids` (idle Active workspaces). The backend claims exactly ONE row per call via `FOR UPDATE SKIP LOCKED LIMIT 1` across the eligible set:
-  - A pending unassigned `CreateWorkspace` row (when `new_workspaces > 0`), OR
+  - A pending unassigned `ProvisionWorkspace` row (when `new_workspaces > 0`), OR
   - The oldest pending row pinned to this agent for any `workspace_id` in `workspace_ids`.
   - Stamps `agent_id`, `status=claimed`, `claimed_at=now` on the single selected row.
   - Returns 204 if nothing eligible (zero rows in `claimed` limbo).

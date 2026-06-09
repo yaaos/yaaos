@@ -31,6 +31,7 @@ None. Transport only — Redis is the substrate.
 - `finding_raised`, `finding_re_observed`, `finding_anchor_updated`, `finding_state_changed`, `finding_acknowledged`, `finding_resolution_detected`, `finding_stale_detected` — finding lifecycle
 - `comment_reply_received`, `agent_reply_posted` — conversation replies
 - `agent_liveness_changed` — workspace-agent liveness transition (reachable/stale/offline); cache-invalidate only (empty payload), org-scoped
+- `workflow_state_changed` — workflow_executions row state transition; payload carries `{ticket_id, workflow_execution_id, state}`; published by [`core/workflow`](core_workflow.md) at every `wfx.state =` site so the Ticket page's run view re-fetches without polling
 
 ## How it's tested
 

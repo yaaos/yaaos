@@ -22,9 +22,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
+from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.workspace import (
     WorkspaceRegistry,
+    force_close_all,
     register_workspace_provider,
 )
 from app.core.workspace.models import WorkspaceRow
@@ -44,7 +45,7 @@ class _RaisingProvider:
     """WorkspaceProvider whose `destroy` always raises. Counts call attempts
     so tests can assert retry behavior."""
 
-    meta = PluginMeta(id="raises", type="workspace", display_name="raises-on-destroy")
+    plugin_id = "raises"
 
     def __init__(self, error: str = "boom") -> None:
         self.calls = 0
@@ -53,13 +54,11 @@ class _RaisingProvider:
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {"sha": spec.sha}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
+    async def destroy(self) -> None:
         self.calls += 1
         raise RuntimeError(self.error)
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
+    async def health_check(self) -> None:
         return None
 
     async def run_coding_agent_cli(self, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -75,7 +74,7 @@ class _RaisingProvider:
 class _GoodProvider:
     """Happy-path provider; destroy returns cleanly."""
 
-    meta = PluginMeta(id="good", type="workspace", display_name="good")
+    plugin_id = "good"
 
     def __init__(self) -> None:
         self.destroy_calls = 0
@@ -83,12 +82,10 @@ class _GoodProvider:
     async def provision(self, spec):  # type: ignore[no-untyped-def]
         return {"sha": spec.sha}
 
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
+    async def destroy(self) -> None:
         self.destroy_calls += 1
 
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
+    async def health_check(self) -> None:
         return None
 
     async def run_coding_agent_cli(self, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -106,28 +103,33 @@ def _reset_providers(workspace_providers_isolation):
     del workspace_providers_isolation  # fixture handles clear before+after
 
 
-def _make_row(
+async def _make_row(
+    db_session,
     *,
     status: WorkspaceStatus = WorkspaceStatus.EXPIRED,
     provider_id: str = "raises",
     destroy_attempts: int = 0,
-    plugin_state: dict | None = None,
     activated_at: datetime | None = None,
     max_idle_seconds: int = 600,
     current_command_id=None,
+    owning_agent_id=None,
 ) -> WorkspaceRow:
+    """Build a WorkspaceRow. Seeds an agent row when `owning_agent_id` is omitted."""
+    if owning_agent_id is None:
+        agent = await seed_agent(org_id=uuid4(), session=db_session)
+        owning_agent_id = agent["id"]
     return WorkspaceRow(
         id=uuid4(),
         org_id=uuid4(),
         provider_id=provider_id,
         spec={"sha": "deadbeef"},
-        plugin_state=plugin_state or {"working_dir": "/tmp/x"},
         status=status.value,
         expires_at=datetime.now(UTC) + timedelta(minutes=10),
         destroy_attempts=destroy_attempts,
         activated_at=activated_at,
         max_idle_seconds=max_idle_seconds,
         current_command_id=current_command_id,
+        owning_agent_id=owning_agent_id,
     )
 
 
@@ -137,7 +139,7 @@ def _make_row(
 async def test_destroy_provider_not_registered_marks_destroy_failed(db_session) -> None:  # type: ignore[no-untyped-def]
     """Workspace whose provider_id isn't in the registry must not stall in
     EXPIRED forever — it flips to DESTROY_FAILED with an explicit error."""
-    row = _make_row(provider_id="missing_provider")
+    row = await _make_row(db_session, provider_id="missing_provider")
     db_session.add(row)
     await db_session.commit()
 
@@ -155,7 +157,7 @@ async def test_destroy_raises_first_attempt_returns_to_expired(db_session) -> No
     captures the message."""
     provider = _RaisingProvider(error="provider unreachable")
     register_workspace_provider(provider)
-    row = _make_row(provider_id="raises", destroy_attempts=0)
+    row = await _make_row(db_session, provider_id="raises", destroy_attempts=0)
     db_session.add(row)
     await db_session.commit()
 
@@ -173,7 +175,7 @@ async def test_destroy_raises_third_attempt_marks_destroy_failed(db_session) -> 
     operator-visible terminal state. No infinite retry."""
     provider = _RaisingProvider()
     register_workspace_provider(provider)
-    row = _make_row(provider_id="raises", destroy_attempts=2)
+    row = await _make_row(db_session, provider_id="raises", destroy_attempts=2)
     db_session.add(row)
     await db_session.commit()
 
@@ -189,7 +191,7 @@ async def test_destroy_happy_path_marks_destroyed_and_clears_error(db_session) -
     attempt set it — important so DESTROYED rows don't carry a stale error."""
     provider = _GoodProvider()
     register_workspace_provider(provider)
-    row = _make_row(provider_id="good", destroy_attempts=1)
+    row = await _make_row(db_session, provider_id="good", destroy_attempts=1)
     row.last_destroy_error = "previous failure"
     db_session.add(row)
     await db_session.commit()
@@ -211,7 +213,8 @@ async def test_idle_sweep_expires_active_workspace_past_max_idle(db_session) -> 
     `max_idle_seconds`, gets flipped to EXPIRED in the idle-timeout sweep —
     so abandoned workspaces don't linger eating quota."""
     register_workspace_provider(_GoodProvider())
-    row = _make_row(
+    row = await _make_row(
+        db_session,
         status=WorkspaceStatus.ACTIVE,
         provider_id="good",
         activated_at=datetime.now(UTC) - timedelta(seconds=900),
@@ -237,7 +240,8 @@ async def test_idle_sweep_leaves_active_workspace_with_live_claim(db_session) ->
     owns them. The idle sweep must never yank a workspace out from under an
     in-flight workflow."""
     register_workspace_provider(_GoodProvider())
-    row = _make_row(
+    row = await _make_row(
+        db_session,
         status=WorkspaceStatus.ACTIVE,
         provider_id="good",
         activated_at=datetime.now(UTC) - timedelta(seconds=900),
@@ -256,7 +260,8 @@ async def test_idle_sweep_leaves_active_workspace_with_live_claim(db_session) ->
 async def test_idle_sweep_leaves_recently_activated_workspace(db_session) -> None:  # type: ignore[no-untyped-def]
     """ACTIVE rows still within their idle window are untouched."""
     register_workspace_provider(_GoodProvider())
-    row = _make_row(
+    row = await _make_row(
+        db_session,
         status=WorkspaceStatus.ACTIVE,
         provider_id="good",
         activated_at=datetime.now(UTC) - timedelta(seconds=60),
@@ -275,10 +280,10 @@ async def test_idle_sweep_leaves_recently_activated_workspace(db_session) -> Non
 
 
 async def test_close_workspace_idempotent_on_already_expired_row(db_session) -> None:  # type: ignore[no-untyped-def]
-    """close_workspace's update is filtered to ACTIVE/CREATING — re-calling
-    on an already-EXPIRED row is a no-op (status unchanged, no error). Important
+    """close_workspace's update is filtered to ACTIVE — re-calling on an
+    already-EXPIRED row is a no-op (status unchanged, no error). Important
     for the CleanupWorkspace-runs-twice case after Tier-2 step retry."""
-    row = _make_row(status=WorkspaceStatus.EXPIRED, provider_id="good")
+    row = await _make_row(db_session, status=WorkspaceStatus.EXPIRED, provider_id="good")
     db_session.add(row)
     await db_session.commit()
 
@@ -311,7 +316,6 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "a"},
-        plugin_state={},
         status=WorkspaceStatus.ACTIVE.value,
         expires_at=_utcnow() + timedelta(hours=1),
         owning_agent_id=stale["id"],
@@ -321,7 +325,6 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "b"},
-        plugin_state={},
         status=WorkspaceStatus.ACTIVE.value,
         expires_at=_utcnow() + timedelta(hours=1),
         owning_agent_id=live["id"],
@@ -343,17 +346,17 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
 
 async def test_startup_recovery_flips_orphan_rows_to_expired(db_session) -> None:  # type: ignore[no-untyped-def]
     """A prior process crashed mid-workflow leaving rows in non-terminal
-    states (CREATING / ACTIVE / DESTROYING). `startup_recovery()` runs at
-    FastAPI lifespan start and flips them all to EXPIRED so the reaper
-    picks them up — no stuck workspaces survive a restart. This is the
-    Python side of failsafe #4 (startup reconciliation)."""
+    states (ACTIVE / DESTROYING). `startup_recovery()` runs at FastAPI
+    lifespan start and flips them to EXPIRED so the reaper picks them up.
+
+    Terminal rows (DESTROYED, DESTROY_FAILED) must NOT be re-flipped.
+    """
     rows = [
-        _make_row(status=WorkspaceStatus.CREATING, provider_id="good"),
-        _make_row(status=WorkspaceStatus.ACTIVE, provider_id="good"),
-        _make_row(status=WorkspaceStatus.DESTROYING, provider_id="good"),
+        await _make_row(db_session, status=WorkspaceStatus.ACTIVE, provider_id="good"),
+        await _make_row(db_session, status=WorkspaceStatus.DESTROYING, provider_id="good"),
         # Already-terminal rows must NOT be re-flipped.
-        _make_row(status=WorkspaceStatus.DESTROYED, provider_id="good"),
-        _make_row(status=WorkspaceStatus.DESTROY_FAILED, provider_id="good"),
+        await _make_row(db_session, status=WorkspaceStatus.DESTROYED, provider_id="good"),
+        await _make_row(db_session, status=WorkspaceStatus.DESTROY_FAILED, provider_id="good"),
     ]
     for row in rows:
         db_session.add(row)
@@ -363,13 +366,12 @@ async def test_startup_recovery_flips_orphan_rows_to_expired(db_session) -> None
 
     refreshed = (await db_session.execute(select(WorkspaceRow).order_by(WorkspaceRow.id))).scalars().all()
     by_id = {r.id: r for r in refreshed}
-    # Three orphans flipped.
+    # ACTIVE and DESTROYING flipped.
     assert by_id[rows[0].id].status == WorkspaceStatus.EXPIRED.value
     assert by_id[rows[1].id].status == WorkspaceStatus.EXPIRED.value
-    assert by_id[rows[2].id].status == WorkspaceStatus.EXPIRED.value
     # Terminal rows untouched.
-    assert by_id[rows[3].id].status == WorkspaceStatus.DESTROYED.value
-    assert by_id[rows[4].id].status == WorkspaceStatus.DESTROY_FAILED.value
+    assert by_id[rows[2].id].status == WorkspaceStatus.DESTROYED.value
+    assert by_id[rows[3].id].status == WorkspaceStatus.DESTROY_FAILED.value
 
 
 # ── WorkspaceRegistry.items() ───────────────────────────────────────────
@@ -398,3 +400,81 @@ def test_workspace_registry_items_is_immutable_snapshot() -> None:
     modified = list(snapshot)
     modified[0] = ("good", None)  # type: ignore[assignment]
     assert reg.items()[0][1] is not None  # original provider still there
+
+
+# ── force_close_all (ACTIVE-only, no CREATING) ─────────────────────────────
+
+
+async def test_force_close_all_leaves_non_active_rows_untouched(db_session) -> None:
+    """force_close_all targets ACTIVE rows only. Non-active rows (e.g. EXPIRED,
+    DESTROYED) must be left untouched."""
+    org_id = uuid4()
+    agent = await seed_agent(org_id=org_id, session=db_session)
+    active_ws = WorkspaceRow(
+        id=uuid4(),
+        org_id=org_id,
+        provider_id="remote_agent",
+        spec={"sha": "a"},
+        status=WorkspaceStatus.ACTIVE.value,
+        expires_at=_utcnow() + timedelta(hours=1),
+        owning_agent_id=agent["id"],
+    )
+    expired_ws = WorkspaceRow(
+        id=uuid4(),
+        org_id=org_id,
+        provider_id="remote_agent",
+        spec={"sha": "b"},
+        status=WorkspaceStatus.EXPIRED.value,
+        expires_at=_utcnow() + timedelta(hours=1),
+        owning_agent_id=agent["id"],
+    )
+    db_session.add_all([active_ws, expired_ws])
+    await db_session.commit()
+
+    count = await force_close_all(org_id=org_id, reason="disconnect")
+
+    assert count == 1, "only the ACTIVE row should be expired"
+    refreshed = {r.id: r for r in (await db_session.execute(select(WorkspaceRow))).scalars().all()}
+    assert refreshed[active_ws.id].status == WorkspaceStatus.EXPIRED.value
+    assert refreshed[expired_ws.id].status == WorkspaceStatus.EXPIRED.value
+
+
+# ── failsafe_agent_loss: workflow correlation via agent_commands ────────────
+
+
+async def test_failsafe_agent_loss_uses_command_row_correlation(db_session) -> None:
+    """failsafe_agent_loss synthesizes a terminal failure for an in-flight
+    command. The workflow_execution_id must come from agent_commands, not from
+    the shed workspaces.current_holder_workflow_id column."""
+    org_id = uuid4()
+    stale = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=600)
+    workspace_id = uuid4()
+    command_id = uuid4()
+
+    # Enqueue a real agent_commands row so the correlation path is exercised.
+    cmd = CleanupWorkspaceCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent="",
+    )
+    await enqueue_command(org_id=org_id, command=cmd, session=db_session)
+    await db_session.flush()
+
+    ws = WorkspaceRow(
+        id=workspace_id,
+        org_id=org_id,
+        provider_id="remote_agent",
+        spec={"sha": "x"},
+        status=WorkspaceStatus.ACTIVE.value,
+        expires_at=_utcnow() + timedelta(hours=1),
+        owning_agent_id=stale["id"],
+        current_command_id=command_id,
+    )
+    db_session.add(ws)
+    await db_session.commit()
+
+    await failsafe_agent_loss(db_session, {stale["id"]})
+    await db_session.commit()
+
+    await db_session.refresh(ws)
+    assert ws.status == WorkspaceStatus.EXPIRED.value

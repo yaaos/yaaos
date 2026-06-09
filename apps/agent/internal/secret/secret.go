@@ -2,7 +2,7 @@
 //
 // Secrets flow through the agent's command-handling path: the
 // ANTHROPIC_API_KEY in `InvokeClaudeCodeCommand.invocation.exec.env`,
-// the github-installation token in `CreateWorkspace.auth.token`, future
+// the github-installation token in `ProvisionWorkspace.auth.token`, future
 // per-org OAuth tokens. A wrong `log.Printf("%v", cmd)` or `json.Marshal`
 // would leak those into stderr / structured logs / audit events.
 //

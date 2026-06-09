@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.vcs import Diff
+from app.core.vcs import Diff
 
 
 def is_skip_path(path: str) -> bool:

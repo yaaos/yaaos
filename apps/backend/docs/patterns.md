@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed into a plugin-internal Pydantic model, then converted to vendor-neutral domain types (`vcs.Finding`).
+- Coding-agent CLI stdout parsed into a plugin-internal Pydantic model, then converted to `ReportedFinding` (raw strings; reviewer validates into domain types).
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 
@@ -56,7 +56,7 @@ Domain functions succeed or raise. No translation unless translation is genuinel
 
 ### Filesystem + processes via `core/workspace`
 
-Never touch the filesystem (`open()`, `pathlib`) or spawn processes (`subprocess`) directly for repo/code work. Always go through `with_workspace(...)` — the workspace decides where/how the CLI runs. Consumers never see internal paths; the Protocol exposes operations, not paths.
+Never touch the filesystem (`open()`, `pathlib`) or spawn processes (`subprocess`) directly for repo/code work. Workspace operations go through the remote agent via `dispatch_invoke_claude_code` (the workspace dispatches via `core/agent_gateway`). Consumers never see internal paths; the Protocol exposes operations, not paths.
 
 Exceptions: `core/database` (Postgres connections), `core/observability` (log files).
 
@@ -216,7 +216,7 @@ Alembic CLI is only used for `alembic revision --autogenerate -m "..."`. Direct 
 - Services and repositories never pass `id=` to a Row constructor. Drop it; the DB mints a v7 UUID on INSERT.
 - Call `await session.flush()` before reading `row.id` if the PK is needed before commit (audit-log FK, child-row FK, return value). Where the row is added and never read before commit, no flush is needed beyond what the transaction already provides.
 - **Exception — app-side identity ownership:** When a component owns an aggregate's identity in-memory before persistence (e.g. the reviewer aggregate minting `Review`, `Finding`, `FindingObservation`, `CommentThread`, `CommentMessage`, and `AcknowledgmentDecision` IDs), it mints the PK via `uuid.uuid7()` — never `uuid.uuid4()` — and passes it explicitly to the Row constructor. The repository's `Row(id=domain_obj.id)` insert is the counterpart to this pattern.
-- Enforced by `apps/backend/.semgrep/uuid_pk_discipline.yaml` (two rules: `uuid-pk-no-python-default`, `uuid-pk-no-explicit-id-in-row-constructor`). Both red-fail CI. The taint rule treats both `uuid4(...)` and `uuid7(...)` as sources; `apps/backend/app/domain/reviewer/aggregate.py` is excluded from that rule as the documented carve-out.
+- Enforced by `apps/backend/.semgrep/uuid_pk_discipline.yaml` (two rules: `uuid-pk-no-python-default`, `uuid-pk-no-explicit-id-in-row-constructor`). Both red-fail CI. The taint rule treats both `uuid4(...)` and `uuid7(...)` as sources; `apps/backend/app/domain/reviewer/aggregate.py` and `publish.py` are excluded from that rule as the documented carve-outs (both own aggregate identity app-side). The exclude globs are `**/`-anchored so they match the scan-target-relative path `bin/ci` produces.
 
 ## Durable tasks via `core/tasks`
 
@@ -242,10 +242,10 @@ When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(..
 
 ## WorkflowCommand discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories with a single `execute(inputs, ctx) -> Outcome` shape:
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories:
 
-- **Workspace** — issues one or more AgentCommands. `start_step` dispatches and parks the workflow in `awaiting_agent`; `handle_agent_event` resumes when the terminal event arrives. Worker never blocks on the agent.
-- **Local** — runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
+- **Workspace** — implements `WorkspaceWorkflowCommand` (adds `dispatch(inputs, ctx, *, session) -> UUID` to the base `WorkflowCommand` Protocol). `start_step` calls `dispatch` inside its own transaction to enqueue an `agent_commands` row pre-stamped with `workflow_execution_id`, parks the workflow in `awaiting_agent` on the returned `command_id`, and resumes via `handle_agent_event` when the terminal event arrives. Worker never blocks on the agent.
+- **Local** — implements `WorkflowCommand.execute(inputs, ctx) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
 - **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 
 Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
@@ -256,7 +256,7 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Failure-report-precedes-disposal invariant
 
-`release_claim` clears `current_command_id` but **preserves** `current_holder_workflow_id`. The terminal AgentEvent must arrive before the workspace row is disposed. This means reconciliation lookups can always resolve `command_id → workspace → current_holder_workflow_id → workflow_execution` — even after the workspace is being torn down.
+`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow after the workspace has been torn down.
 
 ### Recovery policy registry
 
@@ -349,7 +349,7 @@ Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBL
 
 ### Service tests
 
-When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer → vcs.post_review → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
+When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer → vcs.post_finding → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
 
 Mechanics:
 
@@ -419,7 +419,7 @@ A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ..
 Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`). Add manual spans only at meaningful boundaries:
 
 - Every external call — VCS API, coding-agent CLI, webhook signature verification.
-- Every plugin entry point — `VCSPlugin.post_review`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
+- Every plugin entry point — `VCSPlugin.post_finding`, `VCSPlugin.post_comment`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
 - Long phases inside a background coro — review_job phase transitions each get a span so the trace shows where wall time went.
 
 Don't wrap every domain function — noise hurts more than detail helps.
@@ -483,7 +483,7 @@ Both loops wrap each hook call in `try/except` (web) or `contextlib.suppress` (w
 
 Both composition roots live inside `app/` so they're importable as regular Python modules and testable without exec tricks.
 
-- `app/web.py` — web process entry. See § Bootstrap composition order. Ends with `app = webserver.create_app()`. When run directly (`python apps/backend/app/web.py`) the `if __name__ == "__main__"` block calls `uvicorn.run(...)` with all server flags in Python — no flags scattered across Dockerfile CMDs.
+- `app/web.py` — web process entry. See § Bootstrap composition order. Ends with `app = webserver.create_app()`. When run directly (`python apps/backend/app/web.py`) the `if __name__ == "__main__"` block calls `uvicorn.run(app, ...)` with all server flags in Python — no flags scattered across Dockerfile CMDs. It passes the built `app` **object**, not the `"app.web:app"` import string: a string makes uvicorn re-import the module (distinct from the running `__main__`), executing the whole composition root — every module-level registration — a second time. Passing the object runs the bootstrap once. Cost: no uvicorn reload/multi-worker (both need an import string), unused since the backend runs single-process per container. Local dev that wants reload runs uvicorn directly (`uvicorn app.web:app --reload`), which imports the module once and never executes `__main__`.
 - `app/worker.py` — worker process entry. Side-effect imports (workflow commands, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
 
 Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["python", "apps/backend/app/worker.py"]`. tini is PID 1 (image-level `ENTRYPOINT ["/usr/bin/tini", "--"]`) and forwards SIGTERM to the Python child, triggering graceful shutdown via the Phase-1 shutdown registries.
@@ -497,8 +497,8 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 1. Load environment — `app.core.config`.
 2. Configure core infra — `app.core.database`, `app.core.observability`.
 3. Import webserver registry — `app.core.webserver` *before any module registers routes*.
-4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.workspace`.
-5. Domain modules in dependency order — types first (vcs, lessons), then coding_agent, then leaf domain modules, then dependents.
+4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
+5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
 6. Plugins — `claude_code`, `github`.
 7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 8. Build the FastAPI app — `webserver.create_app()`.

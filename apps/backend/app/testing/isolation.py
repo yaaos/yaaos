@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 
 from app.core.redis import RedisPubsub, bind_pubsub
-from app.domain.vcs import (
+from app.core.vcs import (
     bind_vcs_registry,
     current_vcs_registry,
 )
@@ -41,6 +41,20 @@ async def subscriber_registry_isolation() -> None:
     from app.core.agent_gateway import SubscriberRegistry, bind_subscriber_registry  # noqa: PLC0415
 
     bind_subscriber_registry(SubscriberRegistry())
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def scheduler_registry_isolation() -> None:
+    """Clear the recurring-task scheduler registry per test.
+
+    Schedules are registered at import time (e.g. the `scheduled_runs`
+    prune); tests that register their own schedules (via `@scheduled`
+    or `schedule_task`) must start with a known-empty registry so the
+    `tick_once` call only fires the schedules the test introduced.
+    """
+    from app.core.tasks.scheduler import _reset_schedules_for_tests  # noqa: PLC0415
+
+    _reset_schedules_for_tests()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -76,8 +90,8 @@ def _canonical_registries():
         wrap_all_registered_plugins()
         wrap_all_registered_workspace_providers()
 
+    from app.core.coding_agent import current_coding_agent_registry  # noqa: PLC0415
     from app.core.workspace import current_workspace_registry  # noqa: PLC0415
-    from app.domain.coding_agent import current_coding_agent_registry  # noqa: PLC0415
 
     class _Snapshot:
         coding_agent = current_coding_agent_registry().copy()
@@ -95,8 +109,8 @@ async def plugin_registries_isolation(_canonical_registries) -> None:
     affects its own copy; the next test rebinds from the canonical snapshot —
     no restore, no leak, no order dependence.
     """
+    from app.core.coding_agent import bind_coding_agent_registry  # noqa: PLC0415
     from app.core.workspace import bind_workspace_registry  # noqa: PLC0415
-    from app.domain.coding_agent import bind_coding_agent_registry  # noqa: PLC0415
 
     bind_coding_agent_registry(_canonical_registries.coding_agent.copy())
     bind_vcs_registry(_canonical_registries.vcs.copy())
@@ -177,6 +191,7 @@ __all__ = [
     "plugin_registries_isolation",
     "pubsub_isolation",
     "recovery_policies_isolation",
+    "scheduler_registry_isolation",
     "scoped_vcs_plugin",
     "subscriber_registry_isolation",
     "workflow_context_provider_isolation",

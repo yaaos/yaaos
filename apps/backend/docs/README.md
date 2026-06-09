@@ -10,7 +10,7 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 
 ## Module map
 
-32 modules: **17 core · 8 domain · 4 plugins · 3 testing**. Each has a doc with five fixed sections.
+Modules are organized in four layers — **core · domain · plugins · testing**. Each has a doc with five fixed sections.
 
 ### Core — infrastructure, no business logic
 
@@ -22,7 +22,6 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [core_audit_log](core_audit_log.md) | Append-only timeline. |
 | [core_workspace](core_workspace.md) | `Workspace` + `WorkspaceProvider` Protocols; lifecycle + reaper. |
 | [core_observability](core_observability.md) | structlog + conditional OTel SDK + `spawn()`. |
-| [core_plugin_kit](core_plugin_kit.md) | `PluginMeta` + `PluginType` — self-description every plugin exposes. Future plugin-system primitives land here. |
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 | [core_auth](core_auth.md) | Default-deny middleware, contextvars, `Action` enum, `RouteSecurity` taxonomy, `org_context()`. |
 | [core_tenancy](core_tenancy.md) | IAM access graph — `orgs` + `memberships` tables; `resolve_auth_org`, membership VOs. |
@@ -30,20 +29,19 @@ FastAPI service in Python 3.14. Single Docker image runs the API, serves the bun
 | [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis; owns the outbox table and worker process. |
 | [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (skeleton). |
 | [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (skeleton). |
+| [core_vcs](core_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
 | [core_sse](core_sse.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers; declares `/api/sse` as org-scoped. |
 | [core_identity](core_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 | [core_sessions](core_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints. |
+| [core_coding_agent](core_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
 
 ### Domain — business logic, vendor-neutral
 
 | Module | Responsibility |
 |---|---|
-| [domain_vcs](domain_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
-| [domain_coding_agent](domain_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
-| [domain_pull_requests](domain_pull_requests.md) | PR aggregate mirroring VCS state. |
-| [domain_tickets](domain_tickets.md) | Lifecycle `open → in_review → complete`. |
-| [domain_reviewer](domain_reviewer.md) | `ReviewJob` aggregate, per-PR queue, workflow. |
+| [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
+| [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
 

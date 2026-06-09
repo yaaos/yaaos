@@ -74,7 +74,7 @@ def test_push_outside_debounce_runs_incremental() -> None:
     now = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
     decision = decide_trigger(_inputs(now=now, last_push_at=now - timedelta(seconds=120)))
     assert isinstance(decision, Run)
-    assert decision.scope.kind.value == "incremental"
+    assert decision.scope.kind == "incremental"
     assert decision.scope.base_sha == "old_sha"
     assert decision.scope.head_sha == "new_sha"
 

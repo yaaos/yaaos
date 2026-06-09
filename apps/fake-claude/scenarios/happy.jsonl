@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"fake-happy-session","model":"claude-opus-4-5-20250929"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Reviewing the diff."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Found one minor issue."}]}}
+{"type":"result","subtype":"success","result":"{\"findings\": [{\"category\": \"correctness\", \"severity\": \"nit\", \"confidence\": \"speculative\", \"rationale\": \"Unused variable assignment may indicate incomplete logic.\", \"rule_violated\": \"no-unused-vars\", \"rule_source\": \"yaaos\", \"suggested_fix\": \"Remove or use the assigned variable.\", \"file\": \"main.go\", \"line\": 42}]}","is_error":false,"duration_ms":1200,"num_turns":3,"usage":{"input_tokens":1234,"output_tokens":567}}

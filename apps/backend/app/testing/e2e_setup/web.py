@@ -56,6 +56,24 @@ async def seed_github_install(
     return {"status": "seeded"}
 
 
+class _RepoSkillRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    repo_external_id: str = Field(..., min_length=1)
+    skill_name: str = Field(..., min_length=1)
+
+
+@router.post("/seed/repo_skill")
+async def seed_repo_skill(req: _RepoSkillRequest) -> dict[str, str]:
+    """Seed a ``skill_name`` for a connected repo so reviews can build an invocation."""
+    _guard_dev()
+    await service.seed_repo_skill(
+        org_slug=req.org_slug,
+        repo_external_id=req.repo_external_id,
+        skill_name=req.skill_name,
+    )
+    return {"status": "seeded"}
+
+
 class _LessonRequest(BaseModel):
     repo_external_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)

@@ -2,8 +2,9 @@
 
 Provides:
 - `start_step` body — branches on command category. Local + HITL execute
-  inline; Workspace sets `awaiting_agent` and assigns a
-  `pending_agent_command_id`.
+  inline; Workspace calls `command.dispatch(inputs, ctx, session=s)` to enqueue
+  an AgentCommand row, parks the workflow in `awaiting_agent`, and stores
+  the returned `command_id` as `pending_agent_command_id`.
 - `handle_agent_event` body — validates the event matches the pending
   command id, clears it, enqueues `route_workflow`. Idempotent: stale
   events exit cleanly.
@@ -19,17 +20,20 @@ See `apps/backend/docs/core_workflow.md`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC as _UTC
 from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 from opentelemetry import trace
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import session as db_session
 from app.core.observability import with_remote_parent_span
+from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.recovery import get_recovery_policy
@@ -48,10 +52,21 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkspaceWorkflowCommand,
 )
 
 log = structlog.get_logger("core.workflow")
 _tracer = trace.get_tracer("core.workflow")
+
+
+class WorkflowFailedPayload(BaseModel):
+    """Audit payload for `workflow.failed` rows written by the engine on
+    terminal-fail. Generic — owned by `core/workflow`, not domain-specific."""
+
+    workflow_execution_id: str
+    ticket_id: str
+    failed_step_id: str | None
+    failure_reason: str | None
 
 
 # Key prefix in WorkflowExecutionRow.step_state used to persist append_steps
@@ -63,6 +78,9 @@ _AFTER_APPEND_KEY = "__after_append__"
 _ATTEMPTS_KEY = "__attempts__"
 _RECOVERED_STEPS_KEY = "__recovered_steps__"
 _TICKET_PAYLOAD_KEY = "__ticket_payload__"
+# Marks that the workflow's declared finalizer has already been dispatched once,
+# preventing double-fire on the failure path.
+_FINALIZER_FIRED_KEY = "__finalizer_fired__"
 
 
 # ── The three taskiq task bodies ────────────────────────────────────────
@@ -79,9 +97,9 @@ async def start_step(
 ) -> None:
     """Dispatch the step. Branches on the WorkflowCommand category:
 
-    - **Workspace** — sets `state = awaiting_agent` and assigns
-      `pending_agent_command_id`. The engine synthesizes the command id while
-      real dispatch via `core/workspace.dispatch` is stubbed.
+    - **Workspace** — calls `command.dispatch(inputs, ctx, session=s)` to
+      enqueue an AgentCommand row, parks the workflow in `awaiting_agent`,
+      and sets `pending_agent_command_id` to the returned `command_id`.
     - **Local** — runs the command inline, persists its outcome, enqueues
       `route_workflow` via the outbox in the same transaction.
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
@@ -122,6 +140,7 @@ async def _start_step_impl(
         # Cancellation check — set the row terminal and exit before dispatch.
         if wfx.cancel_requested:
             wfx.state = WorkflowState.CANCELLED.value
+            _publish_state_changed(s, wfx)
             log.info(
                 "workflow.start_step.cancelled_pre_dispatch", workflow_execution_id=workflow_execution_id
             )
@@ -147,6 +166,7 @@ async def _start_step_impl(
                 step_id=step_id,
             )
             wfx.state = WorkflowState.FAILED.value
+            _publish_state_changed(s, wfx)
             await s.commit()
             return
 
@@ -159,6 +179,7 @@ async def _start_step_impl(
                 command_kind=step.command_kind,
             )
             wfx.state = WorkflowState.FAILED.value
+            _publish_state_changed(s, wfx)
             await s.commit()
             return
 
@@ -171,20 +192,31 @@ async def _start_step_impl(
         )
 
         wfx.current_step_id = step_id
+        _stamp_step_started(wfx, step_id)
 
         if command.category == CommandCategory.WORKSPACE:
-            # Workspace commands always dispatch over the wire to the registered
-            # WorkspaceProvider. The engine parks the execution in `awaiting_agent`
-            # and assigns a `pending_agent_command_id`; the terminal AgentEvent
-            # arrives via `handle_agent_event` to resume routing. Provider
-            # resolution and "no provider" errors surface in the workspace
-            # module's actual dispatch path (not here) to preserve the module DAG.
-            wfx.pending_agent_command_id = uuid4()
+            # Workspace commands enqueue an AgentCommand durably inside this
+            # transaction via the command's own `dispatch` method. The engine
+            # parks the execution in `awaiting_agent` and stores the returned
+            # `command_id` as `pending_agent_command_id`. The terminal
+            # AgentEvent arrives via `handle_agent_event` to resume routing.
+            # The engine remains ignorant of workspace internals — the command
+            # owns the enqueue + repository wiring; the engine only handles
+            # the state transition.
+            if not isinstance(command, WorkspaceWorkflowCommand):
+                raise WorkflowError(
+                    f"WorkflowCommand kind '{step.command_kind}' has category=workspace "
+                    f"but does not implement WorkspaceWorkflowCommand.dispatch"
+                )
+            command_id = await command.dispatch(inputs, cmd_ctx, session=s)
+            wfx.pending_agent_command_id = command_id
             wfx.state = WorkflowState.AWAITING_AGENT.value
+            _publish_state_changed(s, wfx)
             log.info(
                 "workflow.start_step.workspace_dispatched",
                 workflow_execution_id=workflow_execution_id,
                 command_kind=step.command_kind,
+                command_id=str(command_id),
             )
             await s.commit()
             return
@@ -202,6 +234,7 @@ async def _start_step_impl(
                     outcome_kind=outcome.kind.value,
                 )
                 wfx.state = WorkflowState.FAILED.value
+                _publish_state_changed(s, wfx)
                 await s.commit()
                 return
             s.add(
@@ -211,6 +244,7 @@ async def _start_step_impl(
                 )
             )
             wfx.state = WorkflowState.AWAITING_HUMAN.value
+            _publish_state_changed(s, wfx)
             await s.commit()
             return
 
@@ -298,6 +332,7 @@ async def _handle_agent_event_impl(
         completed_step_id = wfx.current_step_id
         wfx.pending_agent_command_id = None
         wfx.state = WorkflowState.RUNNING.value
+        _publish_state_changed(s, wfx)
 
         await enqueue(
             ROUTE_WORKFLOW,
@@ -371,6 +406,7 @@ async def _route_workflow_impl(
 
         if wfx.cancel_requested:
             wfx.state = WorkflowState.CANCELLED.value
+            _publish_state_changed(s, wfx)
             log.info(
                 "workflow.route_workflow.cancelled_at_route",
                 workflow_execution_id=workflow_execution_id,
@@ -385,6 +421,7 @@ async def _route_workflow_impl(
         # enqueueing the entry step.
         if completed_step_id is None:
             wfx.state = WorkflowState.RUNNING.value
+            _publish_state_changed(s, wfx)
             await _enqueue_start_step(s, wfx, wf, wf.entry_step_id, traceparent, attempt=0)
             await s.commit()
             return
@@ -400,6 +437,7 @@ async def _route_workflow_impl(
                 step_id=completed_step_id,
             )
             wfx.state = WorkflowState.FAILED.value
+            _publish_state_changed(s, wfx)
             await s.commit()
             return
 
@@ -421,6 +459,7 @@ async def _route_workflow_impl(
                 _queue_appended_steps(wfx, [recovery_step])
                 _set_after_append(wfx, completed_step_id)
                 wfx.state = WorkflowState.RUNNING.value
+                _publish_state_changed(s, wfx)
                 log.info(
                     "workflow.route_workflow.recovery_inserted",
                     workflow_execution_id=workflow_execution_id,
@@ -442,6 +481,7 @@ async def _route_workflow_impl(
             attempts = _get_attempt(wfx, completed_step_id)
             if attempts < step.retry_policy.max_attempts - 1:
                 wfx.state = WorkflowState.RUNNING.value
+                _publish_state_changed(s, wfx)
                 await _enqueue_start_step(s, wfx, wf, completed_step_id, traceparent, attempt=attempts + 1)
                 await s.commit()
                 return
@@ -458,6 +498,7 @@ async def _route_workflow_impl(
         head = _dequeue_appended(wfx)
         if head is not None:
             wfx.state = WorkflowState.RUNNING.value
+            _publish_state_changed(s, wfx)
             await _enqueue_start_step(s, wfx, wf, head.id, traceparent, attempt=0)
             await s.commit()
             return
@@ -472,16 +513,80 @@ async def _route_workflow_impl(
             target = _resolve_transition(wf, step, outcome_label or "success")
 
         if target is TerminalAction.COMPLETE_WORKFLOW:
-            wfx.state = WorkflowState.DONE.value
-            await s.commit()
-            return
+            # If the finalizer step already ran (i.e. we're completing the
+            # cleanup step that ran after a prior failure), the workflow must
+            # end as FAILED, not DONE.  The cleanup step's own transition
+            # "success → COMPLETE_WORKFLOW" is the *normal-path* contract;
+            # during the failure path the finalizer's completion is just the
+            # resource-release gate before recording failure.
+            if _has_finalizer_fired(wfx) and completed_step_id == wf.finalizer_step_id:
+                target = TerminalAction.FAIL_WORKFLOW
+            else:
+                wfx.state = WorkflowState.DONE.value
+                _publish_state_changed(s, wfx)
+                await s.commit()
+                return
         if target is TerminalAction.FAIL_WORKFLOW:
+            # Run the declared finalizer (one-shot) before recording failure.
+            # The finalizer step runs cleanup (e.g. CleanupWorkspace) so it
+            # has a chance to release resources even on the failure path.
+            # Guard: fires only once per execution; if the finalizer itself
+            # fails, it arrives here again with the fired flag set → skip.
+            if wf.finalizer_step_id is not None and not _has_finalizer_fired(wfx):
+                _mark_finalizer_fired(wfx)
+                # Capture the failure context before routing to the finalizer;
+                # the failure reason comes from the *original* failing step.
+                failure_reason = _extract_failure_reason(outputs, outcome_label)
+                _store_pending_failure(wfx, completed_step_id, failure_reason)
+                wfx.state = WorkflowState.RUNNING.value
+                _publish_state_changed(s, wfx)
+                log.info(
+                    "workflow.route_workflow.finalizer_dispatched",
+                    workflow_execution_id=workflow_execution_id,
+                    finalizer_step_id=wf.finalizer_step_id,
+                    failed_step_id=completed_step_id,
+                )
+                await _enqueue_start_step(s, wfx, wf, wf.finalizer_step_id, traceparent, attempt=0)
+                await s.commit()
+                return
+
+            # Finalizer already fired (or not declared) — record terminal failure.
+            failure_reason = _pop_pending_failure_reason(wfx) or _extract_failure_reason(
+                outputs, outcome_label
+            )
+            failed_step_id = _pop_pending_failure_step(wfx) or completed_step_id
+            wfx.failure_reason = failure_reason
             wfx.state = WorkflowState.FAILED.value
+            _publish_state_changed(s, wfx)
+            # Write the durable cross-cutting audit row.
+            from app.core.audit_log import Actor, audit  # noqa: PLC0415
+
+            await audit(
+                "workflow_execution",
+                wfx.id,
+                "workflow.failed",
+                WorkflowFailedPayload(
+                    workflow_execution_id=str(wfx.id),
+                    ticket_id=str(wfx.ticket_id),
+                    failed_step_id=failed_step_id,
+                    failure_reason=failure_reason,
+                ),
+                Actor.system(),
+                org_id=_workflow_org_id(wfx),
+                session=s,
+            )
+            log.info(
+                "workflow.route_workflow.failed",
+                workflow_execution_id=workflow_execution_id,
+                failed_step_id=failed_step_id,
+                failure_reason=failure_reason,
+            )
             await s.commit()
             return
 
         # Otherwise it's a string step id.
         wfx.state = WorkflowState.RUNNING.value
+        _publish_state_changed(s, wfx)
         await _enqueue_start_step(s, wfx, wf, target, traceparent, attempt=0)
         await s.commit()
 
@@ -544,6 +649,7 @@ async def resume_hitl(
     pending.resolution_payload = response
     pending.resolved_at = datetime.now(UTC)
     wfx.state = WorkflowState.RUNNING.value
+    _publish_state_changed(session, wfx)
 
     await enqueue(
         ROUTE_WORKFLOW,
@@ -584,6 +690,9 @@ class WorkflowExecutionSummary:
     # that simulate agent events (tests, agent_gateway) can propagate trace
     # context into handle_agent_event without reaching into the row directly.
     otel_trace_context: str | None = None
+    # Short failure label written when the engine records terminal-fail.
+    # None while the workflow is running or when it terminates with DONE.
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -599,6 +708,42 @@ class HitlHistoryEntry:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class WorkflowStepSummary:
+    """One step within a workflow run, projected for the Ticket page UI.
+
+    `state` is a five-valued projection — pending (not yet run) /
+    running (current_step_id matches) / done / failed / skipped — derived
+    from the workflow definition merged with `step_state[step_id]`. Pure
+    workflow vocabulary — never references AgentCommands.
+    """
+
+    step_id: str
+    command_kind: str
+    state: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class WorkflowRunView:
+    """One workflow execution rendered for the ticket page (steps + timing).
+
+    The SPA renders one card per run plus a stage band built from `steps`.
+    Steps are ordered by the workflow definition's `steps` tuple.
+    """
+
+    id: UUID
+    workflow_name: str
+    workflow_version: int
+    state: str
+    current_step_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    steps: tuple[WorkflowStepSummary, ...]
+    failure_reason: str | None = None
+
+
 def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
     return WorkflowExecutionSummary(
         id=row.id,
@@ -611,6 +756,7 @@ def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
         pending_agent_command_id=row.pending_agent_command_id,
         cancel_requested=row.cancel_requested,
         otel_trace_context=row.otel_trace_context,
+        failure_reason=row.failure_reason,
     )
 
 
@@ -723,6 +869,124 @@ async def list_hitl_history(ticket_id: UUID, *, session: AsyncSession) -> list[H
         )
         for r in rows
     ]
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse an ISO-8601 string out of step_state. Returns None on any
+    shape problem so a malformed stamp can't break the projection."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _step_summary(
+    step: Step,
+    *,
+    is_current: bool,
+    entry: dict[str, Any] | None,
+    execution_state: str,
+) -> WorkflowStepSummary:
+    """Derive the projected step state from workflow def + stored entry.
+
+    Branches: stored outcome_label (`success` → done, otherwise failed —
+    `_skipped` is the conventional label for explicit skip); else current
+    step → running; else default pending. On terminal `failed` / `cancelled`
+    execution state, an entry-less step stays `pending` (never executed).
+    """
+    started = _parse_iso(entry.get("started_at")) if isinstance(entry, dict) else None
+    completed = _parse_iso(entry.get("completed_at")) if isinstance(entry, dict) else None
+    outcome_label: str | None = entry.get("outcome_label") if isinstance(entry, dict) else None
+
+    if outcome_label == "success":
+        state = "done"
+    elif outcome_label is not None:
+        # `_skipped` is the conventional label for an explicit skip outcome;
+        # any other non-success label is a failure of the step itself.
+        state = "skipped" if outcome_label == "_skipped" else "failed"
+    elif is_current and execution_state in {
+        WorkflowState.RUNNING.value,
+        WorkflowState.AWAITING_AGENT.value,
+        WorkflowState.AWAITING_HUMAN.value,
+    }:
+        state = "running"
+    else:
+        state = "pending"
+
+    return WorkflowStepSummary(
+        step_id=step.id,
+        command_kind=step.command_kind,
+        state=state,
+        started_at=started,
+        completed_at=completed,
+    )
+
+
+def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
+    """Merge workflow definition + execution row into a `WorkflowRunView`.
+
+    Step order follows the workflow's declared `steps` tuple. Dynamically
+    appended steps (via `Outcome.append_steps`) are not surfaced — the UI
+    renders only the static pipeline. Unknown workflow names produce an
+    empty step list rather than raising; the SPA still renders the run.
+    """
+    engine = get_engine()
+    try:
+        wf = engine.get_workflow(row.workflow_name, version=row.workflow_version)
+    except WorkflowNotFoundError:
+        steps: tuple[WorkflowStepSummary, ...] = ()
+    else:
+        summaries: list[WorkflowStepSummary] = []
+        for step in wf.steps:
+            entry = row.step_state.get(step.id)
+            if not isinstance(entry, dict):
+                entry = None
+            summaries.append(
+                _step_summary(
+                    step,
+                    is_current=(row.current_step_id == step.id),
+                    entry=entry,
+                    execution_state=row.state,
+                )
+            )
+        steps = tuple(summaries)
+    return WorkflowRunView(
+        id=row.id,
+        workflow_name=row.workflow_name,
+        workflow_version=row.workflow_version,
+        state=row.state,
+        current_step_id=row.current_step_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        steps=steps,
+        failure_reason=row.failure_reason,
+    )
+
+
+async def list_run_views_for_ticket(ticket_id: UUID, *, session: AsyncSession) -> list[WorkflowRunView]:
+    """All workflow runs for a ticket, newest first, fully projected.
+
+    Each `WorkflowRunView` carries its step list (state + per-step timing)
+    so the SPA can render the workflow-run card + stage band without a
+    follow-up call. Ordering is `created_at DESC` (latest run first), matching
+    the sibling `list_executions_for_ticket`.
+    """
+    from sqlalchemy import desc  # noqa: PLC0415
+
+    rows = (
+        (
+            await session.execute(
+                select(WorkflowExecutionRow)
+                .where(WorkflowExecutionRow.ticket_id == ticket_id)
+                .order_by(desc(WorkflowExecutionRow.created_at))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_project_run_view(r) for r in rows]
 
 
 async def list_all_execution_states(*, session: AsyncSession) -> list[str]:
@@ -916,14 +1180,58 @@ def _persist_outputs(
     outputs: dict[str, Any],
 ) -> None:
     bucket = dict(wfx.step_state)
+    # Preserve `started_at` if already stamped by `_stamp_step_started`.
+    prior = bucket.get(step_id) if isinstance(bucket.get(step_id), dict) else None
+    started_at = prior.get("started_at") if isinstance(prior, dict) else None
     # Strip control keys before persisting per-step entries — those control
     # keys live alongside step entries with their own '__' prefixes.
-    step_entry = {
+    step_entry: dict[str, Any] = {
         "outcome_label": outcome_label,
         "outputs": {k: v for k, v in outputs.items() if not k.startswith("__")},
+        "completed_at": datetime.now(_UTC).isoformat(),
     }
+    if started_at is not None:
+        step_entry["started_at"] = started_at
     bucket[step_id] = step_entry
     wfx.step_state = bucket
+
+
+def _stamp_step_started(wfx: WorkflowExecutionRow, step_id: str) -> None:
+    """Stamp `started_at` on the step's entry if not already present.
+
+    Called at dispatch time so a still-running step has `started_at` but a
+    null `completed_at` for the run-view UI. `_persist_outputs` later
+    preserves the stamp when writing the terminal outcome.
+    """
+    bucket = dict(wfx.step_state)
+    existing = bucket.get(step_id) if isinstance(bucket.get(step_id), dict) else None
+    if isinstance(existing, dict) and "started_at" in existing:
+        return
+    entry: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    entry["started_at"] = datetime.now(_UTC).isoformat()
+    bucket[step_id] = entry
+    wfx.step_state = bucket
+
+
+def _publish_state_changed(session: AsyncSession, wfx: WorkflowExecutionRow) -> None:
+    """Emit `workflow_state_changed` on the org's general SSE channel.
+
+    Called at every `wfx.state = …` assignment site so the SPA can keep the
+    stage band + Activity tab live. Stashed after-commit so a rolled-back
+    transition never reaches subscribers. core→core only — the engine
+    never imports `domain/*`.
+    """
+    org_id = _workflow_org_id(wfx)
+    publish_general_after_commit(
+        session,
+        org_id=org_id,
+        kind=GeneralEventKind.WORKFLOW_STATE_CHANGED,
+        payload={
+            "ticket_id": str(wfx.ticket_id),
+            "workflow_execution_id": str(wfx.id),
+            "state": wfx.state,
+        },
+    )
 
 
 def _queue_appended_steps(wfx: WorkflowExecutionRow, steps: list[Step]) -> None:
@@ -949,6 +1257,100 @@ def _outcome_payload(outcome: Outcome) -> dict[str, Any]:
     if outcome.failure_reason is not None:
         payload["__failure_reason__"] = outcome.failure_reason
     return payload
+
+
+# ── Finalizer helpers ────────────────────────────────────────────────────
+# The finalizer is a one-shot per execution: once dispatched it is never
+# re-dispatched even if it itself fails. The fired-flag + pending-failure
+# cache live in step_state under control keys so SQLAlchemy detects changes.
+
+_PENDING_FAILURE_STEP_KEY = "__pending_failure_step__"
+_PENDING_FAILURE_REASON_KEY = "__pending_failure_reason__"
+
+
+def _has_finalizer_fired(wfx: WorkflowExecutionRow) -> bool:
+    return bool(wfx.step_state.get(_FINALIZER_FIRED_KEY))
+
+
+def _mark_finalizer_fired(wfx: WorkflowExecutionRow) -> None:
+    bucket = dict(wfx.step_state)
+    bucket[_FINALIZER_FIRED_KEY] = True
+    wfx.step_state = bucket
+
+
+def _store_pending_failure(
+    wfx: WorkflowExecutionRow,
+    failed_step_id: str | None,
+    failure_reason: str | None,
+) -> None:
+    """Stash the failure context so it survives the finalizer step's round-trip
+    and can be read when the finalizer itself completes (or fails)."""
+    bucket = dict(wfx.step_state)
+    if failed_step_id is not None:
+        bucket[_PENDING_FAILURE_STEP_KEY] = failed_step_id
+    if failure_reason is not None:
+        bucket[_PENDING_FAILURE_REASON_KEY] = failure_reason
+    wfx.step_state = bucket
+
+
+def _pop_pending_failure_step(wfx: WorkflowExecutionRow) -> str | None:
+    raw = wfx.step_state.get(_PENDING_FAILURE_STEP_KEY)
+    if raw is None:
+        return None
+    bucket = dict(wfx.step_state)
+    bucket.pop(_PENDING_FAILURE_STEP_KEY, None)
+    wfx.step_state = bucket
+    return str(raw)
+
+
+def _pop_pending_failure_reason(wfx: WorkflowExecutionRow) -> str | None:
+    raw = wfx.step_state.get(_PENDING_FAILURE_REASON_KEY)
+    if raw is None:
+        return None
+    bucket = dict(wfx.step_state)
+    bucket.pop(_PENDING_FAILURE_REASON_KEY, None)
+    wfx.step_state = bucket
+    return str(raw)
+
+
+def _extract_failure_reason(outputs: dict[str, Any], outcome_label: str | None) -> str | None:
+    """Best-effort failure-reason extraction. Prefers the structured
+    `__failure_reason__` output key set by `Outcome.failure(reason=...)`;
+    falls back to the outcome label string."""
+    reason = outputs.get("__failure_reason__")
+    if reason:
+        return str(reason)
+    if outcome_label and outcome_label != "success":
+        return outcome_label
+    return None
+
+
+def _workflow_org_id(wfx: WorkflowExecutionRow) -> UUID:
+    """Return the org_id for the audit call.
+
+    Route-workflow task bodies run inside `OrgContextMiddleware` which sets
+    the `org_id` contextvar from the task metadata. Use that when available;
+    fall back to the ticket_payload stash for test cases that bypass the
+    middleware.
+    """
+    from app.core.auth import current_org_id  # noqa: PLC0415
+
+    org_id = current_org_id()
+    if org_id is not None:
+        return org_id
+    # Fallback: ticket_payload may carry org_id for tests that bypass middleware.
+    payload = wfx.step_state.get(_TICKET_PAYLOAD_KEY)
+    if isinstance(payload, dict):
+        raw = payload.get("org_id")
+        if raw is not None:
+            return UUID(str(raw))
+    # Last resort — mint a nil UUID so the audit row still lands rather than
+    # crashing the failure path; the engine logs the issue.
+    log.warning(
+        "workflow.route_workflow.no_org_id_for_audit",
+        workflow_execution_id=str(wfx.id),
+    )
+    return UUID(int=0)
 
 
 async def _safe_execute(

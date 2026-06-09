@@ -1,8 +1,7 @@
-"""Domain events emitted by the `PRReviewAggregate`.
+"""Domain events emitted by reviewer operations.
 
-Plain dataclasses; the aggregate appends them to its internal event list as
-side effects accumulate. `service.py` drains them after persisting the
-aggregate and dispatches to the SSE bus via `core/sse`.
+Plain dataclasses; the reviewer dispatches them to the SSE bus via
+`service.dispatch_events` after each successful persist.
 """
 
 from __future__ import annotations
@@ -10,21 +9,14 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from app.domain.reviewer.types import (
-    AckKind,
-    CodeAnchor,
-    FindingState,
-    ReplyIntent,
-    ReviewScope,
-    ReviewTrigger,
-)
+from app.domain.reviewer.types import ReviewScope
 
 
 @dataclass(frozen=True)
 class ReviewRequested:
     review_id: uuid.UUID
     pr_id: uuid.UUID
-    trigger: ReviewTrigger
+    trigger: str
     scope: ReviewScope
 
 
@@ -39,7 +31,7 @@ class ReviewStarted:
 class ReviewCompleted:
     review_id: uuid.UUID
     pr_id: uuid.UUID
-    findings_observed: list[uuid.UUID]
+    findings_count: int
 
 
 @dataclass(frozen=True)
@@ -50,81 +42,11 @@ class ReviewFailed:
 
 
 @dataclass(frozen=True)
-class ReviewSuperseded:
-    review_id: uuid.UUID
-    pr_id: uuid.UUID
-    by_review_id: uuid.UUID
-
-
-@dataclass(frozen=True)
 class FindingRaised:
     finding_id: uuid.UUID
     pr_id: uuid.UUID
+    severity: str
+    category: str
 
 
-@dataclass(frozen=True)
-class FindingReObserved:
-    finding_id: uuid.UUID
-    review_id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class FindingAnchorUpdated:
-    finding_id: uuid.UUID
-    new_anchor: CodeAnchor
-
-
-@dataclass(frozen=True)
-class FindingStateChanged:
-    finding_id: uuid.UUID
-    from_state: FindingState
-    to_state: FindingState
-
-
-@dataclass(frozen=True)
-class FindingAcknowledged:
-    finding_id: uuid.UUID
-    ack_id: uuid.UUID
-    kind: AckKind
-
-
-@dataclass(frozen=True)
-class FindingResolutionDetected:
-    finding_id: uuid.UUID
-    kind: FindingState  # RESOLVED_CONFIRMED | RESOLVED_UNVERIFIED
-
-
-@dataclass(frozen=True)
-class FindingStaleDetected:
-    finding_id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class CommentReplyReceived:
-    thread_id: uuid.UUID
-    message_id: uuid.UUID
-    classified_intent: ReplyIntent
-
-
-@dataclass(frozen=True)
-class AgentReplyPosted:
-    thread_id: uuid.UUID
-    message_id: uuid.UUID
-
-
-DomainEvent = (
-    ReviewRequested
-    | ReviewStarted
-    | ReviewCompleted
-    | ReviewFailed
-    | ReviewSuperseded
-    | FindingRaised
-    | FindingReObserved
-    | FindingAnchorUpdated
-    | FindingStateChanged
-    | FindingAcknowledged
-    | FindingResolutionDetected
-    | FindingStaleDetected
-    | CommentReplyReceived
-    | AgentReplyPosted
-)
+DomainEvent = ReviewRequested | ReviewStarted | ReviewCompleted | ReviewFailed | FindingRaised

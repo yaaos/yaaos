@@ -18,22 +18,11 @@ export const TICKET_FIXTURE: Ticket = {
   is_draft: false,
   created_at: "2026-05-23T00:00:00Z",
   updated_at: "2026-05-23T00:00:00Z",
-  current_stage: "Review",
+  current_stage: "pr_review_v1",
   findings_count: 0,
   max_severity: null,
   builder_kind: "user",
   builder_display_name: "alice",
-  stages: [
-    {
-      name: "Review",
-      state: "running",
-      attempt_count: 1,
-      current_attempt: 1,
-      started_at: "2026-05-23T00:00:00Z",
-      completed_at: null,
-      workflow_execution_id: "wfx-1",
-    },
-  ],
   builder: { kind: "user", display_name: "alice" },
 };
 
@@ -49,6 +38,10 @@ export const ticketsHandlers = [
     return HttpResponse.json({ error: "not found" }, { status: 404 });
   }),
 
+  http.get("/api/tickets/:ticketId/workflow-runs", () => {
+    return HttpResponse.json([]);
+  }),
+
   http.get("/api/tickets/:ticketId/audit", () => {
     return HttpResponse.json([]);
   }),
@@ -58,22 +51,10 @@ export const ticketsHandlers = [
   }),
 
   http.post("/api/tickets/:ticketId/hitl/respond", () => {
-    return HttpResponse.json({ stage: "Review", next_state: "running" });
-  }),
-
-  http.get("/api/reviewer/jobs/by-ticket/:ticketId", () => {
-    return HttpResponse.json([]);
+    return HttpResponse.json({ stage: "pr_review_v1", next_state: "running" });
   }),
 
   http.get("/api/reviewer/findings/by-ticket/:ticketId", () => {
-    return HttpResponse.json([]);
-  }),
-
-  http.get("/api/reviewer/conversations/by-ticket/:ticketId", () => {
-    return HttpResponse.json([]);
-  }),
-
-  http.get("/api/reviewer/reviews/by-ticket/:ticketId", () => {
     return HttpResponse.json([]);
   }),
 
@@ -89,10 +70,6 @@ export const ticketsHandlers = [
     return HttpResponse.json({ cancelled_count: 0 });
   }),
 
-  http.post("/api/reviewer/rereview", () => {
-    return HttpResponse.json({ scheduled_count: 1 });
-  }),
-
   http.get("/api/reviewer/metrics", () => {
     return HttpResponse.json({
       review_jobs_by_status: {},
@@ -100,13 +77,5 @@ export const ticketsHandlers = [
       failure_count: 0,
       failure_rate: 0,
     });
-  }),
-
-  http.post("/api/reviewer/findings/:findingId/ack", ({ params }) => {
-    return HttpResponse.json({ finding_id: params.findingId, state: "acknowledged" });
-  }),
-
-  http.post("/api/reviewer/findings/:findingId/push-back", ({ params }) => {
-    return HttpResponse.json({ finding_id: params.findingId, state: "resolved_unverified" });
   }),
 ];

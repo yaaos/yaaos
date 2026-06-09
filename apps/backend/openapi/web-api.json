@@ -14,6 +14,57 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActivityEvent": {
+        "description": "One captured event from a coding-agent run.\n\nPre-rendered by the plugin so the FE doesn't have to interpret raw\nClaude Code stream-json shapes — `message` is the user-facing string\nshown in the UI; `detail` is the raw event data for the expanded view.\n\n`seq` is the monotonic 0-based index inside the run's `ActivityLog`,\nassigned by `render_activity` after filtering null renders.",
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Detail",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "kind",
+          "message"
+        ],
+        "title": "ActivityEvent",
+        "type": "object"
+      },
+      "ActivityLog": {
+        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced once per run from the terminal stdout by\n`CodingAgentPlugin.render_activity` — the same event sequence the\nin-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.",
+        "properties": {
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ActivityEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "title": "ActivityLog",
+        "type": "object"
+      },
       "AgentEvent": {
         "properties": {
           "attempt": {
@@ -25,6 +76,17 @@
             "format": "uuid",
             "title": "Command Id",
             "type": "string"
+          },
+          "completion_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Token"
           },
           "failure_reason": {
             "anyOf": [
@@ -965,22 +1027,6 @@
         "title": "Lesson",
         "type": "object"
       },
-      "ListAvailableResponse": {
-        "properties": {
-          "plugins": {
-            "items": {
-              "$ref": "#/components/schemas/PluginMetaPayload"
-            },
-            "title": "Plugins",
-            "type": "array"
-          }
-        },
-        "required": [
-          "plugins"
-        ],
-        "title": "ListAvailableResponse",
-        "type": "object"
-      },
       "MemberView": {
         "properties": {
           "display_name": {
@@ -1087,51 +1133,6 @@
         "title": "PatchIntegrationRequest",
         "type": "object"
       },
-      "PluginMetaPayload": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
-          "docs_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Docs Url"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "type": {
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "type",
-          "display_name"
-        ],
-        "title": "PluginMetaPayload",
-        "type": "object"
-      },
       "ProviderStatus": {
         "properties": {
           "last_used_at": {
@@ -1189,266 +1190,30 @@
         "title": "ProviderStatus",
         "type": "object"
       },
-      "RereviewRequest": {
+      "RepoSkillRow": {
+        "description": "One entry in the repos list — the repo identifier and its stored skill name.",
         "properties": {
-          "ticket_id": {
-            "format": "uuid",
-            "title": "Ticket Id",
+          "repo_external_id": {
+            "title": "Repo External Id",
             "type": "string"
+          },
+          "skill_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Name"
           }
         },
         "required": [
-          "ticket_id"
+          "repo_external_id",
+          "skill_name"
         ],
-        "title": "RereviewRequest",
-        "type": "object"
-      },
-      "ReviewJob": {
-        "description": "Read-side projection of a `review_jobs` row.\n\nThe SPA reads this via the `jobs_by_ticket` endpoint in\n`reviewer/web.py`. The workflow-engine path doesn't emit this\nshape — `workflow_executions` rows are the canonical job record.",
-        "properties": {
-          "activity_log": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Activity Log",
-            "type": "array"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "current_step": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Step"
-          },
-          "destination": {
-            "title": "Destination",
-            "type": "string"
-          },
-          "duration_s": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration S"
-          },
-          "effort": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Effort"
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "findings": {
-            "anyOf": [
-              {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Findings"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "last_heartbeat_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Heartbeat At"
-          },
-          "lessons_applied": {
-            "anyOf": [
-              {
-                "items": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lessons Applied"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model"
-          },
-          "org_id": {
-            "format": "uuid",
-            "title": "Org Id",
-            "type": "string"
-          },
-          "pr_id": {
-            "format": "uuid",
-            "title": "Pr Id",
-            "type": "string"
-          },
-          "prompt_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Hash"
-          },
-          "review_external_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Review External Id"
-          },
-          "scheduled_at": {
-            "format": "date-time",
-            "title": "Scheduled At",
-            "type": "string"
-          },
-          "skip_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skip Reason"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "tokens_in": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tokens In"
-          },
-          "tokens_out": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tokens Out"
-          },
-          "trigger_reason": {
-            "title": "Trigger Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "org_id",
-          "pr_id",
-          "status",
-          "trigger_reason",
-          "destination",
-          "skip_reason",
-          "scheduled_at",
-          "started_at",
-          "completed_at",
-          "last_heartbeat_at",
-          "current_step",
-          "prompt_hash",
-          "lessons_applied",
-          "tokens_in",
-          "tokens_out",
-          "duration_s",
-          "error_message",
-          "review_external_id",
-          "findings",
-          "activity_log",
-          "model",
-          "effort"
-        ],
-        "title": "ReviewJob",
+        "title": "RepoSkillRow",
         "type": "object"
       },
       "Role": {
@@ -1461,21 +1226,6 @@
         "title": "Role",
         "type": "string"
       },
-      "SetApiKeyRequest": {
-        "properties": {
-          "api_key": {
-            "format": "password",
-            "title": "Api Key",
-            "type": "string",
-            "writeOnly": true
-          }
-        },
-        "required": [
-          "api_key"
-        ],
-        "title": "SetApiKeyRequest",
-        "type": "object"
-      },
       "SetKeyRequest": {
         "properties": {
           "value": {
@@ -1487,6 +1237,23 @@
           "value"
         ],
         "title": "SetKeyRequest",
+        "type": "object"
+      },
+      "SetRepoSkillRequest": {
+        "properties": {
+          "skill_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Name"
+          }
+        },
+        "title": "SetRepoSkillRequest",
         "type": "object"
       },
       "SetVcsRequest": {
@@ -1534,6 +1301,26 @@
           }
         },
         "title": "SetVcsResponse",
+        "type": "object"
+      },
+      "StepActivityResponse": {
+        "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityLog"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "StepActivityResponse",
         "type": "object"
       },
       "UpdateLessonRequest": {
@@ -1653,6 +1440,130 @@
           "settings"
         ],
         "title": "VcsStateResponse",
+        "type": "object"
+      },
+      "WorkflowRunView": {
+        "description": "One workflow execution for a ticket, with its ordered step list.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_step_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Step Id"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepSummary"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workflow_name": {
+            "title": "Workflow Name",
+            "type": "string"
+          },
+          "workflow_version": {
+            "title": "Workflow Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_name",
+          "workflow_version",
+          "state",
+          "current_step_id",
+          "failure_reason",
+          "created_at",
+          "updated_at",
+          "steps"
+        ],
+        "title": "WorkflowRunView",
+        "type": "object"
+      },
+      "WorkflowStepSummary": {
+        "description": "One step in a workflow run, projected for the ticket Activity tab.",
+        "properties": {
+          "command_kind": {
+            "title": "Command Kind",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "command_kind",
+          "state",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "WorkflowStepSummary",
         "type": "object"
       },
       "WorkspaceEvent": {
@@ -2000,17 +1911,30 @@
         "title": "_PatchUserRequest",
         "type": "object"
       },
-      "_PushBackRequest": {
+      "_RepoSkillRequest": {
         "properties": {
-          "reason": {
-            "title": "Reason",
+          "org_slug": {
+            "minLength": 1,
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "repo_external_id": {
+            "minLength": 1,
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "skill_name": {
+            "minLength": 1,
+            "title": "Skill Name",
             "type": "string"
           }
         },
         "required": [
-          "reason"
+          "org_slug",
+          "repo_external_id",
+          "skill_name"
         ],
-        "title": "_PushBackRequest",
+        "title": "_RepoSkillRequest",
         "type": "object"
       },
       "_SamlSignRequest": {
@@ -3120,54 +3044,9 @@
         ]
       }
     },
-    "/api/claude_code/api_key": {
-      "post": {
-        "operationId": "set_api_key_api_claude_code_api_key_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetApiKeyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Set Api Key Api Claude Code Api Key Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Api Key",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
     "/api/claude_code/defaults": {
       "get": {
-        "description": "Code defaults for the orchestrator + sub-agents, plus the model /\nversion / effort dropdown enums. Imported at request time so a code\nchange to `defaults.py` surfaces on the next request — never cached.",
+        "description": "Model / effort dropdown enums for the Claude Code settings UI.\nImported at request time so a code change surfaces on the next request.",
         "operationId": "defaults_endpoint_api_claude_code_defaults_get",
         "parameters": [
           {
@@ -3251,6 +3130,232 @@
           }
         },
         "summary": "Health",
+        "tags": [
+          "claude_code"
+        ]
+      }
+    },
+    "/api/claude_code/repos": {
+      "get": {
+        "description": "List repos connected to the org, joined with each repo's stored skill name.\n\nJoins the live GitHub repo list (from the VCS install) with stored\n`claude_code_repos` rows. Repos present in GitHub but absent from the DB\nare included with `skill_name=null`. Repos in the DB but absent from the\nGitHub list are omitted — the admin must reconnect via GitHub App settings.",
+        "operationId": "list_repos_api_claude_code_repos_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Repos Api Claude Code Repos Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Repos",
+        "tags": [
+          "claude_code"
+        ]
+      }
+    },
+    "/api/claude_code/repos/{repo_external_id}": {
+      "get": {
+        "description": "Read the stored skill name for one repo.\n\n`repo_external_id` contains a `/` (`owner/repo`) so the path segment uses\n`:path` to avoid the `%2F`-decoded-before-routing 405 bug.",
+        "operationId": "get_repo_skill_api_claude_code_repos__repo_external_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repo_external_id",
+            "required": true,
+            "schema": {
+              "title": "Repo External Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSkillRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Repo Skill",
+        "tags": [
+          "claude_code"
+        ]
+      },
+      "put": {
+        "description": "Write the skill name for one repo. Creates the identity row if absent.\n\n`repo_external_id` contains a `/` (`owner/repo`) so the path segment uses\n`:path` to avoid the `%2F`-decoded-before-routing 405 bug.",
+        "operationId": "set_repo_skill_route_api_claude_code_repos__repo_external_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repo_external_id",
+            "required": true,
+            "schema": {
+              "title": "Repo External Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRepoSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSkillRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Repo Skill Route",
         "tags": [
           "claude_code"
         ]
@@ -5973,87 +6078,6 @@
         ]
       }
     },
-    "/api/plugins/available": {
-      "get": {
-        "description": "Enumerate registered plugins of the requested type. The settings UI\nconsumes this for the VCS + Coding Agents pickers — no plugin id is\nhardcoded in the frontend.",
-        "operationId": "list_available_endpoint_api_plugins_available_get",
-        "parameters": [
-          {
-            "description": "Plugin type to enumerate",
-            "in": "query",
-            "name": "type",
-            "required": true,
-            "schema": {
-              "description": "Plugin type to enumerate",
-              "enum": [
-                "vcs",
-                "coding_agent"
-              ],
-              "title": "Type",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListAvailableResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Available Endpoint",
-        "tags": [
-          "plugins"
-        ]
-      }
-    },
     "/api/reviewer/cancel": {
       "post": {
         "description": "Cancel any non-terminal workflow_executions for this ticket.",
@@ -6134,90 +6158,9 @@
         ]
       }
     },
-    "/api/reviewer/conversations/by-ticket/{ticket_id}": {
-      "get": {
-        "description": "All-Conversations cross-cut for the ticket's PR.",
-        "operationId": "conversations_by_ticket_api_reviewer_conversations_by_ticket__ticket_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Conversations By Ticket Api Reviewer Conversations By Ticket  Ticket Id  Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Conversations By Ticket",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
     "/api/reviewer/findings/by-ticket/{ticket_id}": {
       "get": {
-        "description": "List open + acknowledged findings for the ticket's PR.",
+        "description": "List findings for the ticket's PR in the canonical schema.",
         "operationId": "findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get",
         "parameters": [
           {
@@ -6306,330 +6249,6 @@
         ]
       }
     },
-    "/api/reviewer/findings/{finding_id}/ack": {
-      "post": {
-        "description": ": SPA \"Ack\" button. Marks the finding as `intentional` —\nBuilder sees this and accepts it for future reviews.",
-        "operationId": "ack_finding_api_reviewer_findings__finding_id__ack_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "finding_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Finding Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ack Finding Api Reviewer Findings  Finding Id  Ack Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Ack Finding",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/findings/{finding_id}/push-back": {
-      "post": {
-        "description": ": SPA \"Push back\" button. Marks the finding as `wontfix` and\nrecords the Builder's reason in the audit trail.",
-        "operationId": "push_back_finding_api_reviewer_findings__finding_id__push_back_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "finding_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Finding Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_PushBackRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Push Back Finding Api Reviewer Findings  Finding Id  Push Back Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Push Back Finding",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/findings/{finding_id}/thread": {
-      "get": {
-        "description": "Thread messages + ack banner for one finding.",
-        "operationId": "thread_by_finding_api_reviewer_findings__finding_id__thread_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "finding_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Finding Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Thread By Finding Api Reviewer Findings  Finding Id  Thread Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Thread By Finding",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/jobs/by-ticket/{ticket_id}": {
-      "get": {
-        "description": "Per-ticket review history.",
-        "operationId": "jobs_by_ticket_api_reviewer_jobs_by_ticket__ticket_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ReviewJob"
-                  },
-                  "title": "Response Jobs By Ticket Api Reviewer Jobs By Ticket  Ticket Id  Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Jobs By Ticket",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
     "/api/reviewer/metrics": {
       "get": {
         "description": "Aggregate review counters.",
@@ -6693,84 +6312,6 @@
           }
         },
         "summary": "Metrics",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/rereview": {
-      "post": {
-        "description": "Re-review a ticket — drives `pr_review_v1` via the workflow engine.\n\nThe SPA's only contract with this endpoint is the `scheduled_count`\nfield; the response carries `workflow_execution_id` so the caller can\npoll workflow state if desired.",
-        "operationId": "rereview_ticket_api_reviewer_rereview_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RereviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Rereview Ticket Api Reviewer Rereview Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rereview Ticket",
         "tags": [
           "reviewer"
         ]
@@ -7595,7 +7136,7 @@
     },
     "/api/tickets/{ticket_id}": {
       "get": {
-        "description": "Per-ticket detail with the enrichment: `stages[]` (projected from\n`workflow_executions`) + `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `stages: [{name, state, attempt_count, current_attempt, started_at,\n   completed_at, workflow_execution_id}]` — one entry per workflow run\n   on the ticket, newest first.\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.",
+        "description": "Per-ticket detail with the enrichment: `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.\n\nWorkflow-run data is served by the dedicated\n`GET /api/tickets/{id}/workflow-runs` endpoint.",
         "operationId": "detail_api_tickets__ticket_id__get",
         "parameters": [
           {
@@ -7666,6 +7207,101 @@
           }
         },
         "summary": "Detail",
+        "tags": [
+          "tickets"
+        ]
+      }
+    },
+    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
+      "get": {
+        "description": "Return the persisted `ActivityLog` for one workflow step.\n\n`activity` is `null` when either the step never ran a coding-agent\ninvocation (non-`InvokeClaudeCode`) or the weekly partition holding its\nactivity row has aged out (4-week TTL).\n\nCross-tenant safety: 404s when the execution does not belong to the\nticket (and therefore not to the caller's org).",
+        "operationId": "step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "step_id",
+            "required": true,
+            "schema": {
+              "title": "Step Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepActivityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Step Activity",
         "tags": [
           "tickets"
         ]
@@ -7928,6 +7564,86 @@
           }
         },
         "summary": "Hitl Respond",
+        "tags": [
+          "tickets"
+        ]
+      }
+    },
+    "/api/tickets/{ticket_id}/workflow-runs": {
+      "get": {
+        "description": "All workflow runs for the ticket, oldest first, with their step lists.\n\nEach step's `state` is pending | running | done | failed | skipped. Pure\nworkflow vocabulary — no AgentCommand references.",
+        "operationId": "workflow_runs_api_tickets__ticket_id__workflow_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowRunView"
+                  },
+                  "title": "Response Workflow Runs Api Tickets  Ticket Id  Workflow Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Runs",
         "tags": [
           "tickets"
         ]

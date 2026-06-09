@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from cryptography.fernet import Fernet
-
 # Trigger-imports: importing each module's __init__ ensures `Base.metadata` is
 # fully populated so `truncate_all_tables` sees the complete schema regardless
 # of which HTTP routes have been mounted in the calling process. We import any
@@ -31,13 +29,19 @@ DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def reset() -> None:
-    """Truncate all tables. Reviewer specialists are defined as shipped
-    markdown files in `domain/coding_agent/reviewers/`, not DB rows — no
-    structural seeding needed.
+    """Truncate all tables and flush Redis rate-limit state.
+
+    DB truncation covers all domain state. Redis rate-limit keys for the
+    agent identity-exchange endpoint are also deleted so a subsequent seed
+    (bootstrap_owner) isn't blocked by a prior run's burst from the agent
+    container's IP.
     """
+    from app.core.agent_gateway import delete_identity_exchange_rate_limits  # noqa: PLC0415
+
     async with db_session() as s:
         await truncate_all_tables(s)
         await s.commit()
+    await delete_identity_exchange_rate_limits()
 
 
 async def seed_github_install(
@@ -61,15 +65,15 @@ async def seed_github_install(
     vars (set on the test compose); no per-org credential row is needed.
 
     Deliberate side-effect: this seed path calls public service functions
-    (``github.record_app_install``, ``claude_code.set_api_key``,
+    (``github.record_app_install``, ``byok.set``,
     ``orgs.install_coding_agent``) so it emits the same audit rows and events
     that production writes would produce.
     """
+    from app.core import byok as byok_service  # noqa: PLC0415
+    from app.core.audit_log import Actor  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
-    from app.plugins.claude_code import set_api_key  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415
 
-    fernet = Fernet(get_settings().yaaos_encryption_key.get_secret_value().encode())
     if target_org_slug is not None:
         org = await get_org_by_slug(target_org_slug)
         if org is None:
@@ -84,16 +88,16 @@ async def seed_github_install(
             install_external_id="fake-install-1",
             account_login=org_login,
         )
-        await set_api_key(
-            s,
-            org_id=target_org_id,
-            encrypted_anthropic_api_key=fernet.encrypt(b"TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY"),
+        await byok_service.set(
+            target_org_id,
+            "anthropic",
+            "TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY",
+            actor=Actor.system(),
+            session=s,
         )
         # also write the OrgCodingAgentRow so the bespoke Coding Agent
         # settings page (claude_code's AgentEditor) renders against the
         # configured defaults instead of an empty-state placeholder.
-        from app.core.audit_log import Actor  # noqa: PLC0415
-
         await install_coding_agent(
             s,
             org_id=target_org_id,
@@ -101,6 +105,28 @@ async def seed_github_install(
             settings={},
             actor=Actor.system(),
         )
+        await s.commit()
+
+
+async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: str) -> None:
+    """Write `skill_name` for a connected repo via the public repos service.
+
+    Requires the org to exist and have a Claude Code install (seeded by
+    ``seed_github_install`` first). Used by e2e specs that trigger reviews
+    so ``build_review_invocation`` can resolve a non-null skill name.
+
+    Deliberate side-effect: calls ``claude_code.repos.set_repo_skill`` —
+    the same path the PUT route exercises — so the seed is a smoke test of
+    the public write API.
+    """
+    from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
+    from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415
+
+    org = await get_org_by_slug(org_slug)
+    if org is None:
+        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+    async with db_session() as s:
+        await set_repo_skill(org.id, repo_external_id, skill_name, session=s)
         await s.commit()
 
 
@@ -383,6 +409,7 @@ __all__ = [
     "seed_bootstrap_owner",
     "seed_github_install",
     "seed_lesson",
+    "seed_repo_skill",
     "seed_user_with_session",
     "seed_workspace_agent",
     "stage_oauth_test_profile",

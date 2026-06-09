@@ -101,12 +101,13 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 	)
 	childTP := tracing.InjectTraceparent(ctx)
 	if enc != nil {
-		ctx = ContextWithEmitter(ctx, newEncoderEmitter(enc, header.CommandID, childTP, time.Now))
+		ctx = ContextWithEmitter(ctx, newEncoderEmitter(enc, header.CommandID, childTP, header.CompletionToken, time.Now))
 	}
 	base := protocol.AgentEvent{
-		CommandID:   header.CommandID,
-		ReportedAt:  now,
-		Traceparent: childTP,
+		CommandID:       header.CommandID,
+		ReportedAt:      now,
+		Traceparent:     childTP,
+		CompletionToken: header.CompletionToken,
 	}
 	if base.Traceparent == "" {
 		base.Traceparent = header.Traceparent

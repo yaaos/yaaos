@@ -15,7 +15,6 @@ The stub:
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from datetime import UTC, datetime
 from typing import Any
@@ -40,7 +39,7 @@ class StubWorkspaceProvider:
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
-        self.meta = wrapped.meta
+        self.plugin_id = wrapped.plugin_id
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         working_dir = tempfile.mkdtemp(prefix="yaaos-ws-stub-")
@@ -66,7 +65,6 @@ class StubWorkspaceProvider:
 
     async def run_coding_agent_cli(
         self,
-        plugin_state: dict[str, Any],
         argv: list[str],
         *,
         env: dict[str, str] | None = None,
@@ -76,7 +74,7 @@ class StubWorkspaceProvider:
         # Tests that reach this layer should be exercising coding-agent flows
         # via stub_coding_agent, which short-circuits before any workspace call.
         # This no-op preserves protocol completeness.
-        del plugin_state, argv, env, stdin, timeout_seconds
+        del argv, env, stdin, timeout_seconds
         return CodingAgentCliResult(
             exit_code=0,
             stdout="",
@@ -85,38 +83,20 @@ class StubWorkspaceProvider:
             duration_ms=0,
         )
 
-    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
-        working_dir = plugin_state.get("working_dir")
-        if not working_dir or not os.path.isdir(working_dir):
-            return None
-        clean = path.lstrip("/\\")
-        target = os.path.realpath(os.path.join(working_dir, clean))
-        if not target.startswith(os.path.realpath(working_dir) + os.sep):
-            return None
-        try:
-            with open(target, encoding="utf-8") as fh:
-                return fh.read()
-        except FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError:
-            return None
+    async def read_text(self, path: str) -> str | None:
+        # The stub has no checkout directory — reads are not supported.
+        del path
+        return None
 
-    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
-        working_dir = plugin_state.get("working_dir")
-        if not working_dir or not os.path.isdir(working_dir):
-            return
-        clean = path.lstrip("/\\")
-        target = os.path.realpath(os.path.join(working_dir, clean))
-        if not target.startswith(os.path.realpath(working_dir) + os.sep):
-            return
-        if os.path.exists(target):
-            raise RuntimeError(f"workspace file already exists: {path!r}")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(content)
+    async def write_text(self, path: str, content: str) -> None:
+        # The stub has no checkout directory — writes are not supported.
+        del path, content
 
-    async def destroy(self, plugin_state: dict[str, Any]) -> None:
-        working_dir = plugin_state.get("working_dir")
-        if working_dir and os.path.isdir(working_dir):
-            shutil.rmtree(working_dir, ignore_errors=True)
+    async def destroy(self) -> None:
+        # The stub provision creates a tempdir tracked by the provision return
+        # value; since plugin_state is gone, no cleanup is performed here.
+        # Tests that need explicit teardown of the tempdir call os.rmtree directly.
+        pass
 
     async def health_check(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="stub mode", checked_at=datetime.now(UTC))

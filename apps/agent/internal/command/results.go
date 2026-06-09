@@ -11,7 +11,7 @@ type Result interface {
 }
 
 // ExecResult holds the outcome of a subprocess invocation. Embedded in
-// InvokeResult (and in future CreateResult when git clone is subprocess-based).
+// InvokeResult (and in future ProvisionResult when git clone is subprocess-based).
 type ExecResult struct {
 	ExitCode int
 	Stdout   string
@@ -19,25 +19,28 @@ type ExecResult struct {
 	Duration time.Duration
 }
 
-// CreateResult is the typed output of CreateWorkspace. Path carries the
+// ProvisionResult is the typed output of ProvisionWorkspace. Path carries the
 // workspace path the supervisor registry keys on; Reused signals an idempotent repeat.
-type CreateResult struct {
-	Path    string
-	Repo    string
-	HeadSHA string
-	Branch  string
-	Reused  bool
+type ProvisionResult struct {
+	WorkspaceID string
+	Path        string
+	Repo        string
+	HeadSHA     string
+	Branch      string
+	Reused      bool
 }
 
-// ToWire returns the map[string]any the backend expects from CreateWorkspace.
-// Keys match the legacy realhandler.go output so the backend contract is unchanged.
-func (r CreateResult) ToWire() map[string]any {
+// ToWire returns the map[string]any the backend expects from ProvisionWorkspace.
+// workspace_id is required so the router can resolve "$provision.workspace_id"
+// when dispatching CodeReview and CleanupWorkspace.
+func (r ProvisionResult) ToWire() map[string]any {
 	return map[string]any{
-		"path":     r.Path,
-		"repo":     r.Repo,
-		"head_sha": r.HeadSHA,
-		"branch":   r.Branch,
-		"reused":   r.Reused,
+		"workspace_id": r.WorkspaceID,
+		"path":         r.Path,
+		"repo":         r.Repo,
+		"head_sha":     r.HeadSHA,
+		"branch":       r.Branch,
+		"reused":       r.Reused,
 	}
 }
 

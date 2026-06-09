@@ -62,19 +62,22 @@ func EmitterFromContext(ctx context.Context) Emitter {
 // The header fields (`command_id`, `traceparent`, `reported_at`) come
 // from the command the dispatcher is currently servicing.
 type encoderEmitter struct {
-	enc         *ipc.Encoder
-	commandID   string
-	traceparent string
-	now         func() time.Time
+	enc             *ipc.Encoder
+	commandID       string
+	traceparent     string
+	completionToken string
+	now             func() time.Time
 }
 
 // newEncoderEmitter wires an emitter to an IPC encoder for one
 // in-flight command. `now` is injected so tests can pin the timestamp.
-func newEncoderEmitter(enc *ipc.Encoder, commandID, traceparent string, now func() time.Time) *encoderEmitter {
+// completionToken comes from the command header and is echoed on every
+// progress AgentEvent so the backend authorizes it by hash.
+func newEncoderEmitter(enc *ipc.Encoder, commandID, traceparent, completionToken string, now func() time.Time) *encoderEmitter {
 	if now == nil {
 		now = time.Now
 	}
-	return &encoderEmitter{enc: enc, commandID: commandID, traceparent: traceparent, now: now}
+	return &encoderEmitter{enc: enc, commandID: commandID, traceparent: traceparent, completionToken: completionToken, now: now}
 }
 
 func (e *encoderEmitter) Progress(outputs map[string]any) bool {
@@ -82,11 +85,12 @@ func (e *encoderEmitter) Progress(outputs map[string]any) bool {
 		return false
 	}
 	ev := protocol.AgentEvent{
-		CommandID:   e.commandID,
-		Kind:        protocol.EventProgress,
-		Outputs:     outputs,
-		ReportedAt:  e.now().UTC(),
-		Traceparent: e.traceparent,
+		CommandID:       e.commandID,
+		Kind:            protocol.EventProgress,
+		Outputs:         outputs,
+		ReportedAt:      e.now().UTC(),
+		Traceparent:     e.traceparent,
+		CompletionToken: e.completionToken,
 	}
 	// IPC encoder serialises writes — concurrent Progress calls + the
 	// dispatcher's terminal-event write produce well-ordered frames on

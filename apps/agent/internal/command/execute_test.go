@@ -14,27 +14,27 @@ import (
 // fakeWorkspaceOps records which ops were called and returns configurable
 // results.
 type fakeWorkspaceOps struct {
-	createResult  command.CreateResult
-	createErr     error
-	writeResult   command.WriteFilesResult
-	writeErr      error
-	refreshResult command.RefreshResult
-	refreshErr    error
-	invokeResult  command.InvokeResult
-	invokeErr     error
-	cleanupResult command.CleanupResult
-	cleanupErr    error
+	provisionResult command.ProvisionResult
+	provisionErr    error
+	writeResult     command.WriteFilesResult
+	writeErr        error
+	refreshResult   command.RefreshResult
+	refreshErr      error
+	invokeResult    command.InvokeResult
+	invokeErr       error
+	cleanupResult   command.CleanupResult
+	cleanupErr      error
 
-	createCalled  bool
-	writeCalled   bool
-	refreshCalled bool
-	invokeCalled  bool
-	cleanupCalled bool
+	provisionCalled bool
+	writeCalled     bool
+	refreshCalled   bool
+	invokeCalled    bool
+	cleanupCalled   bool
 }
 
-func (f *fakeWorkspaceOps) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
-	f.createCalled = true
-	return f.createResult, f.createErr
+func (f *fakeWorkspaceOps) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
+	f.provisionCalled = true
+	return f.provisionResult, f.provisionErr
 }
 
 func (f *fakeWorkspaceOps) WriteFiles(ctx context.Context, cmd *protocol.WriteFilesCommand) (command.WriteFilesResult, error) {
@@ -66,11 +66,11 @@ func (f *fakeAgentOps) ApplyConfig(cfg command.AgentConfig) {
 	f.appliedConfig = &cfg
 }
 
-// ── CreateWorkspaceCommand.Execute ───────────────────────────────────────────
+// ── ProvisionWorkspaceCommand.Execute ────────────────────────────────────────
 
-func TestCreateWorkspaceCommand_Execute(t *testing.T) {
+func TestProvisionWorkspaceCommand_Execute(t *testing.T) {
 	ops := &fakeWorkspaceOps{
-		createResult: command.CreateResult{
+		provisionResult: command.ProvisionResult{
 			Path:    "/tmp/ws-1",
 			Repo:    "org/repo",
 			HeadSHA: "abc123",
@@ -78,12 +78,12 @@ func TestCreateWorkspaceCommand_Execute(t *testing.T) {
 			Reused:  false,
 		},
 	}
-	cmd := &command.CreateWorkspaceCommand{
-		Proto: protocol.CreateWorkspaceCommand{
+	cmd := &command.ProvisionWorkspaceCommand{
+		Proto: protocol.ProvisionWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
 				CommandID:   "cmd-1",
 				WorkspaceID: "ws-1",
-				Kind:        protocol.KindCreateWorkspace,
+				Kind:        protocol.KindProvisionWorkspace,
 			},
 		},
 	}
@@ -91,12 +91,12 @@ func TestCreateWorkspaceCommand_Execute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !ops.createCalled {
-		t.Error("CloneWorkspace not called")
+	if !ops.provisionCalled {
+		t.Error("ProvisionWorkspace not called")
 	}
-	cr, ok := res.(command.CreateResult)
+	cr, ok := res.(command.ProvisionResult)
 	if !ok {
-		t.Fatalf("result type = %T, want command.CreateResult", res)
+		t.Fatalf("result type = %T, want command.ProvisionResult", res)
 	}
 	if cr.Path != "/tmp/ws-1" {
 		t.Errorf("Path = %q, want /tmp/ws-1", cr.Path)
@@ -113,21 +113,21 @@ func TestCreateWorkspaceCommand_Execute(t *testing.T) {
 	}
 }
 
-// TestCreateWorkspaceCommand_Execute_Reused checks the reused=true path from
-// the legacy handler returns the right wire shape.
-func TestCreateWorkspaceCommand_Execute_Reused(t *testing.T) {
+// TestProvisionWorkspaceCommand_Execute_Reused checks the handler returns the
+// right wire shape for the reused=true path.
+func TestProvisionWorkspaceCommand_Execute_Reused(t *testing.T) {
 	ops := &fakeWorkspaceOps{
-		createResult: command.CreateResult{
+		provisionResult: command.ProvisionResult{
 			Path:   "/tmp/ws-1",
 			Reused: true,
 		},
 	}
-	cmd := &command.CreateWorkspaceCommand{
-		Proto: protocol.CreateWorkspaceCommand{
+	cmd := &command.ProvisionWorkspaceCommand{
+		Proto: protocol.ProvisionWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
 				CommandID:   "cmd-1r",
 				WorkspaceID: "ws-1",
-				Kind:        protocol.KindCreateWorkspace,
+				Kind:        protocol.KindProvisionWorkspace,
 			},
 		},
 	}

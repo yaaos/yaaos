@@ -150,7 +150,7 @@ func InjectTraceparent(ctx context.Context) string {
 //
 // Use as:
 //
-//	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.CreateWorkspace",
+//	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.ProvisionWorkspace",
 //	    attribute.String("workspace_id", id))
 //	defer end(err)
 func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, func(err error)) {

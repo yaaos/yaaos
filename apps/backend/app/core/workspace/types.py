@@ -16,8 +16,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.plugin_kit import PluginMeta
-
 # Per-line callback used by `run_coding_agent_cli` to stream stdout in real
 # time. When provided, the provider invokes it for each newline-terminated
 # chunk from the CLI; when None, stdout is buffered and returned in the
@@ -26,7 +24,6 @@ OnStreamLine = Callable[[bytes], Awaitable[None]]
 
 
 class WorkspaceStatus(StrEnum):
-    CREATING = "creating"
     ACTIVE = "active"
     EXPIRED = "expired"
     DESTROYING = "destroying"
@@ -48,16 +45,14 @@ class NetworkPolicy(StrEnum):
 
 
 class RepoRefForSpec(BaseModel):
-    """Minimal repo identity in a workspace spec. Mirrors domain/vcs RepoRef."""
+    """Minimal repo identity in a workspace spec. Mirrors core/vcs RepoRef."""
 
     plugin_id: str
     external_id: str
 
 
 class WorkspaceSpec(BaseModel):
-    """What's required to provision a workspace. `org_id` is stamped by
-    `create_workspace` before the spec reaches the plugin's `provision()`.
-    """
+    """What's required to provision a workspace."""
 
     repo: RepoRefForSpec
     sha: str
@@ -71,8 +66,7 @@ class WorkspaceSpec(BaseModel):
     base_branch: str | None = None
     resource_caps: ResourceCaps = Field(default_factory=ResourceCaps)
     network_policy: NetworkPolicy = NetworkPolicy.GITHUB_ONLY
-    # Stamped by core/workspace.create_workspace before delegating to provision().
-    # Allows the workspace plugin to request auth tokens for the right org via vcs.
+    # org_id scoping — callers populate before passing to a provider.
     org_id: UUID | None = None
 
 
@@ -110,7 +104,7 @@ class CodingAgentCliResult(BaseModel):
 
 
 class Workspace(Protocol):
-    """The view consumers get back from `create_workspace` / `with_workspace`.
+    """Capability handle for an active workspace.
 
     Exposes only operations + identity. Internal paths (in-process tempdir,
     container id, pod name) are implementation details of the provider.
@@ -148,17 +142,19 @@ class Workspace(Protocol):
 
 
 class WorkspaceProvider(Protocol):
-    """Plugin contract. Provision returns opaque plugin_state; `run_coding_agent_cli`
-    operates against that state. The state shape is private to each plugin (e.g.,
-    `{"working_dir": str}` for in-process; `{"container_id": str}` for Docker).
+    """Plugin contract for workspace providers.
+
+    The remote provider dispatches every operation as an AgentCommand and awaits
+    terminal events from the workflow engine — none of these methods are called
+    synchronously in production. The Protocol shape exists so the stub can wrap
+    the registered implementation without importing provider internals.
     """
 
-    meta: PluginMeta
+    plugin_id: str
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]: ...
     async def run_coding_agent_cli(
         self,
-        plugin_state: dict[str, Any],
         argv: list[str],
         *,
         env: dict[str, str] | None = None,
@@ -166,9 +162,9 @@ class WorkspaceProvider(Protocol):
         timeout_seconds: int | None = None,
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult: ...
-    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None: ...
-    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None: ...
-    async def destroy(self, plugin_state: dict[str, Any]) -> None: ...
+    async def read_text(self, path: str) -> str | None: ...
+    async def write_text(self, path: str, content: str) -> None: ...
+    async def destroy(self) -> None: ...
     async def health_check(self) -> HealthStatus: ...
 
 
@@ -176,16 +172,29 @@ class WorkspaceClaimState(BaseModel):
     """Projection returned by `get_workspace_claim_state`.
 
     Contains only what `core/agent_gateway` needs to apply the stale-claim guard
-    and enqueue workflow-engine continuations — no ORM Row crosses the module
-    boundary.
+    and identify the workspace owner — no ORM Row crosses the module boundary.
+    Workflow-execution correlation is on `agent_commands.workflow_execution_id`.
     """
 
     workspace_id: UUID
-    current_holder_workflow_id: UUID | None
     status: str
-    # owning agent (`workspace_agents.id`); None for in-memory/legacy rows.
-    # agent_gateway compares this against the bearer's agent_id to authorize
-    # command-event posts.
+    # owning agent (`workspace_agents.id`). agent_gateway compares this against
+    # the bearer's agent_id to authorize command-event posts. NOT NULL on all
+    # rows after migration 045.
+    owning_agent_id: UUID | None
+
+
+class WorkspaceOwner(BaseModel):
+    """Projection returned by `get_workspace_owner`.
+
+    Carries the two identifiers a Workspace WorkflowCommand's `dispatch` needs
+    to enqueue an AgentCommand pinned to the workspace's owning agent: the
+    `org_id` (for `enqueue_command`) and the `owning_agent_id` (for
+    `pin_command_to_agent`). No ORM Row crosses the module boundary.
+    """
+
+    workspace_id: UUID
+    org_id: UUID
     owning_agent_id: UUID | None
 
 
@@ -214,7 +223,7 @@ class WorkspaceProvisionError(WorkspaceError):
 
 
 class WorkspaceNotFoundError(WorkspaceError, LookupError):
-    """Raised by get_workspace() if the id is unknown."""
+    """Raised when a workspace lookup by id returns no row."""
 
 
 class WorkspaceExpiredError(WorkspaceError):

@@ -41,6 +41,7 @@ from app.testing.isolation import (  # noqa: F401
     plugin_registries_isolation,
     pubsub_isolation,
     recovery_policies_isolation,
+    scheduler_registry_isolation,
     subscriber_registry_isolation,
     workflow_context_provider_isolation,
     workspace_providers_isolation,

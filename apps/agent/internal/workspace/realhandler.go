@@ -1,7 +1,7 @@
 // RealHandler — production command.WorkspaceOps that owns the per-workspace
 // tempdir lifecycle. Implements all five workspace command kinds:
 //
-//   - CloneWorkspace       — `os.MkdirTemp` under the configured root +
+//   - ProvisionWorkspace   — `os.MkdirTemp` under the configured root +
 //                            real `git clone` via the configured
 //                            `CloneFunc` (auth injected as
 //                            `x-access-token:<token>@…`) + a
@@ -141,22 +141,23 @@ func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 }
 
 // ErrUnknownWorkspace is returned by WriteFiles / RefreshWorkspaceAuth /
-// InvokeClaudeCode when no CreateWorkspace has run for the given
+// InvokeClaudeCode when no ProvisionWorkspace has run for the given
 // workspace_id. The supervisor surfaces this as a completed_failure
 // event; the backend's workflow engine treats it as a fatal step error.
-var ErrUnknownWorkspace = errors.New("workspace not created")
+var ErrUnknownWorkspace = errors.New("workspace not provisioned")
 
-func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
+func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
 	h.mu.Lock()
 	if existing, exists := h.slots[cmd.WorkspaceID]; exists {
-		// Idempotent: a second CreateWorkspace for the same id is a
+		// Idempotent: a second ProvisionWorkspace for the same id is a
 		// supervisor-side bug, but we don't want to crash the workspace
 		// process. Keep the existing slot, report reused=true.
 		path := existing.path
 		h.mu.Unlock()
-		return command.CreateResult{
-			Path:   path,
-			Reused: true,
+		return command.ProvisionResult{
+			WorkspaceID: cmd.WorkspaceID,
+			Path:        path,
+			Reused:      true,
 		}, nil
 	}
 	h.mu.Unlock()
@@ -167,7 +168,7 @@ func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWo
 	}
 	path, err := os.MkdirTemp(root, "yaaos-ws-"+sanitizeID(cmd.WorkspaceID)+"-")
 	if err != nil {
-		return command.CreateResult{}, fmt.Errorf("mkdir tempdir: %w", err)
+		return command.ProvisionResult{}, fmt.Errorf("mkdir tempdir: %w", err)
 	}
 	if err := os.Chmod(path, h.cfg.DirPerm); err != nil {
 		// Best-effort: the tempdir already exists with default perms.
@@ -175,14 +176,14 @@ func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWo
 		_ = err
 	}
 
-	// Clone outside the mutex so concurrent CreateWorkspace calls for
+	// Clone outside the mutex so concurrent ProvisionWorkspace calls for
 	// different workspace_ids don't serialize on the slot map. The
 	// tempdir is empty at this point (manifest write happens *after*
 	// the clone) — `git clone` refuses non-empty destinations.
 	if err := h.cfg.CloneFunc(ctx, path, cmd.Repo, cmd.Auth, cmd.History); err != nil {
 		// Tear down the empty tempdir on clone failure so we don't leak.
 		_ = os.RemoveAll(path)
-		return command.CreateResult{}, fmt.Errorf("git clone: %w", err)
+		return command.ProvisionResult{}, fmt.Errorf("git clone: %w", err)
 	}
 
 	// Startup-reconciliation manifest: write the workspace_id to a
@@ -194,7 +195,7 @@ func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWo
 	// empty.
 	manifestPath := filepath.Join(path, ".workspace-id")
 	if err := os.WriteFile(manifestPath, []byte(cmd.WorkspaceID), 0o600); err != nil {
-		// Manifest is best-effort; CloneWorkspace shouldn't fail
+		// Manifest is best-effort; ProvisionWorkspace shouldn't fail
 		// because of it. An orphan workspace without manifest is
 		// merely invisible to reconciliation, not broken.
 		_ = err
@@ -205,9 +206,10 @@ func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWo
 	// Re-check: another goroutine may have raced us in the meantime.
 	if existing, raced := h.slots[cmd.WorkspaceID]; raced {
 		_ = os.RemoveAll(path)
-		return command.CreateResult{
-			Path:   existing.path,
-			Reused: true,
+		return command.ProvisionResult{
+			WorkspaceID: cmd.WorkspaceID,
+			Path:        existing.path,
+			Reused:      true,
 		}, nil
 	}
 	h.slots[cmd.WorkspaceID] = &realSlot{
@@ -216,12 +218,13 @@ func (h *RealHandler) CloneWorkspace(ctx context.Context, cmd *protocol.CreateWo
 		authKind: cmd.Auth.Kind,
 		authTok:  secret.New(cmd.Auth.Token),
 	}
-	return command.CreateResult{
-		Path:    path,
-		Repo:    cmd.Repo.ExternalID,
-		HeadSHA: cmd.Repo.HeadSHA,
-		Branch:  cmd.Repo.BranchName,
-		Reused:  false,
+	return command.ProvisionResult{
+		WorkspaceID: cmd.WorkspaceID,
+		Path:        path,
+		Repo:        cmd.Repo.ExternalID,
+		HeadSHA:     cmd.Repo.HeadSHA,
+		Branch:      cmd.Repo.BranchName,
+		Reused:      false,
 	}, nil
 }
 

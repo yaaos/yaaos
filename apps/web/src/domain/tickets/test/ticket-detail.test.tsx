@@ -10,14 +10,19 @@ import { TicketDetailPage } from "../public/TicketDetailPage";
  * Smoke tests for TicketDetailPage. Uses MSW to intercept all ticket/reviewer
  * endpoints; asserts that the header, stage indicator, and tab strip render
  * against a representative ticket.
+ *
+ * StageIndicator is sourced from the dedicated workflow-runs endpoint rather
+ * than `ticket.stages` (removed). The Re-run button and cost-estimate modal
+ * are gone — only Cancel remains for non-terminal tickets.
  */
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ ticketId: "t1" }),
 }));
 
-// SSE workflow stream — not relevant for these tests.
-vi.mock("@core/sse", () => ({
+// SSE workflow stream — not relevant for these tests; live step pane only
+// renders when a step is in state "running" which none of our fixtures use.
+vi.mock("@core/sse/public/workflow_activity", () => ({
   useWorkflowActivityStream: () => [],
 }));
 
@@ -38,24 +43,35 @@ const TICKET = {
   is_draft: false,
   created_at: "2026-05-23T00:00:00Z",
   updated_at: "2026-05-23T00:00:00Z",
-  current_stage: "Review",
+  current_stage: "pr_review_v1",
   findings_count: 0,
   max_severity: null,
   builder_kind: "user",
   builder_display_name: "alice",
-  stages: [
-    {
-      name: "Review",
-      state: "running",
-      attempt_count: 1,
-      current_attempt: 1,
-      started_at: "2026-05-23T00:00:00Z",
-      completed_at: null,
-      workflow_execution_id: "wfx-1",
-    },
-  ],
   builder: { kind: "user", display_name: "alice" },
 };
+
+const WORKFLOW_RUNS = [
+  {
+    id: "wfx-1",
+    workflow_name: "pr_review_v1",
+    workflow_version: 1,
+    state: "running",
+    current_step_id: "step-check",
+    failure_reason: null,
+    created_at: "2026-05-23T00:00:00Z",
+    updated_at: "2026-05-23T00:00:00Z",
+    steps: [
+      {
+        step_id: "step-check",
+        command_kind: "CheckShouldReview",
+        state: "done",
+        started_at: "2026-05-23T00:00:00Z",
+        completed_at: "2026-05-23T00:01:00Z",
+      },
+    ],
+  },
+];
 
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -65,17 +81,14 @@ function wrap(node: React.ReactNode) {
 function withHandlers() {
   server.use(
     http.get("/api/tickets/t1", () => HttpResponse.json(TICKET)),
+    http.get("/api/tickets/t1/workflow-runs", () => HttpResponse.json(WORKFLOW_RUNS)),
     http.get("/api/reviewer/findings/by-ticket/t1", () => HttpResponse.json([])),
-    http.get("/api/reviewer/jobs/by-ticket/t1", () => HttpResponse.json([])),
     http.get("/api/tickets/t1/hitl/history", () => HttpResponse.json([])),
-    http.get("/api/tickets/t1/audit", () => HttpResponse.json([])),
-    http.get("/api/reviewer/reviews/by-ticket/t1", () => HttpResponse.json([])),
-    http.get("/api/reviewer/conversations/by-ticket/t1", () => HttpResponse.json([])),
   );
 }
 
 describe("TicketDetailPage (MSW)", () => {
-  it("renders the title + repo + status pill", async () => {
+  it("renders the title + status pill", async () => {
     withHandlers();
     render(wrap(<TicketDetailPage />));
     await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
@@ -83,11 +96,11 @@ describe("TicketDetailPage (MSW)", () => {
     expect(screen.getByTestId("ticket-status-running")).toBeInTheDocument();
   });
 
-  it("renders the stage indicator from ticket.stages", async () => {
+  it("renders stage indicator sourced from workflow-runs endpoint", async () => {
     withHandlers();
     render(wrap(<TicketDetailPage />));
     await waitFor(() => expect(screen.getByTestId("stage-indicator")).toBeInTheDocument());
-    expect(screen.getByTestId("stage-Review")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-pr_review_v1")).toBeInTheDocument();
   });
 
   it("renders all 3 tabs in the tab strip", async () => {
@@ -98,10 +111,32 @@ describe("TicketDetailPage (MSW)", () => {
     expect(screen.getByTestId("ticket-tab-hitl")).toBeInTheDocument();
   });
 
-  it("exposes both Cancel and Re-run buttons when ticket is non-terminal", async () => {
+  it("exposes Cancel button when ticket is non-terminal, no Re-run button", async () => {
     withHandlers();
     render(wrap(<TicketDetailPage />));
     await waitFor(() => expect(screen.getByTestId("ticket-cancel-button")).toBeInTheDocument());
-    expect(screen.getByTestId("ticket-rerun-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("ticket-rerun-button")).toBeNull();
+  });
+
+  it("no Cancel button when ticket is done", async () => {
+    server.use(
+      http.get("/api/tickets/t1", () => HttpResponse.json({ ...TICKET, status: "done" })),
+      http.get("/api/tickets/t1/workflow-runs", () => HttpResponse.json(WORKFLOW_RUNS)),
+      http.get("/api/reviewer/findings/by-ticket/t1", () => HttpResponse.json([])),
+      http.get("/api/tickets/t1/hitl/history", () => HttpResponse.json([])),
+    );
+    render(wrap(<TicketDetailPage />));
+    await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("ticket-cancel-button")).toBeNull();
+  });
+
+  it("shows step label rows in activity tab", async () => {
+    withHandlers();
+    render(wrap(<TicketDetailPage />));
+    await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
+    const activityTab = screen.getByTestId("ticket-tab-activity");
+    activityTab.click();
+    await waitFor(() => expect(screen.getByTestId("step-tree")).toBeInTheDocument());
+    expect(screen.getByTestId("step-row-step-check")).toBeInTheDocument();
   });
 });

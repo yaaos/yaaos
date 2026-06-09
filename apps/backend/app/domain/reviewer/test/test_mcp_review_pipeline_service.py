@@ -27,18 +27,18 @@ from app.core.auth import AuthMiddleware
 from app.core.identity import repository as identity_repo
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
+from app.core.vcs import VCSPullRequest
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import repository as orgs_repo
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
 )
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import create as create_ticket
-from app.domain.vcs import VCSPullRequest
+from app.domain.tickets import upsert as upsert_pr
 
 
 def _config() -> ProviderConfig:

@@ -1,10 +1,10 @@
 # plugins/github
 
-> Only place GitHub-specific code lives. Implements `domain/vcs.VCSPlugin`, owns `/api/github/`, and provides the GitHub user-auth `Provider`.
+> Only place GitHub-specific code lives. Implements `core/vcs.VCSPlugin`, owns `/api/github/`, and provides the GitHub user-auth `Provider`.
 
 ## Scope
 
-Bridges GitHub REST + webhooks to `domain/vcs` types. Two distinct GitHub registrations: a **GitHub App** for per-org installs; a **GitHub OAuth App** for "Sign in with GitHub". They are different GitHub primitives — do not conflate them. No per-org credential storage.
+Bridges GitHub REST + webhooks to `core/vcs` types. Two distinct GitHub registrations: a **GitHub App** for per-org installs; a **GitHub OAuth App** for "Sign in with GitHub". They are different GitHub primitives — do not conflate them. No per-org credential storage.
 
 ## Module architecture
 
@@ -22,7 +22,7 @@ Env vars: `yaaos_github_app_id`, `yaaos_github_app_slug`, `yaaos_github_app_priv
 1. **App JWT** (`_build_app_jwt`) — RS256-signed, 9-minute window. Fake PEM sentinel returns `jwt-fake-<app_id>` for test stacks.
 2. **Installation token** — `POST /app/installations/{id}/access_tokens`, ~1hr TTL, acquired per-call, no cache.
 
-`get_installation_token(org_id)` is on the public Protocol because the workspace plugin needs it at clone time.
+`get_installation_token(org_id)` is on the public Protocol because the workspace plugin needs it at clone time. `list_installation_repos(org_id)` is on the Protocol too: this plugin owns repo enumeration (`GET /installation/repositories`, `per_page=100`, full-names only; `[]` on missing install or error), and sibling plugins (claude_code) read it through the `core/vcs` registry rather than importing this plugin.
 
 ### Login provider (GitHub OAuth App)
 
@@ -71,9 +71,9 @@ For `pull_request.synchronize` only: `GET /repos/{owner}/{repo}/compare/{before}
 
 All calls use short-lived per-method `httpx` clients against `github_api_base_url` (defaults to `https://api.github.com`; tests point at `apps/fake-github`).
 
-`post_review` posts each finding as its own comment. Findings with `file` + `line_start` → `POST /pulls/{n}/comments`; orphan findings and `summary_body` → `POST /issues/{n}/comments`.
+`post_finding` posts each finding as its own comment from named primitive args rendered by `_format_finding_body`. Findings with `file` + `line_start` → `POST /pulls/{n}/comments` (inline); null-anchor findings → `POST /issues/{n}/comments` (top-level PR comment). `post_comment` always routes to `POST /issues/{n}/comments` — used by the secrets-detected warning.
 
-`clone_url(repo_external_id)` returns `<github_web_base_url>/<external_id>.git`. Workspace provider pairs this with a fresh installation token via `GIT_ASKPASS`.
+`clone_url(repo_external_id)` returns `<github_git_base_url>/<external_id>.git` (falls back to `github_web_base_url` when the git base is unset). Workspace provider pairs this with a fresh installation token via `GIT_ASKPASS`. The git base is split from the web base so the agent clones from a host its container can reach — the web base is browser-facing (OAuth redirects).
 
 ## Data owned
 
@@ -87,7 +87,7 @@ No per-org credential storage. `github_settings` was dropped in migration `030_d
 Unit tests in `app/plugins/github/test/`:
 - `test_signature.py` — HMAC verification.
 - `test_payload_parser.py` — every event-mapping branch.
-- `test_post_review.py` — `post_review` routing and `_format_finding_body`.
+- `test_post_review.py` — `post_finding` (inline vs null-anchor routing) and `post_comment` routing, and `_format_finding_body`.
 - `test_install_binding.py` — install start, install callback, webhook signature scoping.
 - `test_intake_producer_service.py` (`@pytest.mark.service`) — `_prepare_pr_review` enqueues notifications outbox row and publishes SSE event.
 

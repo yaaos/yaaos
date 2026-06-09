@@ -1,58 +1,26 @@
-"""`PostFindings` happy-path — drafts flow through the full admission
-pipeline and admitted findings land as FindingRow rows.
-
-Proves the wrapper drives `findingdrafts_to_raw` → `admit_raw_findings`
-end-to-end with realistic inputs.
+"""`PostFindings` happy-path — `ReportedFinding`s flow end-to-end and land
+as canonical `FindingRow` rows with correct severity/confidence/display_id.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
-from app.core.plugin_kit import PluginMeta
+from app.core.vcs import VCSPullRequest
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
     register_workflow_context_provider,
-    register_workspace_provider,
 )
-from app.domain.pull_requests import upsert as upsert_pr
 from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
 from app.domain.tickets import create as create_ticket
-from app.domain.vcs import VCSPullRequest
-from app.testing.seed import seed_workspace as _seed_workspace_for_tests
-
-
-class _StubWorkspaceProvider:
-    """Returns deterministic file content for anchor reads. The `provision`
-    plugin_state carries a `files` dict keyed by path → text; `read_text`
-    looks it up."""
-
-    meta = PluginMeta(id="in_process", type="workspace", display_name="stub")
-
-    async def provision(self, spec):  # type: ignore[no-untyped-def]
-        return {"sha": spec.sha, "files": {}}
-
-    async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
-        return None
-
-    async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
-        del plugin_state
-        return None
-
-    async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
-        raise NotImplementedError
-
-    async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
-        return plugin_state.get("files", {}).get(path)
-
-    async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
-        return None
+from app.domain.tickets import upsert as upsert_pr
 
 
 class _StaticContextProvider:
@@ -64,14 +32,14 @@ class _StaticContextProvider:
         return self._context
 
 
-@pytest.fixture
-def _stubs(workspace_providers_isolation, workflow_context_provider_isolation):
-    register_workspace_provider(_StubWorkspaceProvider())
-
-
-async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> None:  # type: ignore[no-untyped-def]
-    """One realistic FindingDraft flows through PostFindings → admission →
-    FindingRow lands in the DB. Proves the wrapper's end-to-end plumbing."""
+@pytest.mark.service
+async def test_post_findings_persists_canonical_finding_rows(
+    db_session, workflow_context_provider_isolation
+) -> None:  # type: ignore[no-untyped-def]
+    """Two `ReportedFinding`s flow through `PostFindings` → canonical `FindingRow`
+    rows land in the DB with correct severity, confidence, and monotonic
+    `finding_display_id` values.
+    """
     org_id = uuid4()
 
     # 1. Ticket + PR rows so the findings FK has somewhere to land.
@@ -114,22 +82,9 @@ async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> N
         session=db_session,
     )
     pr_id = pr.id
-
-    # 2. Workspace row with plugin_state carrying file contents the anchor
-    #    references. The stub provider's read_text looks up here.
-    ws_id = await _seed_workspace_for_tests(
-        org_id=org_id,
-        provider_id="in_process",
-        plugin_state={
-            "sha": "deadbeef",
-            "files": {"src/foo.py": "def foo(x):\n    return x.value\n"},
-        },
-        sha="deadbeef",
-    )
     await db_session.commit()
 
-    # 2. Context provider returns a real pr_id + org_id (needed for the
-    #    aggregate load + persist) and head_sha matching the workspace.
+    # 2. Context provider returns the real pr_id so PostFindings can resolve it.
     register_workflow_context_provider(
         _StaticContextProvider(
             WorkspaceTicketContext(
@@ -142,58 +97,90 @@ async def test_post_findings_persists_admitted_findings(db_session, _stubs) -> N
         )
     )
 
-    # 3. One realistic FindingDraft — passes the 20-char scenario gate,
-    #    anchored in a file the stub workspace returns.
-    drafts = [
-        {
-            "severity": "major",
-            "rule_id": "r1",
-            "title": "Missing None check",
-            "body": "Caller may pass None.",
-            "concrete_failure_scenario": (
-                "Caller can pass None; foo() dereferences without a check; raises NoneType error."
+    # 3. Two canonical ReportedFinding dicts — severity + confidence are valid enum strings.
+    #    Encoded as stream-json stdout (the format `PostFindings` now parses via the plugin).
+    findings_payload = {
+        "findings": [
+            {
+                "file": "src/foo.py",
+                "line": 10,
+                "category": "security",
+                "severity": "blocker",
+                "confidence": "verified",
+                "rationale": "Unvalidated input passed to SQL query.",
+                "rule_violated": "sql-injection",
+                "rule_source": "owasp",
+                "suggested_fix": "Use parameterized queries.",
+            },
+            {
+                "file": None,
+                "line": None,
+                "category": "correctness",
+                "severity": "nit",
+                "confidence": "speculative",
+                "rationale": "Minor naming inconsistency.",
+                "rule_violated": "naming/convention",
+                "rule_source": "yaaos",
+                "suggested_fix": "Rename to snake_case.",
+            },
+        ]
+    }
+    # Stream-json format: each line is a JSON object; `type=result` carries the payload.
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": json.dumps(findings_payload),
+                    "is_error": False,
+                }
             ),
-            "confidence": 90,
-            "rationale": "Function signature accepts any.",
-            "anchor": {"file_path": "src/foo.py", "line_start": 2, "line_end": 2},
-        }
-    ]
+        ]
+    )
 
     ctx = CommandContext(
         workflow_execution_id=str(uuid4()),
-        ticket_id=str(uuid4()),
+        ticket_id=str(ticket_id),
         step_id="post",
         attempt=0,
     )
 
-    # 3b. Register stub VCS plugin so the GitHub-post half of PostFindings
-    # has somewhere to post. Without it, the post step raises (plugin not
-    # registered) and the workflow fails. PR row's plugin_id is "github" so
-    # we register under that id.
+    # 4. Register stub VCS plugin so the GitHub-post half of PostFindings succeeds.
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
     with register_stub_vcs(plugin_id="github") as stub:
-        outcome = await PostFindings().execute({"draft_findings": drafts, "workspace_id": str(ws_id)}, ctx)
+        outcome = await PostFindings().execute({"stdout": stdout}, ctx)
 
     assert outcome.label == "success", f"unexpected failure: {outcome.failure_reason}"
-    assert outcome.outputs.get("admitted_count") == 1
-    assert outcome.outputs.get("dropped_count") == 0
-    assert outcome.outputs.get("posted") is True
-    assert len(stub.posted_reviews) == 1
-    external_id, posted_review = stub.posted_reviews[0]
-    assert external_id == f"pr-{ext_id}"
-    assert len(posted_review.findings) == 1
+    assert outcome.outputs.get("admitted_count") == 2
 
-    # 4. FindingRow landed in the DB scoped to (pr_id, org_id).
+    # 5. Both FindingRow rows landed in the DB with canonical schema.
     rows = (
         (
             await db_session.execute(
-                select(FindingRow).where(FindingRow.pr_id == pr_id, FindingRow.org_id == org_id)
+                select(FindingRow)
+                .where(FindingRow.pr_id == pr_id, FindingRow.org_id == org_id)
+                .order_by(FindingRow.finding_display_id)
             )
         )
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    assert rows[0].rule_id == "r1"
-    assert rows[0].title == "Missing None check"
+    assert len(rows) == 2
+    first, second = rows
+    # finding_display_id is monotonic (1, 2)
+    assert first.finding_display_id == 1
+    assert second.finding_display_id == 2
+    # Canonical schema fields
+    assert first.severity == "blocker"
+    assert first.confidence == "verified"
+    assert first.category == "security"
+    assert first.file == "src/foo.py"
+    assert first.line == 10
+    assert second.severity == "nit"
+    assert second.file is None
+
+    # 6. VCS plugin received one post_finding call per finding.
+    assert len(stub.posted_findings) == 2

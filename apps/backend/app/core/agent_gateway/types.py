@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentCommandKind(StrEnum):
-    CREATE_WORKSPACE = "CreateWorkspace"
+    PROVISION_WORKSPACE = "ProvisionWorkspace"
     WRITE_FILES = "WriteFiles"
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
@@ -34,6 +34,11 @@ class _CommandBase(BaseModel):
     command_id: UUID
     workspace_id: UUID
     traceparent: str
+    # Per-command completion capability token, minted at claim and echoed back on
+    # the terminal/progress AgentEvent. Plain `str` (not SecretStr): it must
+    # serialize its real value to the agent over the wire — same rationale as
+    # `AuthBlock.token`. NEVER log this field.
+    completion_token: str | None = None
 
 
 # ── The five concrete AgentCommand kinds ────────────────────────────────
@@ -55,8 +60,8 @@ class AuthBlock(BaseModel):
     token: str
 
 
-class CreateWorkspaceCommand(_CommandBase):
-    kind: Literal[AgentCommandKind.CREATE_WORKSPACE] = AgentCommandKind.CREATE_WORKSPACE
+class ProvisionWorkspaceCommand(_CommandBase):
+    kind: Literal[AgentCommandKind.PROVISION_WORKSPACE] = AgentCommandKind.PROVISION_WORKSPACE
     repo: RepoRef
     history: int = Field(ge=1)
     auth: AuthBlock
@@ -128,7 +133,7 @@ class ConfigUpdateCommand(BaseModel):
 
 
 AgentCommand = Annotated[
-    CreateWorkspaceCommand
+    ProvisionWorkspaceCommand
     | WriteFilesCommand
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
@@ -168,6 +173,10 @@ class AgentEvent(BaseModel):
     attempt: int = 0
     reported_at: datetime
     traceparent: str
+    # Echoed back from the command's `completion_token`. Verified (constant-time)
+    # against `agent_commands.completion_token_hash` before any side effect.
+    # NEVER log this field.
+    completion_token: str | None = None
 
     def is_terminal(self) -> bool:
         return self.kind in TERMINAL_EVENT_KINDS
@@ -251,7 +260,7 @@ class ClaimRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
     wait_seconds: int = Field(ge=0, le=55)
     lifecycle: Literal["unconfigured", "configured"] = "unconfigured"
-    # new_workspaces: capacity for new CreateWorkspace commands (max_workspaces - active count).
+    # new_workspaces: capacity for new ProvisionWorkspace commands (max_workspaces - active count).
     new_workspaces: int = Field(ge=0, default=0)
     # workspace_ids: idle workspaces awaiting a command (subset of Active workspaces).
     workspace_ids: tuple[UUID, ...] = ()

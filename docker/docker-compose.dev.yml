@@ -185,9 +185,17 @@ services:
     build:
       context: ../apps/agent
       dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: agent_dev
     environment:
       YAAOS_BACKEND_URL: http://web:8080
       YAAOS_AGENT_VERSION: dev
+      # The agent connects to the backend over the Docker network (web:8080) but
+      # the backend's YAAOS_PUBLIC_ORIGIN is localhost:8080 so browser-facing
+      # OAuth/email links resolve from the host. Override the audience the agent
+      # embeds in its signed STS claim to match what the backend expects.
+      # Only honoured in agent_dev builds — inert in production.
+      YAAOS_AGENT_AUDIENCE_OVERRIDE: localhost:8080
       # Direct the AWS SDK v2 IMDS client at mock-aws.
       AWS_EC2_METADATA_SERVICE_ENDPOINT: http://mock-aws:4566
       # Sign GetCallerIdentity against mock-aws. SigV4 binds host into the

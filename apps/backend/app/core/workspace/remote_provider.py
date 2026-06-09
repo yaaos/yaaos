@@ -10,12 +10,12 @@ engine's `handle_agent_event` resumes the workflow.
 
 Exposes:
 - Provider registration under id `remote_agent`.
-- `dispatch_create_workspace(org_id, workspace_id, *, ..., session)` helper
-  that enqueues a CreateWorkspace command durably inside the caller's transaction.
+- `dispatch_provision_workspace(org_id, workspace_id, *, ..., session)` helper
+  that enqueues a ProvisionWorkspace command durably inside the caller's transaction.
 - `dispatch_cleanup_workspace(workspace_id, *, org_id, agent_id, traceparent, session)`
   that enqueues a CleanupWorkspace command pinned to the owning agent.
 - `provision()` / `destroy()` that hand control to the agent via
-  `CreateWorkspace` / `CleanupWorkspace` AgentCommands.
+  `ProvisionWorkspace` / `CleanupWorkspace` AgentCommands.
 
 The synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
 returning a `CodingAgentCliResult`) don't fit the async event-driven
@@ -36,13 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway import (
     AuthBlock,
     CleanupWorkspaceCommand,
-    CreateWorkspaceCommand,
+    ProvisionWorkspaceCommand,
     RepoRef,
     enqueue_command,
     has_any_reachable_agent,
     pin_command_to_agent,
 )
-from app.core.plugin_kit import PluginMeta
 from app.core.workspace.types import (
     CodingAgentCliResult,
     HealthStatus,
@@ -64,31 +63,20 @@ class RemoteAgentWorkspaceProvider:
     The dispatch entry points enqueue commands; the reviewer workflows
     drive the full integration through their command bodies."""
 
-    meta = PluginMeta(
-        id="remote_agent",
-        type="workspace",
-        display_name="Remote agent",
-        description=(
-            "Dispatch workspaces to a customer-deployed WorkspaceAgent. The "
-            "agent process spawns the workspace and runs coding-agent CLIs "
-            "locally; only metadata and findings cross the trust boundary."
-        ),
-        docs_url="https://github.com/yaaos/yaaos/blob/main/docs/system-architecture.md",
-    )
+    plugin_id = "remote_agent"
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         # Provisioning runs through the dispatch helpers, not this
-        # synchronous Protocol method: they enqueue a `CreateWorkspace`
+        # synchronous Protocol method: they enqueue a `ProvisionWorkspace`
         # AgentCommand and the workflow engine awaits the
         # `completed_success` event.
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider.provision is not a synchronous call; "
-            "use dispatch_create_workspace() to enqueue commands."
+            "use dispatch_provision_workspace() to enqueue commands."
         )
 
     async def run_coding_agent_cli(
         self,
-        plugin_state: dict[str, Any],
         argv: list[str],
         *,
         env: dict[str, str] | None = None,
@@ -96,7 +84,7 @@ class RemoteAgentWorkspaceProvider:
         timeout_seconds: int | None = None,
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult:
-        del plugin_state, argv, env, stdin, timeout_seconds, on_stream_line
+        del argv, env, stdin, timeout_seconds, on_stream_line
         # The reviewer commands enqueue `InvokeClaudeCode` AgentCommands
         # and the workflow engine awaits the terminal event. Calling this
         # method directly is a programming error against the remote provider.
@@ -105,8 +93,8 @@ class RemoteAgentWorkspaceProvider:
             "Workspace WorkflowCommands enqueue AgentCommands and await events."
         )
 
-    async def read_text(self, plugin_state: dict[str, Any], path: str) -> str | None:
-        del plugin_state, path
+    async def read_text(self, path: str) -> str | None:
+        del path
         # Same shape issue as run_coding_agent_cli — reads come back as
         # outputs on terminal events in the remote model.
         raise WorkspaceProvisionError(
@@ -114,15 +102,14 @@ class RemoteAgentWorkspaceProvider:
             "reads arrive as outputs on terminal AgentEvents."
         )
 
-    async def write_text(self, plugin_state: dict[str, Any], path: str, content: str) -> None:
-        del plugin_state, path, content
+    async def write_text(self, path: str, content: str) -> None:
+        del path, content
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider.write_text is not a synchronous call; "
             "use a `WriteFiles` AgentCommand."
         )
 
-    async def destroy(self, plugin_state: dict[str, Any]) -> None:
-        del plugin_state
+    async def destroy(self) -> None:
         # Destruction runs through the engine's CleanupWorkspace
         # WorkflowCommand, which enqueues a CleanupWorkspace AgentCommand;
         # that is the proper invocation path, not this method.
@@ -147,8 +134,8 @@ class RemoteAgentWorkspaceProvider:
 # ── Dispatch entry points ──────────────────────────────────────────────
 
 
-class CreateWorkspaceDispatch(BaseModel):
-    """Result of `dispatch_create_workspace`.
+class ProvisionWorkspaceDispatch(BaseModel):
+    """Result of `dispatch_provision_workspace`.
 
     Carries the new `command_id` for `current_command_id`. The workspace
     is not pre-assigned to an agent — the durable queue lets any reachable
@@ -159,7 +146,7 @@ class CreateWorkspaceDispatch(BaseModel):
     command_id: UUID
 
 
-async def dispatch_create_workspace(
+async def dispatch_provision_workspace(
     org_id: UUID,
     workspace_id: UUID,
     *,
@@ -170,21 +157,26 @@ async def dispatch_create_workspace(
     ttl_seconds: int = 600,
     max_idle_seconds: int = 600,
     session: AsyncSession,
-) -> CreateWorkspaceDispatch:
-    """Enqueue a `CreateWorkspace` command durably inside the caller's transaction.
+    workflow_execution_id: UUID | None = None,
+) -> ProvisionWorkspaceDispatch:
+    """Enqueue a `ProvisionWorkspace` command durably inside the caller's transaction.
 
-    Returns a `CreateWorkspaceDispatch` (the new `command_id`) so the caller
+    Returns a `ProvisionWorkspaceDispatch` (the new `command_id`) so the caller
     can persist `current_command_id` atomically with the `try_claim` gate.
 
-    Unlike the old path there is no agent pre-assignment here — the durable
-    queue lets whichever reachable agent has capacity claim it via `claim_next`.
+    There is no agent pre-assignment here — the durable queue lets whichever
+    reachable agent has capacity claim it via `claim_next`.
 
     Caller is responsible for calling `core/workspace.try_claim` to gate
     the dispatch through the single-flight machinery; this helper does NOT
     write to the workspace row itself.
+
+    `workflow_execution_id` is stamped on the new `agent_commands` row so the
+    terminal-event ingestion path can resolve `command_id → workflow` directly,
+    without a workspace-row lookup. Defaults to NULL for non-workflow callers.
     """
     command_id = uuid4()
-    cmd = CreateWorkspaceCommand(
+    cmd = ProvisionWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
         traceparent=traceparent,
@@ -194,8 +186,58 @@ async def dispatch_create_workspace(
         ttl_seconds=ttl_seconds,
         max_idle_seconds=max_idle_seconds,
     )
-    await enqueue_command(org_id=org_id, command=cmd, session=session)
-    return CreateWorkspaceDispatch(command_id=command_id)
+    await enqueue_command(
+        org_id=org_id,
+        command=cmd,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
+    return ProvisionWorkspaceDispatch(command_id=command_id)
+
+
+async def dispatch_invoke_claude_code(
+    workspace_id: UUID,
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    invocation: dict,  # type: ignore[type-arg]
+    traceparent: str,
+    session: AsyncSession,
+    workflow_execution_id: UUID | None = None,
+) -> UUID:
+    """Enqueue an `InvokeClaudeCode` command pinned to the owning agent.
+
+    `agent_id` is the workspace's `owning_agent_id` — the pod that ran
+    `ProvisionWorkspace`. Post-provision commands MUST route to that same
+    agent because only that pod has the checkout. The command is pinned
+    via `pin_command_to_agent` so `claim_next`'s workspace_ids sweep finds it.
+    Returns the new `command_id`.
+
+    `invocation` is the serialised `Invocation` value object from
+    `domain/coding_agent.build_review_invocation`; it carries the skill
+    handle, argv/stdin/env exec spec, and per-run limits.
+    """
+    from app.core.agent_gateway import InvokeClaudeCodeCommand, InvokeClaudeCodeLimits  # noqa: PLC0415
+
+    command_id = uuid4()
+    limits_raw = invocation.get("limits") or {}
+    limits = InvokeClaudeCodeLimits(wallclock_seconds=limits_raw.get("wallclock_seconds", 1200))
+    cmd = InvokeClaudeCodeCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent=traceparent,
+        invocation=invocation,
+        limits=limits,
+        mcp_servers=(),
+    )
+    await enqueue_command(
+        org_id=org_id,
+        command=cmd,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
+    await pin_command_to_agent(command_id, agent_id, session=session)
+    return command_id
 
 
 async def dispatch_cleanup_workspace(
@@ -209,8 +251,8 @@ async def dispatch_cleanup_workspace(
     """Enqueue a `CleanupWorkspace` command pinned to the owning agent.
 
     `agent_id` is the workspace's stored owning agent (`WorkspaceRow.agent_id`)
-    — the pod that ran `CreateWorkspace`. Post-create commands MUST go to that
-    same agent; re-picking would route to a pod that has no such workspace.
+    — the pod that ran `ProvisionWorkspace`. Post-provision commands MUST go to
+    that same agent; re-picking would route to a pod that has no such workspace.
     The command row is pre-stamped with `agent_id` so `claim_next` can
     find it in the workspace_ids sweep.
     Returns the new `command_id`.
@@ -225,3 +267,20 @@ async def dispatch_cleanup_workspace(
     # Pre-assign the agent so claim_next's workspace_ids sweep finds it.
     await pin_command_to_agent(command_id, agent_id, session=session)
     return command_id
+
+
+def register_workspace_providers() -> None:
+    """Register the shipped workspace provider into the process registry.
+
+    Called explicitly from the web + worker composition roots after the
+    workspace module is loaded — not at import time, so the process controls
+    when registration happens (mirrors `register_workspace_recovery_policies`).
+    `RemoteAgentWorkspaceProvider` is the only shipped implementation: it
+    dispatches every workspace operation to a customer-deployed WorkspaceAgent
+    via `core/agent_gateway`. `ProvisionWorkspace.dispatch` requires at least
+    one registered provider, so this call is load-bearing for the review +
+    enumerate workflows. Called exactly once per process; the registry raises
+    loudly on a duplicate, which is the intended signal for a wiring bug."""
+    from app.core.workspace.service import register_workspace_provider  # noqa: PLC0415
+
+    register_workspace_provider(RemoteAgentWorkspaceProvider())

@@ -18,18 +18,25 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 
 class WorkspaceTicketContext(BaseModel):
     """Everything a Workspace-category or Local WorkflowCommand needs from
     a ticket. Returned by the registered provider. Pydantic-frozen so
-    callers can't accidentally mutate before passing into `create_workspace`.
+    callers can't accidentally mutate before passing into dispatch helpers.
 
     `pr_id` is None when the ticket isn't (yet) associated with a PR row —
     intake creates the ticket before PR materialization in some flows, so
     Local commands that need the reviewer aggregate must handle the None
     case (typically by returning success-without-action).
+
+    `clone_url` and `installation_token` are populated by the registered
+    `WorkflowContextProvider` implementation (in `domain/reviewer`) so that
+    `ProvisionWorkspace.dispatch` can build the `RepoRef` + `AuthBlock`
+    without importing `vcs` or `plugins/github` (layer rule: core < domain).
+    Both default to empty/None so provider impls that only populate org-level
+    context can omit them; dispatch validates presence before use.
     """
 
     model_config = {"frozen": True}
@@ -39,6 +46,13 @@ class WorkspaceTicketContext(BaseModel):
     repo_external_id: str
     payload: dict[str, Any]
     pr_id: UUID | None = None
+    # Git clone URL for the repo (e.g. https://github.com/org/repo.git).
+    # Populated by the domain/reviewer WorkflowContextProvider impl.
+    clone_url: str = ""
+    # GitHub installation token for the clone. Populated by the
+    # domain/reviewer WorkflowContextProvider impl at dispatch time
+    # (~1h TTL; agent claims within seconds-minutes).
+    installation_token: SecretStr = SecretStr("")
 
 
 @runtime_checkable

@@ -1,0 +1,3 @@
+#EXIT:42
+{"type":"system","subtype":"init","session_id":"fake-agentfail-session"}
+{"type":"error","subtype":"crash","message":"simulated subprocess failure"}

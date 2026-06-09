@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core.redis import sliding_window_hit
+from app.core.redis import delete_keys_with_prefix, sliding_window_hit
 
 # Redis key prefix for all identity-exchange rate-limit windows.
 KEY_PREFIX = "rl:identity_exchange:"
@@ -27,7 +27,7 @@ PER_IP_LIMIT = 10
 PER_IP_WINDOW_SECONDS = 60
 
 
-@dataclass(frozen=True)
+@dataclass
 class RateLimitedError(Exception):
     """Raised when an identity-exchange attempt exceeds a window."""
 
@@ -56,9 +56,20 @@ async def check_identity_exchange(*, source_ip: str | None) -> None:
         await _hit(f"{KEY_PREFIX}ip:{source_ip}", PER_IP_LIMIT, PER_IP_WINDOW_SECONDS)
 
 
+async def delete_rate_limits() -> int:
+    """Delete all identity-exchange rate-limit keys from Redis.
+
+    Used by the test-reset path to flush the agent IP's sliding-window
+    counters between test runs so a fresh seed isn't blocked by a prior
+    run's burst. Returns the number of keys deleted.
+    """
+    return await delete_keys_with_prefix(KEY_PREFIX)
+
+
 __all__ = [
     "PER_IP_LIMIT",
     "PER_IP_WINDOW_SECONDS",
     "RateLimitedError",
     "check_identity_exchange",
+    "delete_rate_limits",
 ]

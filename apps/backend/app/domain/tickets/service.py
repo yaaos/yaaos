@@ -19,6 +19,9 @@ from app.core.tasks import enqueue
 from app.core.tenancy import list_active_member_ids
 from app.domain.tickets.models import TicketRow
 from app.domain.tickets.notifications import build_status_change_specs
+from app.domain.tickets.pull_request import PullRequest, PullRequestNotFoundError
+from app.domain.tickets.pull_request import get as get_pull_request
+from app.domain.tickets.pull_request import list_by_ids as list_prs_by_ids
 
 # Six-state ticket vocabulary. `pending` is the initial state set by `create()`;
 # `running` is set when the first workflow step dispatches; `hitl` and `failed`
@@ -52,7 +55,7 @@ class Ticket(BaseModel):
     # fields (nullable until the projections that populate them ship).
     current_stage: str | None = None
     findings_count: int = 0
-    max_severity: Literal["low", "medium", "high"] | None = None
+    max_severity: Literal["blocker", "should_fix", "nit"] | None = None
     builder_kind: Literal["user", "system"] = "user"
     builder_display_name: str | None = None
 
@@ -296,8 +299,6 @@ async def create_for_pr(
 
 
 async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
-    from app.domain.pull_requests import get as get_pull_request  # noqa: PLC0415
-
     async with db_session() as s:
         row = (
             await s.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
@@ -306,8 +307,6 @@ async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
             raise TicketNotFoundError(str(ticket_id))
         t = Ticket.from_row(row)
     if row.pr_id is not None:
-        from app.domain.pull_requests import PullRequestNotFoundError  # noqa: PLC0415
-
         try:
             pr = await get_pull_request(row.pr_id, org_id=row.org_id)
             t.pr_number = pr.number
@@ -412,9 +411,6 @@ async def list_tickets(
     `findings_count` + `max_severity` are read directly from the ticket row
     — reviewer writes the rollup after each review run and on ack/push-back.
     """
-    from app.domain.pull_requests import PullRequest  # noqa: PLC0415
-    from app.domain.pull_requests import list_by_ids as list_prs_by_ids  # noqa: PLC0415
-
     async with db_session() as s:
         stmt = select(TicketRow).where(TicketRow.org_id == org_id)
         if filter.repo_external_ids:

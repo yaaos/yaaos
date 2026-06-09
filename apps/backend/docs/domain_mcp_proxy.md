@@ -9,7 +9,7 @@ Owns: `mcp_review_tokens` (per-review bearer, 2h TTL), the FastAPI router for `P
 ## Why / invariants
 
 - **Raw token never stored** — only `sha256(raw)`. `mint_token` returns the raw exactly once.
-- **Token is review-scoped**, not user-scoped. `revoke_token(review_id)` runs in a `finally` inside the `with_workspace` block — before tempdir teardown.
+- **Token is review-scoped**, not user-scoped. `revoke_token(review_id)` is called by the reviewer's cleanup step — before the workspace is closed.
 - **`mint_token(review_id, *, org_id, session)` stores org on the token row.** The proxy reads `org_id` from `McpToken.org_id` without a round-trip into `domain/reviewer`. The `reviewer → mcp_proxy` direction is the only live edge; the former back-edge is gone.
 - **Read tools always pass; write tools require `allowed_tools` membership.** Claude Code's `--allowed-tools=mcp__<server>__<tool>` is defense-in-depth — the proxy is the actual gate.
 - **`expires_at < now()` → `-32002 broken_creds`** — same error code as a failed credential. The reviewer prefixes a warning callout.

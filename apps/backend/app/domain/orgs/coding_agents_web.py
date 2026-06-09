@@ -19,11 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var, user_id_var
+from app.core.coding_agent import PluginNotFoundError
+from app.core.coding_agent import get_plugin as get_coding_agent_plugin
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.coding_agent import PluginNotFoundError
-from app.domain.coding_agent import get_plugin as get_coding_agent_plugin
 from app.domain.orgs import coding_agents as ca_service
 
 log = structlog.get_logger("orgs.coding_agents.web")

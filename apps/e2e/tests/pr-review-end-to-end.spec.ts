@@ -1,24 +1,40 @@
 /**
- * The headline journey: a PR arrives → yaaos reviews it → user sees findings.
+ * The headline journey: a PR arrives → yaaos reviews it via the real Go
+ * agent → findings post to fake-github.
  *
  * Boundary: fake-github dispatches a `pull_request.opened` webhook; yaaos
- * creates a ticket, runs one review (the parent reviewer dispatches yaaos-*
- * subagents internally; the stub coding-agent short-circuits the CLI),
- * posts one Review back to fake-github, and the user sees the results in
- * the UI. No interaction with the test runner once dispatched.
+ * creates a ticket; the workflow engine dispatches `ProvisionWorkspace` →
+ * `InvokeClaudeCode` → `CleanupWorkspace` AgentCommands to the real Go agent
+ * running in the test stack; the agent fork/execs `fake-claude` (the bash
+ * replay script bind-mounted at `/usr/local/bin/claude`); fake-claude emits
+ * the `happy.jsonl` scenario stream-json; the backend parses the stdout,
+ * validates findings, and posts them to fake-github via `post_finding`.
  *
- * The user is logged in as the Owner of the `acme` org via the `oauth_test`
- * stub; the install is attached to the same org so webhook-created tickets
- * land on the route (`/orgs/acme/tickets`) the user navigates to.
+ * This spec asserts the **cross-plane wire**:
+ *   - An `InvokeClaudeCode` AgentCommand was dispatched AND consumed by the
+ *     real Go agent (the stub workspace provider must NOT be active —
+ *     `YAAOS_CODING_AGENT_STUB` must be unset/0 in the test stack).
+ *   - The finding posted to fake-github contains content only producible by
+ *     the `happy.jsonl` fake-claude scenario (`rule_violated: "no-unused-vars"`),
+ *     which proves the stub's canned `stub/sample-suggestion` output was NOT
+ *     used.
+ *
+ * Requires:
+ *   - Real Go agent + mock-aws in the Docker test stack.
+ *   - `fake-claude` bind-mounted at `/usr/local/bin/claude`.
+ *   - `YAAOS_CODING_AGENT_STUB` unset or `0` in web and worker containers.
+ *   - fake-github able to serve git HTTP (for `ProvisionWorkspace` clone step).
  */
 
 import { expect, test, type Page, type APIRequestContext } from "@playwright/test";
 import {
   dispatchWebhook,
+  gitHeadSha,
   postedComments,
   prPayload,
   resetStack,
   seedGithubInstall,
+  seedRepoSkill,
   YAAOS_URL,
 } from "./_helpers";
 
@@ -44,6 +60,11 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
   // Pin the install + settings rows to acme so the webhook-created ticket
   // lives on the same org the authenticated user belongs to.
   await seedGithubInstall({ targetOrgSlug: "acme" });
+  // Seed skill_name for every scenario repo so build_review_invocation can
+  // resolve the skill handle. "code-review" matches the SKILL.md in these repos.
+  for (const repo of ["acme/review-happy", "acme/review-nonconforming", "acme/review-agentfail"]) {
+    await seedRepoSkill({ orgSlug: "acme", repoExternalId: repo, skillName: "code-review" });
+  }
 
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();
@@ -51,74 +72,96 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
 }
 
 /**
- * Both tests below need a review to execute end-to-end. The only workspace
- * provider is `remote_agent`, which dispatches WORKSPACE commands to a remote
- * WorkspaceAgent; the e2e stack runs no agent, so the review parks in
- * `awaiting_agent` and posts nothing. The review logic itself is covered by
- * the inline service test
- * `apps/backend/app/domain/reviewer/test/test_pr_review_v1_e2e_service.py`;
- * what these two add is the browser-level assertion (findings render, the
- * review card updates live via SSE). They stay skipped until the e2e stack
- * runs a real agent against the dispatch path.
+ * Happy path: PR open → real agent claims InvokeClaudeCode → fake-claude
+ * (happy.jsonl) → canonical finding posted to fake-github.
  *
- * To re-enable: run a WorkspaceAgent + mock-aws in the e2e stack so reviews
- * execute through `claim_next` → agent → terminal event.
+ * The spec seeds the PR under `acme/review-happy` so that the bash
+ * `fake-claude` script matches the repo slug and cats `happy.jsonl`.
+ * The posted comment body must contain `no-unused-vars` — the specific
+ * `rule_violated` value from happy.jsonl — proving the real agent path
+ * (not the in-process stub) produced the finding.
  */
-test.skip("PR open → reviewer posts; ticket detail renders findings", async ({ page, request }) => {
+test("PR open → real agent claims InvokeClaudeCode → findings post to fake-github", async ({
+  page,
+  request,
+}) => {
   await setupAuthedAcmeOwner(page, request);
 
+  // Use the real HEAD SHA from the fake-github bare repo so the agent's
+  // `git checkout --detach <sha>` resolves against a real commit.
+  const headSha = await gitHeadSha("acme", "review-happy");
   await dispatchWebhook({
     event: "pull_request",
     payload: prPayload({
-      repo: "acme/api",
-      number: 42,
-      title: "Add /metrics endpoint",
-      body: "Adds a Prometheus metrics endpoint.",
+      repo: "acme/review-happy",
+      number: 101,
+      title: "Real-agent review: happy path",
+      body: "Cross-plane e2e: real Go agent + fake-claude happy scenario.",
+      headSha,
     }),
   });
 
   // Ticket appears in the list within a few SSE/polling ticks.
   await page.goto(`${YAAOS_URL}/orgs/acme/tickets`);
-  await expect(page.getByTestId("tickets-list")).toContainText("Add /metrics endpoint", {
-    timeout: 20_000,
-  });
+  await expect(page.getByTestId("tickets-list")).toContainText(
+    "Real-agent review: happy path",
+    { timeout: 20_000 },
+  );
 
-  // Open the ticket and wait for the review to post findings to GitHub.
-  // The end-to-end signal we care about: yaaos posted at least one
-  // review comment to fake-github (the SPA dropped the earlier
-  // agent-card pattern; the actual cross-system contract is the
-  // posted comments).
-  await page.getByText("Add /metrics endpoint").click();
+  // Navigate to the ticket detail and wait for the review to complete.
+  await page.getByText("Real-agent review: happy path").click();
   await expect(page.getByTestId("ticket-detail")).toBeVisible();
+
+  // The real cross-plane signal: fake-github received at least one finding
+  // comment posted by yaaos after the real agent ran fake-claude.
+  // The posted comment body must contain `no-unused-vars` — the rule_violated
+  // field from happy.jsonl — which is only producible by the real agent path
+  // (the stub emits `stub/sample-suggestion`).
   await expect
-    .poll(async () => (await postedComments()).length, { timeout: 30_000 })
-    .toBeGreaterThanOrEqual(1);
+    .poll(
+      async () => {
+        const comments = await postedComments();
+        return comments.some(
+          (c) =>
+            typeof c.body === "string" && c.body.includes("no-unused-vars"),
+        );
+      },
+      { timeout: 60_000, intervals: [2_000] },
+    )
+    .toBe(true);
 });
 
 /**
- * SSE-driven state transitions: open the tickets list before the review
- * starts; the review-card flips to `posted` WITHOUT a manual reload (the
- * contract `review_job_status_changed` events drive in `apps/web`).
+ * SSE-driven ticket list update: the tickets list shows the new ticket via
+ * SSE without a manual reload. Driven over the same real-agent path as the
+ * happy test above so the agent is exercised only once.
  *
- * Folded in from the standalone `sse-step-progress-live.spec.ts` so we
- * don't pay the docker-compose bring-up twice for the same backend flow.
+ * This is deliberately lightweight — it pairs with the test above (same repo,
+ * same agent scenario) and only asserts the SSE-driven list update, not the
+ * finding content (which the test above already covers).
  */
-test.skip("review card state transitions live via SSE without reload", async ({ page, request }) => {
+test("SSE-driven ticket list shows new ticket without page reload", async ({
+  page,
+  request,
+}) => {
   await setupAuthedAcmeOwner(page, request);
 
   // Land on the tickets list FIRST so the SSE subscriber is mounted before
   // any events fly.
   await page.goto(`${YAAOS_URL}/orgs/acme/tickets`);
+  const headSha = await gitHeadSha("acme", "review-happy");
   await dispatchWebhook({
     event: "pull_request",
-    payload: prPayload({ repo: "acme/web", number: 55, title: "Live SSE check" }),
+    payload: prPayload({
+      repo: "acme/review-happy",
+      number: 102,
+      title: "SSE live update: real-agent path",
+      headSha,
+    }),
   });
-  await expect(page.getByText("Live SSE check")).toBeVisible({ timeout: 20_000 });
-  await page.getByText("Live SSE check").click();
-  // Detail page mounts; reviewer eventually posts comments without
-  // needing a manual reload.
-  await expect(page.getByTestId("ticket-detail")).toBeVisible();
-  await expect
-    .poll(async () => (await postedComments()).length, { timeout: 30_000 })
-    .toBeGreaterThanOrEqual(1);
+  // The ticket must appear without a manual reload — the SSE event
+  // `ticket_status_changed` invalidates the tickets query.
+  await expect(page.getByText("SSE live update: real-agent path")).toBeVisible({
+    timeout: 20_000,
+  });
 });

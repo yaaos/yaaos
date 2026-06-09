@@ -1,5 +1,5 @@
-"""GET /api/claude_code/defaults — gated on CODING_AGENT_READ; returns the
-orchestrator + agents + model/version/effort enums."""
+"""GET /api/claude_code/defaults — gated on CODING_AGENT_READ; returns
+model / effort dropdown enums."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ async def test_defaults_member_forbidden(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_defaults_admin_gets_orchestrator_and_agents(seeded) -> None:
+async def test_defaults_admin_gets_models_and_efforts(seeded) -> None:
     async with _client() as c:
         r = await c.get(
             "/api/claude_code/defaults",
@@ -75,8 +75,10 @@ async def test_defaults_admin_gets_orchestrator_and_agents(seeded) -> None:
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["orchestrator"]["name"] == "Orchestrator"
-    assert isinstance(body["agents"], list)
-    assert all("name" in a for a in body["agents"])
     assert "models" in body
     assert "efforts" in body
+    assert isinstance(body["models"], list)
+    assert len(body["models"]) > 0
+    # Orchestrator/agents no longer returned.
+    assert "orchestrator" not in body
+    assert "agents" not in body

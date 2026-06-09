@@ -8,8 +8,9 @@ without reshaping bootstrap.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -173,6 +174,23 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("037_drop_provider_columns", "drop_provider_columns"),
     ("038_agent_identity_exchange_schema", "agent_identity_exchange_schema"),
     ("039_create_agent_commands", "create_agent_commands"),
+    ("040_agent_commands_workflow_execution_id", "agent_commands_workflow_execution_id"),
+    ("041_workflow_executions_failure_reason", "workflow_executions_failure_reason"),
+    ("042_outbox_entries_pk_created_at", "outbox_entries_pk_created_at"),
+    ("043_create_claude_code_repos", "create_claude_code_repos"),
+    ("044_canonical_findings_schema", "canonical_findings_schema"),
+    ("045_shed_workspace_columns", "shed_workspace_columns"),
+    ("046_drop_skill_manifest_columns", "drop_skill_manifest_columns"),
+    ("047_drop_default_model", "drop_default_model"),
+    ("048_add_skill_name_to_claude_code_repos", "add_skill_name_to_claude_code_repos"),
+    ("049_create_coding_agent_runs", "create_coding_agent_runs"),
+    ("050_reviews_run_id", "reviews_run_id"),
+    ("051_create_coding_agent_activity", "create_coding_agent_activity"),
+    ("052_create_scheduled_runs", "create_scheduled_runs"),
+    ("053_drop_reviews_dead_columns", "drop_reviews_dead_columns"),
+    ("054_coding_agent_runs_plugin_id", "coding_agent_runs_plugin_id"),
+    ("055_agent_commands_completion_token_hash", "agent_commands_completion_token_hash"),
+    ("056_drop_claude_code_encrypted_api_key", "drop_claude_code_encrypted_api_key"),
 )
 
 
@@ -184,10 +202,11 @@ async def _apply_create_all(conn) -> None:  # type: ignore[no-untyped-def]
         "app.core.workspace.models",
         "app.plugins.claude_code.models",
         "app.plugins.github.models",
-        "app.domain.pull_requests.models",
+        "app.domain.tickets.pull_request",
         "app.domain.tickets.models",
         "app.domain.lessons.models",
         "app.domain.reviewer.models",
+        "app.core.coding_agent.models",
     ):
         importlib.import_module(mod)
     await conn.run_sync(Base.metadata.create_all)
@@ -369,28 +388,26 @@ async def _apply_drop_reviewer_agents(conn) -> None:  # type: ignore[no-untyped-
 
 
 async def _apply_create_durable_findings_tables(conn) -> None:  # type: ignore[no-untyped-def]
-    """Create the durable-findings tables (plan §4.1).
+    """Create the generation-2 findings tables that existed at this migration point.
 
-    `findings`, `finding_observations`, `comment_threads`, `comment_messages`,
-    `acknowledgment_decisions`. `create_all` is idempotent (CREATE TABLE IF NOT
-    EXISTS) so fresh DBs that already ran 001 with these models in metadata
-    no-op here, and DBs created before this migration's models existed get the
-    tables added.
+    On fresh DBs these tables are created here and then replaced by migration 044
+    (`canonical_findings_schema`). On upgraded DBs the tables already exist — no-op.
+    Tables that no longer appear in `Base.metadata` (removed in later migration)
+    are skipped so re-running on clean models does not error.
     """
     import importlib  # noqa: PLC0415
 
     importlib.import_module("app.domain.reviewer.models")
-    new_tables = [
-        Base.metadata.tables[name]
-        for name in (
-            "findings",
-            "finding_observations",
-            "comment_threads",
-            "comment_messages",
-            "acknowledgment_decisions",
-        )
-    ]
-    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+    wanted = (
+        "findings",
+        "finding_observations",
+        "comment_threads",
+        "comment_messages",
+        "acknowledgment_decisions",
+    )
+    new_tables = [Base.metadata.tables[name] for name in wanted if name in Base.metadata.tables]
+    if new_tables:
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
 async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
@@ -399,7 +416,7 @@ async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
     Per plan/notes/full-pr-flow.md §4.3 + §13 step 7 — drop-and-recreate. Existing
     POC data is throwaway. The new `reviews` table is created from the
     `ReviewRow` model via `Base.metadata.create_all`. After this runs, FindingRow
-    + FindingObservationRow have a real FK target for review_id columns.
+    + FindingRow have a real FK target for review_id columns.
     """
     import importlib  # noqa: PLC0415
 
@@ -421,19 +438,20 @@ async def _apply_reviews_cutover(conn) -> None:  # type: ignore[no-untyped-def]
         await conn.execute(text(stmt))
 
     # Re-register the reviewer module's models, then create the new tables.
+    # Only create tables that still exist in Base.metadata (older ancillary
+    # tables are dropped by a later migration and no longer appear in models.py).
     importlib.import_module("app.domain.reviewer.models")
-    new_tables = [
-        Base.metadata.tables[name]
-        for name in (
-            "reviews",
-            "findings",
-            "finding_observations",
-            "comment_threads",
-            "comment_messages",
-            "acknowledgment_decisions",
-        )
-    ]
-    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+    wanted_cutover = (
+        "reviews",
+        "findings",
+        "finding_observations",
+        "comment_threads",
+        "comment_messages",
+        "acknowledgment_decisions",
+    )
+    new_tables = [Base.metadata.tables[name] for name in wanted_cutover if name in Base.metadata.tables]
+    if new_tables:
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
 async def _apply_create_all_identity(conn) -> None:  # type: ignore[no-untyped-def]
@@ -496,20 +514,23 @@ async def _apply_drop_classification_confidence(conn) -> None:  # type: ignore[n
     """Drop `comment_messages.classification_confidence` and renormalize the
     legacy `acknowledgment` intent to `acknowledgment_clear`.
 
-    Reasoning lives in `domain/reviewer/llm/classifier.py`: the LLM picks one
-    of five categorical intents that encode the action directly, no separate
-    probability axis. The old `acknowledgment` label always collapses to
-    `acknowledgment_clear` (the act-immediately branch) — sub-threshold
-    `acknowledgment` rows from the float-confidence era are vanishingly
-    few at POC scale and don't justify a CASE WHEN reconstruction.
+    Guards with IF EXISTS on the table — on fresh DBs `comment_messages` is
+    never created (it was removed in a later migration) so the ALTER/UPDATE
+    are no-ops. On upgraded DBs the table exists and the statements run.
     """
-    statements = [
-        "ALTER TABLE comment_messages DROP COLUMN IF EXISTS classification_confidence",
-        "UPDATE comment_messages SET classified_intent = 'acknowledgment_clear'"
-        " WHERE classified_intent = 'acknowledgment'",
-    ]
-    for stmt in statements:
-        await conn.execute(text(stmt))
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='comment_messages') "
+            "THEN ALTER TABLE comment_messages DROP COLUMN IF EXISTS classification_confidence; END IF; END $$"
+        )
+    )
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='comment_messages') "
+            "THEN UPDATE comment_messages SET classified_intent = 'acknowledgment_clear' "
+            "WHERE classified_intent = 'acknowledgment'; END IF; END $$"
+        )
+    )
 
 
 async def _apply_create_all_mcp(conn) -> None:  # type: ignore[no-untyped-def]
@@ -668,10 +689,11 @@ async def _apply_agent_identity_exchange_schema(conn) -> None:  # type: ignore[n
         "    ALTER TABLE workspaces DROP COLUMN agent_id; "
         "  END IF; "
         "END $$",
-        # Add FK (ON DELETE SET NULL so dropping an agent doesn't cascade-delete workspaces).
+        # Add FK (ON DELETE RESTRICT: owning_agent_id is NOT NULL, so a
+        # workspace_agents row cannot be deleted while a workspace references it).
         "ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS fk_workspaces_owning_agent",
         "ALTER TABLE workspaces ADD CONSTRAINT fk_workspaces_owning_agent "
-        "FOREIGN KEY (owning_agent_id) REFERENCES workspace_agents(id) ON DELETE SET NULL",
+        "FOREIGN KEY (owning_agent_id) REFERENCES workspace_agents(id) ON DELETE RESTRICT",
         "CREATE INDEX IF NOT EXISTS ix_workspaces_owning_agent_id ON workspaces (owning_agent_id)",
         # bearer_tokens: add issued_iam_arn.
         "ALTER TABLE bearer_tokens ADD COLUMN IF NOT EXISTS issued_iam_arn TEXT",
@@ -1126,10 +1148,32 @@ async def _apply_uuid_pk_uuidv7_defaults(conn) -> None:  # type: ignore[no-untyp
     await conn.execute(text("ALTER TABLE lessons ALTER COLUMN id SET DEFAULT uuidv7()"))
     await conn.execute(text("ALTER TABLE reviews ALTER COLUMN id SET DEFAULT uuidv7()"))
     await conn.execute(text("ALTER TABLE findings ALTER COLUMN id SET DEFAULT uuidv7()"))
-    await conn.execute(text("ALTER TABLE finding_observations ALTER COLUMN id SET DEFAULT uuidv7()"))
-    await conn.execute(text("ALTER TABLE comment_threads ALTER COLUMN id SET DEFAULT uuidv7()"))
-    await conn.execute(text("ALTER TABLE comment_messages ALTER COLUMN id SET DEFAULT uuidv7()"))
-    await conn.execute(text("ALTER TABLE acknowledgment_decisions ALTER COLUMN id SET DEFAULT uuidv7()"))
+    # These tables are dropped by a later migration. Guard with IF EXISTS so
+    # fresh DBs (where the tables were never created) do not fail here.
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='finding_observations') "
+            "THEN ALTER TABLE finding_observations ALTER COLUMN id SET DEFAULT uuidv7(); END IF; END $$"
+        )
+    )
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='comment_threads') "
+            "THEN ALTER TABLE comment_threads ALTER COLUMN id SET DEFAULT uuidv7(); END IF; END $$"
+        )
+    )
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='comment_messages') "
+            "THEN ALTER TABLE comment_messages ALTER COLUMN id SET DEFAULT uuidv7(); END IF; END $$"
+        )
+    )
+    await conn.execute(
+        text(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='acknowledgment_decisions') "
+            "THEN ALTER TABLE acknowledgment_decisions ALTER COLUMN id SET DEFAULT uuidv7(); END IF; END $$"
+        )
+    )
 
 
 async def _apply_orgs_sso_authz_columns(conn) -> None:  # type: ignore[no-untyped-def]
@@ -1228,6 +1272,467 @@ async def _apply_create_agent_commands(conn) -> None:  # type: ignore[no-untyped
     await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
 
 
+async def _apply_agent_commands_workflow_execution_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `agent_commands.workflow_execution_id` (uuid, nullable).
+
+    Carries the workflow this command resumes. Workflow correlation no longer
+    depends on a workspace row — the engine stamps this column at enqueue time
+    so `record_agent_event` resolves `command_id → workflow_execution_id`
+    directly. NULL only for agent-scoped commands without workflow correlation
+    (e.g. ConfigUpdate). Idempotent.
+    """
+    await conn.execute(text("ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS workflow_execution_id UUID"))
+
+
+async def _apply_workflow_executions_failure_reason(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `workflow_executions.failure_reason` (text, nullable).
+
+    Short queryable label written on terminal-fail. Values are one of:
+    schema_invalid | agent_failure | timeout | provision_failed | command_error
+    No backfill — pre-existing failed rows keep NULL. Idempotent.
+    """
+    await conn.execute(text("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS failure_reason TEXT"))
+
+
+async def _apply_create_claude_code_repos(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create the `claude_code_repos` table for per-repo skill manifests.
+
+    PK `(org_id, repo_external_id)` via a unique constraint. `skills` is JSONB
+    defaulting to `[]`; `enumerated_at` is null until the first enumeration.
+    Idempotent (CREATE TABLE IF NOT EXISTS).
+    """
+    await conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS claude_code_repos (
+                id UUID PRIMARY KEY DEFAULT uuidv7(),
+                org_id UUID NOT NULL,
+                repo_external_id TEXT NOT NULL,
+                skills JSONB NOT NULL DEFAULT '[]',
+                enumerated_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_claude_code_repos_org_repo UNIQUE (org_id, repo_external_id)
+            )
+            """
+        )
+    )
+
+
+async def _apply_canonical_findings_schema(conn) -> None:  # type: ignore[no-untyped-def]
+    """Replace the generation-2 findings schema with the canonical schema.
+
+    Drops the ancillary tables that no longer exist in the domain model
+    (`finding_observations`, `comment_threads`, `comment_messages`,
+    `acknowledgment_decisions`), then drops and recreates `reviews` and
+    `findings` from the current lean `ReviewRow` / `FindingRow` models.
+
+    Data loss is intentional — review history from the old schema is not
+    compatible and is discarded. Idempotent: each DROP uses IF EXISTS.
+    """
+    import importlib  # noqa: PLC0415
+
+    # Drop ancillary tables (if they still exist from migration 008).
+    await conn.execute(text("DROP TABLE IF EXISTS acknowledgment_decisions CASCADE"))
+    await conn.execute(text("DROP TABLE IF EXISTS comment_messages CASCADE"))
+    await conn.execute(text("DROP TABLE IF EXISTS comment_threads CASCADE"))
+    await conn.execute(text("DROP TABLE IF EXISTS finding_observations CASCADE"))
+    await conn.execute(text("DROP TABLE IF EXISTS findings CASCADE"))
+    await conn.execute(text("DROP TABLE IF EXISTS reviews CASCADE"))
+
+    # Import reviewer models + pull_requests model so FK targets are in metadata.
+    importlib.import_module("app.domain.reviewer.models")
+    importlib.import_module("app.domain.tickets.pull_request")
+    new_tables = [
+        Base.metadata.tables[name] for name in ("reviews", "findings") if name in Base.metadata.tables
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_drop_skill_manifest_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `skills` and `enumerated_at` from `claude_code_repos`.
+
+    The skill-enumeration feature is retired. `claude_code_repos` keeps its
+    identity columns (`id`, `org_id`, `repo_external_id`, `created_at`,
+    `updated_at`) plus the per-repo `skill_name` text field.
+
+    Idempotent: DROP COLUMN IF EXISTS.
+    """
+    await conn.execute(text("ALTER TABLE claude_code_repos DROP COLUMN IF EXISTS skills"))
+    await conn.execute(text("ALTER TABLE claude_code_repos DROP COLUMN IF EXISTS enumerated_at"))
+
+
+async def _apply_drop_default_model(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `default_model` from `claude_code_settings`.
+
+    The orchestrator/subagent model is retired; `default_model` was the only
+    remaining reader column. Idempotent: DROP COLUMN IF EXISTS.
+    """
+    await conn.execute(text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS default_model"))
+
+
+async def _apply_add_skill_name_to_claude_code_repos(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `skill_name` (nullable text) to `claude_code_repos`.
+
+    The per-repo skill handle typed by the admin in the Coding Agents settings
+    page. `build_review_invocation` reads this and raises when it is null/empty,
+    failing the review cleanly before dispatch. Idempotent: ADD COLUMN IF NOT EXISTS.
+    """
+    await conn.execute(text("ALTER TABLE claude_code_repos ADD COLUMN IF NOT EXISTS skill_name TEXT"))
+
+
+async def _apply_create_coding_agent_runs(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create `coding_agent_runs` — one row per `InvokeClaudeCode` execution.
+
+    Records status/exit_code/duration for every coding-agent run; the
+    token-usage columns (tokens_in/out) stay NULL.
+    Idempotent: creates the table only if it does not already exist.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.coding_agent.models")
+    new_tables = [Base.metadata.tables["coding_agent_runs"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_reviews_run_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add nullable `run_id` FK to `reviews` → `coding_agent_runs(id)`.
+
+    Links each review row to its coding-agent run. Nullable — pre-existing
+    reviews have no run. The legacy run-metric/activity columns on `reviews`
+    (model, effort, tokens_in, tokens_out, duration_s, activity_log) are
+    untouched here; they coexist while the review-jobs read path still reads
+    them.
+    Idempotent: ADD COLUMN IF NOT EXISTS.
+    """
+    await conn.execute(
+        text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS run_id UUID REFERENCES coding_agent_runs(id)")
+    )
+
+
+# Window of ISO-week offsets seeded/maintained for `coding_agent_activity`:
+# the current week plus the next two. The seeding migration, the daily
+# maintenance task, and the create_all `after_create` listener all use this
+# same window so a fresh DB and a long-running one have identical create-ahead.
+_CODING_AGENT_ACTIVITY_WINDOW_OFFSETS = (0, 1, 2)
+
+
+def _coding_agent_activity_week_start(now: datetime) -> datetime:
+    """UTC Monday 00:00:00 of the ISO week containing `now`.
+
+    The single anchor every partition-name/range computation derives from, so
+    naming stays consistent across the migration, maintenance, and listener.
+    """
+    today_midnight = datetime(now.year, now.month, now.day, tzinfo=UTC)
+    return today_midnight - timedelta(days=today_midnight.weekday())
+
+
+def _coding_agent_activity_partition_ddl(now: datetime) -> list[str]:
+    """`CREATE TABLE IF NOT EXISTS … PARTITION OF` statements for the window.
+
+    One weekly child partition per offset in
+    `_CODING_AGENT_ACTIVITY_WINDOW_OFFSETS` (current week → +2). Bounds run
+    from week-start (Monday UTC 00:00:00) to next-week-start (exclusive). Names
+    are `coding_agent_activity_pYYYYWW` using ISO year-week for deterministic
+    ordering. The single source of truth for partition naming + range bounds —
+    shared by the seeding migration, the maintenance task, and the create_all
+    `after_create` listener.
+
+    Bounds and the partition name derive from server-side `now` + a fixed
+    ISO-week format — no caller data ever reaches these strings, so the
+    f-string interpolation is injection-free.
+    """
+    week_start = _coding_agent_activity_week_start(now)
+    statements: list[str] = []
+    for offset in _CODING_AGENT_ACTIVITY_WINDOW_OFFSETS:
+        lower = week_start + timedelta(weeks=offset)
+        upper = lower + timedelta(weeks=1)
+        iso_year, iso_week, _ = lower.isocalendar()
+        partition_name = f"coding_agent_activity_p{iso_year:04d}{iso_week:02d}"
+        lower_lit = lower.strftime("%Y-%m-%d %H:%M:%S+00")
+        upper_lit = upper.strftime("%Y-%m-%d %H:%M:%S+00")
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {partition_name} "
+            f"PARTITION OF coding_agent_activity "
+            f"FOR VALUES FROM ('{lower_lit}') TO ('{upper_lit}')"
+        )
+    return statements
+
+
+@event.listens_for(Base.metadata, "after_create")
+def _seed_coding_agent_activity_partitions(target, connection, **kw):  # type: ignore[no-untyped-def]
+    """Seed child partitions when `Base.metadata.create_all` emits the parent.
+
+    A `RANGE`-partitioned parent rejects INSERTs until a covering child
+    partition exists. `create_all`-based schema setups (not the `migrate()`
+    path, which seeds via `_apply_create_coding_agent_activity`) need the
+    listener so a freshly created `coding_agent_activity` can take rows.
+
+    Fires once per `create_all`; runs only when the partitioned parent is
+    among the tables just created (`tables` kwarg). Idempotent — every
+    statement is `CREATE TABLE IF NOT EXISTS … PARTITION OF`. Reuses the
+    shared window helper so the listener, migration, and maintenance task
+    agree on partition naming + the (0, +1, +2) window.
+    """
+    created = kw.get("tables")
+    if created is not None and not any(t.name == "coding_agent_activity" for t in created):
+        return
+    if created is None and "coding_agent_activity" not in target.tables:
+        return
+    for stmt in _coding_agent_activity_partition_ddl(datetime.now(UTC)):
+        connection.execute(
+            text(
+                stmt
+            )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        )
+
+
+async def _apply_create_coding_agent_activity(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create the codebase's first partitioned table — `coding_agent_activity`.
+
+    Layout: `PARTITION BY RANGE (created_at)` (weekly partitions, 4-week TTL).
+    PK is `(run_id, created_at)` because Postgres requires the partition key
+    in every unique constraint. Owned by `core/coding_agent`; one row per
+    `coding_agent_runs` row, holding a pre-rendered `ActivityLog` JSONB blob.
+
+    The parent shape is also declared on the ORM model
+    (`CodingAgentActivityRow` on the shared `Base`, with
+    `postgresql_partition_by`); column drift between this DDL and the model
+    surfaces at `Base.metadata.create_all`. This raw `CREATE TABLE` is still
+    the `migrate()`/prod path — create_all is not run there.
+
+    The seed window matches `maintain_coding_agent_activity_partitions`:
+    the current ISO-UTC week through +2 (3 partitions), via the shared
+    `_coding_agent_activity_partition_ddl` helper. Each child partition is
+    named `coding_agent_activity_pYYYYWW` using ISO week numbering. Every
+    `CREATE` runs idempotent `IF NOT EXISTS` so re-running this migration is
+    safe.
+    """
+    # Parent table — partitioned by RANGE on created_at.
+    await conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS coding_agent_activity ("
+            "  run_id UUID NOT NULL,"
+            "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  org_id UUID NOT NULL,"
+            "  payload JSONB NOT NULL,"
+            "  CONSTRAINT coding_agent_activity_pkey PRIMARY KEY (run_id, created_at),"
+            "  CONSTRAINT coding_agent_activity_run_id_fkey"
+            "    FOREIGN KEY (run_id) REFERENCES coding_agent_runs(id) ON DELETE CASCADE"
+            ") PARTITION BY RANGE (created_at)"
+        )
+    )
+
+    for stmt in _coding_agent_activity_partition_ddl(datetime.now(UTC)):
+        await conn.execute(
+            text(
+                stmt
+            )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        )
+
+
+async def maintain_coding_agent_activity_partitions() -> None:
+    """Rolling create-ahead + drop maintenance for `coding_agent_activity`.
+
+    Creates child partitions for the current ISO-UTC week and the next two
+    weeks (3 partitions total, ~2-week create-ahead window), and drops
+    partitions whose week is older than 4 weeks before the current week
+    (the table's documented retention). Idempotent: `CREATE TABLE IF NOT
+    EXISTS` for create, `DROP TABLE IF EXISTS` for drop, repeated runs on
+    the same day are no-ops.
+
+    Raw partition DDL lives here (not in `core/coding_agent`) because
+    `core/database` is the only module the table-access checker allows
+    raw SQL on the `coding_agent_activity` parent. The companion
+    `@scheduled` task in `core/coding_agent` calls this function once a
+    day.
+
+    Partition naming + week alignment match the seeding migration
+    (`_apply_create_coding_agent_activity`) and the create_all `after_create`
+    listener via the shared `_coding_agent_activity_partition_ddl` helper: UTC
+    Monday 00:00 week start, `coding_agent_activity_pYYYYWW` using ISO-year-week.
+    """
+    now = datetime.now(UTC)
+    week_start = _coding_agent_activity_week_start(now)
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        # Create-ahead: current week + next two (3 partitions, ~2-week window).
+        for stmt in _coding_agent_activity_partition_ddl(now):
+            await conn.execute(
+                text(
+                    stmt
+                )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            )
+
+        # Drop: partitions whose week is more than 4 weeks before the current
+        # week. Enumerate via `pg_inherits` (children of the parent), parse the
+        # `pYYYYWW` suffix, drop those below the cutoff. `pg_inherits` join
+        # avoids `LIKE`-based name scraping and only returns actual children.
+        cutoff_lower = week_start - timedelta(weeks=4)
+        cutoff_iso_year, cutoff_iso_week, _ = cutoff_lower.isocalendar()
+        cutoff_key = cutoff_iso_year * 100 + cutoff_iso_week
+
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT c.relname FROM pg_inherits i "
+                    "JOIN pg_class c ON c.oid = i.inhrelid "
+                    "JOIN pg_class p ON p.oid = i.inhparent "
+                    "WHERE p.relname = 'coding_agent_activity'"
+                )
+            )
+        ).all()
+        for (name,) in rows:
+            # Expected shape: coding_agent_activity_pYYYYWW
+            suffix = name.removeprefix("coding_agent_activity_p")
+            if suffix == name or len(suffix) != 6 or not suffix.isdigit():
+                continue
+            key = int(suffix)
+            if key >= cutoff_key:
+                continue
+            # Identifier is a child of `coding_agent_activity` validated to match
+            # the `pYYYYWW` shape — no caller data, injection-free.
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    f"DROP TABLE IF EXISTS {name}"
+                )
+            )
+
+
+async def _apply_create_scheduled_runs(conn) -> None:  # type: ignore[no-untyped-def]
+    """Create `scheduled_runs` — the per-tick dedup ledger for `core/tasks`.
+
+    Composite PK `(schedule_id, fire_time)` is the unique-target the
+    `INSERT … ON CONFLICT DO NOTHING` claim races against. Owned by
+    `core/tasks`; pruned by a daily `@scheduled` task that deletes rows
+    older than 7 days.
+
+    Idempotent: CREATE TABLE IF NOT EXISTS.
+    """
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("app.core.tasks.models")
+    new_tables = [Base.metadata.tables["scheduled_runs"]]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=new_tables))
+
+
+async def _apply_shed_workspace_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Remove vestigial columns from `workspaces` and tighten `owning_agent_id`.
+
+    - Drop `plugin_state` (JSONB) — no longer needed; workspace state lives in
+      the WorkspaceRow status + agent_commands workflow correlation.
+    - Drop `current_holder_workflow_id` (UUID) — workflow correlation is via
+      `agent_commands.workflow_execution_id`; the workspace row never needs it.
+    - Drop the index on `current_holder_workflow_id`.
+    - Set `owning_agent_id NOT NULL` — every workspace row is created by an agent.
+
+    Idempotent: each step uses IF EXISTS / IF NOT EXISTS guards.
+    """
+    await conn.execute(text("DROP INDEX IF EXISTS ix_workspaces_current_holder_workflow_id"))
+    await conn.execute(text("ALTER TABLE workspaces DROP COLUMN IF EXISTS plugin_state"))
+    await conn.execute(text("ALTER TABLE workspaces DROP COLUMN IF EXISTS current_holder_workflow_id"))
+    await conn.execute(text("ALTER TABLE workspaces ALTER COLUMN owning_agent_id SET NOT NULL"))
+
+
+async def _apply_outbox_entries_pk_created_at(conn) -> None:  # type: ignore[no-untyped-def]
+    """Widen the `outbox_entries` primary key to `(id, created_at)`.
+
+    Postgres requires the partition key in every unique/primary key; including
+    `created_at` now lets a future time-range-partitioning retrofit skip a
+    live-table PK migration. No behavioral change today.
+
+    Steps (idempotent):
+    1. Assert `created_at NOT NULL` via NOT NULL constraint (PK columns cannot
+       be nullable; `created_at` already has a server_default but no constraint).
+    2. Drop the old single-column PK.
+    3. Add the composite PK `(id, created_at)`.
+
+    Each step uses IF EXISTS / IF NOT EXISTS guards where possible; the NOT NULL
+    alter is idempotent when the column is already NOT NULL. Executes inside a
+    single connection so all three steps share one implicit transaction.
+    """
+    # Step 1: enforce NOT NULL. SET NOT NULL is idempotent in PostgreSQL — a
+    # no-op when the column is already NOT NULL (step 3's IF NOT EXISTS guard is
+    # independent; it only prevents "constraint already exists" on re-run).
+    # Postgres will error on SET NOT NULL when nulls exist; outbox_entries has
+    # a server_default so no production rows have NULL created_at.
+    await conn.execute(text("ALTER TABLE outbox_entries ALTER COLUMN created_at SET NOT NULL"))
+    # Step 2: drop the existing PK constraint.
+    await conn.execute(text("ALTER TABLE outbox_entries DROP CONSTRAINT IF EXISTS outbox_entries_pkey"))
+    # Step 3: add the composite PK.
+    await conn.execute(
+        text("ALTER TABLE outbox_entries ADD CONSTRAINT outbox_entries_pkey PRIMARY KEY (id, created_at)")
+    )
+
+
+async def _apply_drop_reviews_dead_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop the legacy run-metric/activity columns from `reviews`.
+
+    `reviews` was recreated lean in migration 044 (`canonical_findings_schema`),
+    so these columns do not exist on fresh DBs. This migration is idempotent
+    (DROP COLUMN IF EXISTS) and covers any DB that pre-dates 044 or still has
+    stale columns from the old `review_jobs`-era schema. The `run_id` FK stays.
+
+    Columns: `activity_log`, `model`, `effort`, `tokens_in`, `tokens_out`,
+    `duration_s`, `scheduled_at`, `started_at`, `completed_at`.
+    """
+    for stmt in [
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS activity_log",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS model",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS effort",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS tokens_in",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS tokens_out",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS duration_s",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS scheduled_at",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS started_at",
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS completed_at",
+    ]:
+        await conn.execute(text(stmt))
+
+
+async def _apply_coding_agent_runs_plugin_id(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `coding_agent_runs.plugin_id` — the plugin that issued the run.
+
+    The run-sink resolves which plugin parses the terminal event from this
+    column rather than a hardcoded id. `server_default='claude_code'` is a
+    one-time backfill so any pre-existing rows satisfy NOT NULL — today the
+    only shipped coding-agent plugin.
+    Idempotent: ADD COLUMN IF NOT EXISTS.
+    """
+    await conn.execute(
+        text(
+            "ALTER TABLE coding_agent_runs ADD COLUMN IF NOT EXISTS "
+            "plugin_id TEXT NOT NULL DEFAULT 'claude_code'"
+        )
+    )
+
+
+async def _apply_drop_claude_code_encrypted_api_key(conn) -> None:  # type: ignore[no-untyped-def]
+    """Drop `claude_code_settings.encrypted_anthropic_api_key`.
+
+    The column was the secondary storage path for the Anthropic API key;
+    the canonical store is `byok_keys` (provider='anthropic'). Idempotent.
+    """
+    await conn.execute(
+        text("ALTER TABLE claude_code_settings DROP COLUMN IF EXISTS encrypted_anthropic_api_key")
+    )
+
+
+async def _apply_agent_commands_completion_token_hash(conn) -> None:  # type: ignore[no-untyped-def]
+    """Add `agent_commands.completion_token_hash` (text, nullable).
+
+    Stores sha256 of the per-command completion capability token minted at
+    `claim_next`; the raw token is returned to the agent once and never
+    persisted. `record_agent_event` verifies the presented token against this
+    hash (constant-time) before any side effect — the churn-proof replacement
+    for the org/agent ownership guard. NULL when a command never went through
+    `claim_next` (e.g. test-seeded rows) — verification is skipped then.
+    No backfill (nullable). Idempotent: ADD COLUMN IF NOT EXISTS.
+    """
+    await conn.execute(text("ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS completion_token_hash TEXT"))
+
+
 async def _apply_pending() -> None:
     """Body of `migrate()`, called while holding the advisory lock.
 
@@ -1319,6 +1824,40 @@ async def _apply_pending() -> None:
                 await _apply_agent_identity_exchange_schema(conn)
             elif kind == "create_agent_commands":
                 await _apply_create_agent_commands(conn)
+            elif kind == "agent_commands_workflow_execution_id":
+                await _apply_agent_commands_workflow_execution_id(conn)
+            elif kind == "workflow_executions_failure_reason":
+                await _apply_workflow_executions_failure_reason(conn)
+            elif kind == "outbox_entries_pk_created_at":
+                await _apply_outbox_entries_pk_created_at(conn)
+            elif kind == "create_claude_code_repos":
+                await _apply_create_claude_code_repos(conn)
+            elif kind == "canonical_findings_schema":
+                await _apply_canonical_findings_schema(conn)
+            elif kind == "shed_workspace_columns":
+                await _apply_shed_workspace_columns(conn)
+            elif kind == "drop_skill_manifest_columns":
+                await _apply_drop_skill_manifest_columns(conn)
+            elif kind == "drop_default_model":
+                await _apply_drop_default_model(conn)
+            elif kind == "add_skill_name_to_claude_code_repos":
+                await _apply_add_skill_name_to_claude_code_repos(conn)
+            elif kind == "create_coding_agent_runs":
+                await _apply_create_coding_agent_runs(conn)
+            elif kind == "reviews_run_id":
+                await _apply_reviews_run_id(conn)
+            elif kind == "create_coding_agent_activity":
+                await _apply_create_coding_agent_activity(conn)
+            elif kind == "create_scheduled_runs":
+                await _apply_create_scheduled_runs(conn)
+            elif kind == "drop_reviews_dead_columns":
+                await _apply_drop_reviews_dead_columns(conn)
+            elif kind == "coding_agent_runs_plugin_id":
+                await _apply_coding_agent_runs_plugin_id(conn)
+            elif kind == "agent_commands_completion_token_hash":
+                await _apply_agent_commands_completion_token_hash(conn)
+            elif kind == "drop_claude_code_encrypted_api_key":
+                await _apply_drop_claude_code_encrypted_api_key(conn)
             await conn.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:v)"),
                 {"v": version},

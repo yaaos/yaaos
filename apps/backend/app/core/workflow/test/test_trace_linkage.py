@@ -8,7 +8,7 @@ and asserts every emitted span shares the same `trace_id` — proving one
 trace covers webhook → workflow start → all task bodies → terminal.
 
 Trace ID stays continuous from webhook to PR comment through the
-workflow-engine layer here; the final hop (vcs.post_review) emits its own
+workflow-engine layer here; the final hop (`vcs.post_finding`) emits its own
 spans through SQLAlchemy/HTTP auto-instrumentation under the same trace
 context when [domain_reviewer.md PostFindings] runs inside a span. The
 Go-subprocess hop rides on env-passing `TRACEPARENT`.
@@ -24,7 +24,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from app.core.plugin_kit import PluginMeta
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
@@ -159,24 +158,24 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     eng = get_engine()
 
     class _MinimalProvider:
-        meta = PluginMeta(id="trace_test_stub", type="workspace", display_name="trace-stub")
+        plugin_id = "trace_test_stub"
 
         async def provision(self, spec):  # type: ignore[no-untyped-def]
             return {}
 
-        async def destroy(self, plugin_state):  # type: ignore[no-untyped-def]
+        async def destroy(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def health_check(self, plugin_state):  # type: ignore[no-untyped-def]
+        async def health_check(self) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def run_coding_agent_cli(self, plugin_state, argv, **kwargs):  # type: ignore[no-untyped-def]
+        async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
             raise NotImplementedError
 
-        async def read_text(self, plugin_state, path):  # type: ignore[no-untyped-def]
+        async def read_text(self, path):  # type: ignore[no-untyped-def]
             return None
 
-        async def write_text(self, plugin_state, path, content):  # type: ignore[no-untyped-def]
+        async def write_text(self, path, content):  # type: ignore[no-untyped-def]
             return None
 
     bind_workspace_registry(WorkspaceRegistry())
@@ -190,6 +189,10 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
         async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
             del inputs, ctx
             return Outcome.success()
+
+        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+            del inputs, ctx, session
+            return uuid4()
 
     eng.register_command(_NoopWs())
     workflow = Workflow(

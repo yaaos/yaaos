@@ -17,13 +17,13 @@ import (
 )
 
 func newCreateCmd(workspaceID, commandID string) command.WorkspaceCommand {
-	return &command.CreateWorkspaceCommand{
-		Proto: protocol.CreateWorkspaceCommand{
+	return &command.ProvisionWorkspaceCommand{
+		Proto: protocol.ProvisionWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
 				CommandID:   commandID,
 				WorkspaceID: workspaceID,
 				Traceparent: "tp-" + commandID,
-				Kind:        protocol.KindCreateWorkspace,
+				Kind:        protocol.KindProvisionWorkspace,
 			},
 		},
 	}
@@ -71,7 +71,7 @@ func TestPool_FirstCommandSpawnsRunner_SuccessEvent(t *testing.T) {
 	}
 }
 
-func TestPool_NonCreateForUnknownWorkspace_Failure(t *testing.T) {
+func TestPool_NonProvisionForUnknownWorkspace_Failure(t *testing.T) {
 	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 
@@ -113,7 +113,7 @@ func TestPool_MultipleCommandsReuseSameRunner(t *testing.T) {
 }
 
 // TestPool_ConcurrentSameIDCreate_SpawnsExactlyOneRunner proves the
-// check-and-set in reserveActiveSlot: N concurrent CreateWorkspace dispatches
+// check-and-set in reserveActiveSlot: N concurrent ProvisionWorkspace dispatches
 // for the SAME workspace_id spawn exactly one runner (no orphaned runner from
 // a lost reservation race) and leave exactly one Active registry record. Run
 // with -race to exercise the atomic reservation guard.
@@ -167,7 +167,7 @@ func TestPool_CleanupReapsRunner_RespawnOnNextCreate(t *testing.T) {
 	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-3"), nil, 0); ev.Kind != protocol.EventCompletedFailure {
 		t.Errorf("post-cleanup write should fail-no-runner, got %q", ev.Kind)
 	}
-	// But a new CreateWorkspace respawns.
+	// But a new ProvisionWorkspace respawns.
 	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-4"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("respawn create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -237,7 +237,7 @@ func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
 	pool := NewPool(inProcessSpawn(hangingOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	// First spawn the workspace via a successful CreateWorkspace.
+	// First spawn the workspace via a successful ProvisionWorkspace.
 	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-1"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -281,7 +281,7 @@ func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
 	if !found {
 		t.Errorf("ws-1 should still be in Snapshot after runner failure")
 	}
-	// A new CreateWorkspace respawns into a fresh Active record.
+	// A new ProvisionWorkspace respawns into a fresh Active record.
 	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-respawn"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Errorf("respawn after cancel: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -290,11 +290,11 @@ func TestPool_SendContextCancel_RunnerDroppedAndFailureEmitted(t *testing.T) {
 func TestPool_MissingWorkspaceID_Failure(t *testing.T) {
 	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 
-	// A CreateWorkspaceCommand with no workspace_id.
-	cmd := &command.CreateWorkspaceCommand{
-		Proto: protocol.CreateWorkspaceCommand{
+	// A ProvisionWorkspaceCommand with no workspace_id.
+	cmd := &command.ProvisionWorkspaceCommand{
+		Proto: protocol.ProvisionWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
-				Kind: protocol.KindCreateWorkspace,
+				Kind: protocol.KindProvisionWorkspace,
 			},
 		},
 	}
@@ -324,7 +324,7 @@ func TestPool_ProgressEventsForwardedToOnProgress(t *testing.T) {
 	pool := NewPool(inProcessSpawn(emittingInvokeOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	// First spawn via CreateWorkspace.
+	// First spawn via ProvisionWorkspace.
 	if ev := pool.Dispatch(context.Background(), newCreateCmd("ws-1", "c-create"), nil, 0); ev.Kind != protocol.EventCompletedSuccess {
 		t.Fatalf("create: %q (reason=%q)", ev.Kind, ev.FailureReason)
 	}
@@ -408,12 +408,12 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 	// supervisor.routeCommand does in production). The new ctx has the
 	// supervisor's child of the backend parent as the active span.
 	ctx := tracing.ExtractContext(context.Background(), backendParent)
-	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.CreateWorkspace")
+	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch.ProvisionWorkspace")
 
 	// Now rewrite the cmd's traceparent to the supervisor's span (the
 	// same rewrite routeCommand does via cmd.SetTraceparent before
 	// pool.Dispatch).
-	cmd := newCreateCmd("ws-1", "c-1").(*command.CreateWorkspaceCommand)
+	cmd := newCreateCmd("ws-1", "c-1").(*command.ProvisionWorkspaceCommand)
 	cmd.Proto.Traceparent = tracing.InjectTraceparent(ctx)
 	if cmd.Proto.Traceparent == "" {
 		t.Fatal("supervisor span should produce non-empty traceparent")
@@ -474,9 +474,9 @@ func TestPool_TraceContinuity_BackendParentToWorkspaceChild(t *testing.T) {
 // drive the per-command timeout path in the pool.
 type hangingForeverOps struct{}
 
-func (hangingForeverOps) CloneWorkspace(ctx context.Context, _ *protocol.CreateWorkspaceCommand) (command.CreateResult, error) {
+func (hangingForeverOps) ProvisionWorkspace(ctx context.Context, _ *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
 	<-ctx.Done()
-	return command.CreateResult{}, ctx.Err()
+	return command.ProvisionResult{}, ctx.Err()
 }
 func (hangingForeverOps) WriteFiles(ctx context.Context, _ *protocol.WriteFilesCommand) (command.WriteFilesResult, error) {
 	<-ctx.Done()
@@ -503,14 +503,14 @@ func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	pool := NewPool(inProcessSpawn(hangingForeverOps{}), nil)
 	defer pool.CloseAll(context.Background())
 
-	cmd := &shortTimeoutCreateCmd{
-		CreateWorkspaceCommand: command.CreateWorkspaceCommand{
-			Proto: protocol.CreateWorkspaceCommand{
+	cmd := &shortTimeoutProvisionCmd{
+		ProvisionWorkspaceCommand: command.ProvisionWorkspaceCommand{
+			Proto: protocol.ProvisionWorkspaceCommand{
 				CommandHeader: protocol.CommandHeader{
 					CommandID:   "c-1",
 					WorkspaceID: "ws-1",
 					Traceparent: "tp-c-1",
-					Kind:        protocol.KindCreateWorkspace,
+					Kind:        protocol.KindProvisionWorkspace,
 				},
 			},
 		},
@@ -522,7 +522,7 @@ func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	if !strings.Contains(ev.FailureReason, "timeout:") {
 		t.Errorf("failure_reason: want 'timeout:' prefix, got %q", ev.FailureReason)
 	}
-	if !strings.Contains(ev.FailureReason, "CreateWorkspace") {
+	if !strings.Contains(ev.FailureReason, "ProvisionWorkspace") {
 		t.Errorf("failure_reason should name the kind, got %q", ev.FailureReason)
 	}
 	// Runner is marked defunct after timeout — KnownIDs still includes
@@ -546,13 +546,13 @@ func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	}
 }
 
-// shortTimeoutCreateCmd wraps CreateWorkspaceCommand with a 30ms timeout for
+// shortTimeoutProvisionCmd wraps ProvisionWorkspaceCommand with a 30ms timeout for
 // testing the pool's per-command deadline path.
-type shortTimeoutCreateCmd struct {
-	command.CreateWorkspaceCommand
+type shortTimeoutProvisionCmd struct {
+	command.ProvisionWorkspaceCommand
 }
 
-func (s *shortTimeoutCreateCmd) Timeout() time.Duration { return 30 * time.Millisecond }
+func (s *shortTimeoutProvisionCmd) Timeout() time.Duration { return 30 * time.Millisecond }
 
 func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 	// Create succeeds via StubHandler; then Invoke hangs and times out
@@ -588,7 +588,7 @@ func TestPool_TimeoutOnInvokeClaudeCode_UsesWireLimit(t *testing.T) {
 	}
 }
 
-// stubThenHangOps accepts CreateWorkspace via StubHandler's default;
+// stubThenHangOps accepts ProvisionWorkspace via StubHandler's default;
 // hangs on every InvokeClaudeCode until ctx cancels.
 type stubThenHangOps struct{ workspacetest.StubHandler }
 
@@ -634,7 +634,7 @@ func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
 	pool.Dispatch(context.Background(), newCreateCmd("ws-2", "c-2"), nil, 0)
 
 	pool.CloseAll(context.Background())
-	// After CloseAll, subsequent non-Create commands for those workspaces
+	// After CloseAll, subsequent non-Provision commands for those workspaces
 	// fail since the runners are gone.
 	if ev := pool.Dispatch(context.Background(), newWriteCmd("ws-1", "c-after"), nil, 0); ev.Kind != protocol.EventCompletedFailure {
 		t.Errorf("post-CloseAll write should fail, got %q", ev.Kind)
@@ -652,7 +652,7 @@ func TestPool_CloseAll_TerminatesAllRunners(t *testing.T) {
 // pool.go:512-519) even when the outer context is cancelled mid-Send.
 func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
 	// hangingForeverOps (defined in this file) blocks all command bodies
-	// including CreateWorkspace until ctx cancels — simulates a workspace
+	// including ProvisionWorkspace until ctx cancels — simulates a workspace
 	// operation interrupted by supervisor shutdown (root ctx cancel).
 	pool := NewPool(inProcessSpawn(hangingForeverOps{}), nil)
 	defer pool.CloseAll(context.Background())
@@ -661,13 +661,13 @@ func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
 	const cmdID = "cmd-shutdown"
 	const traceparent = "tp-shutdown"
 
-	cmd := &command.CreateWorkspaceCommand{
-		Proto: protocol.CreateWorkspaceCommand{
+	cmd := &command.ProvisionWorkspaceCommand{
+		Proto: protocol.ProvisionWorkspaceCommand{
 			CommandHeader: protocol.CommandHeader{
 				CommandID:   cmdID,
 				WorkspaceID: wsID,
 				Traceparent: traceparent,
-				Kind:        protocol.KindCreateWorkspace,
+				Kind:        protocol.KindProvisionWorkspace,
 			},
 		},
 	}
@@ -706,10 +706,10 @@ func TestPool_ShutdownDuringInFlight_EmitsCompletedFailure(t *testing.T) {
 	}
 }
 
-// TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure proves
-// that any non-create WorkspaceCommand for an unseen workspace_id yields a
+// TestPool_NonProvisionWorkspaceCommand_UnknownWorkspace_SyntheticFailure proves
+// that any non-provision WorkspaceCommand for an unseen workspace_id yields a
 // completed_failure with reason containing "no workspace runner".
-func TestPool_NonCreateWorkspaceCommand_UnknownWorkspace_SyntheticFailure(t *testing.T) {
+func TestPool_NonProvisionWorkspaceCommand_UnknownWorkspace_SyntheticFailure(t *testing.T) {
 	pool := NewPool(inProcessSpawn(workspacetest.StubHandler{}), nil)
 	defer pool.CloseAll(context.Background())
 

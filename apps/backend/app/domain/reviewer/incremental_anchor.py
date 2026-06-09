@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from app.domain.coding_agent import StaleCheckContext
+from app.core.coding_agent import StaleCheckContext
 from app.domain.reviewer.aggregate import PRReviewAggregate
 from app.domain.reviewer.anchor import resolve_anchor
 
