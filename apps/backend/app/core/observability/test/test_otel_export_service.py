@@ -115,7 +115,7 @@ def _build_providers(
 
     resource = Resource.create(
         {
-            "service.name": "yaaos-app",
+            "service.name": "yaaos-web",
             "service.version": "0.0.0-dev",
             "deployment.environment.name": "local",
         }

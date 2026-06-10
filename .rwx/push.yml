@@ -264,24 +264,14 @@ tasks:
         --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
         --build-arg VITE_ENVIRONMENT=production
 
-      # Belt-and-braces worker reconciliation. fly.production.toml moves the
-      # worker health check to a top-level [[checks]] (Fly-recommended shape
-      # for non-public process groups), which should make bluegreen start
-      # green workers correctly. This block self-heals any residual drift:
-      #   1. Destroy stopped workers from older releases (stale spares left
-      #      behind by prior bluegreen deploys).
-      #   2. Start any current-release worker still stopped.
-      # Filters off the Fly-managed metadata `fly_process_group` and
-      # `fly_release_version`. Both steps are idempotent — no-op when
-      # there's nothing to do.
+      # Destroy stopped workers from older releases — bluegreen leftovers
+      # whose destroy step didn't complete. Bluegreen owns active-machine
+      # state; this only cleans up stale spares. Idempotent.
       MAX_VER="$(flyctl machine list -a yaaos --json | jq -r '[.[] | (.config.metadata.fly_release_version // "0") | tonumber] | max')"
-      echo "Reconciling worker machines against release version: ${MAX_VER}"
+      echo "Reaping older-release worker machines (current: ${MAX_VER})"
       flyctl machine list -a yaaos --json \
         | jq -r --argjson max "$MAX_VER" '.[] | select(.config.metadata.fly_process_group == "worker" and .state == "stopped" and ((.config.metadata.fly_release_version // "0") | tonumber) < $max) | .id' \
         | xargs -r -n1 -I{} flyctl machine destroy --force {} -a yaaos
-      flyctl machine list -a yaaos --json \
-        | jq -r --argjson max "$MAX_VER" '.[] | select(.config.metadata.fly_process_group == "worker" and .state == "stopped" and ((.config.metadata.fly_release_version // "0") | tonumber) == $max) | .id' \
-        | xargs -r -n1 -I{} flyctl machine start {} -a yaaos
 
   # ─── agent image publish ─────────────────────────────────────────────
   #

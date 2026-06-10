@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # must differ across separately-deployed roles even when they share a code
     # base. Both env-overridable for downstream collectors that need a custom
     # naming scheme.
-    otel_service_name_app: str = "yaaos-app"
+    otel_service_name_app: str = "yaaos-web"
     otel_service_name_worker: str = "yaaos-worker"
     log_level: str = "INFO"
 
