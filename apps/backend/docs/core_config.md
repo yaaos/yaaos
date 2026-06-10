@@ -34,9 +34,14 @@
 
 **`YAAOS_CLOUDFLARE_INGRESS_SECRET`** — shared secret injected by a Cloudflare Transform Rule into the `CF-Access-Yaaos-Ingress` header on every proxied request. `CloudflareIngressMiddleware` reads this at request time (not boot time) and rejects mismatches with 403. Empty default = no-op so dev/test/e2e are unaffected. Set as a Fly secret in production.
 
+**`SERVICE_VERSION`** — `service_version: str = "0.0.0-dev"`. Version string embedded in the OTel resource (`service.version`) and served at `/api/health`. Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a safe sentinel for local/dev boots.
+
+**OTLP auth headers — no Settings field.** `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Bearer <token>,Dash0-Dataset=<name>`) is set as a Fly secret and read by the OTel SDK directly at exporter construction time. Nothing in our code parses it. Exporter wiring is gated on `otel_exporter_otlp_endpoint` being set; the SDK then reads the standard OTLP env vars.
+
 ## Gotchas
 
 - Callers never instantiate `Settings` directly — always via `get_settings()`.
 - `APP_MODE` and `ENVIRONMENT` are independent. Never derive one from the other.
 - The Dockerfile sets `APP_MODE=production` at image build time; tests in `conftest.py` override it to `test` before any import.
 - Tests that override `YAAOS_CLOUDFLARE_INGRESS_SECRET` must call `get_settings.cache_clear()` before and after — the cached singleton won't pick up the env change otherwise.
+- `OTEL_EXPORTER_OTLP_HEADERS` is never a Settings field — it's a standard OTel env var consumed directly by the SDK. Do not add a `SecretStr` field for it; auth headers must not cross the Python module boundary.

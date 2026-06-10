@@ -51,7 +51,7 @@ depends_on = []
 
 [[modules]]
 path = "app.core.observability"
-depends_on = ["app.core.config"]
+depends_on = ["app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.redis"
@@ -494,6 +494,7 @@ expose = [
   "current_traceparent",
   "get_logger",
   "restore_traceparent_context",
+  "shutdown",
   "spawn",
   "with_remote_parent_span",
 ]
