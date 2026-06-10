@@ -61,7 +61,15 @@ ARG VERSION=""
 # arg is non-empty. ${VERSION:+-X main.agentVersion=${VERSION}} injects the
 # version only when VERSION is provided so the default "0.0.0-dev" fallback
 # applies in local/unversioned builds.
-RUN CGO_ENABLED=0 GOOS=linux go build \
+#
+# The two cache mounts hold the Go build cache (GOCACHE) and module cache
+# (GOMODCACHE). They're build-time only — never baked into a layer — so the
+# static binary stays byte-identical. In CI the `preserve-data` Docker setting
+# persists BuildKit's cache store across runs, so an unchanged-deps source edit
+# recompiles incrementally instead of cold (~30s → a few seconds).
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     ${BUILD_TAGS:+-tags ${BUILD_TAGS}} \
     -ldflags "-s -w${VERSION:+ -X main.agentVersion=${VERSION}}" \

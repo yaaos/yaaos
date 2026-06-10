@@ -87,7 +87,7 @@ kill_timeout = "180s"
 # The worker count is operator-set via `flyctl scale count worker=1`;
 # autoscaling knobs (auto_stop_machines / min_machines_running) belong on
 # [[services]] / [http_service] and aren't needed here.
-[[checks]]
+[checks.worker_health]
   processes = ["worker"]
   port = 8081
   type = "http"
