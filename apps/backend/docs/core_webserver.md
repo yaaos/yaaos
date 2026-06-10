@@ -39,5 +39,5 @@ When you change the API shape (routes, response models, query params), run `apps
 - In dev (no `apps/web/dist`), non-`/api/` paths 404. Run `pnpm dev` separately.
 - SPA catch-all guards path traversal via `relative_to(dist)`.
 - `RouteSpec` is a Pydantic model; construction validates prefix rules before anything is registered.
-- The OpenAPI artifact is generated under `YAAOS_ENV=dev` (or `test` — both work); the dump script sets no environment itself, so the caller must supply the required env vars (`DATABASE_URL`, `YAAOS_ENCRYPTION_KEY`, `REDIS_URL`, `YAAOS_PUBLIC_ORIGIN`). No actual connections are made.
+- The OpenAPI artifact is generated under `APP_MODE=dev` (or `test` — both work); the dump script sets no environment itself, so the caller must supply the required env vars (`DATABASE_URL`, `YAAOS_ENCRYPTION_KEY`, `REDIS_URL`, `YAAOS_PUBLIC_ORIGIN`). No actual connections are made.
 

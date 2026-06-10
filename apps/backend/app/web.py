@@ -98,8 +98,8 @@ from app.plugins import claude_code, github, linear, notion  # noqa: F401, E402
 # both bootstrap() (VCS) and bootstrap_oauth() (identity).
 from app.core.config import get_settings  # noqa: E402
 
-# 6b. Test-only providers — env-gated; modules assert on yaaos_env=="test".
-if get_settings().yaaos_env == "test":
+# 6b. Test-only providers — env-gated; modules assert on app_mode=="test".
+if get_settings().is_test:
     from app.plugins import oauth_test  # noqa: F401
     from app.plugins import saml_test  # noqa: F401
 

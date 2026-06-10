@@ -1,6 +1,6 @@
 """Test-only OAuth Provider.
 
-Loads only when `yaaos_env == "test"`. Backend integration tests + Playwright
+Loads only when `app_mode == "test"`. Backend integration tests + Playwright
 E2E call `set_next_profile(...)` to stage the identity the next `exchange_code`
 call will return, then drive the real `/api/auth/callback/test` route. No
 HTTP traffic, no token exchange — the goal is to exercise the login
@@ -12,7 +12,7 @@ from __future__ import annotations
 from app.core.config import get_settings
 from app.core.identity import ProviderProfile, register_provider
 
-assert get_settings().yaaos_env == "test", "plugins.oauth_test refuses to load outside YAAOS_ENV=test"
+assert get_settings().is_test, "plugins.oauth_test refuses to load outside APP_MODE=test"
 
 
 _NEXT_PROFILE: ProviderProfile | None = None

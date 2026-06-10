@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     )
 
     # Optional
-    yaaos_env: Literal["dev", "test", "prod"] = "prod"
+    app_mode: Literal["dev", "test", "production"] = "production"
+    # Deployment tier for telemetry (OTel deployment.environment.name).
+    # Independent of app_mode — a staging deploy runs app_mode=production
+    # (prod-like behavior) but environment=staging (distinct telemetry tag).
+    environment: Literal["local", "development", "staging", "production"] = "local"
     yaaos_port: int = 8080
 
     # SQLAlchemy QueuePool sizing for the prod-path engine. NullPool is used
@@ -182,10 +186,25 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = False
 
     @property
+    def is_production(self) -> bool:
+        """True when `app_mode` is `production`."""
+        return self.app_mode == "production"
+
+    @property
+    def is_dev(self) -> bool:
+        """True when `app_mode` is `dev`."""
+        return self.app_mode == "dev"
+
+    @property
+    def is_test(self) -> bool:
+        """True when `app_mode` is `test`."""
+        return self.app_mode == "test"
+
+    @property
     def is_non_prod(self) -> bool:
-        """True when `yaaos_env` is `dev` or `test`. Use for affordances that
+        """True when `app_mode` is `dev` or `test`. Use for affordances that
         should be permissive in both (NullPool, no-Secure cookies, etc.)."""
-        return self.yaaos_env != "prod"
+        return self.app_mode != "production"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

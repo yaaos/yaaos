@@ -80,7 +80,7 @@ async def classify_reply(input: ClassifyReplyInput) -> ClassifyReplyOutput:
     """Run the reply classifier. Pytest runs use the file-colocated LLM
     cache (`LLMTestCache`, session-scoped via `core.llm.pytest_plugin`)
     to replay deterministic responses from disk. The e2e docker stack
-    (`yaaos_env == "test"`) has no LLM key + no on-disk cache; in that
+    (`APP_MODE=test`) has no LLM key + no on-disk cache; in that
     env the classifier falls back to a deterministic, content-aware
     heuristic stub so reviewer-reply flows can run end-to-end without
     an Anthropic key in CI.

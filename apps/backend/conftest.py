@@ -17,12 +17,12 @@ os.environ.setdefault("YAAOS_ENCRYPTION_KEY", "vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8
 # connect (lazy client). Tests that need a live Redis check reachability
 # themselves and skip if absent.
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-# YAAOS_ENV must be `test` for the suite — `get_engine()` switches to NullPool
+# APP_MODE must be `test` for the suite — `get_engine()` switches to NullPool
 # whenever `is_non_prod` (dev or test), and the `oauth_test` plugin asserts on
 # this exact value to refuse loading outside the test env. The `backend-ci`
-# Docker stage inherits `YAAOS_ENV=prod` from the prod base; force the
+# Docker stage inherits `APP_MODE=production` from the prod base; force the
 # override here so the test invocation environment doesn't leak prod semantics.
-os.environ["YAAOS_ENV"] = "test"
+os.environ["APP_MODE"] = "test"
 os.environ.setdefault("YAAOS_CODING_AGENT_STUB", "1")
 os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")

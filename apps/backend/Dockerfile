@@ -79,7 +79,7 @@ USER yaaos
 # Runtime
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    YAAOS_ENV=prod
+    APP_MODE=production
 
 EXPOSE 8080
 

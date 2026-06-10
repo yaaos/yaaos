@@ -16,7 +16,7 @@ Routes (all `POST`, all return 404 in prod — gated on `is_non_prod`):
 
 Layering: this module lives in the testing layer (above plugins, per
 `docs/architecture.md`) so it can depend on every domain + plugin model.
-It is imported from `app/web.py` only when `is_non_prod` (`yaaos_env` is
+It is imported from `app/web.py` only when `is_non_prod` (`app_mode` is
 `dev` or `test`); prod wheels exclude the testing/ tree entirely (see
 `pyproject.toml`).
 """

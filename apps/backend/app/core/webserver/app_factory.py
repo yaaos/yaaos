@@ -52,7 +52,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a separate port and proxies /api/* to FastAPI.
     _install_spa_serving(app)
 
-    log.info("yaaos.boot.complete", env=settings.yaaos_env, port=settings.yaaos_port)
+    log.info("yaaos.boot.complete", env=settings.app_mode, port=settings.yaaos_port)
     yield
 
     # 5. Per-module shutdown hooks.
@@ -163,8 +163,8 @@ def _install_middleware(app: FastAPI) -> None:
     # # slowapi rate limiting. Per-IP on /api/auth/* (anonymous
     # endpoints); per-user on mutating /api/* paths. Limits live on
     # individual route decorators (`@limiter.limit(AUTH_LIMIT)`). Only
-    # mounted in `prod` so dev + Playwright suites aren't throttled.
-    if settings.yaaos_env == "prod":
+    # mounted in production so dev + Playwright suites aren't throttled.
+    if settings.is_production:
         from slowapi import _rate_limit_exceeded_handler  # noqa: PLC0415
         from slowapi.errors import RateLimitExceeded  # noqa: PLC0415
         from slowapi.middleware import SlowAPIMiddleware  # noqa: PLC0415
@@ -190,11 +190,11 @@ def _install_middleware(app: FastAPI) -> None:
 
 
 def _check_required_prod_secrets() -> None:
-    """In `prod`, refuse to start when any required secret is at its dev
+    """In production, refuse to start when any required secret is at its dev
     default. `dev`/`test` get to boot with stubs so the suite + onboarding
     flow keep working."""
     s = get_settings()
-    if s.yaaos_env != "prod":
+    if not s.is_production:
         return
     missing: list[str] = []
     if s.yaaos_oauth_state_secret.get_secret_value() == "dev-only-oauth-state-secret":

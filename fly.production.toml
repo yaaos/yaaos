@@ -35,7 +35,8 @@ kill_timeout = "30s"
   target = "web"
 
 [env]
-  YAAOS_ENV = "prod"
+  APP_MODE = "production"
+  ENVIRONMENT = "production"
   # Full external origin. Derives the public link base (yaaos_app_base_url) and
   # the agent identity-exchange audience (yaaos_public_hostname).
   YAAOS_PUBLIC_ORIGIN = "https://app.yaaos.cloud"

@@ -309,7 +309,7 @@ def stage_oauth_test_profile(
     """Stash the next profile the ``oauth_test`` provider will return."""
     from app.core.identity import ProviderProfile  # noqa: PLC0415
 
-    # `plugins.oauth_test` loads only under YAAOS_ENV=test; this helper is
+    # `plugins.oauth_test` loads only under APP_MODE=test; this helper is
     # imported by code that runs in dev too, so import lazily.
     from app.plugins.oauth_test import set_next_profile  # noqa: PLC0415
 

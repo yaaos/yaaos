@@ -13,7 +13,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.core.config import get_settings
 
-assert get_settings().yaaos_env == "test", "plugins.saml_test refuses to load outside YAAOS_ENV=test"
+assert get_settings().is_test, "plugins.saml_test refuses to load outside APP_MODE=test"
 
 
 _SALT = "yaaos-saml-test-assertion"

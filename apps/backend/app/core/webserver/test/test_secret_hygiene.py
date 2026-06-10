@@ -9,7 +9,7 @@ import pytest
 
 @pytest.fixture
 def prod_env(monkeypatch):
-    monkeypatch.setenv("YAAOS_ENV", "prod")
+    monkeypatch.setenv("APP_MODE", "production")
     monkeypatch.setenv("DATABASE_URL", os.environ.get("DATABASE_URL", "postgresql+asyncpg://x/y"))
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
     from app.core.config import get_settings  # noqa: PLC0415
@@ -61,7 +61,7 @@ def test_prod_with_all_secrets_set_does_not_raise(prod_env, monkeypatch):
 
 
 def test_non_prod_skip_check(monkeypatch):
-    monkeypatch.setenv("YAAOS_ENV", "dev")
+    monkeypatch.setenv("APP_MODE", "dev")
     from app.core.config import get_settings  # noqa: PLC0415
 
     get_settings.cache_clear()

@@ -77,7 +77,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       REDIS_URL: redis://redis:6379/0
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
-      YAAOS_ENV: test
+      APP_MODE: test
       # Canonical public hostname — required for boot (agent identity-exchange
       # audience binding). The e2e suite stubs the coding agent, so this only
       # needs to satisfy the required Settings field.
@@ -176,7 +176,7 @@ services:
       # Encryption key must match the web container — the worker decrypts
       # rows the web wrote.
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
-      YAAOS_ENV: test
+      APP_MODE: test
       YAAOS_PUBLIC_ORIGIN: http://web:8080
       GITHUB_API_BASE_URL: http://fake-github:8080
       GITHUB_WEB_BASE_URL: http://localhost:58081

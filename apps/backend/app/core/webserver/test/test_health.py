@@ -29,7 +29,7 @@ def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
             "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==",
         ),
     )
-    monkeypatch.setenv("YAAOS_ENV", "dev")
+    monkeypatch.setenv("APP_MODE", "dev")
     # Clear the cached singleton so the monkeypatched env wins.
     # lazy: imported after monkeypatch.setenv so the cache_clear sees fresh state
     from app.core.config import get_settings  # noqa: PLC0415
@@ -37,7 +37,7 @@ def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
     yield
     # Restore: monkeypatch reverts env, but the cache still holds dev settings.
-    # Clear it so downstream tests see the conftest-default `YAAOS_ENV=test`.
+    # Clear it so downstream tests see the conftest-default `APP_MODE=test`.
     get_settings.cache_clear()
 
 

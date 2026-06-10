@@ -39,8 +39,8 @@ async def test_truncate_all_tables_clears_rows(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_truncate_all_tables_raises_in_prod(monkeypatch) -> None:
-    """`truncate_all_tables` is non-prod only; refuses to run under `YAAOS_ENV=prod`."""
-    monkeypatch.setenv("YAAOS_ENV", "prod")
+    """`truncate_all_tables` is non-prod only; refuses to run under `APP_MODE=production`."""
+    monkeypatch.setenv("APP_MODE", "production")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://x/y")
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
     from app.core.config import get_settings  # noqa: PLC0415

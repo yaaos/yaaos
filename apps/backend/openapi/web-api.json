@@ -2853,7 +2853,7 @@
     },
     "/api/auth/providers": {
       "get": {
-        "description": "List registered provider ids. The SPA renders one button per id on\nthe login page; the test stub appears only when YAAOS_ENV=test.",
+        "description": "List registered provider ids. The SPA renders one button per id on\nthe login page; the test stub appears only when APP_MODE=test.",
         "operationId": "providers_api_auth_providers_get",
         "responses": {
           "200": {

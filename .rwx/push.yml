@@ -103,7 +103,7 @@ tasks:
       trap "docker compose -f '$COMPOSE_FILE' down -v" EXIT
       export DATABASE_URL="postgresql+asyncpg://yaaos:yaaos@localhost:55432/yaaos"
       export REDIS_URL="redis://localhost:56379/0"
-      export YAAOS_ENV=dev
+      export APP_MODE=dev
       cd apps/backend && bin/ci
     outputs:
       test-results:

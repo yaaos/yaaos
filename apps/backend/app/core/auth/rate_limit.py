@@ -31,9 +31,9 @@ def _per_user_key(request: Request) -> str:
 
 
 def _enabled() -> bool:
-    """Enable rate limiting only in `prod`. `dev`/`test` skip it so
+    """Enable rate limiting only in `production`. `dev`/`test` skip it so
     Playwright suites + ad-hoc local testing aren't throttled."""
-    return get_settings().yaaos_env == "prod"
+    return get_settings().is_production
 
 
 # Lazy slowapi import — avoids the dep when tests skip it.
