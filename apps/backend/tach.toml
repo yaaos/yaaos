@@ -75,7 +75,7 @@ depends_on = ["app.core.auth", "app.core.redis", "app.core.sessions", "app.core.
 
 [[modules]]
 path = "app.core.tasks"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.shutdown_registry"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.tenancy"

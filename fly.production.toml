@@ -16,17 +16,13 @@
 app = "yaaos"
 primary_region = "ord"
 
-# Generous shutdown window. Phase 1 has no worker drain yet (SIGTERM cancels
-# in-flight tasks); 30s lets uvicorn finish in-flight HTTP on the web group.
-# Phase 2 (worker graceful drain + OTel flush budget) will raise this.
+# Graceful-shutdown budget: 30s lets uvicorn drain in-flight HTTP on the web
+# group. Raise this when worker graceful drain + OTel flush budget lands.
 kill_timeout = "30s"
 
-# Phase 1: rolling. bluegreen needs a health check on EVERY process group to
-# gate the cutover, but the worker has no HTTP/TCP port to check — so bluegreen
-# would hang or strand the old worker. Rolling is safe for a checkless worker
-# (the standard worker pattern). Cost: a brief web blip per deploy on the
-# single web machine. Zero-downtime (bluegreen + a 6PN-private worker health
-# endpoint + worker graceful drain + health-503) is the phase-2 slice.
+# Rolling deploy — changed to bluegreen once worker graceful drain + health-503
+# gate land (both process groups need a passing health check for bluegreen to
+# cut over; the worker health check added below satisfies the worker side).
 [deploy]
   strategy = "rolling"
 
@@ -71,14 +67,33 @@ kill_timeout = "30s"
     method = "GET"
     path = "/api/health"
 
+# ── worker: task consumer (no public HTTP; health checked on 6PN-private port 8081) ──
+# The worker health server binds 0.0.0.0:8081 — no [http_service] (no public
+# ingress needed). The [[services]] block declares the port so Fly can route
+# internal checks to it and so the machine checker can reach it directly
+# (bypassing Cloudflare, which would 403 the probe).
+[[services]]
+  processes = ["worker"]
+  internal_port = 8081
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
 # ── process commands (override image CMD; tini entrypoint preserved) ──────
 [processes]
   web = "python apps/backend/app/web.py"
   worker = "python apps/backend/app/worker.py"
 
-# Single small machine per group (fixed 1+1, no autoscaling per v1 scope).
-# The image carries the Claude Code CLI for in-process reviews — 1 GB floor.
-# Tune later if observed load warrants.
+# Single small machine per group (fixed 1+1, no autoscaling).
+# 1 GB floor: Claude Code CLI and its Node runtime are memory-hungry.
+# Tune if observed load warrants.
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"

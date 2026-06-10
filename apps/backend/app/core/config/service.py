@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # thumb: db_pool_size >= worker_concurrency + 2 (drain + headroom).
     db_pool_size: int = 10
     db_max_overflow: int = 5
+    yaaos_worker_health_port: int = 8081
     yaaos_cors_origins: str | None = None  # comma-separated; only honored in non-dev
     otel_exporter_otlp_endpoint: str | None = None
     # OTel `service.name` per role. App + worker deploy as separate processes
