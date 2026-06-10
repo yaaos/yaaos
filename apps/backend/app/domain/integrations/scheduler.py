@@ -164,7 +164,7 @@ async def run_scheduler_loop() -> None:
         try:
             counts = await run_health_check_once()
             if any(counts.values()):
-                log.info("integrations.health_check.ran", **counts)
+                log.debug("integrations.health_check.ran", **counts)
         except Exception:
             log.exception("integrations.scheduler.failed")
         await asyncio.sleep(interval)

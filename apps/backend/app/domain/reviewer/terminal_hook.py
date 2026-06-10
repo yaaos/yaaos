@@ -65,7 +65,7 @@ async def _on_workflow_terminal(
         session=session,
     )
     if not flipped:
-        log.info(
+        log.debug(
             "reviewer.terminal_hook.no_flip",
             ticket_id=str(ticket_id),
             workflow_execution_id=str(workflow_execution_id),

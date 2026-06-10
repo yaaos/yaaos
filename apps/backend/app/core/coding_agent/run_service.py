@@ -63,7 +63,7 @@ async def create_run(
     )
     session.add(row)
     await session.flush()
-    log.info(
+    log.debug(
         "coding_agent.run.created",
         run_id=str(row.id),
         org_id=str(org_id),
@@ -141,7 +141,7 @@ async def finalize_run(
         )
         session.add(activity_row)
 
-    log.info(
+    log.debug(
         "coding_agent.run.finalized",
         run_id=str(run_id),
         status=status,

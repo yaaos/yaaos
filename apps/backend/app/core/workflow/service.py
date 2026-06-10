@@ -146,7 +146,7 @@ async def _start_step_impl(
         # Cancellation check — set the row terminal and exit before dispatch.
         if wfx.cancel_requested:
             await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
-            log.info(
+            log.debug(
                 "workflow.start_step.cancelled_pre_dispatch", workflow_execution_id=workflow_execution_id
             )
             await s.commit()
@@ -154,7 +154,7 @@ async def _start_step_impl(
 
         # State guard. start_step is only valid while running.
         if wfx.state != WorkflowState.RUNNING.value:
-            log.info(
+            log.debug(
                 "workflow.start_step.skip_not_running",
                 workflow_execution_id=workflow_execution_id,
                 state=wfx.state,
@@ -215,7 +215,7 @@ async def _start_step_impl(
             wfx.pending_agent_command_id = command_id
             wfx.state = WorkflowState.AWAITING_AGENT.value
             _publish_state_changed(s, wfx)
-            log.info(
+            log.debug(
                 "workflow.start_step.workspace_dispatched",
                 workflow_execution_id=workflow_execution_id,
                 command_kind=step.command_kind,
@@ -321,7 +321,7 @@ async def _handle_agent_event_impl(
             return
 
         if wfx.state != WorkflowState.AWAITING_AGENT.value:
-            log.info(
+            log.debug(
                 "workflow.handle_agent_event.skip_state",
                 workflow_execution_id=workflow_execution_id,
                 state=wfx.state,
@@ -329,7 +329,7 @@ async def _handle_agent_event_impl(
             return
 
         if wfx.pending_agent_command_id is None or str(wfx.pending_agent_command_id) != agent_command_id:
-            log.info(
+            log.debug(
                 "workflow.handle_agent_event.stale_command_id",
                 workflow_execution_id=workflow_execution_id,
                 expected=str(wfx.pending_agent_command_id),
@@ -410,7 +410,7 @@ async def _route_workflow_impl(
             return
 
         if WorkflowState(wfx.state) in TERMINAL_STATES:
-            log.info(
+            log.debug(
                 "workflow.route_workflow.skip_terminal",
                 workflow_execution_id=workflow_execution_id,
                 state=wfx.state,
@@ -419,7 +419,7 @@ async def _route_workflow_impl(
 
         if wfx.cancel_requested:
             await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
-            log.info(
+            log.debug(
                 "workflow.route_workflow.cancelled_at_route",
                 workflow_execution_id=workflow_execution_id,
             )
@@ -471,7 +471,7 @@ async def _route_workflow_impl(
                 _set_after_append(wfx, completed_step_id)
                 wfx.state = WorkflowState.RUNNING.value
                 _publish_state_changed(s, wfx)
-                log.info(
+                log.debug(
                     "workflow.route_workflow.recovery_inserted",
                     workflow_execution_id=workflow_execution_id,
                     failed_step_id=completed_step_id,
@@ -550,7 +550,7 @@ async def _route_workflow_impl(
                 _store_pending_failure(wfx, completed_step_id, failure_reason)
                 wfx.state = WorkflowState.RUNNING.value
                 _publish_state_changed(s, wfx)
-                log.info(
+                log.debug(
                     "workflow.route_workflow.finalizer_dispatched",
                     workflow_execution_id=workflow_execution_id,
                     finalizer_step_id=wf.finalizer_step_id,

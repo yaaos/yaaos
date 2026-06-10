@@ -178,7 +178,7 @@ async def run() -> None:
         {drain_task, consume_task, scheduler_task, stop_task, ticker_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
-    log.info(
+    log.debug(
         "tasks.worker.shutting_down",
         finished=[t.get_name() for t in done],
     )

@@ -115,7 +115,7 @@ def _log_stream_event(event: dict[str, Any]) -> None:
     """
     et = event.get("type")
     if et == "system":
-        log.info(
+        log.debug(
             "claude_code.stream.system",
             subtype=event.get("subtype"),
             session_id=event.get("session_id"),
@@ -129,7 +129,7 @@ def _log_stream_event(event: dict[str, Any]) -> None:
                 inp = block.get("input") or {}
                 # For Task tool calls, surface which subagent was dispatched.
                 subagent = inp.get("subagent_type") if isinstance(inp, dict) else None
-                log.info(
+                log.debug(
                     "claude_code.stream.tool_use",
                     tool=block.get("name"),
                     tool_use_id=block.get("id"),
@@ -150,14 +150,14 @@ def _log_stream_event(event: dict[str, Any]) -> None:
                     )
                 else:
                     summary = str(content or "")
-                log.info(
+                log.debug(
                     "claude_code.stream.tool_result",
                     tool_use_id=block.get("tool_use_id"),
                     is_error=block.get("is_error", False),
                     excerpt=summary[:200],
                 )
     elif et == "result":
-        log.info(
+        log.debug(
             "claude_code.stream.result",
             subtype=event.get("subtype"),
             duration_ms=event.get("duration_ms"),

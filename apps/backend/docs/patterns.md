@@ -281,6 +281,7 @@ Rules:
 - Audit is for state changes with business meaning, not debugging. A failed DB read is a log line; a successful prompt update is an audit entry.
 - Reads never write to `audit_log`.
 - When in doubt, log. If "would an operator want to know this happened to entity X?" is yes, also audit.
+- **`log.info` is for business-meaningful state changes; routine progress uses `log.debug`.** `LOG_LEVEL=INFO` is the prod default — every `.info()` line ships to stdout and OTLP. Reserve `.info()` for: successful state transitions on domain entities, user-initiated mutations, webhook/event acceptance, configuration changes, and first-time lifecycle events (boot, worker started). Demote to `.debug()`: per-iteration sweep outputs, per-step progress inside a multi-step flow, guard skips ("skip_not_running"), stale-claim rejections, per-event confirmations that duplicate durable audit rows. Background errors are visible on traces (via `spawn()` exception recording), so demoting their accompanying progress logs is safe.
 
 Audit: user-initiated mutations (prompt edits, lesson CRUD, "re-review"), agent-initiated actions (review/reply posted), state transitions with business meaning (review_job queued→running→posted; ticket in_review→complete).
 

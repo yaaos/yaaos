@@ -462,7 +462,7 @@ async def requeue_stale_claimed(
             row.claimed_at = None
             row.attempt = row.attempt + 1
             requeued += 1
-            log.info(
+            log.debug(
                 "agent_gateway.command_requeued",
                 command_id=str(row.id),
                 org_id=str(row.org_id),
@@ -506,7 +506,7 @@ async def record_heartbeat(
         # Heartbeat arrived for an agent the control plane doesn't know about —
         # this happens transiently after a restart before identity exchange
         # writes its row, so we just log.
-        log.info(
+        log.debug(
             "agent.heartbeat.unknown_agent",
             agent_id=str(agent_id),
             workspace_count=len(request.workspaces),
@@ -603,7 +603,7 @@ async def record_agent_event(
     # resume), and a mismatched token would simply replay through the reaper.
     if event.kind == AgentEventKind.RECEIVED:
         await acknowledge_command_received(event.command_id, session=session)
-        log.info(
+        log.debug(
             "agent.event.received",
             command_id=str(event.command_id),
         )
@@ -640,7 +640,7 @@ async def record_agent_event(
         # SSE live-tail picks them up. Skipped when the command has no
         # workflow correlation (agent-scoped ConfigUpdate has no live-tail
         # subscriber to fan out to).
-        log.info(
+        log.debug(
             "agent.event.progress",
             command_id=str(event.command_id),
         )
@@ -752,7 +752,7 @@ async def record_workspace_event(
         raise StaleClaimError(
             f"workspace {event.workspace_id} rejected event {event.kind!r} (command {event.command_id})"
         )
-    log.info(
+    log.debug(
         "agent.workspace_event",
         workspace_id=str(event.workspace_id),
         kind=event.kind,

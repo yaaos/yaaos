@@ -283,5 +283,5 @@ def wrap_all_registered_plugins() -> int:
             fresh.replace(StubCodingAgentPlugin(wrapped=real))
             count += 1
     bind_coding_agent_registry(fresh)
-    log.info("stub_coding_agent.wrapped_all", count=count)
+    log.debug("stub_coding_agent.wrapped_all", count=count)
     return count

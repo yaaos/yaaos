@@ -157,7 +157,7 @@ class CodeReview:
             plugin_id=plugin.plugin_id,
             session=session,
         )
-        log.info(
+        log.debug(
             "code_review.run_created",
             run_id=str(run_id),
             command_id=str(command_id),
@@ -173,7 +173,7 @@ class CodeReview:
         if not claimed:
             raise RuntimeError(f"workspace {ws_id} is busy or inactive; cannot claim for CodeReview")
 
-        log.info(
+        log.debug(
             "code_review.dispatched",
             workspace_id=str(ws_id),
             command_id=str(command_id),
@@ -215,7 +215,7 @@ class CheckShouldReview:
 
         reason = _decide_skip(payload)
         if reason is not None:
-            log.info(
+            log.debug(
                 "checkshouldreview.skip",
                 workflow_execution_id=ctx.workflow_execution_id,
                 ticket_id=ctx.ticket_id,
@@ -365,7 +365,7 @@ class PostFindings(_LocalReviewCommand):
         provider = get_workflow_context_provider()
         ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
         if ticket_ctx is None or ticket_ctx.pr_id is None:
-            log.info(
+            log.debug(
                 "post_findings.no_pr_link",
                 workflow_execution_id=ctx.workflow_execution_id,
                 ticket_id=ctx.ticket_id,

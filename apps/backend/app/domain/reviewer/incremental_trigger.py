@@ -98,7 +98,7 @@ async def start_incremental_review(
 
     decision = decide_trigger(inputs)
     if isinstance(decision, Skip):
-        log.info(
+        log.debug(
             "incremental.skipped",
             pr_id=str(pr_id),
             reason=decision.reason,
@@ -113,7 +113,7 @@ async def start_incremental_review(
         return f"skipped:{decision.reason}"
 
     if isinstance(decision, Debounce):
-        log.info(
+        log.debug(
             "incremental.debounced",
             pr_id=str(pr_id),
             seconds_remaining=decision.seconds_remaining,

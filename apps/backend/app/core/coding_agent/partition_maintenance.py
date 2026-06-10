@@ -32,7 +32,7 @@ async def maintain_partitions() -> None:
     going through the broker dispatch path.
     """
     await maintain_coding_agent_activity_partitions()
-    log.info("coding_agent_activity.partition_maintenance.done")
+    log.debug("coding_agent_activity.partition_maintenance.done")
 
 
 # Daily at 01:00 UTC — well clear of the midnight scheduled_runs prune so

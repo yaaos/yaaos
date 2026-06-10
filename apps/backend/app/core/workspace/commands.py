@@ -131,7 +131,7 @@ class ProvisionWorkspace(_LifecycleCommand):
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
-        log.info(
+        log.debug(
             "provision_workspace.dispatched",
             workflow_execution_id=ctx.workflow_execution_id,
             workspace_id=str(ws_id),
@@ -234,7 +234,7 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
 
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
         del inputs
-        log.info(
+        log.debug(
             "refresh_workspace_auth.inline",
             workflow_execution_id=ctx.workflow_execution_id,
             ticket_id=ctx.ticket_id,

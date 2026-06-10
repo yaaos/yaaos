@@ -83,7 +83,7 @@ async def _sweep_once() -> int:
             # beat us. Either way, not fatal — log and move on.
             log.warning("orphan_sweep.transition_failed", ticket_id=str(ticket_id))
     if failed:
-        log.info("orphan_sweep.swept", count=failed)
+        log.debug("orphan_sweep.swept", count=failed)
     return failed
 
 

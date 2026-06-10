@@ -35,7 +35,7 @@ async def prune_scheduled_runs() -> None:
     async with db_session() as s:
         result = await s.execute(delete(ScheduledRunRow).where(ScheduledRunRow.created_at < cutoff))
         await s.commit()
-    log.info("tasks.scheduled_runs_prune.done", deleted=result.rowcount)
+    log.debug("tasks.scheduled_runs_prune.done", deleted=result.rowcount)
 
 
 # Register the prune body with the scheduler as the named `@scheduled`

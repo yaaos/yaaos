@@ -95,7 +95,7 @@ def bootstrap() -> None:
     """Register the singleton provider. Skipped when credentials are unset."""
     s = get_settings()
     if not s.yaaos_oauth_notion_client_id or not s.yaaos_oauth_notion_client_secret.get_secret_value():
-        log.info("notion.skipped_unconfigured")
+        log.debug("notion.skipped_unconfigured")
         return
     register_provider(_provider)
 

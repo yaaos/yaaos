@@ -124,5 +124,5 @@ def wrap_all_registered_workspace_providers() -> int:
             fresh.replace(StubWorkspaceProvider(wrapped=real))
             count += 1
     bind_workspace_registry(fresh)
-    log.info("stub_workspace.wrapped_all", count=count)
+    log.debug("stub_workspace.wrapped_all", count=count)
     return count

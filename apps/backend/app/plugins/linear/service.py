@@ -87,7 +87,7 @@ def bootstrap() -> None:
     instead of advertising an integration that would 404 upstream)."""
     s = get_settings()
     if not s.yaaos_oauth_linear_client_id or not s.yaaos_oauth_linear_client_secret.get_secret_value():
-        log.info("linear.skipped_unconfigured")
+        log.debug("linear.skipped_unconfigured")
         return
     register_provider(_provider)
 

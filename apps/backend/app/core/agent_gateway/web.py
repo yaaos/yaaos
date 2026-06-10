@@ -464,7 +464,7 @@ async def post_workspace_event(
                 await record_workspace_event(event, agent_id=agent.agent_id, session=s)
                 await s.commit()
         except StaleClaimError as exc:
-            log.info("agent.workspace_event.stale", workspace_id=str(workspace_id), error=str(exc))
+            log.debug("agent.workspace_event.stale", workspace_id=str(workspace_id), error=str(exc))
             return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
     return Response(status_code=200)
 
@@ -488,7 +488,7 @@ async def post_command_event(
                 await record_agent_event(event, agent_id=agent.agent_id, session=s)
                 await s.commit()
         except StaleClaimError as exc:
-            log.info("agent.command_event.stale", command_id=str(command_id), error=str(exc))
+            log.debug("agent.command_event.stale", command_id=str(command_id), error=str(exc))
             return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
     return Response(status_code=200)
 
@@ -568,7 +568,7 @@ async def activity_ws(websocket: WebSocket) -> None:
                                 payload=event,
                             )
                 else:
-                    log.info(
+                    log.debug(
                         "agent_gateway.ws.unknown_kind",
                         agent_id=str(agent_id),
                         kind=kind,

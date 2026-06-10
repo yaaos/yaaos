@@ -89,7 +89,7 @@ class SubscriberRegistry:
                         "workflow_execution_id": str(wfx_id),
                     }
                 )
-            log.info(
+            log.debug(
                 "subscribers.sender_registered",
                 agent_id=str(agent_id),
                 resubscribed_count=len(replay),
@@ -109,7 +109,7 @@ class SubscriberRegistry:
     async def unregister_sender(self, agent_id: UUID) -> None:
         async with self._lock:
             self._senders.pop(agent_id, None)
-            log.info("subscribers.sender_unregistered", agent_id=str(agent_id))
+            log.debug("subscribers.sender_unregistered", agent_id=str(agent_id))
 
     # ── Subscriber lifecycle ───────────────────────────────────────────
 

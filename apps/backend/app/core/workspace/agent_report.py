@@ -119,7 +119,7 @@ class WorkspaceAgentReportSinkImpl:
             if report.kind in _ROW_CREATE_KINDS:
                 created = await _create_lean_workspace_row(report, session)
                 if created:
-                    log.info(
+                    log.debug(
                         "workspace.lean_row_created",
                         workspace_id=str(report.workspace_id),
                         kind=report.kind,
@@ -141,7 +141,7 @@ class WorkspaceAgentReportSinkImpl:
             await session.execute(
                 update(WorkspaceRow).where(WorkspaceRow.id == report.workspace_id).values(status=new_status)
             )
-        log.info(
+        log.debug(
             "workspace.agent_event_applied",
             workspace_id=str(report.workspace_id),
             kind=report.kind,
@@ -189,7 +189,7 @@ class WorkspaceAgentReportSinkImpl:
             cmd_payload=cmd_payload,
             session=session,
         )
-        log.info(
+        log.debug(
             "workspace.provision_success_materialised",
             workspace_id=str(workspace_id),
             command_id=str(command_id),
@@ -242,7 +242,7 @@ class WorkspaceAgentReportSinkImpl:
         workspace_id = row[0]
         released = await release_claim(workspace_id, command_id=command_id, session=session)
         if released:
-            log.info(
+            log.debug(
                 "workspace.claim_released",
                 workspace_id=str(workspace_id),
                 command_id=str(command_id),
