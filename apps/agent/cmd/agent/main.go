@@ -30,7 +30,16 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-const agentVersion = "0.0.1"
+// agentVersion is the binary's baseline version string. It defaults to
+// "0.0.0-dev" so untagged builds are obviously pre-release. The publish
+// pipeline overrides it at link time via:
+//
+//	-ldflags "-X main.agentVersion=<semver>"
+//
+// At runtime YAAOS_AGENT_VERSION still wins over the compiled-in value
+// (both envOr calls below pick it up), so test stacks can override without
+// a rebuild.
+var agentVersion = "0.0.0-dev"
 
 // Hardcoded production backend. Customers don't configure this — the
 // agent ships pre-pointed at app.yaaos.cloud. Overrideable via
@@ -108,7 +117,7 @@ func run() int {
 func runSupervisor() error {
 	cfg := supervisor.Config{
 		BaseURL:       envOr("YAAOS_BACKEND_URL", defaultBackendURL),
-		Version:       envOr("YAAOS_AGENT_VERSION", "0.0.0-dev"),
+		Version:       envOr("YAAOS_AGENT_VERSION", agentVersion),
 		WorkspaceRoot: envOr("YAAOS_WORKSPACE_ROOT", ""),
 	}
 	// NewProvider selects the signing implementation. In production and dev,

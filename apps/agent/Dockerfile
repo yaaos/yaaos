@@ -47,15 +47,23 @@ COPY internal internal
 # path is not compiled in. See internal/supervisor/identity_seam_*.go.
 ARG BUILD_TAGS=""
 
+# VERSION is stamped into the binary via -ldflags so `service.version` in OTel
+# and the supervisor's claim payload carry the real release string. The publish
+# pipeline passes --build-arg VERSION=<semver>; local dev builds omit it and
+# get the "0.0.0-dev" default baked into main.agentVersion.
+ARG VERSION=""
+
 # Static binary. CGO_ENABLED=0 keeps the binary glibc/musl-agnostic so it
 # runs cleanly on the Debian runtime stage. -trimpath removes local build
 # paths from the binary so customers don't see /home/<runner>/... in
 # stack traces. ${BUILD_TAGS:+-tags ${BUILD_TAGS}} adds -tags only when the
-# arg is non-empty.
+# arg is non-empty. ${VERSION:+-X main.agentVersion=${VERSION}} injects the
+# version only when VERSION is provided so the default "0.0.0-dev" fallback
+# applies in local/unversioned builds.
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     ${BUILD_TAGS:+-tags ${BUILD_TAGS}} \
-    -ldflags '-s -w' \
+    -ldflags "-s -w${VERSION:+ -X main.agentVersion=${VERSION}}" \
     -o /out/agent \
     ./cmd/agent
 
