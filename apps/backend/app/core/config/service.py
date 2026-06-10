@@ -175,6 +175,12 @@ class Settings(BaseSettings):
     notion_mcp_url: str = "https://mcp.notion.com/mcp"
     notion_api_base_url: str = "https://api.notion.com"
 
+    # Cloudflare-only ingress gate. When non-empty, the backend rejects any
+    # request that does not carry the matching `CF-Access-Yaaos-Ingress` header
+    # (injected by a Cloudflare Transform Rule). Empty default = no-op so
+    # dev/test/e2e are unaffected.
+    yaaos_cloudflare_ingress_secret: SecretStr = SecretStr("")
+
     # Invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: SecretStr = SecretStr("dev-only-invitation-secret")
     yaaos_invitation_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days

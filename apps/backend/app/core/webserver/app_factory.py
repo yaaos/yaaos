@@ -175,6 +175,15 @@ def _install_middleware(app: FastAPI) -> None:
         app.add_middleware(SlowAPIMiddleware)
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    # Cloudflare-only ingress gate. Must be the LAST add_middleware call so it
+    # runs outermost (FastAPI applies middleware in reverse-registration order).
+    # Rejects direct .fly.dev / Fly-IP hits with 403; /api/health is exempt so
+    # Fly's internal machine checker still passes. No-op when the secret is
+    # empty (dev/test/e2e).
+    from app.core.auth import CloudflareIngressMiddleware  # noqa: PLC0415
+
+    app.add_middleware(CloudflareIngressMiddleware)
+
     # AuthFailure → 401 with cleared yaaos_session + yaaos_csrf cookies.
     # Registered before the catch-all Exception handler below so it gets
     # first crack at the typed subclass.

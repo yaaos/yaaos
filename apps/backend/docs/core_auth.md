@@ -4,7 +4,7 @@
 
 ## Scope
 
-- Owns: `AuthMiddleware`, `RouteSecurity` enum, `Action` enum, `Role` enum, `_REQUIRED_ROLE` map, `required_role_for(action)`, identity contextvars, `org_context()`, `classify_route()`.
+- Owns: `CloudflareIngressMiddleware`, `AuthMiddleware`, `RouteSecurity` enum, `Action` enum, `Role` enum, `_REQUIRED_ROLE` map, `required_role_for(action)`, identity contextvars, `org_context()`, `classify_route()`.
 - Does NOT own: session-cookie resolution or membership lookup — those are in [`core/sessions`](core_sessions.md), which also owns `/api/auth/*` routes.
 - Emits: sets `org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `route_security_resolved`. Consumed by structlog, OTel middleware, and audit-log writes.
 
@@ -13,6 +13,16 @@
 `Role` (StrEnum) is the shared authorization primitive. Three tiers: `OWNER ≥ ADMIN ≥ BUILDER`. `role.covers(required)` is the only comparison — the integer rank table is private. All layers that need the role type import it from `core.auth`, not from `domain.orgs`.
 
 `_REQUIRED_ROLE: dict[Action, Role]` maps every `Action` member to its minimum `Role`. `required_role_for(action)` is the public accessor. `core/sessions.dependencies` builds the `require(action)` dep factory on top of these. A CI test (`test_role_covers.test_every_action_has_a_required_role`) asserts full coverage.
+
+## Cloudflare ingress gate
+
+`CloudflareIngressMiddleware` is the **outermost** ASGI layer. It runs before `AuthMiddleware`, rate-limiting, and all route handlers.
+
+- **Header:** `CF-Access-Yaaos-Ingress` — Cloudflare injects this via a Transform Rule using the shared secret set in `YAAOS_CLOUDFLARE_INGRESS_SECRET` (Fly secret). Direct `.fly.dev` hits and Fly IP hits do not carry it → 403.
+- **Exempt path:** `/api/health` passes unconditionally — Fly's internal machine checker bypasses Cloudflare and must still reach the health endpoint.
+- **No-op when empty:** when `YAAOS_CLOUDFLARE_INGRESS_SECRET` is unset or empty (dev/test/e2e), the middleware is a transparent pass-through. Local stacks and Playwright suites are unaffected.
+- **Constant-time compare:** `hmac.compare_digest` guards against timing attacks.
+- **Registration:** last `app.add_middleware(...)` call in `app_factory._install_middleware` — FastAPI reverses registration order, so last-registered = outermost.
 
 ## Why / invariants
 
@@ -29,6 +39,7 @@
 `classify_route(path, method)` is the single source of truth. Method-exact > exact > prefix. Unclassified `/api/*` falls through as `PUBLIC`.
 
 **Middleware order on `/api/*`:**
+0. `CloudflareIngressMiddleware` (outermost) — 403 unless `CF-Access-Yaaos-Ingress` matches; exempt `/api/health`; no-op when secret unset.
 1. Reset all identity contextvars (ASGI may reuse the task).
 2. Classify route. `ORG_SCOPED` without `X-Org-Slug` (nor `?org=` on `/api/sse/*`) → 400 immediately. `USER_SCOPED` and `ORG_SCOPED` mutations → CSRF double-submit check.
 3. Post-response guard: if response is 2xx and `route_security_resolved` is still `None`, substitute 500 + log. Forgetting a security dep crashes, not leaks.

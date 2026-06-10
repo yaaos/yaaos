@@ -15,6 +15,7 @@ from app.core.auth.auth_failure import (
     auth_failure_response,
     register_handler,
 )
+from app.core.auth.cloudflare import CLOUDFLARE_INGRESS_HEADER, CloudflareIngressMiddleware
 from app.core.auth.context import (
     actor_id_var,
     actor_kind_var,
@@ -57,6 +58,7 @@ from app.core.auth.types import (
 
 __all__ = [
     "AUTH_LIMIT",
+    "CLOUDFLARE_INGRESS_HEADER",
     "CSRF_COOKIE_NAME",
     "CSRF_HEADER_NAME",
     "MUTATE_LIMIT",
@@ -72,6 +74,7 @@ __all__ = [
     "Action",
     "AuthFailure",
     "AuthMiddleware",
+    "CloudflareIngressMiddleware",
     "Role",
     "RouteSecurity",
     "actor_id_var",
