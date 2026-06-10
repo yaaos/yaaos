@@ -175,7 +175,7 @@ SPA renders data and dispatches actions. It does not compute verdicts, derive st
 | Backend | Python 3.14, FastAPI |
 | Frontend | Node 24, React + TanStack Router + TanStack Query + Tailwind |
 | Data store | Postgres 18 |
-| ORM / migrations | SQLAlchemy 2.0 async + Alembic (hand-edited) |
+| ORM / migrations | SQLAlchemy 2.0 async + Alembic |
 | Background work | `asyncio.create_task` via `core/primitives.spawn` |
 | API | REST + SSE |
 | Tests | pytest, Vitest, Playwright |
