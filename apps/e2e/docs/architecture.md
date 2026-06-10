@@ -11,7 +11,7 @@
 ## Runtime dependencies
 
 - Postgres + backend + `fake-github` brought up via `docker/docker-compose.test.yml`.
-- Backend must run with `YAAOS_ENV=dev` (enables `/api/testing/*` reset/seed routes).
+- Backend must run with `APP_MODE=dev` (enables `/api/testing/*` reset/seed routes).
 - No real GitHub or Anthropic calls — `fake-github` intercepts all outbound VCS traffic; `YAAOS_CODING_AGENT_STUB=1` stubs review LLM calls.
 
 ## Scope
