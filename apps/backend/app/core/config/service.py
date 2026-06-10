@@ -48,9 +48,14 @@ class Settings(BaseSettings):
     # Optional
     app_mode: Literal["dev", "test", "production"] = "production"
     # Deployment tier for telemetry (OTel deployment.environment.name).
+    # Required, free-form — fail-fast at boot if unset so a new deploy that
+    # forgets the env var doesn't silently tag telemetry with a default tier.
     # Independent of app_mode — a staging deploy runs app_mode=production
     # (prod-like behavior) but environment=staging (distinct telemetry tag).
-    environment: Literal["local", "development", "staging", "production"] = "local"
+    environment: str = Field(
+        ...,
+        description="Deployment tier tag for telemetry. Free-form: 'local', 'development', 'staging', 'production', or any new tier name.",
+    )
     yaaos_port: int = 8080
 
     # SQLAlchemy QueuePool sizing for the prod-path engine. NullPool is used

@@ -23,6 +23,8 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 # Docker stage inherits `APP_MODE=production` from the prod base; force the
 # override here so the test invocation environment doesn't leak prod semantics.
 os.environ["APP_MODE"] = "test"
+# ENVIRONMENT has no default — Settings refuses to construct without it.
+os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("YAAOS_CODING_AGENT_STUB", "1")
 os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")

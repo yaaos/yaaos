@@ -78,6 +78,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       APP_MODE: test
+      ENVIRONMENT: test
       # Canonical public hostname — required for boot (agent identity-exchange
       # audience binding). The e2e suite stubs the coding agent, so this only
       # needs to satisfy the required Settings field.
@@ -177,6 +178,7 @@ services:
       # rows the web wrote.
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       APP_MODE: test
+      ENVIRONMENT: test
       YAAOS_PUBLIC_ORIGIN: http://web:8080
       GITHUB_API_BASE_URL: http://fake-github:8080
       GITHUB_WEB_BASE_URL: http://localhost:58081

@@ -22,7 +22,7 @@
 **`APP_MODE` vs `ENVIRONMENT` — two orthogonal axes.**
 
 - `APP_MODE` (field `app_mode`, `Literal["dev","test","production"]`, default `"production"`) is a **behavior switch**: `dev` enables permissive CORS and NullPool; `test` enables the test OAuth stub and routes emails to the in-memory inbox; `production` activates rate limiting, `Secure` cookies, and the prod-secrets gate.
-- `ENVIRONMENT` (field `environment`, `Literal["local","development","staging","production"]`, default `"local"`) is the **deployment tier** for telemetry (`deployment.environment.name`). A staging deploy runs `APP_MODE=production` (prod-like behavior) but `ENVIRONMENT=staging` (distinct OTel dataset). They are never derived from each other.
+- `ENVIRONMENT` (field `environment`, free-form `str`, **required** — Settings refuses to construct without it) is the **deployment tier** for telemetry (`deployment.environment.name`). A staging deploy runs `APP_MODE=production` (prod-like behavior) but `ENVIRONMENT=staging` (distinct OTel dataset). No default and no Literal whitelist: a new deploy that forgets the var fails-fast at boot rather than silently tagging telemetry with a wrong-tier default, and a new tier name (e.g. `staging-eu`) works without a code change.
 
 **Canonical accessors** — the literal string `"production"` appears in exactly one file (`service.py`). Call-sites use the properties:
 

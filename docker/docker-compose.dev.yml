@@ -56,6 +56,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       APP_MODE: dev
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       YAAOS_PUBLIC_ORIGIN: ${YAAOS_PUBLIC_ORIGIN:-http://localhost:8080}
       YAAOS_PORT: "8080"
       # `service.name` is split per-role; observability.configure() picks the right field.
@@ -125,6 +126,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
       YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       APP_MODE: dev
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       YAAOS_PUBLIC_ORIGIN: ${YAAOS_PUBLIC_ORIGIN:-http://localhost:8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}

@@ -26,6 +26,7 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
     monkeypatch.setenv("REDIS_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     monkeypatch.setenv("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.cloud")
+    monkeypatch.setenv("ENVIRONMENT", "test")
     # conftest sets YAAOS_CODING_AGENT_STUB=1 process-wide for the suite; clear it
     # here so the prod-mode tests below present a coherent production env (the
     # model validator forbids the stub flag under APP_MODE=production).
@@ -129,11 +130,25 @@ def test_slowapi_middleware_not_active_when_is_dev(monkeypatch: pytest.MonkeyPat
 # ── environment is independent of app_mode ─────────────────────────────────
 
 
-def test_environment_defaults_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_unset_refuses_to_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ENVIRONMENT must be supplied explicitly — no default.
+
+    Without it, Settings refuses to construct. A new deploy that forgets to
+    set the var fails-fast at boot rather than silently tagging telemetry
+    with a wrong-tier default.
+    """
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     get_settings.cache_clear()
+    with pytest.raises(ValidationError, match="environment"):
+        get_settings()
+
+
+def test_environment_accepts_arbitrary_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No literal whitelist — a new tier name (e.g. 'staging-eu') works without a code change."""
+    monkeypatch.setenv("ENVIRONMENT", "staging-eu")
+    get_settings.cache_clear()
     s = get_settings()
-    assert s.environment == "local"
+    assert s.environment == "staging-eu"
 
 
 def test_environment_read_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
