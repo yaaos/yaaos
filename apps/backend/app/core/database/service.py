@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from opentelemetry.instrumentation.utils import suppress_instrumentation
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -105,12 +106,15 @@ async def session() -> AsyncIterator[AsyncSession]:
 async def ping() -> bool:
     """`SELECT 1` against the DB. Returns True on success, False on any error.
 
-    Used by `/api/health` to report DB connectivity. Swallows all exceptions
-    intentionally — the endpoint reports a boolean, not a stack trace.
+    Used by `/api/health` (web) and `/health` (worker) to report DB
+    connectivity. Swallows all exceptions intentionally — the endpoint reports a
+    boolean, not a stack trace. Runs inside `suppress_instrumentation()` so the
+    constant health-probe queries don't emit a SQLAlchemy span apiece.
     """
     try:
-        async with session() as s:
-            await s.execute(text("SELECT 1"))
+        with suppress_instrumentation():
+            async with session() as s:
+                await s.execute(text("SELECT 1"))
         return True
     except Exception:
         return False

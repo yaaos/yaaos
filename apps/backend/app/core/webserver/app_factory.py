@@ -22,7 +22,7 @@ from starlette.requests import Request
 
 from app.core import database
 from app.core.config import get_settings
-from app.core.observability import get_logger
+from app.core.observability import TRACE_EXCLUDED_URLS, get_logger
 from app.core.shutdown_registry import iter_web_shutdown_hooks
 from app.core.webserver.health import health_router
 from app.core.webserver.registry import get_specs
@@ -135,7 +135,11 @@ def _install_middleware(app: FastAPI) -> None:
         # OTel is optional.
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
 
-        FastAPIInstrumentor.instrument_app(app)
+        # `excluded_urls` keeps /api/health out of tracing. The global
+        # FastAPIInstrumentor().instrument() in observability is the authoritative
+        # path in prod (this call is a no-op once that ran); the kwarg here covers
+        # the path where the global instrument didn't run (e.g. apps built in tests).
+        FastAPIInstrumentor.instrument_app(app, excluded_urls=TRACE_EXCLUDED_URLS)
     except Exception:
         # OTel not installed or already instrumented — non-fatal.
         pass

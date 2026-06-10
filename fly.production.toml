@@ -22,10 +22,11 @@ primary_region = "ord"
 kill_timeout = "180s"
 
 # Bluegreen deploy: Fly gates cutover on a passing health check across every
-# process group before shifting traffic. Both groups have a check (web:
-# [[http_service.checks]] → /api/health; worker: [[services.http_checks]] →
-# :8081/health). Rolling was used before the worker health endpoint + worker
-# drain + health-503 gate were in place.
+# process group before shifting traffic. Web uses [[http_service.checks]] →
+# /api/health; worker uses a top-level [[checks]] → :8081/health (Fly's
+# recommended shape for non-public process groups; see the worker comment
+# below). Rolling was used before the worker health endpoint + worker drain
+# + health-503 gate were in place.
 [deploy]
   strategy = "bluegreen"
 
@@ -76,23 +77,25 @@ kill_timeout = "180s"
     path = "/api/health"
 
 # ── worker: task consumer (no public HTTP; health checked on 6PN-private port 8081) ──
-# The worker health server binds 0.0.0.0:8081 — no [http_service] (no public
-# ingress needed). The [[services]] block declares the port so Fly can route
-# internal checks to it and so the machine checker can reach it directly
-# (bypassing Cloudflare, which would 403 the probe).
-[[services]]
+# Top-level [[checks]] (NOT [[services]]) is the Fly-recommended shape for
+# background workers per fly.io/docs/blueprints/seamless-deployments — non-
+# public services use top-level checks "for observability, not traffic
+# control." It also avoids a multi-process-group bluegreen bug where
+# workers declared via [[services]] are created but never transitioned to
+# `started`, leaving the deploy "complete" with the worker stopped.
+#
+# The worker count is operator-set via `flyctl scale count worker=1`;
+# autoscaling knobs (auto_stop_machines / min_machines_running) belong on
+# [[services]] / [http_service] and aren't needed here.
+[[checks]]
   processes = ["worker"]
-  internal_port = 8081
-  protocol = "tcp"
-  auto_stop_machines = "off"
-  min_machines_running = 1
-
-  [[services.http_checks]]
-    interval = "15s"
-    timeout = "3s"
-    grace_period = "30s"
-    method = "GET"
-    path = "/health"
+  port = 8081
+  type = "http"
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "30s"
+  method = "GET"
+  path = "/health"
 
 # ── process commands (override image CMD; tini entrypoint preserved) ──────
 [processes]

@@ -40,7 +40,7 @@ See [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml
 docker build -f apps/agent/Dockerfile -t yaaos-agent:dev apps/agent
 ```
 
-Two-stage `golang:1.26-alpine` builder → `debian:bookworm-slim` runtime. ~80 MB. UID 65532. Agent is PID 1 — `SIGTERM` reaches it directly. `CGO_ENABLED=0` + `-trimpath` + `-ldflags='-s -w'`.
+Two-stage `golang:1.26-alpine` builder → `node:24-bookworm-slim` runtime (node + npm bundled so the agent can `npm i -g @anthropic-ai/claude-code` and exec `claude` at runtime). UID 65532. Agent is PID 1 — `SIGTERM` reaches it directly. `CGO_ENABLED=0` + `-trimpath` + `-ldflags='-s -w'`.
 
 ### Registry + tagging
 
@@ -49,7 +49,7 @@ Published to **`docker.io/yaaos/agent`** (Docker Hub). Tags:
 - `MAJOR.MINOR` — immutable release tag (e.g. `0.1`); pin this in production. Minor increments on every `main` merge that changes `apps/agent/**`; major is the human-edited value in `apps/agent/VERSION`.
 - `latest` — points to the most recent release; getting-started only.
 
-Build target: `linux/amd64` (built with `docker buildx --platform linux/amd64` from the arm64 RWX CI runner).
+Build target: `linux/arm64` only (built natively on the arm64 RWX CI runner). yaaos customer hosts are arm64.
 
 ## Deployment (ECS Fargate)
 

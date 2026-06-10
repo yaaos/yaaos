@@ -34,6 +34,12 @@ from app.core.config import get_settings
 
 Role = Literal["app", "worker"]
 
+# Comma-delimited regexes (OTel `excluded_urls` syntax) of paths the FastAPI
+# instrumentor must NOT trace. `/api/health` is hit constantly by Fly's machine
+# checker; tracing each probe is pure noise. Matched with re.search against the
+# request path, so the bare substring covers the leading-slash form.
+TRACE_EXCLUDED_URLS = "api/health"
+
 _initialized = False
 
 # Module-level provider references for shutdown — set once by _configure_otel.
@@ -477,7 +483,7 @@ def _configure_otel(
     # Idempotent: already-instrumented raises on a second call, which only
     # matters for tests that reload the module. Swallow that case explicitly.
     try:
-        FastAPIInstrumentor().instrument()
+        FastAPIInstrumentor().instrument(excluded_urls=TRACE_EXCLUDED_URLS)
     except Exception:
         pass
     try:

@@ -15,6 +15,8 @@
 - `FastAPIInstrumentor` emits `http.server.duration`, `http.server.active_requests`, and `http.server.response.size` automatically once the global MeterProvider is set (web process only).
 - `SystemMetricsInstrumentor` (from `opentelemetry-instrumentation-system-metrics`, which pulls `psutil`) registers CPU, memory, and GC observable instruments on both the web and worker processes. Wired in `_configure_otel` by passing `meter_provider=` explicitly — no global state mutation beyond what the SDK owns.
 
+**Health probes are not traced** — `TRACE_EXCLUDED_URLS` (`"api/health"`) is passed to the FastAPI instrumentor (both the global `instrument()` in `_configure_otel` and the fallback `instrument_app()` in `core/webserver`), so `/api/health` produces no HTTP server span. The health DB ping (`core/database.ping()`, used by web `/api/health` and worker `/health`) runs inside `suppress_instrumentation()` so the constant probes emit no SQLAlchemy span either. Fly's machine checker hits health every few seconds; tracing each probe would be pure noise.
+
 **Exporter no-arg construction** — exporters are constructed with NO `endpoint=` / `headers=` kwargs. The SDK reads `OTEL_EXPORTER_OTLP_ENDPOINT` (base URL, e.g. `https://ingress.<region>.aws.dash0.com`) and appends `/v1/{traces,metrics,logs}` per signal; `OTEL_EXPORTER_OTLP_HEADERS` carries the `Authorization: Bearer …,Dash0-Dataset: …` pair. Passing `endpoint=` explicitly skips the per-signal append → bare-base 404, telemetry silently dropped.
 
 **`configure(role=...)` must be called once at boot** — `"app"` from `web.py`, `"worker"` from `core/tasks/runtime.py`. Sets `service.name` accordingly. Idempotent (module-level `_initialized` flag + OTel "already instrumented" guard).

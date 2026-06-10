@@ -6,7 +6,13 @@ adds wire-protocol trace propagation helpers
 boundary.
 """
 
-from app.core.observability.service import YaaosDimensionsSpanProcessor, configure, get_logger, shutdown
+from app.core.observability.service import (
+    TRACE_EXCLUDED_URLS,
+    YaaosDimensionsSpanProcessor,
+    configure,
+    get_logger,
+    shutdown,
+)
 from app.core.observability.slow_request import (
     SLOW_REQUEST_THRESHOLD_MS,
     SlowRequestLogMiddleware,
@@ -24,6 +30,7 @@ from app.core.shutdown_registry import (
 
 __all__ = [
     "SLOW_REQUEST_THRESHOLD_MS",
+    "TRACE_EXCLUDED_URLS",
     "SlowRequestLogMiddleware",
     "YaaosDimensionsSpanProcessor",
     "active_task_count",

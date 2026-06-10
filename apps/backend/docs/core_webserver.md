@@ -14,6 +14,7 @@
 - Body shape: `{status: "ok"|"degraded", db_ok: bool, redis_ok: bool, version: str}` — unchanged regardless of status code.
 - `version` is read from `settings.service_version` (`SERVICE_VERSION` env var, default `"0.0.0-dev"`). Set by the deploy pipeline (e.g. git SHA or semver tag).
 - Exempt from Cloudflare ingress middleware; no auth required.
+- Not traced — the path is in `observability.TRACE_EXCLUDED_URLS`, passed to the FastAPI instrumentor, and the DB ping runs under suppressed instrumentation. See [core_observability.md](core_observability.md).
 
 ## Why / invariants
 

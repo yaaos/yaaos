@@ -490,6 +490,7 @@ from = ["app.core.oauth"]
 expose = [
   "SLOW_REQUEST_THRESHOLD_MS",
   "SlowRequestLogMiddleware",
+  "TRACE_EXCLUDED_URLS",
   "YaaosDimensionsSpanProcessor",
   "active_task_count",
   "configure",

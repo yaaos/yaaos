@@ -1,15 +1,16 @@
 # yaaos WorkspaceAgent — customer-deployed Go binary.
 #
-# Two-stage build: golang:1.25-alpine compiles the static binary; the
-# runtime stage is `debian:bookworm-slim` because the agent shells out
-# to `git` for repo clone (and hands off to the Claude Code CLI which
-# also expects `git` + a real userspace). Distroless/static would be
-# smaller but offers no shell or package manager, which the git
-# dependency rules out.
+# Two-stage build: golang:1.26-alpine compiles the static binary; the
+# runtime stage is `node:24-bookworm-slim` because the agent execs the
+# Claude Code CLI (a Node.js program installed via `npm i -g`) for every
+# `InvokeClaudeCode` command, and also shells out to `git` for repo
+# clone. Using the official Node image instead of `debian:bookworm-slim`
+# + apt's `npm` package avoids the ~200-package `node-*` apt purge dance
+# (npm ships bundled with node here, no apt cleanup needed).
 #
-# Image is ~80 MB. The agent is
-# PID 1; SIGTERM from ECS reaches it directly so graceful shutdown works
-# without an init wrapper.
+# Published as linux/arm64 only — yaaos customers are arm64 hosts.
+# The agent is PID 1; SIGTERM from the orchestrator reaches it directly
+# so graceful shutdown works without an init wrapper.
 #
 # Build:
 #   docker build -f apps/agent/Dockerfile -t yaaos-agent:dev apps/agent
@@ -68,19 +69,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/agent
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM node:24-bookworm-slim
 
 # `git` is required: the agent shells out to it for ProvisionWorkspace
 # (HTTPS clone with installation-token auth), and the Claude Code CLI
 # the agent later spawns also depends on it. `ca-certificates` lets the
-# clone reach GitHub over HTTPS. `nodejs` + `npm` are required to install
-# the Claude Code CLI (`claude`) which the workspace subprocess execs for
-# every `InvokeClaudeCode` command. We don't install curl, ssh, less, or
-# any other userland — the surface area stays small.
+# clone reach GitHub over HTTPS. Node + npm ship in the base image, so
+# we only need apt for git + ca-certificates. We don't install curl,
+# ssh, less, or any other userland — the surface area stays small.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates nodejs npm \
+ && apt-get install -y --no-install-recommends git ca-certificates \
  && npm install -g @anthropic-ai/claude-code \
- && apt-get purge -y --auto-remove npm \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Run as a non-root user (UID 65532, matching the distroless `nonroot`

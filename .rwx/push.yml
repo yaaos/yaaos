@@ -264,14 +264,34 @@ tasks:
         --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
         --build-arg VITE_ENVIRONMENT=production
 
+      # Belt-and-braces worker reconciliation. fly.production.toml moves the
+      # worker health check to a top-level [[checks]] (Fly-recommended shape
+      # for non-public process groups), which should make bluegreen start
+      # green workers correctly. This block self-heals any residual drift:
+      #   1. Destroy stopped workers from older releases (stale spares left
+      #      behind by prior bluegreen deploys).
+      #   2. Start any current-release worker still stopped.
+      # Filters off the Fly-managed metadata `fly_process_group` and
+      # `fly_release_version`. Both steps are idempotent — no-op when
+      # there's nothing to do.
+      MAX_VER="$(flyctl machine list -a yaaos --json | jq -r '[.[] | (.config.metadata.fly_release_version // "0") | tonumber] | max')"
+      echo "Reconciling worker machines against release version: ${MAX_VER}"
+      flyctl machine list -a yaaos --json \
+        | jq -r --argjson max "$MAX_VER" '.[] | select(.config.metadata.fly_process_group == "worker" and .state == "stopped" and ((.config.metadata.fly_release_version // "0") | tonumber) < $max) | .id' \
+        | xargs -r -n1 -I{} flyctl machine destroy --force {} -a yaaos
+      flyctl machine list -a yaaos --json \
+        | jq -r --argjson max "$MAX_VER" '.[] | select(.config.metadata.fly_process_group == "worker" and .state == "stopped" and ((.config.metadata.fly_release_version // "0") | tonumber) == $max) | .id' \
+        | xargs -r -n1 -I{} flyctl machine start {} -a yaaos
+
   # ─── agent image publish ─────────────────────────────────────────────
   #
   # Publishes the WorkspaceAgent image to Docker Hub on every `main` push
   # that changes `apps/agent/**`. Reads the major version from the
   # committed `apps/agent/VERSION` file and derives the minor by querying
   # existing Docker Hub tags for the current major — true +1-per-release,
-  # no git topology needed. Builds linux/amd64 (this RWX runner is arm64,
-  # so --platform must be explicit). The task fails if the computed tag
+  # no git topology needed. Builds linux/arm64 natively (this RWX runner
+  # is arm64; yaaos customers run arm64 hosts so we publish arm64 only).
+  # The task fails if the computed tag
   # already exists (race guard for concurrent publishes). Docker Hub repo:
   # yaaos/agent. Creds from the `yaaos` vault.
   - key: publish-agent-image
@@ -329,14 +349,14 @@ tasks:
         exit 1
       fi
 
-      # --- 4. Authenticate and build for linux/amd64. ---
-      # This RWX runner is arm64; --platform linux/amd64 produces the
-      # correct image for the ECS/Fly deployment target.
+      # --- 4. Authenticate and build for linux/arm64. ---
+      # This RWX runner is arm64 and yaaos customers run arm64 hosts,
+      # so we build natively (no QEMU) and publish arm64 only.
       echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
       docker buildx create --use --name agent-builder 2>/dev/null || true
       docker buildx build \
-        --platform linux/amd64 \
+        --platform linux/arm64 \
         --build-arg VERSION="${VERSION}" \
         --tag "${DOCKER_HUB_REPO}:${VERSION}" \
         --tag "${DOCKER_HUB_REPO}:latest" \

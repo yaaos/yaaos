@@ -45,7 +45,7 @@
 
 **OTLP auth headers — no Settings field.** `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Bearer <token>,Dash0-Dataset=<name>`) is set as a Fly secret and read by the OTel SDK directly at exporter construction time. Nothing in our code parses it. Exporter wiring is gated on `otel_exporter_otlp_endpoint` being set; the SDK then reads the standard OTLP env vars.
 
-**`YAAOS_WORKER_HEALTH_PORT`** — `yaaos_worker_health_port: int = 8081`. TCP port the worker health server binds on `0.0.0.0`. The Fly `[[services]]` check for the `worker` process group targets this port. Default 8081 is out of the way of the web process (8080) and is not publicly routed — Fly's machine checker reaches it directly inside the 6PN (private) network, bypassing Cloudflare.
+**`YAAOS_WORKER_HEALTH_PORT`** — `yaaos_worker_health_port: int = 8081`. TCP port the worker health server binds on `0.0.0.0`. The Fly top-level `[[checks]]` for the `worker` process group targets this port. Default 8081 is out of the way of the web process (8080) and is not publicly routed — Fly's machine checker reaches it directly inside the 6PN (private) network, bypassing Cloudflare.
 
 ## Gotchas
 

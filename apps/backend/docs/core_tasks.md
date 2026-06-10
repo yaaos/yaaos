@@ -86,7 +86,7 @@ Shutdown hooks must tolerate in-flight work — `_WORKER_DRAIN_GRACE_SECONDS` bo
 
 - **Liveness ticker** — `_liveness_ticker(heartbeat, stop)` advances `WorkerHeartbeat.tick()` every `TICKER_INTERVAL_SECONDS` (5 s). Because it runs as a peer asyncio task in the same event loop as the consume loop, a wedged loop stops the ticker too, making the health check return 503 within two missed ticks (~10–60 s depending on the stale threshold).
 - **Worker health server** — a minimal single-route Starlette app run via a background `uvicorn.Server` task on `0.0.0.0:<yaaos_worker_health_port>` (default `8081`). The handler (`worker_health.py`) runs `database.ping()` + `redis.ping()` and checks `WorkerHeartbeat.is_fresh()`. Returns 200 `{status:"ok",…}` when all pass; 503 `{status:"degraded",…}` when any fail. Response body always includes `db_ok`, `redis_ok`, `heartbeat_ok`, `status`.
-- The health server is NOT the main FastAPI app — no auth middleware, no Cloudflare ingress gate — so Fly's machine checker reaches it directly.
+- The health server is NOT the main FastAPI app — no auth middleware, no Cloudflare ingress gate — so Fly's machine checker reaches it directly. As a bare Starlette app it gets no FastAPI HTTP span, and `database.ping()` suppresses its own SQLAlchemy span, so probes leave no trace footprint. `access_log=False` on its uvicorn server keeps probe access lines out of logs.
 - `yaaos_worker_health_port: int = 8081` in `core/config` controls the bind port.
 
 ## How it's tested
