@@ -249,4 +249,9 @@ tasks:
       curl -L https://fly.io/install.sh | sh
       export FLYCTL_INSTALL="$HOME/.fly"
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
-      flyctl deploy --remote-only --config fly.production.toml
+      flyctl deploy --remote-only --config fly.production.toml \
+        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=${{ vaults.yaaos.secrets.VITE_OTEL_COLLECTOR_ENDPOINT }} \
+        --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
+        --build-arg VITE_DASH0_DATASET=${{ vaults.yaaos.secrets.VITE_DASH0_DATASET }} \
+        --build-arg VITE_SERVICE_VERSION=${{ init.sha }} \
+        --build-arg VITE_ENVIRONMENT=production
