@@ -32,7 +32,7 @@
 - `is_non_prod` — `app_mode != "production"` (shorthand for dev + test together)
 - `cors_origins_list` returns `["*"]` when `is_non_prod`; otherwise parsed `YAAOS_CORS_ORIGINS`.
 
-**`YAAOS_CLOUDFLARE_INGRESS_SECRET`** — shared secret injected by a Cloudflare Transform Rule into the `CF-Access-Yaaos-Ingress` header on every proxied request. `CloudflareIngressMiddleware` reads this at request time (not boot time) and rejects mismatches with 403. Empty default = no-op so dev/test/e2e are unaffected. Set as a Fly secret in production.
+**`YAAOS_CLOUDFLARE_INGRESS_SECRET`** — shared secret injected by a Cloudflare Transform Rule into the `CF-Access-Yaaos-Ingress` header on every proxied request. `CloudflareIngressMiddleware` reads this at request time (not boot time) and rejects mismatches with 403. Empty default = no-op so dev/test/e2e are unaffected; in `production` `_check_required_prod_secrets` refuses to boot if unset, so the no-op branch is unreachable in prod. Set as a Fly secret in production.
 
 **`SERVICE_VERSION`** — `service_version: str = "0.0.0-dev"`. Version string embedded in the OTel resource (`service.version`) and served at `/api/health`. Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a safe sentinel for local/dev boots.
 

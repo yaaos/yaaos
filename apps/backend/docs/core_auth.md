@@ -60,5 +60,5 @@
 ## Gotchas
 
 - **Rate limiting** — `slowapi` wraps the app in `prod`/`dev`; skipped in `test`. Per-IP on `/api/auth/*` (30/min); per-user on all mutating `/api/*` (120/min, keyed by session cookie, falls back to IP for anonymous). Exceeded → 429 `Retry-After`.
-- **Prod secret check** — `create_app()` calls `_check_required_prod_secrets()`. Missing/stub `YAAOS_OAUTH_STATE_SECRET`, `YAAOS_INVITATION_TOKEN_SECRET`, `YAAOS_OAUTH_GITHUB_CLIENT_ID`, `YAAOS_OAUTH_GITHUB_CLIENT_SECRET`, or `YAAOS_TOTP_MASTER_KEY` in `prod` → `RuntimeError` at boot. See [`docs/runbooks/secret-rotation.md`](../../../docs/runbooks/secret-rotation.md).
+- **Prod secret check** — `create_app()` calls `_check_required_prod_secrets()`. Missing/stub `YAAOS_OAUTH_STATE_SECRET`, `YAAOS_INVITATION_TOKEN_SECRET`, `YAAOS_OAUTH_GITHUB_CLIENT_ID`, `YAAOS_OAUTH_GITHUB_CLIENT_SECRET`, `YAAOS_TOTP_MASTER_KEY`, or `YAAOS_CLOUDFLARE_INGRESS_SECRET` in `prod` → `RuntimeError` at boot. Empty `YAAOS_CLOUDFLARE_INGRESS_SECRET` would otherwise turn `CloudflareIngressMiddleware` into a transparent pass-through and silently disable the outermost defense layer — fail-secure boot prevents that. See [`docs/runbooks/secret-rotation.md`](../../../docs/runbooks/secret-rotation.md).
 

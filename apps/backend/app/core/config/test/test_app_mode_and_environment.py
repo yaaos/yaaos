@@ -97,6 +97,7 @@ def test_slowapi_middleware_active_when_is_production(monkeypatch: pytest.Monkey
     monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "real-client-id")
     monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "real-client-secret")
     monkeypatch.setenv("YAAOS_TOTP_MASTER_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
+    monkeypatch.setenv("YAAOS_CLOUDFLARE_INGRESS_SECRET", "real-cf-ingress-secret")
     get_settings.cache_clear()
 
     from app.core.webserver import create_app  # noqa: PLC0415

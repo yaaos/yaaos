@@ -29,6 +29,7 @@ def test_prod_with_stub_secrets_raises(prod_env, monkeypatch):
         "YAAOS_GITHUB_OAUTH_CLIENT_ID",
         "YAAOS_GITHUB_OAUTH_CLIENT_SECRET",
         "YAAOS_TOTP_MASTER_KEY",
+        "YAAOS_CLOUDFLARE_INGRESS_SECRET",
     ):
         monkeypatch.delenv(var, raising=False)
     from app.core.config import get_settings  # noqa: PLC0415
@@ -37,6 +38,32 @@ def test_prod_with_stub_secrets_raises(prod_env, monkeypatch):
     from app.core.webserver.app_factory import _check_required_prod_secrets  # noqa: PLC0415
 
     with pytest.raises(RuntimeError, match="refuses to start in prod"):
+        _check_required_prod_secrets()
+
+
+def test_prod_with_empty_cloudflare_ingress_secret_raises(prod_env, monkeypatch):
+    # Every other prod secret is set; only the Cloudflare ingress secret is
+    # missing. The check must still refuse to boot — an empty ingress secret
+    # turns CloudflareIngressMiddleware into a transparent pass-through and
+    # silently disables the outermost defense layer.
+    monkeypatch.setenv("YAAOS_OAUTH_STATE_SECRET", "real-state-secret")
+    monkeypatch.setenv("YAAOS_INVITATION_TOKEN_SECRET", "real-invitation-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_ID", "12345")
+    monkeypatch.setenv("YAAOS_GITHUB_APP_SLUG", "yaaos")
+    monkeypatch.setenv(
+        "YAAOS_GITHUB_APP_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----"
+    )
+    monkeypatch.setenv("YAAOS_GITHUB_APP_WEBHOOK_SECRET", "real-webhook-secret")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "real-oauth-client-id")
+    monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "real-oauth-client-secret")
+    monkeypatch.setenv("YAAOS_TOTP_MASTER_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
+    monkeypatch.delenv("YAAOS_CLOUDFLARE_INGRESS_SECRET", raising=False)
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    get_settings.cache_clear()
+    from app.core.webserver.app_factory import _check_required_prod_secrets  # noqa: PLC0415
+
+    with pytest.raises(RuntimeError, match="YAAOS_CLOUDFLARE_INGRESS_SECRET"):
         _check_required_prod_secrets()
 
 
@@ -52,6 +79,7 @@ def test_prod_with_all_secrets_set_does_not_raise(prod_env, monkeypatch):
     monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_ID", "real-oauth-client-id")
     monkeypatch.setenv("YAAOS_GITHUB_OAUTH_CLIENT_SECRET", "real-oauth-client-secret")
     monkeypatch.setenv("YAAOS_TOTP_MASTER_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
+    monkeypatch.setenv("YAAOS_CLOUDFLARE_INGRESS_SECRET", "real-cf-ingress-secret")
     from app.core.config import get_settings  # noqa: PLC0415
 
     get_settings.cache_clear()

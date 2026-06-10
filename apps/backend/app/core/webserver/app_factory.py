@@ -224,6 +224,10 @@ def _check_required_prod_secrets() -> None:
         missing.append("YAAOS_GITHUB_OAUTH_CLIENT_SECRET")
     if not s.yaaos_totp_master_key.get_secret_value():
         missing.append("YAAOS_TOTP_MASTER_KEY")
+    # Cloudflare ingress secret: empty → CloudflareIngressMiddleware becomes a
+    # transparent pass-through, silently disabling the outermost defense layer.
+    if not s.yaaos_cloudflare_ingress_secret.get_secret_value():
+        missing.append("YAAOS_CLOUDFLARE_INGRESS_SECRET")
     if missing:
         raise RuntimeError(f"yaaos refuses to start in prod with missing/stub secrets: {', '.join(missing)}")
 
