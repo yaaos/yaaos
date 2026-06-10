@@ -1,32 +1,82 @@
-# yaaos
+**Yet Another Agent Orchestration Service** 
 
-**Yet Another Agent Orchestration Service.** Self-hosted, team-scale orchestrator that runs your coding agents against incoming work and posts the results back to the source.
+# Why yaaos?
 
-## What yaaos is
+There are a few products in adjacent spaces. Baz, CodeRabbit, and Qodo do AI-powered code reviews. Devin and OpenHands are autonomous coding-agent platforms. Competing head-on with frontier coding agents like Claude Code or Codex is a losing game, so yaaos doesn't. It's a coding-agent-agnostic orchestration platform — roughly what Devin and OpenHands do, but you bring your own coding agent. Pick whichever one your company is most comfortable with.
 
-yaaos is the orchestration layer. It receives a piece of work (today: a GitHub pull request), provisions an isolated workspace, hands the work to a coding agent of your choice, and posts the agent's structured output back to the source.
+That choice matters more than it sounds. AI adoption inside a company usually starts with individual devs, then teams converge on prompts and conventions around a specific agent — Claude Code, Codex, etc. Devin and OpenHands ask you to throw that away and learn a new agent with new behavior. yaaos doesn't. It drives the agent your devs already use, with the prompts your team already wrote. The orchestration is new; the agent isn't.
 
-yaaos is **not** a coding agent. It does not review code. It does not write code. It does not call LLMs directly. Those jobs belong to the agent — yaaos provides the workflow around it.
+# The product
 
-## Principles
+yaaos aims to be a full SDLC workflow solution — code review, feature work, ops troubleshooting. Today it does code reviews on GitHub PRs; the rest comes next. The shape is the same regardless of workflow: a PR is opened, yaaos spins up a workspace, hands the work to a coding agent, and posts the result back where your team already looks.
 
-- **Orchestrator, not an agent.** Reviews, refactors, code writing — all delegated to a CLI agent (Claude Code today; Codex / Aider / others as plugins). yaaos's job is the workflow: webhook → ticket → workspace → agent → post-back. Zero LLM calls live in yaaos itself.
-- **Bring your favourite coding agent.** Each agent is a plugin behind a small Protocol. Add a new agent by implementing `review(workspace, context)` / `reply(workspace, context)` — yaaos doesn't care which model or framework runs inside.
-- **Configurable.** Agent personas (prompts), per-repo lessons, model API keys, webhook routing, time-control intervals, plugin selection — all editable at runtime via the UI or DB.
-- **Workspaces are separable from the service.** A workspace is provisioned through a `WorkspaceProvider` plugin. Today: in-process tempdir + git clone. Tomorrow: Docker containers, Fly machines, K8s pods. The service Protocol doesn't change.
-- **Every ticket gets its own fully isolated workspace.** One workspace per ticket, shared by every agent on that ticket. Provisioned once when the review batch starts; destroyed once every agent finishes. No cross-ticket state contamination.
-- **Security by default.** Credentials encrypted at rest (Fernet, key in env). API tokens never written to a workspace's filesystem. HMAC verification on every inbound webhook. No shell-string subprocess invocations. Secrets never logged or audited.
+A few principles drive the design.
 
-## How it fits together (at a glance)
+**Product principles**
 
-GitHub webhook → yaaos backend (FastAPI) → ticket + per-agent review jobs → workspace per job → coding-agent CLI subprocess → structured findings → posted back as a GitHub review. The React SPA gets live updates via SSE.
+- **Orchestrator, not an agent.** Reviews, refactors, and code writing are delegated to a CLI agent — Claude Code today, with Codex, Aider, and others available as plugins. yaaos owns the workflow around the agent, not the intelligence inside it.
+- **Bring your favorite coding agent and your own account.** You bring the API key, and your prompts go straight to the agent — yaaos doesn't sit in the middle.
+- **Integrates into your stack.** GitHub is wired up today. Notion, Linear, and other tools your team already lives in will land as plugins over time.
+- **Workspaces in your cloud.** Workspaces run on infrastructure you own and configure, so your code never leaves your VPC.
+- **Configurable.** yaaos ships with opinions on how SDLC workflows should run, but none of them are locked in. You can shape the workflow around how your team actually works.
+- **Security is a first-class concern.** Your source code is your IP, and in an era where AI tools routinely ship code off to third-party clouds, knowing exactly where it goes matters more than ever. We treat security as a central design constraint, not a checkbox. Details below.
 
-Full architecture: [`docs/system-architecture.md`](docs/system-architecture.md). Per-app + per-module docs: [`docs/README.md`](docs/README.md).
+# Security & compliance
 
-## Get started
+This section is the CISO summary. Full details, code paths, and threat model in [`docs/system-security.md`](docs/system-security.md).
 
-See [`docs/setup.md`](docs/setup.md) — Docker stack, GitHub App creation, Anthropic key, local dev variant.
+## Architecture in brief
 
-## Working in this repo
+Three components, two trust zones.
 
-[`CLAUDE.md`](CLAUDE.md) holds the working rules: layering, doc discipline, test conventions, where to find what.
+**Control plane** — the yaaos backend, hosted by us on fly.io. Web UI, workflow engine, audit log, plugin registries. Holds no customer source code.
+
+**Workspace agent** — a Go binary the customer deploys on any Linux host inside their own AWS account that can assume their registered IAM role — typically ECS, EKS, or EC2. Long-polls the control plane for work, clones repos, spawns workspace processes, runs the coding agent CLI, and posts results back. Outbound TLS only; no inbound ports. This is the only component that ever touches source code.
+
+**Coding agent CLI** — Claude Code today; Codex, Aider, and others as plugins. Runs as a subprocess inside a workspace, driven by the agent. Talks to its provider (Anthropic, OpenAI, etc.) with the customer's BYOK API key.
+
+**Execution flow.** A PR is opened → GitHub webhook hits the control plane → control plane creates a ticket and queues an `AgentCommand` → the customer's workspace agent picks it up via long-poll → agent clones the repo into a fresh workspace → agent invokes the coding agent CLI → results stream back as `AgentEvents` → control plane posts findings to the PR. The workspace is torn down after each run.
+
+**Key property:** source code lives only inside the workspace agent's environment, on infrastructure the customer controls. The control plane never sees it.
+
+## Control plane security
+
+- **Sessions.** OAuth login issues session + CSRF cookies.
+- **Authorization.** Per-action role policy. Sensitive mutations (IAM ARN, region) are restricted to org admins.
+- **MFA + SSO.** TOTP per-user; SAML SSO per-org for enterprise tenants (coming soon!).
+- **Secrets at rest.** Fernet-encrypted columns for BYOK provider keys, SAML SP private keys, TOTP secrets, and OAuth refresh tokens. Master key in env, never in the DB. Session bearers stored as sha256 hashes only.
+- **Platform secrets.** GitHub App private key and webhook secret live in env vars, not the database.
+- **Webhook integrity.** Inbound GitHub webhooks are HMAC-verified against a shared secret; unsigned or tampered payloads are rejected before any application logic runs.
+
+## Workspace security
+
+- **IAM-anchored identity.** Each customer registers an IAM role ARN. The agent assumes that role inside the customer's AWS account; the backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS to verify identity. Signed request URLs validated against a regex of known AWS STS hostnames. yaaos never trusts the agent's own ARN claim.
+- **Replay protection.** Each agent identity signature is bound to the specific yaaos deployment it was produced for, so a valid signature from one yaaos installation cannot be replayed against another.
+- **OS-process isolation.** One OS process per workspace, IPC over stdio. Container filesystem read-only except `/var/agent/workspaces/`. No landlock / seccomp / per-workspace UID today — single-tenant assumption inside the customer's own environment. Runs as an unprivileged user.
+- **Zero business logic in the agent.** Every threshold, prompt, lesson, depth, and timeout is supplied by the control plane per-command. The agent ships repo clone + IPC framing + subprocess management; nothing about review behavior lives in the customer's deployed binary.
+- **Workspaces in your VPC.** The agent runs on any Linux host in your AWS account (ECS, EKS, EC2, or similar) configured with the registered IAM role. Outbound TLS to the control plane only; no inbound TCP, no exposed ports. Source code never leaves your network perimeter.
+- **No secrets on disk.** API keys reach the coding agent subprocess only via environment variables, never as CLI arguments (which would be visible in `ps`) and never written to disk.
+
+## Data in transit
+
+- **TLS everywhere.** All control-plane traffic is HTTPS / WSS. The agent only opens outbound TLS; there is no inbound listener.
+- **Bearer scope.** Identity-exchange bearers are scoped to a single agent instance (`agent_id`), 1-hour TTL, rotated before expiry.
+
+## Compliance & vendors
+
+- **Audit log.** Every state change — user mutations, agent actions, workflow transitions — writes a typed, durable `audit_log` row attributed to a known actor. 90-day retention. Surfaced in-product per org so admins can answer "who did what, when" without filing a support ticket.
+- **Data residency.** Workspaces and source code live entirely in the customer's AWS account. The control plane is hosted on fly.io, and all yaaos-side data (Postgres, Redis, telemetry) is stored in US regions.
+- **Sub-processors.** All vendors below are SOC 2 compliant. All yaaos staff accounts on these services have 2FA enabled.
+
+  | Purpose | Vendor | Data handled |
+  |---|---|---|
+  | Compute | [fly.io](https://fly.io) | Control plane app + worker processes |
+  | WAF / edge | [Cloudflare](https://cloudflare.com) | Inbound HTTP traffic, TLS termination |
+  | Email | [Resend](https://resend.com) | Transactional email (invites, notifications) |
+  | Redis | [Upstash](https://upstash.com) | Session cache, pub/sub, ephemeral queues |
+  | Postgres | [Neon](https://neon.tech) | Primary datastore — users, tickets, audit log, encrypted secrets |
+  | Observability | [Dash0](https://dash0.com) | Traces, metrics, logs (PII-scrubbed at the exporter) |
+- **Responsible disclosure.** Report suspected vulnerabilities to [admin@yaaos.cloud](mailto:admin@yaaos.cloud). We respond within one business day.
+
+# Links
+See https://yaaos.cloud for the website and https://app.yaaos.cloud for the app.
