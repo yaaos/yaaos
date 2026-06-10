@@ -37,7 +37,7 @@
 
 `domain/intake/web.post_intake` records `current_traceparent()` when a webhook arrives and passes it into `core/workflow`; downstream tasks restore it. This is what gives one `trace_id` across webhook → terminal outcome.
 
-**`spawn(name, coro)`** — `asyncio.create_task` wrapped with error logging. Task retained in a module-level set to prevent GC mid-flight.
+**`spawn(name, coro)`** — `asyncio.create_task` wrapped with an OTel span (`spawn:{name}`) + error recording. On exception: `span.record_exception(exc)` + `span.set_status(ERROR)` before the `spawn.crashed` log line. Does not re-raise. Task retained in a module-level set to prevent GC mid-flight.
 
 **`SlowRequestLogMiddleware`** — emits `http.slow_request` warn for requests ≥ `SLOW_REQUEST_THRESHOLD_MS` (default 500ms). Never throws.
 
@@ -46,7 +46,7 @@
 - `configure(role)` — initialize structlog + all three OTel providers. Call once at boot.
 - `shutdown()` — async; force-flush + shut down all three providers. Registered with both shutdown registries automatically at import.
 - `get_logger(name?)` — bound structlog logger.
-- `spawn(name, coro)` — fire-and-forget background task with error logging.
+- `spawn(name, coro, *, tracer?)` — fire-and-forget background task: OTel span + exception recording + error log. `tracer=` injection point for tests.
 - `current_traceparent()`, `restore_traceparent_context(tp)`, `with_remote_parent_span(tracer, name, tp)` — wire-protocol trace helpers.
 - `SlowRequestLogMiddleware`, `SLOW_REQUEST_THRESHOLD_MS` — slow-request logging middleware.
 - `active_task_count()` — number of in-flight spawned tasks (test helper).

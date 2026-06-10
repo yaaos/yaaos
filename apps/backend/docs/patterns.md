@@ -48,7 +48,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 Don't catch where raised. Let them propagate. Catch only at top-level boundaries:
 - HTTP middleware (converts to 500 JSON).
-- `core/observability.spawn()` wrapper (logs the failure; the coro is responsible for marking its row failed before raising).
+- `core/observability.spawn()` wrapper (records exception on the span + logs the failure; the coro is responsible for marking its row failed before raising).
 - Thin retry wrapper around vendor SDK calls.
 - Tests.
 
@@ -137,9 +137,7 @@ Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing 
 
 Every fire-and-forget background coroutine goes through this single helper. Behaviour:
 - Wraps the coro in an OTel span `spawn:{name}`.
-- Propagates structlog ContextVars (request_id, trace_id) to the spawned coroutine.
-- On exception: logs `kind='spawn.crashed'` at ERROR with traceback. Does NOT re-raise. The coro is responsible for marking its domain-row state to `failed` BEFORE raising — once `spawn()` catches, the domain row is the durable record.
-- Cancellation: DB state flip + cooperative polling.
+- On exception: calls `span.record_exception(exc)` + `span.set_status(ERROR)`, then logs `spawn.crashed` at ERROR with traceback. Does NOT re-raise. The coro is responsible for marking its domain-row state to `failed` BEFORE raising — once `spawn()` catches, the domain row is the durable record.
 - Holds the `asyncio.Task` in a module-level set until completion so GC doesn't collect it mid-flight.
 
 Used by: reviewer, github plugin catch-up, workspace reaper.

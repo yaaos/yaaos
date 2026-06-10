@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **Owns:** `@task` decorator, `enqueue` API, outbox table (`outbox_entries`), drain loop, worker process scaffolding, `OrgContextMiddleware`, recurring-task scheduler (`@scheduled` / `schedule_task` / `scheduler_loop`), `scheduled_runs` dedup ledger.
+- **Owns:** `@task` decorator, `enqueue` API, outbox table (`outbox_entries`), drain loop, worker process scaffolding, `OrgContextMiddleware`, `TaskMetricsMiddleware`, `TaskSpanMiddleware`, recurring-task scheduler (`@scheduled` / `schedule_task` / `scheduler_loop`), `scheduled_runs` dedup ledger.
 - **Does not own:** task bodies (owned by callers); broker topology (Redis detail hidden here).
 - **Boundary:** `enqueue` writes a row in the caller's transaction; the drain pump pushes to Redis; taskiq pops and executes. The entire durable path is self-contained. The scheduler tick loop runs alongside the drain in every worker and gates per-slot enqueue via an atomic `INSERT … ON CONFLICT DO NOTHING` on `scheduled_runs`.
 
@@ -48,10 +48,20 @@ dimensioned by **task name only** (not `org_id` — per-org cardinality would ex
 | `task.duration` | Histogram | `s` | Wall-clock execution time from `pre_execute` to `post_execute` or `on_error`. |
 
 `TaskMetricsMiddleware` is the carrier — wired into the broker in `runtime.run()` alongside
-`OrgContextMiddleware`. The module-level instruments are obtained via `metrics.get_meter(__name__)`
+`OrgContextMiddleware` and `TaskSpanMiddleware`. The module-level instruments are obtained via `metrics.get_meter(__name__)`
 at import time; in the worker process they delegate to the real `MeterProvider` set by
 `observability.configure(role="worker")`. Tests inject fresh instruments via constructor
 parameters to avoid touching global OTel state.
+
+## Worker task spans
+
+`core/tasks/spans.py` declares `TaskSpanMiddleware`, wired into the broker in `runtime.run()` alongside `OrgContextMiddleware` and `TaskMetricsMiddleware`. For each task execution:
+
+- Opens a span named `task:<task_name>` via `pre_execute`.
+- On error (`on_error` / `post_execute` with `is_err`): calls `span.record_exception(exc)` + `span.set_status(ERROR)` so the failure is visible in traces, not just logs.
+- Ends the span in `post_execute` / `on_error` — even if exception recording itself fails.
+
+Tests inject a tracer from a local `TracerProvider` + `InMemorySpanExporter` via the `tracer=` constructor parameter, matching the `TaskMetricsMiddleware` instrument-injection pattern.
 
 ## How it's tested
 
@@ -64,3 +74,4 @@ parameters to avoid touching global OTel state.
 `test/test_scheduled_runs_prune_service.py` — broker registration of the prune task body; body deletes >7-day rows and leaves fresher rows alone.
 `test/test_scheduler_backoff.py` — unit-tests the pure `_backoff_sleep` helper: exponential growth, 120 s cap, normal-cadence restore after a reset.
 `test/test_task_metrics_service.py` — `TaskMetricsMiddleware` with injected `InMemoryMetricReader` instruments: successful body increments `task.started` + `task.succeeded` + records `task.duration`; failing body increments `task.failed` instead.
+`test/test_task_span_service.py` — `TaskSpanMiddleware` with injected `InMemorySpanExporter` tracer: failing body produces a span with ERROR status + exception event; successful body produces a span with no exception events.

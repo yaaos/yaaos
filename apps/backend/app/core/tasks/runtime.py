@@ -30,6 +30,7 @@ from app.core.tasks.drain import drain_loop
 from app.core.tasks.metrics import task_metrics_middleware
 from app.core.tasks.middleware import org_context_middleware
 from app.core.tasks.scheduler import scheduler_loop
+from app.core.tasks.spans import task_span_middleware
 
 log = structlog.get_logger("core.tasks.worker")
 
@@ -67,7 +68,7 @@ async def run() -> None:
     broker = get_broker()
     # Task-defining modules are loaded by the composition root (`app/worker.py`)
     # before `run()` is called — `@task` decorators are already registered here.
-    broker.add_middlewares(org_context_middleware, task_metrics_middleware)
+    broker.add_middlewares(org_context_middleware, task_metrics_middleware, task_span_middleware)
     log.info("tasks.worker.booting", broker=type(broker).__name__)
 
     await broker.startup()
