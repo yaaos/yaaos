@@ -1,10 +1,10 @@
 # core/database
 
-> Async SQLAlchemy engine, session factory, declarative base, and the in-house migration runner.
+> Async SQLAlchemy engine, session factory, declarative base, and the Alembic-based migration runner.
 
 ## Scope
 
-- Owns: `AsyncEngine` + `AsyncSessionmaker` singletons, `Base`, `schema_migrations` table, migration runner.
+- Owns: `AsyncEngine` + `AsyncSessionmaker` singletons, `Base`, `alembic_version` table (managed by Alembic), migration runner.
 - Does NOT own: any domain ORM model — those belong to the modules that define them.
 
 ## Why / invariants
@@ -17,7 +17,7 @@
 
 **Migration advisory lock** — `migrate()` holds a Postgres session-scoped advisory lock (`_MIGRATION_LOCK_KEY`) for the full call, spanning per-migration commits. Prevents web + worker both racing to apply the same migration on startup. **Warning:** session-scoped locks break under PgBouncer transaction-pooling (session affinity is lost between statements). If a connection pooler is ever added, bypass it for `migrate()` or switch lock primitive.
 
-**Custom migration runner** — `_MIGRATIONS` tuple in `service.py` is the sole source of truth. `alembic upgrade head` is forbidden; the runner applies idempotently. `_apply_create_all` explicitly imports every module's `models` — new modules with tables must be added to that import list.
+**Alembic migration runner** — `migrate()` calls `alembic upgrade head` via `alembic.command.upgrade` (programmatic API). The connection is stashed on `cfg.attributes["connection"]` so `env.py`'s boot path reuses the caller's sync connection — no second engine opened. `alembic/versions/0001_baseline.py` is the single baseline revision; new DDL is added as subsequent numbered revisions. `script_location` is overridden to an absolute path so `migrate()` is cwd-independent. Use `alembic revision --autogenerate -m "..."` (CLI) to generate new revisions; direct `alembic upgrade` on disk is not used at runtime.
 
 **`set_test_session_override`** (in `app.core.database.service`, not re-exported from the package) — routes every `async with session()` call to the fixture-bound `AsyncSession` so production code runs inside the test's outer transaction. The `db_session` fixture in `conftest.py` imports it directly from the submodule. The `restart_savepoint` listener turns production `await s.commit()` into a SAVEPOINT release; teardown rolls back the outer transaction.
 
@@ -25,7 +25,7 @@
 
 **`truncate_all_tables`** — uses `DELETE FROM` (not `TRUNCATE`) to avoid blocking SSE/WS/background `AccessShare` readers. Sets `lock_timeout=2s`. UUID PKs mean no sequence reset needed. Raises `RuntimeError` in `prod`. Only used by the test-reset path; never call elsewhere.
 
-**Partitioned tables — DDL lives here.** Raw partition DDL (`PARTITION BY RANGE`, per-week `PARTITION OF`) is confined to `core/database` because it needs raw `text(...)` SQL with interpolated partition names + range bounds; `bin/check_table_access` allowlists only `core/database/**` for cross-table raw SQL. The owning module's mapped class lives on the shared `Base` and declares `postgresql_partition_by` (e.g. `CodingAgentActivityRow`), so `Base.metadata.create_all` emits the partitioned parent — making create_all the drift sentinel against the `_apply_create_coding_agent_activity` migration (column drift surfaces there). Child partitions come from two places: an `after_create` listener on `Base.metadata` seeds the window when create_all emits the parent (create_all-based setups); the `migrate()` path seeds via the migration's raw DDL and then rolls forward via `maintain_coding_agent_activity_partitions`. Partition naming, week alignment, and the seed window `(0, +1, +2)` are one source of truth — the `_coding_agent_activity_partition_ddl` helper shared by the migration, the listener, and the maintenance task. Every `CREATE TABLE` uses `IF NOT EXISTS` so re-running after partial application is safe. `coding_agent_activity` is the codebase's first partitioned table.
+**Partitioned tables — DDL lives here.** Raw partition DDL (`PARTITION BY RANGE`, per-week `PARTITION OF`) is confined to `core/database` because it needs raw `text(...)` SQL with interpolated partition names + range bounds; `bin/check_table_access` allowlists only `core/database/**` for cross-table raw SQL. The owning module's mapped class lives on the shared `Base` and declares `postgresql_partition_by` (e.g. `CodingAgentActivityRow`), so `Base.metadata.create_all` emits the partitioned parent — keeping the ORM column shape and the Alembic baseline DDL from drifting. The `coding_agent_activity` partitioned parent is created by the Alembic baseline (`0001_baseline.py`) via raw `op.execute` (Alembic autogen does not handle `PARTITION BY RANGE`). Child partitions are seeded from `migrate()` by calling `maintain_coding_agent_activity_partitions()` immediately after Alembic finishes; the same function runs daily from the scheduled task in `core/coding_agent`. Partition naming, week alignment, and the seed window `(0, +1, +2)` are one source of truth — the `_coding_agent_activity_partition_ddl` helper shared by the baseline and the maintenance task. Every `CREATE TABLE` uses `IF NOT EXISTS`. `coding_agent_activity` is the codebase's first partitioned table.
 
 ## Gotchas
 

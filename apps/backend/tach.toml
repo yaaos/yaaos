@@ -402,7 +402,6 @@ from = ["app.core.config"]
 expose = [
   "Base",
   "dispose",
-  "ensure_schema_migrations_table",
   "get_engine",
   "get_sessionmaker",
   "maintain_coding_agent_activity_partitions",

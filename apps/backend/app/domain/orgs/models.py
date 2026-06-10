@@ -50,7 +50,16 @@ class InvitationRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = (Index("ix_invitations_email_lower", func.lower(email)),)
+    __table_args__ = (
+        Index("ix_invitations_email_lower", func.lower(email)),
+        Index(
+            "uq_invitations_pending_org_email",
+            "org_id",
+            func.lower(email),
+            unique=True,
+            postgresql_where=text("accepted_at IS NULL"),
+        ),
+    )
 
 
 class SsoConfigRow(Base):

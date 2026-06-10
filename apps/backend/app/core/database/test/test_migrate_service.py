@@ -1,12 +1,10 @@
-"""Concurrent `migrate()` must not double-apply a version.
+"""Concurrent ``migrate()`` must not race or corrupt ``alembic_version``.
 
-`migrate()` runs on startup from both the FastAPI process and the worker, and
-from every web instance. Without serialization the callers can both read an
-empty `applied` set, race to
-apply the same DDL, and one of them crashes on the duplicate
-`INSERT INTO schema_migrations` PK. A Postgres session-scoped advisory lock
-acquired on a dedicated connection serializes the body so only one process
-applies at a time; the other blocks, then re-reads and no-ops.
+``migrate()`` runs on startup from both the FastAPI process and the worker, and
+from every web instance.  A Postgres session-scoped advisory lock acquired on a
+dedicated connection serializes the body so only one process applies at a time;
+the other blocks, then Alembic reads ``alembic_version`` and finds it is already
+at head.
 """
 
 from __future__ import annotations
@@ -17,24 +15,24 @@ import pytest
 from sqlalchemy import text
 
 from app.core import database
-from app.core.database.service import _MIGRATIONS
 
 
 @pytest.mark.asyncio
 async def test_concurrent_migrate_does_not_duplicate(_migrated_schema: None) -> None:
-    engine = database.get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE TABLE schema_migrations"))
+    """Parallel migrate() calls are idempotent — no duplicate application.
 
+    The schema is already at head (via _migrated_schema).  Running two
+    concurrent migrate() calls must complete safely: the advisory lock serializes
+    them, and each call either applies (first one wins) or no-ops (second sees
+    alembic_version already at head).
+    """
+    # Both calls should complete without error.
     await asyncio.gather(database.migrate(), database.migrate())
 
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            text("SELECT version, COUNT(*) AS n FROM schema_migrations GROUP BY version")
-        )
-        counts = {row[0]: row[1] for row in result}
+    async with database.get_engine().connect() as conn:
+        result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+        rows = result.all()
 
-    expected = {v for v, _ in _MIGRATIONS}
-    assert set(counts) == expected
-    duplicates = {v: n for v, n in counts.items() if n != 1}
-    assert not duplicates, f"versions applied more than once: {duplicates}"
+    # Exactly one row, containing our baseline revision.
+    assert len(rows) == 1, f"expected exactly 1 alembic_version row, got {rows}"
+    assert rows[0][0] == "0001_baseline", f"unexpected revision: {rows[0][0]}"

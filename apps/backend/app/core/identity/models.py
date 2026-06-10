@@ -69,7 +69,15 @@ class UserEmailRow(Base):
     # frees the address (lazy reuse). Postgres partial unique index lives in
     # the migration body since SQLAlchemy doesn't render partial indexes
     # cleanly across dialects.
-    __table_args__ = (Index("ix_user_emails_email_lower", func.lower(email)),)
+    __table_args__ = (
+        Index("ix_user_emails_email_lower", func.lower(email)),
+        Index(
+            "uq_user_emails_email_active",
+            func.lower(email),
+            unique=True,
+            postgresql_where=text("verified_at IS NOT NULL"),
+        ),
+    )
 
 
 class OAuthIdentityRow(Base):

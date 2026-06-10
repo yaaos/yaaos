@@ -72,7 +72,7 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 - `app/testing/` — test-only scaffolding (excluded from prod wheel).
 - `app/web.py` — web composition root; bootstrap import order (load-bearing) + `uvicorn.run(...)` under `__main__`.
 - `app/worker.py` — worker composition root; side-effect plugin imports + `asyncio.run(...)` under `__main__`.
-- `app/alembic/` — hand-edited migrations using idempotent helpers.
+- `apps/backend/alembic/` — Alembic migration scripts (one baseline revision; new revisions added with `alembic revision --autogenerate`).
 - `bin/` — `ci`, `sync_modules`, `check_table_access`.
 - `conftest.py` — pytest top-level fixtures.
 - `pyproject.toml` — uv + ruff config + TID251 bans.

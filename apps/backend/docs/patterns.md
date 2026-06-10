@@ -202,13 +202,13 @@ The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call
 
 ### Idempotent migrations
 
-`core/database.migration_helpers` wraps `op.*` with idempotent variants (`create_table_if_not_exists`, `add_column_if_not_exists`, `create_index_if_not_exists`, `drop_column_if_exists`). Every migration uses these helpers; re-running a half-applied migration is always safe.
+Alembic tracks applied revisions in `alembic_version`; a revision already at head is a no-op. Revisions that create tables or add columns should use `IF NOT EXISTS` variants (`op.execute(text("CREATE TABLE IF NOT EXISTS ..."))`, or Alembic's `create_table_if_not_exists` / `add_column_if_not_exists`) where the DDL may have been partially applied, so re-running a migration after a partial failure is always safe.
 
 ### Per-migration tracking
 
-`schema_migrations` records every applied version. The runner is `core/database.migrate()`, not stock `alembic upgrade head`: reads applied versions, scans `alembic/versions/*.py`, applies any file whose `revision` isn't in the table. Robust to branch-switching and multiple heads.
+`alembic_version` records every applied revision (managed by Alembic). `core/database.migrate()` calls `alembic upgrade head` programmatically — it stashes the caller's sync connection on the Alembic config so no second engine is opened. The advisory lock in `migrate()` serializes concurrent callers (web + worker startup race).
 
-Alembic CLI is only used for `alembic revision --autogenerate -m "..."`. Direct `alembic upgrade` is forbidden.
+Alembic CLI (`alembic revision --autogenerate -m "..."`) is the only supported way to create new revisions. Direct `alembic upgrade` at runtime is not used — the programmatic path is the contract.
 
 ### UUID primary keys
 

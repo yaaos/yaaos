@@ -114,6 +114,12 @@ class BearerTokenRow(Base):
     __table_args__ = (
         Index("ix_bearer_tokens_org_issued", "org_id", "issued_at"),
         Index("ix_bearer_tokens_issued_iam_arn", "issued_iam_arn"),
+        Index(
+            "ix_bearer_tokens_agent_active",
+            "agent_id",
+            "expires_at",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
     )
 
 

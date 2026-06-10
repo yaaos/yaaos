@@ -12,6 +12,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -46,11 +47,11 @@ class OrgRow(Base):
     # the identity-exchange verifier canonicalizes the assumed-role ARN it gets
     # back from STS and matches against this column. `aws_region` pins the STS
     # endpoint the signed request must target — defence against cross-region
-    # replay. registered_iam_arn and aws_region are both-or-neither (DB check
-    # constraint `ck_orgs_arn_region_paired`).
+    # replay. `registered_iam_arn` and `aws_region` are both-or-neither
+    # (CHECK constraint `ck_orgs_arn_region_paired` in `__table_args__`).
     # Uniqueness on `registered_iam_arn` is enforced by a partial unique index
-    # (`uq_orgs_registered_iam_arn`) created in migration 028, not by the model
-    # — so in-memory orgs (NULL ARN) don't collide and aren't capped at one row.
+    # (`uq_orgs_registered_iam_arn` in `__table_args__`) so in-memory orgs
+    # (NULL ARN) don't collide and aren't capped at one row.
     registered_iam_arn: Mapped[str | None] = mapped_column(String, nullable=True)
     aws_region: Mapped[str | None] = mapped_column(String, nullable=True)
     # SSO authz flags denormalized from sso_configs for fast middleware access.
@@ -62,6 +63,19 @@ class OrgRow(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_orgs_registered_iam_arn",
+            "registered_iam_arn",
+            unique=True,
+            postgresql_where=text("registered_iam_arn IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(registered_iam_arn IS NULL) = (aws_region IS NULL)",
+            name="ck_orgs_arn_region_paired",
+        ),
     )
 
 

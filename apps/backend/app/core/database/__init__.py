@@ -3,7 +3,6 @@
 from app.core.database.service import (
     Base,
     dispose,
-    ensure_schema_migrations_table,
     get_engine,
     get_sessionmaker,
     maintain_coding_agent_activity_partitions,
@@ -17,7 +16,6 @@ from app.core.database.service import (
 __all__ = [
     "Base",
     "dispose",
-    "ensure_schema_migrations_table",
     "get_engine",
     "get_sessionmaker",
     "maintain_coding_agent_activity_partitions",

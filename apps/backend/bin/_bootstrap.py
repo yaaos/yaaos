@@ -1,0 +1,246 @@
+"""Bootstrap the first user + first org.
+
+Run once after the database is provisioned and migrations have run. Interactive
+by default; tests drive it via stdin-piped subprocess invocations.
+
+Reads: stdin (five prompts) + `YAAOS_OAUTH_GITHUB_USERINFO_URL` (for resolving
+the GitHub username to a numeric id; defaults to https://api.github.com/user/<login>).
+
+Writes (all idempotent — second run with same inputs is a no-op):
+  - users row (display name)
+  - user_emails row (verified, primary)
+  - oauth_identities row (provider=github, external_subject=<gh id>)
+  - orgs row (slug + display name)
+  - memberships row (role=owner, handle derived from email local-part)
+
+Usage:
+    apps/backend/bin/bootstrap
+or, scripted:
+    printf 'jack@example.com\\njkora\\nJack Kora\\nAcme\\nacme\\n' | apps/backend/bin/bootstrap
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import sys
+from pathlib import Path
+from typing import IO
+
+# Make `app.*` importable without installing the package.
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE.parent))
+
+import httpx  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+
+from app.core.audit_log import Actor, audit  # noqa: E402
+from app.core.auth import Role  # noqa: E402
+from app.core.database import session as db_session  # noqa: E402
+from app.core.identity import repository as identity_repo  # noqa: E402
+from app.domain.orgs import repository as orgs_repo  # noqa: E402
+
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+_GH_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+
+
+def _prompt(stream: IO[str], label: str, validator=lambda v: True) -> str:
+    """Prompt until non-empty + validator-approved input arrives."""
+    while True:
+        sys.stdout.write(f"{label}: ")
+        sys.stdout.flush()
+        raw = stream.readline()
+        if not raw:
+            sys.stderr.write("\nbootstrap: stdin closed mid-prompt\n")
+            sys.exit(2)
+        value = raw.strip()
+        if not value:
+            sys.stderr.write("(empty — try again)\n")
+            continue
+        if not validator(value):
+            sys.stderr.write("(invalid format — try again)\n")
+            continue
+        return value
+
+
+def _is_email(v: str) -> bool:
+    return "@" in v and "." in v.split("@", 1)[1]
+
+
+def _is_slug(v: str) -> bool:
+    return bool(_SLUG_RE.match(v))
+
+
+def _is_github_login(v: str) -> bool:
+    return bool(_GH_LOGIN_RE.match(v))
+
+
+async def _resolve_github_subject(login: str) -> str:
+    """Look up `login` on GitHub and return the stable numeric id as a string.
+
+    Endpoint is overrideable via env so tests can point at a fake. Reads:
+    `YAAOS_OAUTH_GITHUB_USERINFO_URL` (defaults to https://api.github.com/users/{login}).
+    """
+    template = os.environ.get(
+        "YAAOS_OAUTH_GITHUB_USERINFO_LOOKUP_URL",
+        "https://api.github.com/users/{login}",
+    )
+    url = template.format(login=login)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers={"Accept": "application/vnd.github+json"})
+    if resp.status_code != 200:
+        raise RuntimeError(f"GitHub user lookup failed: {resp.status_code} {resp.text[:200]}")
+    payload = resp.json()
+    return str(payload["id"])
+
+
+async def _ensure_org(
+    s, *, slug: str, display_name: str, registered_iam_arn: str | None = None, aws_region: str | None = None
+):
+    existing = await orgs_repo.get_org_by_slug(s, slug)
+    if existing is not None:
+        return existing, False
+    row = await orgs_repo.insert_org(s, slug=slug, display_name=display_name)
+    # Non-prod only: seed the org's IAM ARN + region from env vars so the dev
+    # stack's mock-aws agent can exchange identity without visiting the UI.
+    if registered_iam_arn and aws_region:
+        from app.core.tenancy import update_org_fields  # noqa: PLC0415
+
+        await update_org_fields(s, row.org_id, registered_iam_arn=registered_iam_arn, aws_region=aws_region)
+    return row, True
+
+
+async def _ensure_user(s, *, email: str, display_name: str):
+    existing = await identity_repo.find_user_by_email(s, email)
+    if existing is not None:
+        return existing, False
+    user = await identity_repo.insert_user(s, display_name=display_name)
+    await identity_repo.add_email(s, user_id=user.id, email=email, is_primary=True, verified=True)
+    return user, True
+
+
+async def _ensure_oauth_identity(s, *, user_id, external_subject: str):
+    existing = await identity_repo.find_oauth_identity(
+        s, provider="github", external_subject=external_subject
+    )
+    if existing is not None:
+        if existing.user_id != user_id:
+            raise RuntimeError(f"GitHub identity {external_subject} is already linked to a different user")
+        return existing, False
+    row = await identity_repo.add_oauth_identity(
+        s,
+        user_id=user_id,
+        provider="github",
+        external_subject=external_subject,
+        verified=True,
+    )
+    return row, True
+
+
+async def _ensure_owner_membership(s, *, user_id, org_id, handle: str):
+    existing = await orgs_repo.get_membership(s, user_id=user_id, org_id=org_id)
+    if existing is not None:
+        return existing, False
+    row = await orgs_repo.insert_membership(s, user_id=user_id, org_id=org_id, role=Role.OWNER, handle=handle)
+    return row, True
+
+
+async def _emit_bootstrap_audit(
+    s, *, org_id, user_id, user_created: bool, org_created: bool, membership_created: bool
+) -> None:
+    """Emit a `bootstrap_owner_seeded` audit row capturing what the script
+    created. Idempotent re-runs that found everything already existing
+    don't emit (caller checks)."""
+
+    class _BootstrapPayload(BaseModel):
+        user_created: bool
+        org_created: bool
+        membership_created: bool
+
+    await audit(
+        "user",
+        user_id,
+        "bootstrap_owner_seeded",
+        _BootstrapPayload(
+            user_created=user_created,
+            org_created=org_created,
+            membership_created=membership_created,
+        ),
+        Actor(kind="system"),
+        org_id=org_id,
+        session=s,
+    )
+
+
+async def _run(stream: IO[str]) -> int:
+    email = _prompt(stream, "Email", _is_email).lower()
+    gh_login = _prompt(stream, "GitHub username", _is_github_login)
+    display_name = _prompt(stream, "Display name")
+    org_name = _prompt(stream, "Org name")
+    org_slug = _prompt(stream, "Org slug (a-z, 0-9, -)", _is_slug).lower()
+
+    external_subject = await _resolve_github_subject(gh_login)
+    handle = email.split("@", 1)[0][:64].lower()
+
+    # Non-prod: seed IAM ARN + region from env so the dev agent can exchange
+    # identity against mock-aws without manual settings-page configuration.
+    # These env vars are only honored when YAAOS_ENV != prod.
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    seed_arn: str | None = None
+    seed_region: str | None = None
+    if settings.is_non_prod:
+        seed_arn = os.environ.get("YAAOS_DEV_SEED_ARN")
+        seed_region = os.environ.get("YAAOS_DEV_SEED_REGION")
+
+    async with db_session() as s:
+        user, user_created = await _ensure_user(s, email=email, display_name=display_name)
+        _, identity_created = await _ensure_oauth_identity(
+            s, user_id=user.id, external_subject=external_subject
+        )
+        org, org_created = await _ensure_org(
+            s,
+            slug=org_slug,
+            display_name=org_name,
+            registered_iam_arn=seed_arn,
+            aws_region=seed_region,
+        )
+        _, membership_created = await _ensure_owner_membership(
+            s, user_id=user.id, org_id=org.org_id, handle=handle
+        )
+        if user_created or org_created or membership_created:
+            await _emit_bootstrap_audit(
+                s,
+                org_id=org.org_id,
+                user_id=user.id,
+                user_created=user_created,
+                org_created=org_created,
+                membership_created=membership_created,
+            )
+        await s.commit()
+
+    summary = (
+        f"user_id={user.id} user={'created' if user_created else 'exists'}; "
+        f"oauth_identity={'created' if identity_created else 'exists'}; "
+        f"org_id={org.org_id} org={'created' if org_created else 'exists'}; "
+        f"membership={'created' if membership_created else 'exists'}"
+    )
+    sys.stdout.write(summary + "\n")
+    return 0
+
+
+def main() -> int:
+    try:
+        return asyncio.run(_run(sys.stdin))
+    except KeyboardInterrupt:
+        sys.stderr.write("\nbootstrap: aborted\n")
+        return 130
+    except Exception as exc:
+        sys.stderr.write(f"bootstrap: {exc}\n")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

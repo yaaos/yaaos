@@ -1,16 +1,19 @@
-"""Periodic safeguard against `running` tickets that the reviewer never picked up.
+"""Periodic safeguard against `running` tickets whose workflow never started.
 
 A ticket lands in `running` the moment the github intake type inserts it.
-The reviewer then schedules a `reviews` row and drives the workflow forward.
+The engine then starts a `workflow_executions` row and drives the steps forward.
 When that hand-off silently fails (missing BYOK key, transient crash mid-
-dispatch, etc.) the ticket is stranded — no `reviews` row ever appears, so the
-workflow projection never moves status off `running`, and the Dashboard's
-"in flight" band counts it forever.
+dispatch, etc.) the ticket is stranded — no `workflow_executions` row ever
+leaves the non-terminal states, so the workflow projection never moves status
+off `running`, and the Dashboard's "in flight" band counts it forever.
 
 This sweep flips stranded rows to `failed` with `failure_reason=
-'orphaned_no_review_job'`. POC scope: small interval loop, no retries, no
-state-machine refinement. The grace window (`yaaos_ticket_orphan_grace_seconds`)
-keeps freshly-inserted rows safe while their reviewer dispatch is in-flight.
+'orphaned_no_review_job'`. The orphan signal is: no non-terminal
+`workflow_executions` row exists for the ticket. A ticket with an active
+execution (e.g. stalled at `ProvisionWorkspace`) is explicitly NOT an orphan —
+the agent may still come online and complete the review. The grace window
+(`yaaos_ticket_orphan_grace_seconds`) keeps freshly-inserted rows safe while
+their workflow dispatch is in-flight.
 """
 
 from __future__ import annotations
@@ -19,12 +22,11 @@ import asyncio
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.workflow import list_active_execution_ids
 from app.domain import tickets
-from app.domain.reviewer.models import ReviewRow
 
 log = structlog.get_logger("reviewer.orphan_sweep")
 
@@ -44,34 +46,15 @@ async def _sweep_once() -> int:
     if not candidates:
         return 0
 
-    # Partition: tickets with a pr_id need a ReviewRow check (intra-reviewer
-    # model — no module boundary violation). Tickets without a pr_id are
-    # always orphan candidates.
-    pr_ids_to_ticket: dict[UUID, tuple[UUID, UUID]] = {}
-    no_pr_candidates: list[tuple[UUID, UUID]] = []
-    for ticket_id, org_id, pr_id in candidates:
-        if pr_id is not None:
-            pr_ids_to_ticket[pr_id] = (ticket_id, org_id)
-        else:
-            no_pr_candidates.append((ticket_id, org_id))
-
-    # Find which pr_ids already have a ReviewRow (those are not orphans).
-    covered_pr_ids: set[UUID] = set()
-    if pr_ids_to_ticket:
-        async with db_session() as s:
-            covered_pr_ids = {
-                r[0]
-                for r in (
-                    await s.execute(
-                        select(ReviewRow.pr_id).where(ReviewRow.pr_id.in_(list(pr_ids_to_ticket)))
-                    )
-                ).all()
-            }
-
-    orphans: list[tuple[UUID, UUID]] = list(no_pr_candidates)
-    for pr_id, (ticket_id, org_id) in pr_ids_to_ticket.items():
-        if pr_id not in covered_pr_ids:
-            orphans.append((ticket_id, org_id))
+    # A candidate is an orphan iff it has no non-terminal workflow execution.
+    # A ticket stalled at an early step (e.g. ProvisionWorkspace) has a running
+    # execution and must not be swept — the agent may still complete it.
+    orphans: list[tuple[UUID, UUID]] = []
+    async with db_session() as s:
+        for ticket_id, org_id, _ in candidates:
+            active = await list_active_execution_ids(ticket_id, session=s)
+            if not active:
+                orphans.append((ticket_id, org_id))
 
     failed = 0
     for ticket_id, org_id in orphans:

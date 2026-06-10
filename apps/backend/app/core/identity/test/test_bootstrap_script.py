@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import httpx
@@ -28,7 +27,7 @@ def _spawn(stdin_text: str, env_extra: dict[str, str] | None = None) -> subproce
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        [sys.executable, str(_BIN)],
+        [str(_BIN)],
         input=stdin_text,
         capture_output=True,
         text=True,

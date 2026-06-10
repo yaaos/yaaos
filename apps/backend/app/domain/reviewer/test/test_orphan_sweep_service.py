@@ -1,7 +1,7 @@
-"""Orphan-sweep safeguard: `running` tickets with no review row → `failed`.
+"""Orphan-sweep safeguard: `running` tickets with no active workflow execution → `failed`.
 
 Verifies the audit row + status transition + grace window. Service-grade
-because the sweep crosses tickets + reviewer + audit modules.
+because the sweep crosses tickets + reviewer + audit + workflow modules.
 """
 
 from __future__ import annotations
@@ -42,6 +42,33 @@ async def _seed_running_ticket(db_session, org_id, *, ext: str, age_seconds: int
     return tid
 
 
+async def _seed_workflow_execution(  # type: ignore[no-untyped-def]
+    db_session,
+    ticket_id: uuid.UUID,
+    *,
+    state: str,
+    current_step_id: str | None = None,
+) -> uuid.UUID:
+    """Insert a workflow_executions row for the given ticket."""
+    wfx_id = uuid.uuid4()
+    await db_session.execute(
+        text(
+            "INSERT INTO workflow_executions "
+            "(id, ticket_id, workflow_name, workflow_version, state, current_step_id,"
+            " step_state, cancel_requested)"
+            " VALUES (:id, :ticket_id, 'pr_review_v1', 1, :state, :current_step_id,"
+            " '{}'::jsonb, false)"
+        ),
+        {
+            "id": wfx_id,
+            "ticket_id": ticket_id,
+            "state": state,
+            "current_step_id": current_step_id,
+        },
+    )
+    return wfx_id
+
+
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  # type: ignore[no-untyped-def]
@@ -71,35 +98,37 @@ async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_sweep_skips_ticket_with_existing_review(db_session) -> None:  # type: ignore[no-untyped-def]
-    """A `running` ticket whose PR already has a `reviews` row must not be touched."""
+async def test_sweep_skips_ticket_with_active_workflow_execution(db_session) -> None:  # type: ignore[no-untyped-def]
+    """A `running` ticket with a non-terminal workflow_executions row must not be touched."""
     user = await identity_repo.insert_user(db_session, display_name="J")
-    org = await orgs_repo.insert_org(db_session, slug="reviewed-org")
+    org = await orgs_repo.insert_org(db_session, slug="active-wfx-org")
     del user
     ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#9", age_seconds=600)
-    pr_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            "INSERT INTO pull_requests "
-            "(id, org_id, plugin_id, external_id, repo_external_id, ticket_id, number, title, body,"
-            " author_login, author_type, base_branch, head_branch, base_sha, head_sha, is_draft,"
-            " is_fork, state, html_url)"
-            " VALUES (:pr_id, :org_id, 'github', 'x/y#9', 'x/y', :tid, 9, 't', '', 'j', 'user',"
-            " 'main', 'feat', 'a', 'b', false, false, 'open', 'https://example/x/y/9')"
-        ),
-        {"pr_id": pr_id, "org_id": org.org_id, "tid": ticket_id},
-    )
-    await db_session.execute(
-        text("UPDATE tickets SET pr_id = :pr_id WHERE id = :tid"),
-        {"pr_id": pr_id, "tid": ticket_id},
-    )
-    review_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            "INSERT INTO reviews (id, org_id, pr_id, sequence_number, status)"
-            " VALUES (:id, :org_id, :pr_id, 1, 'queued')"
-        ),
-        {"id": review_id, "org_id": org.org_id, "pr_id": pr_id},
+    await _seed_workflow_execution(db_session, ticket_id, state="running")
+    await db_session.commit()
+
+    failed = await _sweep_once()
+    assert failed == 0
+
+    ticket = await get_ticket(ticket_id, org_id=org.org_id)
+    assert ticket.status == "running"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_sweep_skips_ticket_stalled_at_provision_workspace(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Regression: a ticket stalled at ProvisionWorkspace (no reviews row yet) must not be swept.
+
+    This is the exact production incident — workflow stuck at an early step, sweep fires,
+    falsely marks the ticket failed before the agent comes online.
+    """
+    user = await identity_repo.insert_user(db_session, display_name="J")
+    org = await orgs_repo.insert_org(db_session, slug="provision-stall-org")
+    del user
+    ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#10", age_seconds=600)
+    # Workflow is in flight but stalled at ProvisionWorkspace — no reviews row exists yet.
+    await _seed_workflow_execution(
+        db_session, ticket_id, state="running", current_step_id="provision_workspace"
     )
     await db_session.commit()
 
@@ -108,3 +137,26 @@ async def test_sweep_skips_ticket_with_existing_review(db_session) -> None:  # t
 
     ticket = await get_ticket(ticket_id, org_id=org.org_id)
     assert ticket.status == "running"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_sweep_flips_stale_running_ticket_with_only_terminal_workflow_to_failed(db_session) -> None:  # type: ignore[no-untyped-def]
+    """A ticket whose only workflow execution is terminal is still an orphan.
+
+    In production the workflow terminal hook should have already flipped the ticket,
+    but the sweep is a defense-in-depth backstop for that failure mode.
+    """
+    user = await identity_repo.insert_user(db_session, display_name="J")
+    org = await orgs_repo.insert_org(db_session, slug="terminal-wfx-org")
+    del user
+    ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#11", age_seconds=600)
+    # Only a terminal (failed) execution — the "non-terminal" guard must not fire.
+    await _seed_workflow_execution(db_session, ticket_id, state="failed")
+    await db_session.commit()
+
+    failed = await _sweep_once()
+    assert failed == 1
+
+    ticket = await get_ticket(ticket_id, org_id=org.org_id)
+    assert ticket.status == "failed"
