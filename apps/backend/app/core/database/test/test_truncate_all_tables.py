@@ -43,6 +43,10 @@ async def test_truncate_all_tables_raises_in_prod(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "production")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://x/y")
     monkeypatch.setenv("YAAOS_ENCRYPTION_KEY", "VHJ5SW5nTm90VG9CcmVha1lvdXJTZWNyZXRzS2V5MTIzPQ==")
+    # conftest sets YAAOS_CODING_AGENT_STUB=1 suite-wide; clear it so constructing
+    # prod Settings doesn't trip the stub-forbidden validator before we reach the
+    # truncate-in-prod guard under test.
+    monkeypatch.delenv("YAAOS_CODING_AGENT_STUB", raising=False)
     from app.core.config import get_settings  # noqa: PLC0415
 
     get_settings.cache_clear()

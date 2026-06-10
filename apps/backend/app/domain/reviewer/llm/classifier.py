@@ -87,10 +87,11 @@ async def classify_reply(input: ClassifyReplyInput) -> ClassifyReplyOutput:
     """
     # Stub mode for the e2e docker stack: no LLM key + no on-disk cache.
     # `YAAOS_REVIEWER_CLASSIFIER_STUB=1` opt-in keeps pytest runs (which
-    # use the `LLMTestCache`) on the real PromptRunnable path.
-    import os  # noqa: PLC0415
+    # use the `LLMTestCache`) on the real PromptRunnable path. Settings forbids
+    # the flag in production, so the stub path is unreachable in prod.
+    from app.core.config import get_settings  # noqa: PLC0415
 
-    if os.environ.get("YAAOS_REVIEWER_CLASSIFIER_STUB", "").lower() in {"1", "true", "yes"}:
+    if get_settings().yaaos_reviewer_classifier_stub:
         return _stub_classify(input)
     r = PromptRunnable(load_prompt(_PROMPT_PATH), ClassifyReplyOutput)
     return await r.ainvoke(

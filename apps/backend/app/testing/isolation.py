@@ -91,12 +91,11 @@ def _canonical_registries():
     is set, and returns snapshots via .copy(). Never calls bootstrap() again —
     the import handles it.
     """
-    import os  # noqa: PLC0415
-
     import app.plugins.claude_code  # noqa: PLC0415
     import app.plugins.github  # noqa: F401, PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
 
-    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+    if get_settings().yaaos_coding_agent_stub:
         from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415
         from app.testing.stub_workspace import wrap_all_registered_workspace_providers  # noqa: PLC0415
 

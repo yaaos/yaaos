@@ -9,7 +9,6 @@ See `apps/backend/docs/core_tasks.md` for the architecture.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 
 
@@ -54,8 +53,12 @@ def main() -> int:
 
     import app.plugins.claude_code  # noqa: PLC0415
     import app.plugins.github  # noqa: F401, PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
 
-    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+    # Settings refuses to boot if this flag is set in production, so this branch
+    # is unreachable in prod (and the testing-layer imports below fail loud in a
+    # stripped prod wheel regardless).
+    if get_settings().yaaos_coding_agent_stub:
         from app.testing.stub_coding_agent import wrap_all_registered_plugins  # noqa: PLC0415
         from app.testing.stub_workspace import wrap_all_registered_workspace_providers  # noqa: PLC0415
 

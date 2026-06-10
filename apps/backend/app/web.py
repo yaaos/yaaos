@@ -113,10 +113,10 @@ if get_settings().is_test:
 #    plugins (`core < domain < plugins < testing`) — nothing in production code
 #    depends on it. If the testing layer has been stripped from the deployment
 #    (per the wheel exclude in pyproject.toml), this import fails loud — stub
-#    mode cannot be silently enabled in a stripped production artifact.
-import os  # noqa: E402
-
-if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+#    mode cannot be silently enabled in a stripped production artifact. Settings
+#    also refuses to boot if the flag is set in production, so this branch is
+#    unreachable in prod regardless of whether the testing tree is present.
+if get_settings().yaaos_coding_agent_stub:
     from app.testing.stub_coding_agent import wrap_all_registered_plugins
     from app.testing.stub_workspace import wrap_all_registered_workspace_providers
 

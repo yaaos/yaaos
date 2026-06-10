@@ -189,6 +189,13 @@ class Settings(BaseSettings):
     # below); dev/test compose set it.
     yaaos_sts_host_override: str | None = None
 
+    # Non-prod-only stub switches. Each swaps a real dependency for a no-op /
+    # heuristic stub used by the e2e stack and pytest. Both forbidden in
+    # production by the model validator below — a prod deployment that stubbed
+    # either would silently fake reviews. Safe default is False.
+    yaaos_coding_agent_stub: bool = False  # stubs the coding-agent + workspace providers
+    yaaos_reviewer_classifier_stub: bool = False  # stubs the reviewer reply classifier
+
     # Service version string exposed in /api/health and OTel resource attrs.
     # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
     # safe sentinel so local/dev boots don't require the env var.
@@ -205,16 +212,27 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = False
 
     @model_validator(mode="after")
-    def _forbid_sts_host_override_in_prod(self) -> Self:
-        """A production deployment must never replay agent identity against a
-        mock STS. Refuse to construct Settings (i.e. refuse to boot) when
-        `app_mode=production` and the override is set, rather than relying on
-        the consumer to notice. Empty/unset is the safe prod state."""
-        if self.is_production and self.yaaos_sts_host_override:
+    def _forbid_non_prod_only_settings_in_prod(self) -> Self:
+        """Knobs that enable mock/stub behavior must never be set in production.
+
+        Refuse to construct Settings (i.e. refuse to boot, loudly, with a
+        `ValidationError`) when `app_mode=production` and any is set, rather
+        than relying on each consumer to notice. Each is safe-by-default
+        (unset / False). Collects all offenders into one message."""
+        if not self.is_production:
+            return self
+        forbidden: list[str] = []
+        if self.yaaos_sts_host_override:
+            forbidden.append("YAAOS_STS_HOST_OVERRIDE")
+        if self.yaaos_coding_agent_stub:
+            forbidden.append("YAAOS_CODING_AGENT_STUB")
+        if self.yaaos_reviewer_classifier_stub:
+            forbidden.append("YAAOS_REVIEWER_CLASSIFIER_STUB")
+        if forbidden:
             raise ValueError(
-                "YAAOS_STS_HOST_OVERRIDE is set but APP_MODE=production. "
-                "A production deployment must never use a mock STS host. "
-                "Unset the override or change APP_MODE."
+                f"{', '.join(forbidden)} set but APP_MODE=production. These enable "
+                "mock/stub behavior and must never run in production. Unset them or "
+                "change APP_MODE."
             )
         return self
 

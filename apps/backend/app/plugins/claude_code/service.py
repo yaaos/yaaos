@@ -11,7 +11,6 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -39,6 +38,7 @@ from app.core.coding_agent import (
 from app.core.coding_agent import (
     FindingDraftList as _FindingDraftList,
 )
+from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
@@ -603,7 +603,7 @@ async def _probe_anthropic_auth(api_key: SecretStr) -> tuple[bool, str]:
     key as authenticating cleanly so onboarding and `/api/claude_code/health`
     behave consistently with the rest of the stubbed pipeline.
     """
-    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+    if get_settings().yaaos_coding_agent_stub:
         return (True, "ok (stub)")
     raw_key = api_key.get_secret_value()
     fp = _key_fingerprint(raw_key)
