@@ -23,35 +23,32 @@ invocations fail loudly.
 from __future__ import annotations
 
 import asyncio
+
+# ---------------------------------------------------------------------------
+# Discover and import every `app/**/models.py` so Base.metadata is fully
+# populated before autogenerate runs. Filesystem is the source of truth —
+# adding a new module's models.py is auto-detected, no env.py edit needed.
+# Any models.py that fails to import crashes env.py loudly; that's the
+# intended signal.
+# ---------------------------------------------------------------------------
+import importlib
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# ---------------------------------------------------------------------------
-# Import every model module so Base.metadata is fully populated.
-# This list MUST stay in sync with the find apps/backend/app -name models.py
-# sweep; autogenerate reflects only tables registered on Base.
-# ---------------------------------------------------------------------------
-import app.core.agent_gateway.models
-import app.core.audit_log.models
-import app.core.byok.models
-import app.core.coding_agent.models
-import app.core.identity.models
-import app.core.notifications.models
-import app.core.tasks.models
-import app.core.tenancy.models
-import app.core.workflow.models
-import app.core.workspace.models
-import app.domain.integrations.models
-import app.domain.lessons.models
-import app.domain.mcp_proxy.models
-import app.domain.orgs.models
-import app.domain.reviewer.models
-import app.domain.tickets.models
-import app.plugins.claude_code.models
-import app.plugins.github.models  # noqa: F401
 from alembic import context
-from app.core.database.service import Base
+from app.core.database import Base
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent  # apps/backend/
+_APP_ROOT = _BACKEND_ROOT / "app"
+for _models_path in sorted(_APP_ROOT.rglob("models.py")):
+    # Skip test fixtures and bytecode caches (none today, but defensive).
+    if any(part in {"test", "__pycache__"} for part in _models_path.parts):
+        continue
+    _rel = _models_path.relative_to(_BACKEND_ROOT).with_suffix("")
+    _module = ".".join(_rel.parts)
+    importlib.import_module(_module)
 
 config = context.config
 if config.config_file_name is not None:
