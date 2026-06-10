@@ -11,10 +11,10 @@ variables for the canonical list.
 """
 
 from functools import cache
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, computed_field
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -182,6 +182,13 @@ class Settings(BaseSettings):
     # dev/test/e2e are unaffected.
     yaaos_cloudflare_ingress_secret: SecretStr = SecretStr("")
 
+    # Non-prod-only STS host allowlist override (e.g. `mock-aws:4566`) for the
+    # agent identity-exchange replay path. `core/agent_gateway/sts_verifier`
+    # compiles it into a secondary host regex. Forbidden in production — a prod
+    # deployment must never replay against a mock STS (see the model validator
+    # below); dev/test compose set it.
+    yaaos_sts_host_override: str | None = None
+
     # Service version string exposed in /api/health and OTel resource attrs.
     # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
     # safe sentinel so local/dev boots don't require the env var.
@@ -196,6 +203,20 @@ class Settings(BaseSettings):
     smtp_password: SecretStr = SecretStr("")
     smtp_from: str = "yaaos@localhost"
     smtp_use_tls: bool = False
+
+    @model_validator(mode="after")
+    def _forbid_sts_host_override_in_prod(self) -> Self:
+        """A production deployment must never replay agent identity against a
+        mock STS. Refuse to construct Settings (i.e. refuse to boot) when
+        `app_mode=production` and the override is set, rather than relying on
+        the consumer to notice. Empty/unset is the safe prod state."""
+        if self.is_production and self.yaaos_sts_host_override:
+            raise ValueError(
+                "YAAOS_STS_HOST_OVERRIDE is set but APP_MODE=production. "
+                "A production deployment must never use a mock STS host. "
+                "Unset the override or change APP_MODE."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

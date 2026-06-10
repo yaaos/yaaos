@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.config.service import get_settings
 
@@ -161,3 +162,35 @@ def test_environment_production_with_app_mode_production(monkeypatch: pytest.Mon
     s = get_settings()
     assert s.app_mode == "production"
     assert s.environment == "production"
+
+
+# ── STS host override forbidden in production ────────────────────────────────
+
+
+def test_sts_host_override_in_production_refuses_to_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """APP_MODE=production + YAAOS_STS_HOST_OVERRIDE set → Settings refuses to construct.
+
+    A prod deployment must never replay agent identity against a mock STS.
+    """
+    monkeypatch.setenv("APP_MODE", "production")
+    monkeypatch.setenv("YAAOS_STS_HOST_OVERRIDE", "mock-aws:4566")
+    get_settings.cache_clear()
+    with pytest.raises(ValidationError, match="YAAOS_STS_HOST_OVERRIDE"):
+        get_settings()
+
+
+def test_sts_host_override_allowed_in_non_prod(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+    monkeypatch.setenv("YAAOS_STS_HOST_OVERRIDE", "mock-aws:4566")
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.yaaos_sts_host_override == "mock-aws:4566"
+
+
+def test_production_without_sts_host_override_boots(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_MODE", "production")
+    monkeypatch.delenv("YAAOS_STS_HOST_OVERRIDE", raising=False)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.is_production is True
+    assert s.yaaos_sts_host_override is None

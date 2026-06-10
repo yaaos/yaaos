@@ -43,7 +43,6 @@ The verifier:
 from __future__ import annotations
 
 import json
-import os
 import re
 import ssl
 import time
@@ -64,28 +63,16 @@ log = structlog.get_logger("core.agent_gateway.sts_verifier")
 # entirely-unknown hosts so a parse error catches them before replay.
 _STS_HOST_RE = re.compile(r"^sts(?:\.(?P<region>[a-z0-9-]+))?\.amazonaws\.com$")
 
-# Non-prod only: allow an additional STS host via env var. Used in dev/test
-# to point at the local mock-aws container. The env var is read exactly once
-# at module import; the result is compiled into a secondary regex that the
-# parser tries only when app_mode is non-production.
-#
-# Startup assertion: if app_mode=production but this override is also set, the
-# process must refuse to boot — a prod deployment should never talk to a mock.
-_STS_HOST_OVERRIDE_ENV = "YAAOS_STS_HOST_OVERRIDE"
-
-# Read from os.environ directly — this is a container-layer override, not a
-# pydantic-settings field. get_settings().is_production provides the mode check.
-_sts_override_host: str | None = os.environ.get(_STS_HOST_OVERRIDE_ENV)
-
-if _sts_override_host and get_settings().is_production:
-    raise RuntimeError(
-        f"{_STS_HOST_OVERRIDE_ENV} is set but APP_MODE=production. "
-        "A production deployment must never use a mock STS host. "
-        "Unset the override or change APP_MODE."
-    )
+# Non-prod only: allow an additional STS host (e.g. the local mock-aws
+# container). Sourced from `Settings.yaaos_sts_host_override`, read once at
+# module import and compiled into a secondary regex the parser tries only when
+# the override is present. `Settings` validates that the override is unset in
+# production (the model validator refuses to boot otherwise), so by the time
+# we read it here a non-empty value guarantees a non-production deployment.
+_sts_override_host: str | None = get_settings().yaaos_sts_host_override
 
 _STS_OVERRIDE_RE: re.Pattern[str] | None = None
-if _sts_override_host and not get_settings().is_production:
+if _sts_override_host:
     # Escape the host to prevent regex injection, then allow an optional port.
     _escaped = re.escape(_sts_override_host)
     _STS_OVERRIDE_RE = re.compile(rf"^{_escaped}(?::\d+)?$")

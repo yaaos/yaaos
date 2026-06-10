@@ -34,6 +34,8 @@
 
 **`YAAOS_CLOUDFLARE_INGRESS_SECRET`** — shared secret injected by a Cloudflare Transform Rule into the `X-Yaaos-cf-Ingress` header on every proxied request. `CloudflareIngressMiddleware` reads this at request time (not boot time) and rejects mismatches with 403. Empty default = no-op so dev/test/e2e are unaffected; in `production` `_check_required_prod_secrets` refuses to boot if unset, so the no-op branch is unreachable in prod. Set as a Fly secret in production.
 
+**`YAAOS_STS_HOST_OVERRIDE`** — optional `str | None` (field `yaaos_sts_host_override`) allowlisting an extra STS host (e.g. `mock-aws:4566`) for the agent identity-exchange replay path; `core/agent_gateway/sts_verifier` compiles it into a secondary host regex. A `model_validator(mode="after")` on `Settings` **refuses to construct** (crashes boot with a `ValidationError`) when `app_mode == "production"` and the override is set — a prod deployment must never replay against a mock STS. Unset is the safe prod state; dev/test compose set it.
+
 **`SERVICE_VERSION`** — `service_version: str = "0.0.0-dev"`. Version string embedded in the OTel resource (`service.version`) and served at `/api/health`. Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a safe sentinel for local/dev boots.
 
 **OTLP auth headers — no Settings field.** `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Bearer <token>,Dash0-Dataset=<name>`) is set as a Fly secret and read by the OTel SDK directly at exporter construction time. Nothing in our code parses it. Exporter wiring is gated on `otel_exporter_otlp_endpoint` being set; the SDK then reads the standard OTLP env vars.
