@@ -23,7 +23,7 @@ async def run_invitation_sweep_loop() -> None:
         try:
             purged = await delete_expired_invitations()
             if purged:
-                log.info("orgs.invitations.swept", purged=purged)
+                log.debug("orgs.invitations.swept", purged=purged)
         except Exception:
             log.exception("orgs.invitations.sweep.failed")
         await asyncio.sleep(interval)

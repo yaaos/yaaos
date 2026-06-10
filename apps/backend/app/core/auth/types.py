@@ -6,12 +6,12 @@ Every `/api/*` route falls into one of three security categories:
   check, OAuth callbacks, bearer-authed bridges.
 * `RouteSecurity.USER_SCOPED` — session required, but no org. Account
   profile, notifications, "which orgs am I in?".
-* `RouteSecurity.ORG_SCOPED` — session **and** a valid `X-Org-Slug` header
+* `RouteSecurity.ORG_SCOPED` — session **and** a valid `X-Yaaos-Org-Slug` header
   resolving to a membership with sufficient role. Everything that operates
   on a single org's data.
 
 `classify_route(path, method)` performs the lookup. Middleware uses the
-result to decide whether to enforce the `X-Org-Slug` header (only
+result to decide whether to enforce the `X-Yaaos-Org-Slug` header (only
 `ORG_SCOPED` requires it). The route's `Depends(...)` chain handles
 session lookup + role checks.
 
@@ -96,17 +96,17 @@ class RouteSecurity(StrEnum):
 
 PUBLIC_PREFIXES: tuple[str, ...] = (
     # `/api/sso/{slug}/...` carries the org slug in the path, not the
-    # `X-Org-Slug` header. Handlers resolve the slug themselves.
+    # `X-Yaaos-Org-Slug` header. Handlers resolve the slug themselves.
     "/api/sso/",
     # The MCP proxy authenticates via the per-review bearer token, not the
-    # session cookie. The yaaos coding-agent CLI doesn't carry `X-Org-Slug`;
+    # session cookie. The yaaos coding-agent CLI doesn't carry `X-Yaaos-Org-Slug`;
     # the path encodes `review_id` and the proxy resolves `org_id` from the
     # review row.
     "/api/mcp/",
     # WorkspaceAgent wire protocol — bearer-authed, not session-authed.
     # `/identity/exchange` is explicitly public (no bearer yet); the other
     # five endpoints use `_bearer_dep` for their own auth check. The
-    # session middleware must not gate on `X-Org-Slug` or the CSRF token
+    # session middleware must not gate on `X-Yaaos-Org-Slug` or the CSRF token
     # for these routes, and the post-response guard must not fire.
     "/api/v1/",
 )
@@ -135,7 +135,7 @@ PUBLIC_EXACT: frozenset[str] = frozenset(
 PUBLIC_PREFIX_VARIABLE: tuple[str, ...] = (
     "/api/auth/callback/",
     # OAuth callback URLs under /api/mcp-proxy/{provider}/callback. The
-    # upstream provider doesn't know about our X-Org-Slug header; the signed
+    # upstream provider doesn't know about our X-Yaaos-Org-Slug header; the signed
     # `state` carries the org_id.
     # (Matched via the dedicated suffix check below.)
 )
@@ -156,7 +156,7 @@ USER_SCOPED_PREFIXES: tuple[str, ...] = (
 USER_SCOPED_EXACT: frozenset[str] = frozenset(
     {
         # Current-user lookup. SPA hits this before the org is known; on
-        # success the SPA picks an org and sets X-Org-Slug on later calls.
+        # success the SPA picks an org and sets X-Yaaos-Org-Slug on later calls.
         "/api/auth/me",
         # User-scoped (cross-org) listing of the user's memberships.
         "/api/orgs/mine",
@@ -174,7 +174,7 @@ USER_SCOPED_METHOD_EXACT: frozenset[tuple[str, str]] = frozenset(
 
 
 # ---------------------------------------------------------------------------
-# Category 3 — ORG_SCOPED: session + X-Org-Slug + role check.
+# Category 3 — ORG_SCOPED: session + X-Yaaos-Org-Slug + role check.
 # ---------------------------------------------------------------------------
 
 ORG_SCOPED_PREFIXES: tuple[str, ...] = (
@@ -233,7 +233,7 @@ def classify_route(path: str, method: str | None = None) -> RouteSecurity | None
     if any(path.startswith(p) for p in PUBLIC_PREFIX_VARIABLE):
         return RouteSecurity.PUBLIC
     # `/api/mcp-proxy/{provider}/callback` — OAuth redirect target; bypass
-    # X-Org-Slug. Only the `/callback` suffix is public; `/connect`,
+    # X-Yaaos-Org-Slug. Only the `/callback` suffix is public; `/connect`,
     # `/validate`, etc. stay ORG_SCOPED.
     if path.startswith("/api/mcp-proxy/") and path.endswith("/callback"):
         return RouteSecurity.PUBLIC
@@ -252,7 +252,7 @@ def is_org_scoped_path(path: str, method: str | None = None) -> bool:
 
 # SSE streams are consumed by the browser `EventSource` API, which cannot set
 # request headers. For these routes only, the org slug may ride in the `org`
-# query parameter as an alternative to the `X-Org-Slug` header. The resolved
+# query parameter as an alternative to the `X-Yaaos-Org-Slug` header. The resolved
 # slug still flows through the same membership check, so authorization is
 # identical to the header path.
 SSE_PATH_PREFIX = "/api/sse/"
@@ -260,5 +260,5 @@ SSE_PATH_PREFIX = "/api/sse/"
 
 def org_slug_in_query_allowed(path: str) -> bool:
     """True iff `path` may carry its org slug in the `org` query parameter
-    (instead of the `X-Org-Slug` header). SSE stream routes only."""
+    (instead of the `X-Yaaos-Org-Slug` header). SSE stream routes only."""
     return path.startswith(SSE_PATH_PREFIX)

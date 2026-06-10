@@ -128,7 +128,7 @@ async def test_unknown_slug_returns_404(seeded) -> None:
         resp = await c.get(
             "/api/memberships/ok",
             cookies={"yaaos_session": seeded["owner_token"]},
-            headers={"X-Org-Slug": "no-such-org"},
+            headers={"X-Yaaos-Org-Slug": "no-such-org"},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"]["error"] == "org_not_found"
@@ -139,7 +139,7 @@ async def test_no_session_returns_401(seeded) -> None:
     async with _client(_make_app()) as c:
         resp = await c.get(
             "/api/memberships/ok",
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 401
 
@@ -150,7 +150,7 @@ async def test_wrong_role_returns_403(seeded) -> None:
         resp = await c.delete(
             "/api/memberships/admin-only",
             cookies={"yaaos_session": seeded["member_token"], "yaaos_csrf": "t"},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": "t"},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": "t"},
         )
     assert resp.status_code == 403
     assert resp.json()["detail"]["error"] == "insufficient_role"
@@ -162,7 +162,7 @@ async def test_membership_success_returns_200(seeded) -> None:
         resp = await c.get(
             "/api/memberships/ok",
             cookies={"yaaos_session": seeded["owner_token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 200
     assert resp.json() == {"ok": "yes"}
@@ -174,7 +174,7 @@ async def test_route_without_security_dep_returns_500(seeded) -> None:
         resp = await c.get(
             "/api/memberships/no-dep",
             cookies={"yaaos_session": seeded["owner_token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 500
     assert resp.json()["error"] == "route_missing_security_declaration"
@@ -218,7 +218,7 @@ async def test_csrf_mismatch_on_mutating_request_returns_403(seeded) -> None:
                 "yaaos_csrf": "value-a",
             },
             headers={
-                "X-Org-Slug": seeded["org"].slug,
+                "X-Yaaos-Org-Slug": seeded["org"].slug,
                 "X-CSRF-Token": "value-b",
             },
         )
@@ -236,7 +236,7 @@ async def test_csrf_match_on_mutating_request_passes(seeded) -> None:
                 "yaaos_csrf": "same-token",
             },
             headers={
-                "X-Org-Slug": seeded["org"].slug,
+                "X-Yaaos-Org-Slug": seeded["org"].slug,
                 "X-CSRF-Token": "same-token",
             },
         )
@@ -250,7 +250,7 @@ async def test_csrf_skipped_on_safe_method(seeded) -> None:
         resp = await c.get(
             "/api/memberships/ok",
             cookies={"yaaos_session": seeded["owner_token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 200
 
@@ -275,7 +275,7 @@ async def test_role_check_does_not_leak_membership_existence(db_session, seeded)
         resp = await c.get(
             "/api/memberships/ok",
             cookies={"yaaos_session": raw},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"]["error"] == "org_not_found"

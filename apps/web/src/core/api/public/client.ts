@@ -88,15 +88,15 @@ function _readCookie(name: string): string | null {
 // Lightweight typed fetch for our hand-written endpoints (the openapi-fetch client
 // only carries types for the small set above).
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  // Inject X-Org-Slug from the current route unless the caller already set one.
+  // Inject X-Yaaos-Org-Slug from the current route unless the caller already set one.
   const slug = getCurrentOrgSlug();
   const callerHeaders = (init?.headers as Record<string, string>) ?? {};
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...callerHeaders,
   };
-  if (slug && !("X-Org-Slug" in callerHeaders) && !("x-org-slug" in callerHeaders)) {
-    headers["X-Org-Slug"] = slug;
+  if (slug && !("X-Yaaos-Org-Slug" in callerHeaders) && !("x-yaaos-org-slug" in callerHeaders)) {
+    headers["X-Yaaos-Org-Slug"] = slug;
   }
   // Double-submit CSRF: every mutating request echoes the `yaaos_csrf` cookie
   // in the `X-CSRF-Token` header. Safe methods don't need it.

@@ -11,10 +11,10 @@ variables for the canonical list.
 """
 
 from functools import cache
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, computed_field
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,7 +46,16 @@ class Settings(BaseSettings):
     )
 
     # Optional
-    yaaos_env: Literal["dev", "test", "prod"] = "prod"
+    app_mode: Literal["dev", "test", "production"] = "production"
+    # Deployment tier for telemetry (OTel deployment.environment.name).
+    # Required, free-form — fail-fast at boot if unset so a new deploy that
+    # forgets the env var doesn't silently tag telemetry with a default tier.
+    # Independent of app_mode — a staging deploy runs app_mode=production
+    # (prod-like behavior) but environment=staging (distinct telemetry tag).
+    environment: str = Field(
+        ...,
+        description="Deployment tier tag for telemetry. Free-form: 'local', 'development', 'staging', 'production', or any new tier name.",
+    )
     yaaos_port: int = 8080
 
     # SQLAlchemy QueuePool sizing for the prod-path engine. NullPool is used
@@ -57,6 +66,7 @@ class Settings(BaseSettings):
     # thumb: db_pool_size >= worker_concurrency + 2 (drain + headroom).
     db_pool_size: int = 10
     db_max_overflow: int = 5
+    yaaos_worker_health_port: int = 8081
     yaaos_cors_origins: str | None = None  # comma-separated; only honored in non-dev
     otel_exporter_otlp_endpoint: str | None = None
     # OTel `service.name` per role. App + worker deploy as separate processes
@@ -171,6 +181,36 @@ class Settings(BaseSettings):
     notion_mcp_url: str = "https://mcp.notion.com/mcp"
     notion_api_base_url: str = "https://api.notion.com"
 
+    # Cloudflare-only ingress gate. When non-empty, the backend rejects any
+    # request that does not carry the matching `X-Yaaos-cf-Ingress` header
+    # (injected by a Cloudflare Transform Rule). Empty default = no-op so
+    # dev/test/e2e are unaffected.
+    yaaos_cloudflare_ingress_secret: SecretStr = SecretStr("")
+
+    # Content-Security-Policy mode. `report-only` is the safe default —
+    # CSP violations log in browser DevTools but don't block resources.
+    # Promote to `enforce` once the report-only deploy has run clean.
+    yaaos_csp_mode: Literal["report-only", "enforce"] = "report-only"
+
+    # Non-prod-only STS host allowlist override (e.g. `mock-aws:4566`) for the
+    # agent identity-exchange replay path. `core/agent_gateway/sts_verifier`
+    # compiles it into a secondary host regex. Forbidden in production — a prod
+    # deployment must never replay against a mock STS (see the model validator
+    # below); dev/test compose set it.
+    yaaos_sts_host_override: str | None = None
+
+    # Non-prod-only stub switches. Each swaps a real dependency for a no-op /
+    # heuristic stub used by the e2e stack and pytest. Both forbidden in
+    # production by the model validator below — a prod deployment that stubbed
+    # either would silently fake reviews. Safe default is False.
+    yaaos_coding_agent_stub: bool = False  # stubs the coding-agent + workspace providers
+    yaaos_reviewer_classifier_stub: bool = False  # stubs the reviewer reply classifier
+
+    # Service version string exposed in /api/health and OTel resource attrs.
+    # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
+    # safe sentinel so local/dev boots don't require the env var.
+    service_version: str = "0.0.0-dev"
+
     # Invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: SecretStr = SecretStr("dev-only-invitation-secret")
     yaaos_invitation_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days
@@ -181,11 +221,51 @@ class Settings(BaseSettings):
     smtp_from: str = "yaaos@localhost"
     smtp_use_tls: bool = False
 
+    @model_validator(mode="after")
+    def _forbid_non_prod_only_settings_in_prod(self) -> Self:
+        """Knobs that enable mock/stub behavior must never be set in production.
+
+        Refuse to construct Settings (i.e. refuse to boot, loudly, with a
+        `ValidationError`) when `app_mode=production` and any is set, rather
+        than relying on each consumer to notice. Each is safe-by-default
+        (unset / False). Collects all offenders into one message."""
+        if not self.is_production:
+            return self
+        forbidden: list[str] = []
+        if self.yaaos_sts_host_override:
+            forbidden.append("YAAOS_STS_HOST_OVERRIDE")
+        if self.yaaos_coding_agent_stub:
+            forbidden.append("YAAOS_CODING_AGENT_STUB")
+        if self.yaaos_reviewer_classifier_stub:
+            forbidden.append("YAAOS_REVIEWER_CLASSIFIER_STUB")
+        if forbidden:
+            raise ValueError(
+                f"{', '.join(forbidden)} set but APP_MODE=production. These enable "
+                "mock/stub behavior and must never run in production. Unset them or "
+                "change APP_MODE."
+            )
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        """True when `app_mode` is `production`."""
+        return self.app_mode == "production"
+
+    @property
+    def is_dev(self) -> bool:
+        """True when `app_mode` is `dev`."""
+        return self.app_mode == "dev"
+
+    @property
+    def is_test(self) -> bool:
+        """True when `app_mode` is `test`."""
+        return self.app_mode == "test"
+
     @property
     def is_non_prod(self) -> bool:
-        """True when `yaaos_env` is `dev` or `test`. Use for affordances that
+        """True when `app_mode` is `dev` or `test`. Use for affordances that
         should be permissive in both (NullPool, no-Secure cookies, etc.)."""
-        return self.yaaos_env != "prod"
+        return self.app_mode != "production"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

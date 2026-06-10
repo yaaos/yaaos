@@ -137,15 +137,34 @@ async def _taskiq_dispatcher_for(broker: AsyncBroker) -> Dispatcher:
     return dispatch
 
 
-async def drain_loop(broker: AsyncBroker, *, poll_idle_seconds: float = 0.1) -> None:
+async def drain_loop(
+    broker: AsyncBroker,
+    *,
+    stop: asyncio.Event | None = None,
+    poll_idle_seconds: float = 0.1,
+    session_factory: Callable[[], Any] | None = None,
+    drain_fn: Callable[..., Awaitable[int]] | None = None,
+) -> None:
     """Long-running coroutine: poll undispatched outbox rows and ship
     them to the broker. Sleeps `poll_idle_seconds` between empty polls;
-    immediately re-polls when a batch had work."""
+    immediately re-polls when a batch had work.
+
+    Pass `stop` to request a clean exit between batches.  When `stop` is
+    set the loop drains the current in-progress batch (if any) and returns
+    normally — no `CancelledError` is raised.  On SIGTERM the worker sets
+    `stop` BEFORE setting the Receiver's `finish_event` so no new tasks
+    are pushed to the broker while in-flight bodies are draining.
+
+    `session_factory` and `drain_fn` are test-injection seams defaulting to the
+    module-level `session` / `drain_once`; production passes neither.
+    """
+    open_session = session_factory if session_factory is not None else session
+    run_drain = drain_fn if drain_fn is not None else drain_once
     dispatcher = await _taskiq_dispatcher_for(broker)
-    while True:
+    while stop is None or not stop.is_set():
         try:
-            async with session() as s:
-                n = await drain_once(s, dispatcher=dispatcher)
+            async with open_session() as s:
+                n = await run_drain(s, dispatcher=dispatcher)
                 await s.commit()
         except Exception:
             log.exception("tasks.drain.loop_crashed")

@@ -10,7 +10,7 @@ Invitations are the sole access gate for new members — no self-signup. SAML SS
 
 ## Entities
 
-- **Org** — UUID PK + immutable unique `slug` (used in `X-Org-Slug` header). Soft-deleted via `archived_at`. Row owned by [`core/tenancy`](core_tenancy.md).
+- **Org** — UUID PK + immutable unique `slug` (used in `X-Yaaos-Org-Slug` header). Soft-deleted via `archived_at`. Row owned by [`core/tenancy`](core_tenancy.md).
 - **Membership** — composite PK `(user_id, org_id)`. Per-membership `@handle` (a user can have different handles per org); one of three roles. Removal deletes the row (presence = active). Row owned by [`core/tenancy`](core_tenancy.md).
 - **Invitation** — stores `sha256(raw_token)`, never the raw value. Single-use: `accepted_at` clamps the row.
 - **SsoConfig** — at most one per org. Holds IdP metadata XML, JIT toggle, exempt-Owner pointer, SP private key (encrypted via [core/secrets](core_secrets.md)).
@@ -41,7 +41,7 @@ Both audit with `from_role` + `to_role` payload.
 
 ## VCS + coding agents
 
-- One VCS plugin per org. State on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). GitHub install handshake is via `POST /api/github/install/start` (separate endpoint so `X-Org-Slug` + CSRF are available); `set_vcs` records the choice on first-bind. Switching is two-step: clear then set.
+- One VCS plugin per org. State on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). GitHub install handshake is via `POST /api/github/install/start` (separate endpoint so `X-Yaaos-Org-Slug` + CSRF are available); `set_vcs` records the choice on first-bind. Switching is two-step: clear then set.
 - `clear_vcs` calls every hook registered via `register_vcs_clear_hook` (see `vcs.py`) before clearing the org row. VCS plugins (e.g. `plugins/github`) register a hook at boot to delete their per-org install rows — no direct model import needed in `domain/orgs`.
 - Many coding-agent plugins per org via `org_coding_agents(org_id, plugin_id)` with `settings jsonb`. All mutations audit.
 

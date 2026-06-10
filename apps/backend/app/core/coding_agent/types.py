@@ -1,13 +1,14 @@
 """Types + Protocol for the coding-agent abstraction.
 
-The Protocol exposes five in-process task modes plus five remote-dispatch
-methods: `build_review_invocation`, `parse_review_output`,
-`review_preflight_steps`, `parse_usage`, `render_activity`. Together they
-define the full plugin capability surface; the shipped remote review path
-exercises the build/parse/render/preflight subset, while the in-process
-methods are part of the contract a fully-featured plugin satisfies. Plugins
-own prompt assembly, exec spec construction, and parsing for each mode;
-consumers hand over domain context and receive domain results.
+The Protocol defines the full plugin capability surface. The shipped
+production path is remote-dispatch only: `build_review_invocation` (assemble
+exec spec), `parse_review_output` / `parse_usage` / `render_activity` (parse
+agent stdout), and `review_preflight_steps`. The additional task methods
+(`review`, `incremental_review`, `verify_fix`, `stale_check`,
+`answer_question`) remain in the Protocol for test fakes and future reuse;
+no production plugin currently implements them. Plugins own prompt assembly,
+exec spec construction, and parsing for each mode; consumers hand over domain
+context and receive domain results.
 
 `ReportedFinding` is the raw-string output twin for findings returned by
 the agent. It carries no enum constraints (those live in `domain/reviewer`)

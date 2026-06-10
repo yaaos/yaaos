@@ -7,7 +7,7 @@
 | GET    | `/api/orgs/mine`           | session cookie only (cross-org) — picker + switcher. |
 | GET    | `/api/orgs/config-status`  | `ORG_READ` — "not configured" gate aggregation. |
 
-Org identified by `X-Org-Slug` header (RouteSecurity.ORG_SCOPED). Architecture.md documents
+Org identified by `X-Yaaos-Org-Slug` header (RouteSecurity.ORG_SCOPED). Architecture.md documents
 the URL as `/api/orgs/{slug}` for readability; this implementation mirrors the
 other endpoints which all take the slug via header. The single endpoint
 returns the updated org's relevant settings.
@@ -20,7 +20,7 @@ constraint 500.
 
 `/api/orgs/mine` lives on the public allowlist (see `core/auth/types.py`)
 because the SPA hits it before any org is selected — the session cookie
-identifies the user; no `X-Org-Slug` header is involved. `last_used_at` is
+identifies the user; no `X-Yaaos-Org-Slug` header is involved. `last_used_at` is
 null — there is no per-membership "last visited" column today.
 """
 

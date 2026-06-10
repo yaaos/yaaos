@@ -16,7 +16,7 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 - **`app_configured: false`** — platform env vars unset; shows operator guidance, no install button.
 - "Manage on GitHub" links to `installations_url` — canonical for repo access changes. No yaaos-side reconnect.
 - "Remove" → `DELETE /api/vcs`; does not uninstall the GitHub App.
-- Install flow uses a backend POST (not `window.location`) because `X-Org-Slug` + CSRF can't ride a bare navigation.
+- Install flow uses a backend POST (not `window.location`) because `X-Yaaos-Org-Slug` + CSRF can't ride a bare navigation.
 
 ## Coding Agents list
 

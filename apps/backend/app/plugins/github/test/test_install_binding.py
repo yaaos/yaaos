@@ -135,7 +135,7 @@ async def test_install_start_returns_signed_redirect_url(seeded_owner, monkeypat
         r = await c.post(
             "/api/github/install/start",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -158,7 +158,7 @@ async def test_install_start_admin_forbidden(seeded_owner, monkeypatch) -> None:
         r = await c.post(
             "/api/github/install/start",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 403
     get_settings.cache_clear()
@@ -175,7 +175,7 @@ async def test_install_start_409_when_no_app_provisioned(seeded_owner, monkeypat
         r = await c.post(
             "/api/github/install/start",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded_owner["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 409
     assert r.json()["detail"]["error"] == "app_not_provisioned"

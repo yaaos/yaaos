@@ -1,9 +1,9 @@
-"""Stream-json parsing — pure helpers used by `_run_and_parse_envelope`.
+"""Stream-json parsing — pure helpers used by `parse_review_output` and `render_activity`.
 
 The CLI emits one JSON object per line under `--output-format=stream-json`.
 We parse the captured stdout post-hoc to extract the terminal `result` event
 and log a per-event trace. These tests exercise the parser against canned
-streams; live CLI streaming is covered by manual review and e2e.
+streams; live CLI streaming is covered by e2e.
 """
 
 from __future__ import annotations

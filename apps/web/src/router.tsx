@@ -189,7 +189,7 @@ const orgSettingsWorkspacesRoute = createRoute({
 // User-area pages nest under the current org so the URL alone carries
 // all routing context (no module-global current-org, no localStorage).
 // The backend routes they call (`/api/user/*`, `/api/notifications/*`)
-// stay USER_SCOPED and ignore `X-Org-Slug`; the slug in the path is
+// stay USER_SCOPED and ignore `X-Yaaos-Org-Slug`; the slug in the path is
 // purely a frontend routing concern.
 const orgUserRedirectRoute = createRoute({
   getParentRoute: () => orgScopeRoute,

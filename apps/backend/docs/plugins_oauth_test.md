@@ -1,12 +1,12 @@
 # plugins/oauth_test
 
-> Test-only `Provider` stub. Refuses to load outside `YAAOS_ENV=test`.
+> Test-only `Provider` stub. Refuses to load outside `APP_MODE=test`.
 
 ## Purpose
 
 Lets backend integration tests + Playwright specs drive the real `/api/auth/login` + `/api/auth/callback/*` codepath without HTTP-mocking GitHub. Tests stage the identity the next callback resolves; every byte of the login orchestrator (matching, hard-reject, link-challenge) runs unmodified.
 
-**Never enable in production.** `service.py` asserts `yaaos_env == "test"` at import time — importing from a `dev` or `prod` process raises immediately. `app/web.py` only imports this module when `yaaos_env == "test"`. The Playwright "Sign in (test)" button is only rendered when the providers endpoint reports `test` — which only happens in test env.
+**Never enable in production.** `service.py` asserts `is_test` at import time — importing from a `dev` or `production` process raises immediately. `app/web.py` only imports this module when `is_test`. The Playwright "Sign in (test)" button is only rendered when the providers endpoint reports `test` — which only happens in test env.
 
 ## Public interface
 

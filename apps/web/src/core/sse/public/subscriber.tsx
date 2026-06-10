@@ -16,7 +16,7 @@ import type { ServerEvent } from "./types";
  * currently mounted fixes the storm without giving up the StrictMode lint.
  *
  * The connection is keyed by org slug. `/api/sse/general` is org-scoped, but
- * the browser `EventSource` API cannot send the `X-Org-Slug` header, so the
+ * the browser `EventSource` API cannot send the `X-Yaaos-Org-Slug` header, so the
  * slug rides in the `?org=` query param (the backend accepts it for `/api/sse`
  * routes). When the active org changes the old stream is closed and a new one
  * opened; with no org in scope (`/login`, the org picker) there is no stream.

@@ -109,7 +109,7 @@ async def run_identity_purge() -> None:
         log.exception("identity.cleanup.failed")
         raise
     if sessions_purged or totps_purged or audit_purged:
-        log.info(
+        log.debug(
             "identity.cleanup.ran",
             sessions_purged=sessions_purged,
             totps_purged=totps_purged,

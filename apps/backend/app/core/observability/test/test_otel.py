@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -13,16 +12,18 @@ from app.core.observability.service import _inject_trace_context
 
 @pytest.fixture
 def in_memory_spans():
-    """Attach an in-memory exporter to the global TracerProvider, yield it,
-    then detach. Tests pull spans out via `exporter.get_finished_spans()`."""
+    """Provide a local TracerProvider with an in-memory exporter.
+
+    Creates a fresh TracerProvider so the fixture is independent of whether
+    configure() has been called (the global provider may still be a proxy if
+    these tests run without a prior configure() call). Tests call
+    provider.get_tracer("test") to emit spans.
+    """
     exporter = InMemorySpanExporter()
     processor = SimpleSpanProcessor(exporter)
-    provider = trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider), (
-        "TracerProvider not initialized — call observability.configure() first"
-    )
+    provider = TracerProvider()
     provider.add_span_processor(processor)
-    yield exporter
+    yield provider, exporter
     processor.shutdown()
 
 
@@ -34,7 +35,10 @@ def test_inject_trace_context_no_active_span() -> None:
 
 
 def test_inject_trace_context_inside_span() -> None:
-    tracer = trace.get_tracer("test")
+    # Use a local TracerProvider so the test is independent of whether
+    # configure() has been called (global provider may still be a proxy).
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("unit-test-span"):
         out = _inject_trace_context(None, "info", {"event": "doing-work"})
     assert "trace_id" in out
@@ -43,11 +47,12 @@ def test_inject_trace_context_inside_span() -> None:
     assert len(out["span_id"]) == 16  # 64-bit hex
 
 
-def test_in_memory_exporter_captures_spans(in_memory_spans: InMemorySpanExporter) -> None:
+def test_in_memory_exporter_captures_spans(in_memory_spans: tuple) -> None:
     """Verify the in-memory fixture actually works — emit a span, see it."""
-    tracer = trace.get_tracer("test")
+    provider, exporter = in_memory_spans
+    tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("captured-span"):
         pass
-    spans = in_memory_spans.get_finished_spans()
+    spans = exporter.get_finished_spans()
     names = {s.name for s in spans}
     assert "captured-span" in names

@@ -80,7 +80,7 @@ async def test_duplicate_arn_across_orgs_returns_422(two_orgs) -> None:
             "/api/orgs",
             json={"registered_iam_arn": arn, "aws_region": region},
             cookies={"yaaos_session": sess_a.raw_token, "yaaos_csrf": sess_a.csrf_token},
-            headers={"X-Org-Slug": two_orgs["org_a"].slug, "X-CSRF-Token": sess_a.csrf_token},
+            headers={"X-Yaaos-Org-Slug": two_orgs["org_a"].slug, "X-CSRF-Token": sess_a.csrf_token},
         )
     assert r.status_code == 200, f"org_a first-save failed: {r.text}"
 
@@ -91,7 +91,7 @@ async def test_duplicate_arn_across_orgs_returns_422(two_orgs) -> None:
             "/api/orgs",
             json={"registered_iam_arn": arn, "aws_region": region},
             cookies={"yaaos_session": sess_b.raw_token, "yaaos_csrf": sess_b.csrf_token},
-            headers={"X-Org-Slug": two_orgs["org_b"].slug, "X-CSRF-Token": sess_b.csrf_token},
+            headers={"X-Yaaos-Org-Slug": two_orgs["org_b"].slug, "X-CSRF-Token": sess_b.csrf_token},
         )
     assert r2.status_code == 422, f"expected 422 collision, got {r2.status_code}: {r2.text}"
     assert r2.json()["detail"]["error"] == "arn_already_registered"
@@ -121,6 +121,6 @@ async def test_same_org_re_saving_arn_is_allowed(two_orgs, db_session) -> None:
             "/api/orgs",
             json={"registered_iam_arn": arn, "aws_region": region},
             cookies={"yaaos_session": sess_a.raw_token, "yaaos_csrf": sess_a.csrf_token},
-            headers={"X-Org-Slug": two_orgs["org_a"].slug, "X-CSRF-Token": sess_a.csrf_token},
+            headers={"X-Yaaos-Org-Slug": two_orgs["org_a"].slug, "X-CSRF-Token": sess_a.csrf_token},
         )
     assert r.status_code == 200, f"re-save of own ARN failed: {r.text}"

@@ -57,7 +57,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 - **1-hour TTL.** Response includes `renewal_after` (5 min before `expires_at`) as the suggested re-exchange time.
 - **Non-revoking rotation.** A second call issues a new bearer without revoking the old one. The agent atomically swaps the bearer after receiving the rotation response.
 - **`issued_iam_arn` on bearer row.** Every `bearer_tokens` row records the canonical IAM ARN verified at issuance.
-- **Host allowlist override** — `YAAOS_STS_HOST_OVERRIDE` allows an additional STS host (e.g. `mock-aws:4566`) only when `YAAOS_ENV` is non-prod. The process refuses to boot with both `YAAOS_ENV=prod` and the override set.
+- **Host allowlist override** — the `Settings.yaaos_sts_host_override` field (`YAAOS_STS_HOST_OVERRIDE`) allows an additional STS host (e.g. `mock-aws:4566`) only in non-production. `Settings` validates this at config load — a `model_validator` refuses to construct (crashes boot) when `APP_MODE=production` and the override is set — so by the time `sts_verifier` reads it, a non-empty value guarantees non-prod. See [core_config.md](core_config.md).
 
 ## Command dispatch — `agent_commands` durable queue
 

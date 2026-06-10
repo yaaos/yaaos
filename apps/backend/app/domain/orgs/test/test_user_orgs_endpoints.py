@@ -90,7 +90,7 @@ async def test_config_status_unconfigured_reports_missing_pieces(seeded) -> None
         r = await c.get(
             "/api/orgs/config-status",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug},
         )
     assert r.status_code == 200
     body = r.json()
@@ -124,7 +124,7 @@ async def test_config_status_fully_configured(seeded, db_session) -> None:
         r = await c.get(
             "/api/orgs/config-status",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug},
         )
     assert r.status_code == 200
     body = r.json()

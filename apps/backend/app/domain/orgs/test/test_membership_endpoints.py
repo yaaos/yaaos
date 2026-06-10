@@ -70,7 +70,7 @@ async def test_invite_happy_path_sends_email(seeded) -> None:
                 "yaaos_session": owner_session.raw_token,
                 "yaaos_csrf": owner_session.csrf_token,
             },
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
         )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -92,7 +92,7 @@ async def test_invite_member_role_rejected(seeded) -> None:
                 "yaaos_session": member_session.raw_token,
                 "yaaos_csrf": member_session.csrf_token,
             },
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": member_session.csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": member_session.csrf_token},
         )
     assert resp.status_code == 403
 
@@ -206,7 +206,7 @@ async def test_remove_member_revokes_sessions(seeded, db_session) -> None:
                 "yaaos_session": owner_session.raw_token,
                 "yaaos_csrf": owner_session.csrf_token,
             },
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
         )
     assert resp.status_code == 200
     from app.core.database import get_sessionmaker  # noqa: PLC0415
@@ -234,7 +234,7 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
                 "yaaos_session": owner_session.raw_token,
                 "yaaos_csrf": owner_session.csrf_token,
             },
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": owner_session.csrf_token},
         )
     assert resp.status_code == 200
     assert resp.json()["role"] == "admin"
@@ -257,7 +257,7 @@ async def test_list_members_returns_org_roster(seeded) -> None:
         resp = await c.get(
             "/api/memberships",
             cookies={"yaaos_session": owner_session.raw_token},
-            headers={"X-Org-Slug": org.slug},
+            headers={"X-Yaaos-Org-Slug": org.slug},
         )
     assert resp.status_code == 200, resp.text
     rows = resp.json()

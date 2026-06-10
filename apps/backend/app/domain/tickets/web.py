@@ -8,7 +8,7 @@
 | GET    | `/api/tickets/{ticket_id}/workflow-runs`                                   | `TICKETS_READ`  |
 | GET    | `/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}`               | `TICKETS_READ`  |
 
-Org context arrives via `X-Org-Slug` (RouteSecurity.ORG_SCOPED).
+Org context arrives via `X-Yaaos-Org-Slug` (RouteSecurity.ORG_SCOPED).
 """
 
 from __future__ import annotations

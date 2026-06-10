@@ -17,9 +17,26 @@ COPY apps/web/package.json apps/web/
 # Install deps for the web workspace only
 RUN pnpm install --filter ./apps/web... --frozen-lockfile || pnpm install --filter ./apps/web...
 
+# VITE_* build args — inlined into the SPA bundle at compile time.
+# Dash0 observability values (endpoint, auth token, dataset) are injected
+# by the RWX deploy-prod task from the yaaos vault.  VITE_SERVICE_VERSION
+# comes from the CI git SHA; VITE_ENVIRONMENT is the deployment tier tag
+# (independent of Vite's own --mode, which controls optimization level only).
+ARG VITE_OTEL_COLLECTOR_ENDPOINT
+ARG VITE_DASH0_AUTH_TOKEN
+ARG VITE_DASH0_DATASET
+ARG VITE_SERVICE_VERSION
+ARG VITE_ENVIRONMENT
+
+ENV VITE_OTEL_COLLECTOR_ENDPOINT=${VITE_OTEL_COLLECTOR_ENDPOINT}
+ENV VITE_DASH0_AUTH_TOKEN=${VITE_DASH0_AUTH_TOKEN}
+ENV VITE_DASH0_DATASET=${VITE_DASH0_DATASET}
+ENV VITE_SERVICE_VERSION=${VITE_SERVICE_VERSION}
+ENV VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
+
 # Source + build
 COPY apps/web ./apps/web
-RUN pnpm --filter ./apps/web build
+RUN pnpm --filter ./apps/web build --mode production
 
 # ────────────────────────────────────────────────────────────────────────
 # Stage 2: backend runtime image
@@ -79,7 +96,7 @@ USER yaaos
 # Runtime
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    YAAOS_ENV=prod
+    APP_MODE=production
 
 EXPOSE 8080
 

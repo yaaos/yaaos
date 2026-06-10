@@ -2135,7 +2135,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2146,7 +2146,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -2213,7 +2213,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2224,7 +2224,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -2289,7 +2289,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2300,7 +2300,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -2378,7 +2378,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2389,7 +2389,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -2531,7 +2531,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2542,7 +2542,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -2853,7 +2853,7 @@
     },
     "/api/auth/providers": {
       "get": {
-        "description": "List registered provider ids. The SPA renders one button per id on\nthe login page; the test stub appears only when YAAOS_ENV=test.",
+        "description": "List registered provider ids. The SPA renders one button per id on\nthe login page; the test stub appears only when APP_MODE=test.",
         "operationId": "providers_api_auth_providers_get",
         "responses": {
           "200": {
@@ -3051,7 +3051,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3062,7 +3062,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3142,7 +3142,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3153,7 +3153,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3219,7 +3219,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3230,7 +3230,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3292,7 +3292,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3303,7 +3303,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3367,7 +3367,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3378,7 +3378,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3434,7 +3434,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3445,7 +3445,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3518,7 +3518,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3529,7 +3529,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3594,7 +3594,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3605,7 +3605,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3688,12 +3688,12 @@
     },
     "/api/github/install/start": {
       "post": {
-        "description": "Owner-initiated GitHub App install. Returns the App's install URL with\na signed `state=<org_id>` query param. The SPA's button click POSTs here\n(so `X-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets\n`window.location.href = redirect_url` to send the browser to GitHub.\n\nThe callback at `/install_callback` verifies the signed state and writes\na `github_app_installations` row.",
+        "description": "Owner-initiated GitHub App install. Returns the App's install URL with\na signed `state=<org_id>` query param. The SPA's button click POSTs here\n(so `X-Yaaos-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets\n`window.location.href = redirect_url` to send the browser to GitHub.\n\nThe callback at `/install_callback` verifies the signed state and writes\na `github_app_installations` row.",
         "operationId": "github_install_start_api_github_install_start_post",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3704,7 +3704,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3779,7 +3779,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3790,7 +3790,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -3845,7 +3845,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3856,7 +3856,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4108,7 +4108,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4119,7 +4119,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4175,7 +4175,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4186,7 +4186,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4260,7 +4260,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4271,7 +4271,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4337,7 +4337,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4348,7 +4348,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4410,7 +4410,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4421,7 +4421,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4486,7 +4486,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4497,7 +4497,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4564,7 +4564,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4575,7 +4575,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4640,7 +4640,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4651,7 +4651,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4770,7 +4770,7 @@
     },
     "/api/mcp-proxy/{provider}/connect": {
       "get": {
-        "description": "Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to\nthe provider's authorize URL. The callback verifies the signature + uses\nthe embedded org_id (since the upstream doesn't know our X-Org-Slug).",
+        "description": "Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to\nthe provider's authorize URL. The callback verifies the signature + uses\nthe embedded org_id (since the upstream doesn't know our X-Yaaos-Org-Slug).",
         "operationId": "connect_start_api_mcp_proxy__provider__connect_get",
         "parameters": [
           {
@@ -4784,7 +4784,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4795,7 +4795,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4856,7 +4856,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4867,7 +4867,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -4976,7 +4976,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4987,7 +4987,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5105,7 +5105,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5116,7 +5116,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5176,7 +5176,7 @@
     },
     "/api/memberships/me/{org_id}": {
       "patch": {
-        "description": "Self-update one's `@handle` in the org named by the path param.\nEnforces `UNIQUE(org_id, handle)` via the existing partial index —\nduplicate handles surface as 409. The path `org_id` may differ from\n`X-Org-Slug` (which the middleware still requires for the prefix gate).",
+        "description": "Self-update one's `@handle` in the org named by the path param.\nEnforces `UNIQUE(org_id, handle)` via the existing partial index —\nduplicate handles surface as 409. The path `org_id` may differ from\n`X-Yaaos-Org-Slug` (which the middleware still requires for the prefix gate).",
         "operationId": "patch_own_membership_handle_api_memberships_me__org_id__patch",
         "parameters": [
           {
@@ -5191,7 +5191,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5202,7 +5202,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5276,7 +5276,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5287,7 +5287,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5353,7 +5353,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5364,7 +5364,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5694,7 +5694,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5705,7 +5705,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5758,7 +5758,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5769,7 +5769,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -5892,7 +5892,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5903,7 +5903,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6015,7 +6015,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6026,7 +6026,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6095,7 +6095,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6106,7 +6106,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6185,7 +6185,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6196,7 +6196,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6256,7 +6256,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6267,7 +6267,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6334,7 +6334,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6345,7 +6345,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6405,7 +6405,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6416,7 +6416,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6479,7 +6479,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6490,7 +6490,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6542,7 +6542,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6553,7 +6553,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -6608,7 +6608,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6619,7 +6619,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7005,7 +7005,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7016,7 +7016,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7073,7 +7073,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7084,7 +7084,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7151,7 +7151,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7162,7 +7162,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7248,7 +7248,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7259,7 +7259,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7334,7 +7334,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7345,7 +7345,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7415,7 +7415,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7426,7 +7426,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7496,7 +7496,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7507,7 +7507,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -7586,7 +7586,7 @@
           },
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7597,7 +7597,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -8306,7 +8306,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8317,7 +8317,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -8369,7 +8369,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8380,7 +8380,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -8432,7 +8432,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8443,7 +8443,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {
@@ -8507,7 +8507,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Org-Slug",
+            "name": "X-Yaaos-Org-Slug",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8518,7 +8518,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Org-Slug"
+              "title": "X-Yaaos-Org-Slug"
             }
           },
           {

@@ -32,7 +32,7 @@ from app.testing.workflow_harness import scoped_engine
 
 
 class _StubIntakeType:
-    """Intake type used in tests — no GitHub. Header `x-stub-auth: ok` is
+    """Intake type used in tests — no GitHub. Header `X-Yaaos-Stub-Auth: ok` is
     required (a missing/wrong header maps to `bad_signature` → 401)."""
 
     name = "stub_pr"
@@ -41,9 +41,9 @@ class _StubIntakeType:
         self._org_id = org_id
 
     async def handle(self, *, headers, body, session) -> IntakePrepared:
-        if headers.get("x-stub-auth") != "ok":
+        if headers.get("x-yaaos-stub-auth") != "ok":
             raise IntakeRejectedError("bad_signature")
-        idempotency_key = headers.get("x-stub-idempotency", "default-key")
+        idempotency_key = headers.get("x-yaaos-stub-idempotency", "default-key")
         return IntakePrepared(
             org_id=self._org_id,
             workflow_name="stub_pr_v1",
@@ -139,7 +139,7 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
         r = await c.post(
             "/api/intake/stub_pr",
             content=b"{}",
-            headers={"x-stub-auth": "ok", "x-stub-idempotency": "key-1"},
+            headers={"X-Yaaos-Stub-Auth": "ok", "X-Yaaos-Stub-Idempotency": "key-1"},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -185,7 +185,7 @@ async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -
 
 @pytest.mark.asyncio
 async def test_duplicate_idempotency_key_returns_existing_ticket(db_session, stub_intake) -> None:
-    headers = {"x-stub-auth": "ok", "x-stub-idempotency": "dup-key"}
+    headers = {"X-Yaaos-Stub-Auth": "ok", "X-Yaaos-Stub-Idempotency": "dup-key"}
     async with _client() as c:
         first = await c.post("/api/intake/stub_pr", content=b"{}", headers=headers)
         second = await c.post("/api/intake/stub_pr", content=b"{}", headers=headers)

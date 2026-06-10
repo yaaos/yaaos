@@ -1,6 +1,6 @@
 """Service-level coverage for /api/notifications/*.
 
-Endpoints are session-cookie-only (no X-Org-Slug). Each test seeds two
+Endpoints are session-cookie-only (no X-Yaaos-Org-Slug). Each test seeds two
 users so we can prove the per-user scoping; mark-read is idempotent.
 """
 

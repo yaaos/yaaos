@@ -51,7 +51,7 @@ No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` 
 
 ## yaaos-side test surface
 
-`/api/testing/*` (gated on `YAAOS_ENV=dev`), owned by [`testing/e2e_setup`](../../backend/docs/testing_e2e_setup.md):
+`/api/testing/*` (gated on `APP_MODE=dev`), owned by [`testing/e2e_setup`](../../backend/docs/testing_e2e_setup.md):
 
 - `POST /reset` — truncates every table. No structural seeding (reviewer specialists are shipped markdown).
 - `POST /seed/github_install` — sets "system ready" without going through the install handshake (writes the install row + Claude Code settings).

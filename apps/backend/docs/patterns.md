@@ -48,7 +48,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 Don't catch where raised. Let them propagate. Catch only at top-level boundaries:
 - HTTP middleware (converts to 500 JSON).
-- `core/observability.spawn()` wrapper (logs the failure; the coro is responsible for marking its row failed before raising).
+- `core/observability.spawn()` wrapper (records exception on the span + logs the failure; the coro is responsible for marking its row failed before raising).
 - Thin retry wrapper around vendor SDK calls.
 - Tests.
 
@@ -137,9 +137,7 @@ Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing 
 
 Every fire-and-forget background coroutine goes through this single helper. Behaviour:
 - Wraps the coro in an OTel span `spawn:{name}`.
-- Propagates structlog ContextVars (request_id, trace_id) to the spawned coroutine.
-- On exception: logs `kind='spawn.crashed'` at ERROR with traceback. Does NOT re-raise. The coro is responsible for marking its domain-row state to `failed` BEFORE raising — once `spawn()` catches, the domain row is the durable record.
-- Cancellation: DB state flip + cooperative polling.
+- On exception: calls `span.record_exception(exc)` + `span.set_status(ERROR)`, then logs `spawn.crashed` at ERROR with traceback. Does NOT re-raise. The coro is responsible for marking its domain-row state to `failed` BEFORE raising — once `spawn()` catches, the domain row is the durable record.
 - Holds the `asyncio.Task` in a module-level set until completion so GC doesn't collect it mid-flight.
 
 Used by: reviewer, github plugin catch-up, workspace reaper.
@@ -283,6 +281,7 @@ Rules:
 - Audit is for state changes with business meaning, not debugging. A failed DB read is a log line; a successful prompt update is an audit entry.
 - Reads never write to `audit_log`.
 - When in doubt, log. If "would an operator want to know this happened to entity X?" is yes, also audit.
+- **`log.info` is for business-meaningful state changes; routine progress uses `log.debug`.** `LOG_LEVEL=INFO` is the prod default — every `.info()` line ships to stdout and OTLP. Reserve `.info()` for: successful state transitions on domain entities, user-initiated mutations, webhook/event acceptance, configuration changes, and first-time lifecycle events (boot, worker started). Demote to `.debug()`: per-iteration sweep outputs, per-step progress inside a multi-step flow, guard skips ("skip_not_running"), stale-claim rejections, per-event confirmations that duplicate durable audit rows. Background errors are visible on traces (via `spawn()` exception recording), so demoting their accompanying progress logs is safe.
 
 Audit: user-initiated mutations (prompt edits, lesson CRUD, "re-review"), agent-initiated actions (review/reply posted), state transitions with business meaning (review_job queued→running→posted; ticket in_review→complete).
 
@@ -298,7 +297,7 @@ Row shape:
 
 Every domain function takes `org_id` kwarg or reads it from the `org_id_var` contextvar; every query filters by it. Two-track rule:
 
-- **HTTP request handlers** — `Depends(require(Action.X))` resolves `X-Org-Slug` and sets the contextvar. Handlers can read it via `current_org_id()`.
+- **HTTP request handlers** — `Depends(require(Action.X))` resolves `X-Yaaos-Org-Slug` and sets the contextvar. Handlers can read it via `current_org_id()`.
 - **Background work** — every non-HTTP entry point opens `with org_context(org_id, actor_kind, actor_id=None)` from [`core/auth`](core_auth.md). This sets the same contextvars + OTel span attrs (`yaaos.org_id`, `yaaos.actor_kind`, `yaaos.actor_id`) + structlog bound vars so background log lines + audit rows attribute correctly. Wrapped today: GitHub catch-up poller, reviewer worker (`actor_kind=workspace`), taskiq task bodies (`actor_kind=SYSTEM` — via `OrgContextMiddleware` in `core/tasks`, not manual wrapping in each body). Scheduler cleanup jobs that don't emit audit rows + don't read from org-scoped tables (session/invitation/totp/audit purges) do NOT need a wrap — they're global by design.
 - **Discipline rule** — any function reading from an org-scoped table must either (a) take `org_id` as an explicit kwarg, or (b) call `require_org_context()` to assert the contextvar is set. The assertion surfaces forgotten-wrap bugs loudly instead of silently leaking cross-org data.
 
@@ -334,7 +333,7 @@ Every yaaos-issued bearer follows the same shape — adopted in for sessions, in
 
 ## Route security declarations
 
-Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBLIC` (no auth), `USER_SCOPED` (session, no org), or `ORG_SCOPED` (session + `X-Org-Slug` + role check). The classifier `classify_route(path, method)` and the prefix/exact lists live in `app/core/auth/types.py`; the middleware enforces `X-Org-Slug` and CSRF based on the category. Route dependencies: `Depends(require(Action.X))` for `ORG_SCOPED`, `Depends(require_session)` (or `Depends(public_route)`) for `USER_SCOPED` handlers that read the session cookie, `Depends(public_route)` for `PUBLIC`. The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset. Action → minimum-role map lives in `app/core/auth/role_policy._REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new URL prefix requires placing it in exactly one of the three category sets in `app/core/auth/types.py`.
+Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBLIC` (no auth), `USER_SCOPED` (session, no org), or `ORG_SCOPED` (session + `X-Yaaos-Org-Slug` + role check). The classifier `classify_route(path, method)` and the prefix/exact lists live in `app/core/auth/types.py`; the middleware enforces `X-Yaaos-Org-Slug` and CSRF based on the category. Route dependencies: `Depends(require(Action.X))` for `ORG_SCOPED`, `Depends(require_session)` (or `Depends(public_route)`) for `USER_SCOPED` handlers that read the session cookie, `Depends(public_route)` for `PUBLIC`. The post-response middleware guard returns 500 if a 2xx response left `route_security_resolved` unset. Action → minimum-role map lives in `app/core/auth/role_policy._REQUIRED_ROLE`; adding a new action is a code change, not config. Adding a new URL prefix requires placing it in exactly one of the three category sets in `app/core/auth/types.py`.
 
 ## Testing
 
@@ -426,11 +425,13 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 ## ContextVar-bound registries — test isolation model
 
-The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) and the process singletons (`RedisPubsub`, `SubscriberRegistry`, email inbox) are all held in `ContextVar`s. Production never calls `bind_*()` — each module holds a module-level default that captures import-time `bootstrap()` registrations. Test isolation is structural: bind a fresh copy per test, no restore needed.
+The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) and the process singletons (`RedisPubsub`, `SubscriberRegistry`, email inbox, SSE shutdown event) are all held in `ContextVar`s. Production never calls `bind_*()` — each module holds a module-level default that captures import-time `bootstrap()` registrations. Test isolation is structural: bind a fresh copy per test, no restore needed.
 
 Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): imports the three plugin packages (triggering import-time bootstrap), optionally wraps with stubs, then snapshots the bound registries via `.copy()`. Runs once per session.
 
 Function-scoped autouse `plugin_registries_isolation` fixture: calls `bind_*()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test rebinds canonical — no restore, no leak, no order dependence.
+
+Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shutdown_event(asyncio.Event())` before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
 
 `app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
 
@@ -500,7 +501,7 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
 5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
 6. Plugins — `claude_code`, `github`.
-7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `yaaos_env == "dev"`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
+7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `is_non_prod`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
 8. Build the FastAPI app — `webserver.create_app()`.
 
 Each module imported in steps 2–6 appends its `shutdown()` hook to the relevant process registry as a side effect of import. By step 8, all hooks are registered before `create_app()` wires them into the lifespan.

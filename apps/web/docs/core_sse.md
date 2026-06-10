@@ -6,7 +6,7 @@
 
 Owns the single browser-wide `EventSource` connecting to `/api/sse/general` and maps event kinds to query cache invalidations. Domain modules consume queries; `core/sse` makes those queries refresh. The workspace-activity stream is a separate hook (`useWorkflowActivityStream`) that connects to `/api/sse/workspace_activity/{id}`.
 
-`/api/sse` is org-scoped, but the browser `EventSource` API cannot set the `X-Org-Slug` header. The org slug therefore rides in the `?org=<slug>` query param; the backend accepts it for `/api/sse` routes and runs it through the same membership check.
+`/api/sse` is org-scoped, but the browser `EventSource` API cannot set the `X-Yaaos-Org-Slug` header. The org slug therefore rides in the `?org=<slug>` query param; the backend accepts it for `/api/sse` routes and runs it through the same membership check.
 
 ## Public interface
 
@@ -62,6 +62,8 @@ Invalidations are deduped on a 200 ms trailing debounce keyed by `JSON.stringify
 Native `EventSource` auto-reconnects with exponential backoff; `onerror` transitions status to `disconnected` but does not close the stream. The query client runs with `refetchOnWindowFocus: false` and no `refetchInterval`, so SSE is the only live-update path — reconnect reconciliation matters.
 
 `onopen` reconciles on every (re)connect: it invalidates the list-level keys (`["tickets"]`, `["reviewer", "metrics"]`) so a refetch recovers anything created while the stream was not OPEN. The stream connects asynchronously and pub/sub has no replay, so an event published in that window is lost on the bus — the refetch reads it from persisted state instead. The server emits a connect prelude so `onopen` fires immediately rather than waiting for the first event (see [backend `core/sse`](../../backend/docs/core_sse.md)).
+
+On web process shutdown, the backend emits a `retry: 1000\n: server closing\n\n` frame before closing the stream. The `retry:` directive tells `EventSource` to reconnect in ~1 s, so the gap is one RTT rather than the browser's TCP-timeout window. The `onopen` reconciliation on reconnect picks up any state changed during the shutdown window.
 
 ## Data owned
 

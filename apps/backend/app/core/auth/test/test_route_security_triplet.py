@@ -5,7 +5,7 @@ triplet — unauthenticated 401, wrong-org 404, insufficient-role 403,
 success 200."*
 
 This test enumerates every registered ORG_SCOPED route, asserts the
-unauthenticated path returns 4xx (400 when X-Org-Slug is missing, 401 when
+unauthenticated path returns 4xx (400 when X-Yaaos-Org-Slug is missing, 401 when
 session is missing), and confirms the registry hasn't regressed.
 
 The per-role positive + 403 + 404 cases live in each endpoint's own test
@@ -77,7 +77,7 @@ async def test_org_scoped_prefixes_have_routes() -> None:
 
 @pytest.mark.asyncio
 async def test_every_org_scoped_route_rejects_anonymous_access() -> None:
-    """Negative-trio floor: unauthenticated + no X-Org-Slug ⇒ middleware
+    """Negative-trio floor: unauthenticated + no X-Yaaos-Org-Slug ⇒ middleware
     returns 400 (missing_org_slug); with header but no session ⇒ 401."""
     routes = _enumerate_org_scoped_routes()
     assert routes, "no org-scoped routes discovered"
@@ -90,8 +90,8 @@ async def test_every_org_scoped_route_rejects_anonymous_access() -> None:
                 f"{method} {path} returned {resp.status_code}; expected 4xx without any auth"
             )
 
-            # With X-Org-Slug but no session → 401 from `require()`.
-            resp = await c.request(method, path, headers={"X-Org-Slug": "some-slug"})
+            # With X-Yaaos-Org-Slug but no session → 401 from `require()`.
+            resp = await c.request(method, path, headers={"X-Yaaos-Org-Slug": "some-slug"})
             assert resp.status_code in (401, 403, 404, 405, 422), (
                 f"{method} {path} returned {resp.status_code} with slug but no session; expected 401/403/404"
             )

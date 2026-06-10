@@ -10,7 +10,7 @@
 Plaintext never crosses the API boundary except inbound on `POST {provider}`.
 GET returns "configured" / "not_set" only.
 
-Org context via `X-Org-Slug`.
+Org context via `X-Yaaos-Org-Slug`.
 """
 
 from __future__ import annotations

@@ -40,7 +40,7 @@ The module declares the TanStack `Register` augmentation so `<Link to="/orgs/$sl
 
 `core/api/org-context.ts` exposes `getCurrentOrgSlug()` (plain function) and `useCurrentOrgSlug()` (hook). Both derive from `window.location` on every read — no module-global cache, no localStorage. Two tabs in different orgs stay independent.
 
-`apiFetch` uses `getCurrentOrgSlug()` to attach `X-Org-Slug`. Chrome components use `useCurrentOrgSlug()` to re-render on navigation. Chrome renders only inside the org-scope route (`STANDALONE_PATHS` exit early) so every chrome component is guaranteed a non-null slug.
+`apiFetch` uses `getCurrentOrgSlug()` to attach `X-Yaaos-Org-Slug`. Chrome components use `useCurrentOrgSlug()` to re-render on navigation. Chrome renders only inside the org-scope route (`STANDALONE_PATHS` exit early) so every chrome component is guaranteed a non-null slug.
 
 ### `/api/auth/me` contract
 

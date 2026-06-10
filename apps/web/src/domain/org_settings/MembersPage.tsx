@@ -44,7 +44,7 @@ function useMembers(orgSlug: string | null) {
     queryFn: () =>
       orgSlug
         ? apiFetch<Member[]>("/api/memberships", {
-            headers: { "X-Org-Slug": orgSlug },
+            headers: { "X-Yaaos-Org-Slug": orgSlug },
           })
         : Promise.resolve([]),
   });
@@ -58,7 +58,7 @@ function useInvite(orgSlug: string | null) {
         method: "POST",
         body: JSON.stringify(body),
         headers: orgSlug
-          ? { "X-Org-Slug": orgSlug, "Content-Type": "application/json" }
+          ? { "X-Yaaos-Org-Slug": orgSlug, "Content-Type": "application/json" }
           : { "Content-Type": "application/json" },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["memberships", orgSlug] }),
@@ -73,7 +73,7 @@ function useChangeRole(orgSlug: string | null) {
         method: "PATCH",
         body: JSON.stringify({ role }),
         headers: orgSlug
-          ? { "X-Org-Slug": orgSlug, "Content-Type": "application/json" }
+          ? { "X-Yaaos-Org-Slug": orgSlug, "Content-Type": "application/json" }
           : { "Content-Type": "application/json" },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["memberships", orgSlug] }),
@@ -86,7 +86,7 @@ function useRemoveMember(orgSlug: string | null) {
     mutationFn: (user_id: string) =>
       apiFetch(`/api/memberships/${user_id}`, {
         method: "DELETE",
-        headers: orgSlug ? { "X-Org-Slug": orgSlug } : undefined,
+        headers: orgSlug ? { "X-Yaaos-Org-Slug": orgSlug } : undefined,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["memberships", orgSlug] }),
   });

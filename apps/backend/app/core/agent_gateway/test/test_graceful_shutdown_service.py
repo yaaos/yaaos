@@ -277,7 +277,7 @@ async def test_arn_change_revokes_old_arn_bearers(db_session) -> None:
             "/api/orgs",
             json={"registered_iam_arn": new_arn, "aws_region": "us-east-1"},
             cookies={"yaaos_session": session_token, "yaaos_csrf": csrf_token},
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": csrf_token},
         )
     assert resp.status_code == 200, resp.text
 
@@ -316,7 +316,7 @@ async def test_arn_clear_revokes_old_arn_bearers(db_session) -> None:
             "/api/orgs",
             json={"registered_iam_arn": None, "aws_region": None},
             cookies={"yaaos_session": session_token, "yaaos_csrf": csrf_token},
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": csrf_token},
         )
     assert resp.status_code == 200, resp.text
 

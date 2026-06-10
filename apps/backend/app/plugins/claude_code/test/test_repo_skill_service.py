@@ -140,3 +140,41 @@ async def test_build_review_invocation_uses_resolved_skill_not_constant() -> Non
     # The Invocation.kind must be the resolved skill name, not the old constant.
     assert invocation.kind == "my-custom-skill"
     assert invocation.kind != "code-review"
+
+
+# ── build_review_invocation — remote exec spec, no local subprocess ───────────
+
+
+@pytest.mark.asyncio
+async def test_build_review_invocation_returns_exec_spec_for_remote_agent() -> None:
+    """build_review_invocation produces an Invocation with a populated ExecSpec.
+
+    The ExecSpec is the contract the remote WorkspaceAgent executes.  This
+    test confirms the review path always uses the remote-dispatch model: the
+    returned object carries argv + env + stdin for the agent to run, not a
+    local subprocess call.  There is no in-process `review()` method to call.
+    """
+    plugin = _FakePlugin()
+    ctx = ReviewContext(
+        org_id=uuid.uuid4(),
+        repo_external_id="acme/remote-repo",
+        pr_external_id="200",
+        head_sha="headsha",
+        base_sha="basesha",
+    )
+    fake_session = _make_mock_session_with_skill("code-review")
+    invocation = await plugin.build_review_invocation(ctx, session=fake_session)
+
+    # Remote-dispatch contract: exec spec must be populated.
+    assert invocation.exec is not None, "exec spec must be set for remote-agent dispatch"
+    assert invocation.exec.argv, "exec argv must be non-empty"
+    # argv[0] is the binary path — it must not be an absolute local path
+    # (which would only work if the binary existed on the backend host).
+    # It is always just the bare "claude" name, resolved by the agent.
+    assert "/" not in invocation.exec.argv[0], (
+        "argv[0] must be a bare binary name resolved by the remote agent, not a local path"
+    )
+    assert invocation.exec.env.get("ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY must be set in remote exec env"
+    assert invocation.exec.stdin, "stdin (the prompt) must be set for the remote agent"
+    # No attribute named `review` exists on the plugin class.
+    assert not hasattr(plugin, "review"), "in-process review() method must not exist"

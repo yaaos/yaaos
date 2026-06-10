@@ -9,7 +9,7 @@
 | PATCH  | `/api/user/me`                          | `USER_UPDATE_SELF` — update display_name; clear github_username |
 
 Session is enforced by `require_session` from `core/identity/session_dependency`.
-No `X-Org-Slug` header is required — these endpoints operate on the user, not on a single org.
+No `X-Yaaos-Org-Slug` header is required — these endpoints operate on the user, not on a single org.
 
 `users.github_username` is written automatically by the "Sign in with
 GitHub" login flow. Re-binding to a different GitHub account is "sign in

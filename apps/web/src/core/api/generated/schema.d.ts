@@ -189,7 +189,7 @@ export interface paths {
         /**
          * Providers
          * @description List registered provider ids. The SPA renders one button per id on
-         *     the login page; the test stub appears only when YAAOS_ENV=test.
+         *     the login page; the test stub appears only when APP_MODE=test.
          */
         get: operations["providers_api_auth_providers_get"];
         put?: never;
@@ -427,7 +427,7 @@ export interface paths {
          * Github Install Start
          * @description Owner-initiated GitHub App install. Returns the App's install URL with
          *     a signed `state=<org_id>` query param. The SPA's button click POSTs here
-         *     (so `X-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets
+         *     (so `X-Yaaos-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets
          *     `window.location.href = redirect_url` to send the browser to GitHub.
          *
          *     The callback at `/install_callback` verifies the signed state and writes
@@ -674,7 +674,7 @@ export interface paths {
          * Connect Start
          * @description Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to
          *     the provider's authorize URL. The callback verifies the signature + uses
-         *     the embedded org_id (since the upstream doesn't know our X-Org-Slug).
+         *     the embedded org_id (since the upstream doesn't know our X-Yaaos-Org-Slug).
          */
         get: operations["connect_start_api_mcp_proxy__provider__connect_get"];
         put?: never;
@@ -794,7 +794,7 @@ export interface paths {
          * @description Self-update one's `@handle` in the org named by the path param.
          *     Enforces `UNIQUE(org_id, handle)` via the existing partial index —
          *     duplicate handles surface as 409. The path `org_id` may differ from
-         *     `X-Org-Slug` (which the middleware still requires for the prefix gate).
+         *     `X-Yaaos-Org-Slug` (which the middleware still requires for the prefix gate).
          */
         patch: operations["patch_own_membership_handle_api_memberships_me__org_id__patch"];
         trace?: never;
@@ -2574,7 +2574,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -2607,7 +2607,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -2648,7 +2648,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -2685,7 +2685,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -2728,7 +2728,7 @@ export interface operations {
                 limit?: number;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3043,7 +3043,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3100,7 +3100,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3135,7 +3135,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 repo_external_id: string;
@@ -3170,7 +3170,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 repo_external_id: string;
@@ -3209,7 +3209,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3242,7 +3242,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3279,7 +3279,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 plugin_id: string;
@@ -3316,7 +3316,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 plugin_id: string;
@@ -3377,7 +3377,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3430,7 +3430,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3463,7 +3463,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3568,7 +3568,7 @@ export interface operations {
                 limit?: number;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3601,7 +3601,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3638,7 +3638,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 lesson_id: string;
@@ -3673,7 +3673,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 lesson_id: string;
@@ -3712,7 +3712,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 lesson_id: string;
@@ -3749,7 +3749,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -3782,7 +3782,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -3819,7 +3819,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -3892,7 +3892,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -3927,7 +3927,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 provider: string;
@@ -3996,7 +3996,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4064,7 +4064,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4101,7 +4101,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 org_id: string;
@@ -4140,7 +4140,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 target_user_id: string;
@@ -4177,7 +4177,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 target_user_id: string;
@@ -4351,7 +4351,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4419,7 +4419,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4458,7 +4458,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4522,7 +4522,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 slug: string;
@@ -4559,7 +4559,7 @@ export interface operations {
                 ticket_id: string;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4596,7 +4596,7 @@ export interface operations {
                 include_terminal?: boolean;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -4633,7 +4633,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4668,7 +4668,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -4705,7 +4705,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4738,7 +4738,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 workflow_execution_id: string;
@@ -4773,7 +4773,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4808,7 +4808,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -4988,7 +4988,7 @@ export interface operations {
                 limit?: number;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -5023,7 +5023,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -5058,7 +5058,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5095,7 +5095,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5134,7 +5134,7 @@ export interface operations {
                 limit?: number;
             };
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5171,7 +5171,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5208,7 +5208,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5251,7 +5251,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
                 ticket_id: string;
@@ -5663,7 +5663,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -5696,7 +5696,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -5733,7 +5733,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {
@@ -5766,7 +5766,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Org-Slug"?: string | null;
+                "X-Yaaos-Org-Slug"?: string | null;
             };
             path?: never;
             cookie?: {

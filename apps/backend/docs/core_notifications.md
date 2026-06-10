@@ -14,7 +14,7 @@
 - **`subject_type` and `subject_id` must be both null or both set.** `service.create` enforces this; violation raises `ValueError`.
 - **`fanout` task, not direct call.** Producers `enqueue(fanout, ...)`. The task body opens its own session, calls `create` per spec, commits. No domain knowledge lives here.
 - **Recipients pre-computed in the producer's transaction.** The task body does no membership or entity query — avoiding a cross-transaction race.
-- **`USER_SCOPED` prefix** — middleware does not demand `X-Org-Slug`; handlers resolve the session cookie directly (same as `/api/orgs/mine`).
+- **`USER_SCOPED` prefix** — middleware does not demand `X-Yaaos-Org-Slug`; handlers resolve the session cookie directly (same as `/api/orgs/mine`).
 - `type` is freeform text; future event kinds slot in without a migration.
 
 ## Data owned

@@ -188,7 +188,7 @@ async def test_uninstall_noop_returns_false_no_audit(seeded, db_session) -> None
 @pytest.mark.asyncio
 async def test_endpoint_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/coding-agents", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/coding-agents", headers={"X-Yaaos-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -198,7 +198,7 @@ async def test_endpoint_member_forbidden(seeded) -> None:
         r = await c.get(
             "/api/coding-agents",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -214,7 +214,7 @@ async def test_endpoint_install_and_list_via_http(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
         assert r.status_code == 200, r.text
         listing = await c.get(
@@ -223,7 +223,7 @@ async def test_endpoint_install_and_list_via_http(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
     assert listing.status_code == 200
     body = listing.json()
@@ -241,7 +241,7 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
     assert r.status_code == 422
 
@@ -256,7 +256,7 @@ async def test_endpoint_duplicate_install_409(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
         r = await c.post(
             "/api/coding-agents",
@@ -265,7 +265,7 @@ async def test_endpoint_duplicate_install_409(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
     assert r.status_code == 409
 
@@ -279,6 +279,6 @@ async def test_endpoint_uninstall_404_when_missing(seeded) -> None:
                 "yaaos_session": seeded["admin_sess"].raw_token,
                 "yaaos_csrf": seeded["admin_sess"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
     assert r.status_code == 404

@@ -120,7 +120,7 @@ async def test_clear_vcs_noop_returns_false_and_no_audit(seeded, db_session) -> 
 @pytest.mark.asyncio
 async def test_get_endpoint_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/vcs", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/vcs", headers={"X-Yaaos-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -130,7 +130,7 @@ async def test_get_endpoint_member_forbidden(seeded) -> None:
         r = await c.get(
             "/api/vcs",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -141,7 +141,7 @@ async def test_get_endpoint_returns_empty_state(seeded) -> None:
         r = await c.get(
             "/api/vcs",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     assert r.json() == {"plugin_id": None, "settings": {}}
@@ -158,7 +158,7 @@ async def test_post_endpoint_github_writes_state(seeded) -> None:
             "/api/vcs",
             json={"plugin_id": "github", "settings": {}},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -174,7 +174,7 @@ async def test_post_endpoint_unknown_plugin_404(seeded) -> None:
             "/api/vcs",
             json={"plugin_id": "ghost", "settings": {}},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
 
@@ -208,7 +208,7 @@ async def test_delete_endpoint_clears_state(seeded, db_session) -> None:
         r = await c.delete(
             "/api/vcs",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json() == {"plugin_id": None, "settings": {}}

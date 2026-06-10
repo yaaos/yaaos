@@ -11,8 +11,6 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -27,72 +25,34 @@ from app.core.auth import org_id_var
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
-    AnswerQuestionContext,
-    AnswerQuestionResult,
     CodingAgentError,
     ExecSpec,
     HealthStatus,
-    IncrementalReviewContext,
-    IncrementalReviewResult,
     Invocation,
-    InvocationStatus,
-    InvocationTelemetry,
-    OnActivity,
     ReportedFinding,
     ReviewContext,
-    ReviewResult,
-    StaleCheckContext,
-    StaleCheckResult,
     Usage,
     ValidationResult,
-    VerifyFixContext,
-    VerifyFixResult,
     register_plugin,
-)
-from app.core.coding_agent import (
-    AnswerQuestionDto as _AnswerQuestionDto,
 )
 from app.core.coding_agent import (
     FindingDraftList as _FindingDraftList,
 )
-from app.core.coding_agent import (
-    StaleCheckDto as _StaleCheckDto,
-)
-from app.core.coding_agent import (
-    VerifyFixDto as _VerifyFixDto,
-)
-from app.core.coding_agent import (
-    assemble_answer_question_prompt as _assemble_answer_question_prompt,
-)
-from app.core.coding_agent import (
-    assemble_incremental_review_prompt as _assemble_incremental_review_prompt,
-)
-from app.core.coding_agent import (
-    assemble_stale_check_prompt as _assemble_stale_check_prompt,
-)
-from app.core.coding_agent import (
-    assemble_verify_fix_prompt as _assemble_verify_fix_prompt,
-)
-from app.core.coding_agent import (
-    schema_appendix as _schema_appendix,
-)
+from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.workspace import Workspace, WorkspaceExecError
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")
 
 
-# Default per-invocation timeout for the Claude Code CLI. Big PRs with parallel
-# subagent dispatch + per-finding verification can legitimately take 10-15 min
-# on first run; 20 min gives headroom. Per-call override available via
-# `ReviewContext.agent_config["timeout_seconds"]`.
+# Default wallclock limit for a remote InvokeClaudeCode command. Big PRs with
+# parallel subagent dispatch + per-finding verification can legitimately take
+# 10-15 min on first run; 20 min gives headroom.
 _DEFAULT_TIMEOUT_SECONDS = 1200
 
-# Hardcoded model + effort for . Future UI work moves these to a settings
-# row + per-job override. `--model opus` resolves to the latest Opus alias;
-# `--effort medium` is a Claude Code reasoning level (low / medium / high /
-# xhigh / max).
+# Hardcoded model + effort for the remote invocation. Future UI work moves
+# these to a settings row + per-job override. `--model opus` resolves to the
+# latest Opus alias; `--effort medium` is a Claude Code reasoning level.
 _MODEL = "opus"
 _EFFORT = "medium"
 
@@ -155,7 +115,7 @@ def _log_stream_event(event: dict[str, Any]) -> None:
     """
     et = event.get("type")
     if et == "system":
-        log.info(
+        log.debug(
             "claude_code.stream.system",
             subtype=event.get("subtype"),
             session_id=event.get("session_id"),
@@ -169,7 +129,7 @@ def _log_stream_event(event: dict[str, Any]) -> None:
                 inp = block.get("input") or {}
                 # For Task tool calls, surface which subagent was dispatched.
                 subagent = inp.get("subagent_type") if isinstance(inp, dict) else None
-                log.info(
+                log.debug(
                     "claude_code.stream.tool_use",
                     tool=block.get("name"),
                     tool_use_id=block.get("id"),
@@ -190,14 +150,14 @@ def _log_stream_event(event: dict[str, Any]) -> None:
                     )
                 else:
                     summary = str(content or "")
-                log.info(
+                log.debug(
                     "claude_code.stream.tool_result",
                     tool_use_id=block.get("tool_use_id"),
                     is_error=block.get("is_error", False),
                     excerpt=summary[:200],
                 )
     elif et == "result":
-        log.info(
+        log.debug(
             "claude_code.stream.result",
             subtype=event.get("subtype"),
             duration_ms=event.get("duration_ms"),
@@ -426,414 +386,7 @@ class ClaudeCodePlugin:
         api_key = SecretStr(plaintext) if plaintext else None
         return api_key, row.cli_path if row else None
 
-    async def review(
-        self,
-        workspace: Workspace,
-        context: ReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> ReviewResult:
-        # This in-process path is retained for future re-introduction but not
-        # called in the remote-dispatch model. The remote path uses
-        # build_review_invocation + dispatch_invoke_claude_code.
-        prep = await self._prepare_invocation({})
-        if isinstance(prep, ReviewResult):
-            return prep
-        argv, env, timeout = prep
-
-        import json as _json  # noqa: PLC0415
-
-        schema_str = _json.dumps(context.output_schema, indent=2)
-        full_prompt = (
-            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "
-            f"Base: {context.base_sha}, Head: {context.head_sha}.\n\n"
-            "## Output Format (STRICT)\n\n"
-            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
-            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
-            f"{schema_str}\n"
-        )
-
-        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
-        if isinstance(envelope, ReviewResult):
-            return envelope
-        agent_text, telemetry = envelope
-
-        try:
-            parsed_dict = _json.loads(agent_text)
-            parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (_json.JSONDecodeError, ValidationError) as e:
-            return ReviewResult(
-                status=InvocationStatus.PARSE_FAILURE,
-                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _FindingDraftList: {e}",
-            )
-
-        findings = [
-            ReportedFinding(
-                file=d.file,
-                line=d.line,
-                category=d.category,
-                severity=d.severity,
-                confidence=d.confidence,
-                rationale=d.rationale,
-                rule_violated=d.rule_violated,
-                rule_source=d.rule_source,
-                suggested_fix=d.suggested_fix,
-            )
-            for d in parsed.findings
-        ]
-        return ReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=findings,
-            state=_compute_state_v2(findings),
-            summary_body=None,
-            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-        )
-
-    async def _prepare_invocation(
-        self,
-        agent_config: dict[str, Any],
-        *,
-        allowed_tools_override: str | None = None,
-        extra_allowed_tools: list[str] | None = None,
-    ) -> tuple[list[str], dict[str, str], int] | ReviewResult:
-        """Load settings, build argv + env. Returns ReviewResult on early failure.
-
-        `allowed_tools_override` swaps the `--allowed-tools` value used by the
-        full review (which includes `Task` for subagent dispatch) for a leaner
-        set — `answer_question` uses a read-only repo + git list with no Task.
-        (Reply path coerces the result; same error shape applies.)
-        """
-        org_id = org_id_var.get()
-        if org_id is None:
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                error_message="no org context — cannot load BYOK key",
-            )
-        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
-        if not api_key:
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                error_message="ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents",
-            )
-        cli_path = cli_path_setting or shutil.which("claude")
-        if not cli_path:
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                error_message="claude binary not found on PATH",
-            )
-
-        env = os.environ.copy()
-        env["ANTHROPIC_API_KEY"] = api_key.get_secret_value()
-        timeout = agent_config.get("timeout_seconds") or _DEFAULT_TIMEOUT_SECONDS
-        argv = [
-            cli_path,
-            "--print",
-            # stream-json emits one JSON event per line as work progresses.
-            # The workspace's streaming path forwards each line to a callback
-            # so we can publish ReviewJobActivity SSE events live + persist
-            # the full sequence on completion. `--verbose` is required when
-            # streaming JSON.
-            "--output-format=stream-json",
-            "--verbose",
-            "--permission-mode=bypassPermissions",
-            # Model + effort hardcoded (future UI configures them).
-            "--model",
-            _MODEL,
-            "--effort",
-            _EFFORT,
-            # Task is available for skill dispatch. Bash is restricted to
-            # read-only git commands.
-            "--allowed-tools="
-            + (
-                allowed_tools_override
-                or (
-                    "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
-                    "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
-                    "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)"
-                )
-            )
-            + ("," + ",".join(extra_allowed_tools) if extra_allowed_tools else ""),
-        ]
-        return argv, env, timeout
-
-    async def _run_and_parse_envelope(
-        self,
-        workspace: Workspace,
-        argv: list[str],
-        env: dict[str, str],
-        full_prompt: str,
-        timeout: int,
-        on_activity: OnActivity | None,
-    ) -> tuple[str, InvocationTelemetry] | ReviewResult:
-        """Run the CLI via the workspace; parse the wrapper envelope.
-
-        Streams stdout line-by-line: each line is parsed into a stream event,
-        logged, rendered to an `ActivityEvent`, and forwarded via `on_activity`
-        (if supplied). After the subprocess exits, the final `result` event
-        yields the agent text + tokens + resolved model.
-
-        Returns (agent_text, telemetry) on success, or a `ReviewResult` carrying
-        the failure status.
-        """
-        events: list[dict[str, Any]] = []
-
-        async def _on_stream_line(line: bytes) -> None:
-            text = line.decode("utf-8", errors="replace").strip()
-            if not text:
-                return
-            try:
-                event = json.loads(text)
-            except json.JSONDecodeError:
-                return  # malformed line — skip; final agent_text comes from `result`
-            events.append(event)
-            _log_stream_event(event)
-            if on_activity is None:
-                return
-            activity = _render_activity(event)
-            if activity is None:
-                return
-            try:
-                await on_activity(activity)
-            except Exception:
-                log.exception("claude_code.on_activity_failed", kind=activity.kind)
-
-        try:
-            result = await workspace.run_coding_agent_cli(
-                argv=argv,
-                env=env,
-                stdin=full_prompt.encode("utf-8"),
-                timeout_seconds=timeout,
-                on_stream_line=_on_stream_line,
-            )
-        except WorkspaceExecError as e:
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                error_message=f"could not spawn claude: {e}",
-            )
-
-        telemetry = InvocationTelemetry(latency_ms=result.duration_ms, raw_stderr=result.stderr)
-        final_result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-
-        if result.timed_out:
-            return ReviewResult(
-                status=InvocationStatus.TIMEOUT,
-                telemetry=telemetry.model_copy(update={"raw_output": result.stdout}),
-                error_message=(
-                    f"claude did not return within {timeout}s (parsed {len(events)} stream events)"
-                ),
-            )
-
-        if result.exit_code != 0:
-            first_line = result.stderr.splitlines()[0] if result.stderr else ""
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                telemetry=telemetry.model_copy(update={"raw_output": result.stdout}),
-                error_message=f"claude exited {result.exit_code}: {first_line}",
-            )
-
-        if final_result_event is None:
-            return ReviewResult(
-                status=InvocationStatus.AGENT_ERROR,
-                telemetry=telemetry.model_copy(update={"raw_output": result.stdout}),
-                error_message="claude stream contained no `result` event",
-            )
-
-        agent_text = final_result_event.get("result", "")
-        usage = final_result_event.get("usage", {}) or {}
-        tokens_in = usage.get("input_tokens")
-        tokens_out = usage.get("output_tokens")
-        # The CLI announces the resolved versioned model name (e.g.
-        # `claude-opus-4-5-20250929`) in the `system.init` event. The `result`
-        # event sometimes echoes only the alias the caller passed in (`opus`).
-        # Prefer init when it carries a versioned name (anything that looks
-        # like an alias-only — no hyphens — falls through to the result-event
-        # value, then to the static `_MODEL` constant).
-        init_event = next(
-            (e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None
-        )
-        init_model = (init_event or {}).get("model")
-        result_model = final_result_event.get("model")
-        resolved_model = _pick_versioned_model(init_model, result_model) or _MODEL
-
-        telemetry = telemetry.model_copy(
-            update={
-                "tokens_in": tokens_in,
-                "tokens_out": tokens_out,
-                "model": resolved_model,
-            }
-        )
-        return agent_text, telemetry
-
-    async def incremental_review(
-        self,
-        workspace: Workspace,
-        context: IncrementalReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> IncrementalReviewResult:
-        prep = await self._prepare_invocation(context.agent_config)
-        if isinstance(prep, ReviewResult):
-            return IncrementalReviewResult(
-                status=prep.status,
-                error_message=prep.error_message,
-                telemetry=prep.telemetry,
-            )
-        argv, env, timeout = prep
-
-        full_prompt = _assemble_incremental_review_prompt(context) + _schema_appendix(_FindingDraftList)
-        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
-        if isinstance(envelope, ReviewResult):
-            return IncrementalReviewResult(
-                status=envelope.status,
-                error_message=envelope.error_message,
-                telemetry=envelope.telemetry,
-            )
-        agent_text, telemetry = envelope
-
-        try:
-            parsed_dict = json.loads(agent_text)
-            parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (json.JSONDecodeError, ValidationError) as e:
-            return IncrementalReviewResult(
-                status=InvocationStatus.PARSE_FAILURE,
-                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _FindingDraftList: {e}",
-            )
-
-        findings = [
-            ReportedFinding(
-                file=d.file,
-                line=d.line,
-                category=d.category,
-                severity=d.severity,
-                confidence=d.confidence,
-                rationale=d.rationale,
-                rule_violated=d.rule_violated,
-                rule_source=d.rule_source,
-                suggested_fix=d.suggested_fix,
-            )
-            for d in parsed.findings
-        ]
-        return IncrementalReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=findings,
-            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-        )
-
-    async def verify_fix(
-        self,
-        workspace: Workspace,
-        context: VerifyFixContext,
-        on_activity: OnActivity | None = None,
-    ) -> VerifyFixResult:
-        prep = await self._prepare_invocation(context.agent_config)
-        if isinstance(prep, ReviewResult):
-            return VerifyFixResult(
-                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
-            )
-        argv, env, timeout = prep
-        full_prompt = _assemble_verify_fix_prompt(context) + _schema_appendix(_VerifyFixDto)
-        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
-        if isinstance(envelope, ReviewResult):
-            return VerifyFixResult(
-                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
-            )
-        agent_text, telemetry = envelope
-        try:
-            parsed = _VerifyFixDto.model_validate(json.loads(agent_text))
-        except (json.JSONDecodeError, ValidationError) as e:
-            return VerifyFixResult(
-                status=InvocationStatus.PARSE_FAILURE,
-                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _VerifyFixDto: {e}",
-            )
-        return VerifyFixResult(
-            status=InvocationStatus.SUCCESS,
-            still_present=parsed.still_present,
-            confidence=parsed.confidence,
-            reasoning=parsed.reasoning,
-            observed_line=parsed.observed_line,
-            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-        )
-
-    async def stale_check(
-        self,
-        workspace: Workspace,
-        context: StaleCheckContext,
-        on_activity: OnActivity | None = None,
-    ) -> StaleCheckResult:
-        prep = await self._prepare_invocation(context.agent_config)
-        if isinstance(prep, ReviewResult):
-            return StaleCheckResult(
-                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
-            )
-        argv, env, timeout = prep
-        full_prompt = _assemble_stale_check_prompt(context) + _schema_appendix(_StaleCheckDto)
-        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
-        if isinstance(envelope, ReviewResult):
-            return StaleCheckResult(
-                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
-            )
-        agent_text, telemetry = envelope
-        try:
-            parsed = _StaleCheckDto.model_validate(json.loads(agent_text))
-        except (json.JSONDecodeError, ValidationError) as e:
-            return StaleCheckResult(
-                status=InvocationStatus.PARSE_FAILURE,
-                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _StaleCheckDto: {e}",
-            )
-        return StaleCheckResult(
-            status=InvocationStatus.SUCCESS,
-            still_applies=parsed.still_applies,
-            confidence=parsed.confidence,
-            reasoning=parsed.reasoning,
-            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-        )
-
-    async def answer_question(
-        self,
-        workspace: Workspace,
-        context: AnswerQuestionContext,
-        on_activity: OnActivity | None = None,
-    ) -> AnswerQuestionResult:
-        # Read-only repo + git tools only — no `Task` subagent dispatch (the
-        # question runner answers itself) and no `Write`/`Edit`/`Bash` beyond
-        # whitelisted git commands. Same authentication path as `verify_fix`.
-        prep = await self._prepare_invocation(
-            context.agent_config,
-            allowed_tools_override=(
-                "Read,Glob,Grep,LS,"
-                "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
-                "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)"
-            ),
-        )
-        if isinstance(prep, ReviewResult):
-            return AnswerQuestionResult(
-                status=prep.status, error_message=prep.error_message, telemetry=prep.telemetry
-            )
-        argv, env, timeout = prep
-        full_prompt = _assemble_answer_question_prompt(context) + _schema_appendix(_AnswerQuestionDto)
-        envelope = await self._run_and_parse_envelope(workspace, argv, env, full_prompt, timeout, on_activity)
-        if isinstance(envelope, ReviewResult):
-            return AnswerQuestionResult(
-                status=envelope.status, error_message=envelope.error_message, telemetry=envelope.telemetry
-            )
-        agent_text, telemetry = envelope
-        try:
-            parsed = _AnswerQuestionDto.model_validate(json.loads(agent_text))
-        except (json.JSONDecodeError, ValidationError) as e:
-            return AnswerQuestionResult(
-                status=InvocationStatus.PARSE_FAILURE,
-                telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-                error_message=f"agent response didn't match _AnswerQuestionDto: {e}",
-            )
-        return AnswerQuestionResult(
-            status=InvocationStatus.SUCCESS,
-            answer=parsed.answer,
-            telemetry=telemetry.model_copy(update={"raw_output": agent_text}),
-        )
-
-    # ── Remote-dispatch methods (Shape B) ────────────────────────────────
+    # ── Remote-dispatch methods ───────────────────────────────────────────
 
     async def build_review_invocation(
         self,
@@ -1014,12 +567,9 @@ class ClaudeCodePlugin:
         org_id = org_id_var.get()
         if org_id is None:
             return HealthStatus(healthy=False, message="no org context", checked_at=_utcnow())
-        api_key, cli_path_setting = await self._load_settings_for_invocation(org_id)
+        api_key, _ = await self._load_settings_for_invocation(org_id)
         if not api_key:
             return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
-        cli_path = cli_path_setting or shutil.which("claude")
-        if not cli_path:
-            return HealthStatus(healthy=False, message="claude binary not found", checked_at=_utcnow())
         # Cached probe — verifies the key actually authenticates against Anthropic.
         # Cache TTL keeps the cost low (~1 request per 5min per running process).
         ok, message = await _probe_anthropic_auth(api_key)
@@ -1027,46 +577,6 @@ class ClaudeCodePlugin:
 
 
 _plugin = ClaudeCodePlugin()
-
-
-_MCP_CONFIG_FILE = ".mcp.json"
-
-
-async def _materialize_mcp_config(
-    workspace: Workspace,
-    mcp_payload: dict[str, Any] | None,
-) -> list[str]:
-    """Write a Claude-Code `.mcp.json` into the workspace from the reviewer's
-    MCP payload. Returns the per-server `mcp__<server>__<tool>` allowed-tools
-    additions (defense in depth — the proxy is the actual gate).
-
-    Returns an empty list when no payload is provided.
-    """
-    if not mcp_payload or not mcp_payload.get("servers"):
-        return []
-    token = mcp_payload["token"]
-    base_url = mcp_payload["base_url"]
-    config = {
-        "mcpServers": {
-            s["provider"]: {
-                "type": "http",
-                "url": f"{base_url}/{s['provider']}",
-                "headers": {"Authorization": f"Bearer {token}"},
-            }
-            for s in mcp_payload["servers"]
-        }
-    }
-    await workspace.write_text(_MCP_CONFIG_FILE, json.dumps(config, indent=2))
-    extras: list[str] = []
-    for s in mcp_payload["servers"]:
-        provider = s["provider"]
-        allowed = set(s.get("allowed_tools") or [])
-        for tool in s.get("known_read_tools", []):
-            extras.append(f"mcp__{provider}__{tool}")
-        for tool in s.get("known_write_tools", []):
-            if tool in allowed:
-                extras.append(f"mcp__{provider}__{tool}")
-    return extras
 
 
 # ── Anthropic auth probe ──────────────────────────────────────────────────────
@@ -1093,7 +603,7 @@ async def _probe_anthropic_auth(api_key: SecretStr) -> tuple[bool, str]:
     key as authenticating cleanly so onboarding and `/api/claude_code/health`
     behave consistently with the rest of the stubbed pipeline.
     """
-    if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+    if get_settings().yaaos_coding_agent_stub:
         return (True, "ok (stub)")
     raw_key = api_key.get_secret_value()
     fp = _key_fingerprint(raw_key)

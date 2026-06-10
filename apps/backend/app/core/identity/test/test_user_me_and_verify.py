@@ -56,7 +56,7 @@ async def seeded(db_session):
 @pytest.mark.asyncio
 async def test_user_me_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/user/me", headers={"X-Org-Slug": seeded["org_a"].slug})
+        r = await c.get("/api/user/me", headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug})
     assert r.status_code == 401
 
 
@@ -66,7 +66,7 @@ async def test_user_me_returns_memberships_and_handles(seeded) -> None:
         r = await c.get(
             "/api/user/me",
             cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -79,7 +79,7 @@ async def test_user_me_returns_memberships_and_handles(seeded) -> None:
 @pytest.mark.asyncio
 async def test_user_me_works_without_org_slug_header(seeded) -> None:
     """`/api/user/me` is USER_SCOPED — the middleware must let the request
-    through without `X-Org-Slug`. Whether the SPA happens to be on an
+    through without `X-Yaaos-Org-Slug`. Whether the SPA happens to be on an
     org-scoped URL when calling it (which would attach the header) is
     irrelevant; the route ignores it."""
     async with _client() as c:
@@ -113,7 +113,7 @@ async def test_patch_user_updates_display_name(seeded) -> None:
             "/api/user/me",
             json={"display_name": "New Name"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["display_name"] == "New Name"
@@ -131,7 +131,7 @@ async def test_patch_clears_github_username(seeded, db_session) -> None:
             "/api/user/me",
             json={"clear_github_username": True},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["github_username"] is None
@@ -163,7 +163,7 @@ async def test_patch_own_handle_updates(seeded) -> None:
             f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "renamed"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["handle"] == "renamed"
@@ -187,7 +187,7 @@ async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
             f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "taken"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 409, r.text
 
@@ -200,7 +200,7 @@ async def test_patch_own_handle_rejects_blank(seeded) -> None:
             f"/api/memberships/me/{seeded['org_a'].org_id}",
             json={"handle": "  "},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 422
 
@@ -215,7 +215,7 @@ async def test_patch_own_handle_rejects_membership_not_found(seeded) -> None:
             f"/api/memberships/me/{uuid4()}",
             json={"handle": "x"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org_a"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404
 

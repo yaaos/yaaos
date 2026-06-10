@@ -150,7 +150,7 @@ async def test_middleware_blocks_without_sso_satisfaction(sso_org, db_session) -
         r = await c.get(
             "/api/memberships/probe",
             cookies={"yaaos_session": s.raw_token},
-            headers={"X-Org-Slug": "sso-org"},
+            headers={"X-Yaaos-Org-Slug": "sso-org"},
         )
     assert r.status_code == 403
     assert r.json()["detail"]["error"] == "sso_required"
@@ -166,7 +166,7 @@ async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None
         r = await c.get(
             "/api/memberships/probe",
             cookies={"yaaos_session": s.raw_token},
-            headers={"X-Org-Slug": "sso-org"},
+            headers={"X-Yaaos-Org-Slug": "sso-org"},
         )
     assert r.status_code == 200
 
@@ -195,6 +195,6 @@ async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
         r = await c.get(
             "/api/memberships/probe",
             cookies={"yaaos_session": s.raw_token},
-            headers={"X-Org-Slug": "exempt-org"},
+            headers={"X-Yaaos-Org-Slug": "exempt-org"},
         )
     assert r.status_code == 200

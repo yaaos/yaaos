@@ -6,7 +6,7 @@
 | POST   | `/api/vcs`     | `VCS_WRITE` — set chosen plugin + settings; returns either the new state OR an install URL when the plugin redirects |
 | DELETE | `/api/vcs`     | `VCS_WRITE` — clear the org's VCS choice |
 
-Org context comes from `X-Org-Slug` (RouteSecurity.ORG_SCOPED). Architecture.md writes
+Org context comes from `X-Yaaos-Org-Slug` (RouteSecurity.ORG_SCOPED). Architecture.md writes
 these as `/api/orgs/{slug}/vcs` for human readability; the actual implementation
 mirrors the existing audit + memberships endpoints which take the slug via header.
 """

@@ -15,7 +15,7 @@ Every signal carries two kinds of attributes:
 
 - **Resource attributes** (static for the process lifetime, set before BindExporter):
   - `service.name` = `yaaos-workspace-agent`
-  - `service.version` = binary version
+  - `service.version` = binary version — sourced from `main.agentVersion` (ldflags-injectable `var`, defaults to `"0.0.0-dev"`); `YAAOS_AGENT_VERSION` env wins at runtime. Both the OTel `Init` call and `supervisor.Config.Version` read the same `envOr("YAAOS_AGENT_VERSION", agentVersion)` expression — there is no split-brain fallback.
   - `service.instance.id` = `instance_id` — the backend-assigned role-session-name from the STS ARN (`workspace_agents.instance_id`). Correlates OTel signals to a specific `workspace_agents` row. Empty until set via `SetInstanceID` after identity exchange; populated before `BindExporter` runs in the normal ConfigUpdate path.
 - **Span / metric attributes** (set after identity exchange):
   - `org_id` — the org this agent instance belongs to; pinned on first identity exchange.
@@ -77,3 +77,5 @@ Key counters emitted by the supervisor (all carry `org_id` + `agent_id`):
 
 - `apps/agent/internal/observability/otel.go` — `Init`, `Config`, `Result`, `SetInstanceID`.
 - `apps/agent/internal/observability/metrics.go` — `Instruments`, `Metrics()`, `SetStandardDimensions`, `StandardAttrs`.
+- `apps/agent/cmd/agent/main.go` — `var agentVersion` (ldflags target `main.agentVersion`; `YAAOS_AGENT_VERSION` runtime override).
+- `apps/agent/VERSION` — human-edited major integer; the publish pipeline derives the full semver from it.

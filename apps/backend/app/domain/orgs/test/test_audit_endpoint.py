@@ -76,7 +76,7 @@ async def test_audit_endpoint_admin_can_read(seeded) -> None:
         r = await c.get(
             "/api/audit",
             cookies={"yaaos_session": seeded["owner_session"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     rows = r.json()
@@ -90,7 +90,7 @@ async def test_audit_endpoint_member_role_rejected(seeded) -> None:
         r = await c.get(
             "/api/audit",
             cookies={"yaaos_session": seeded["member_session"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -102,7 +102,7 @@ async def test_audit_endpoint_filters_by_action(seeded) -> None:
             "/api/audit",
             params={"action": "logout"},
             cookies={"yaaos_session": seeded["owner_session"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200
     rows = r.json()

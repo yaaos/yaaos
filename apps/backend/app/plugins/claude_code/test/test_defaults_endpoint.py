@@ -50,7 +50,7 @@ async def seeded(db_session):
 @pytest.mark.asyncio
 async def test_defaults_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/claude_code/defaults", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/claude_code/defaults", headers={"X-Yaaos-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -60,7 +60,7 @@ async def test_defaults_member_forbidden(seeded) -> None:
         r = await c.get(
             "/api/claude_code/defaults",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -71,7 +71,7 @@ async def test_defaults_admin_gets_models_and_efforts(seeded) -> None:
         r = await c.get(
             "/api/claude_code/defaults",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()

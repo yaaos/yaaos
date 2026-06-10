@@ -10,7 +10,7 @@
 These endpoints are user-scoped (cross-org): the session cookie identifies
 the recipient; org filters are optional query params, not header context.
 The whole prefix lives on the public allowlist in `core/auth/types.py` so
-the auth middleware doesn't demand `X-Org-Slug`; we manually resolve the
+the auth middleware doesn't demand `X-Yaaos-Org-Slug`; we manually resolve the
 session cookie inside each handler (same pattern as `/api/orgs/mine`).
 """
 

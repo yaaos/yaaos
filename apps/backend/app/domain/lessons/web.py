@@ -8,7 +8,7 @@
 | PUT    | `/api/lessons/{id}`   | `LESSONS_WRITE` |
 | DELETE | `/api/lessons/{id}`   | `LESSONS_WRITE` |
 
-Org context arrives via `X-Org-Slug` (RouteSecurity.ORG_SCOPED). Actor is the current
+Org context arrives via `X-Yaaos-Org-Slug` (RouteSecurity.ORG_SCOPED). Actor is the current
 user, derived from the session cookie.
 """
 

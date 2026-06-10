@@ -43,7 +43,6 @@ The verifier:
 from __future__ import annotations
 
 import json
-import os
 import re
 import ssl
 import time
@@ -54,6 +53,8 @@ from enum import StrEnum
 import httpx
 import structlog
 
+from app.core.config import get_settings
+
 log = structlog.get_logger("core.agent_gateway.sts_verifier")
 
 
@@ -62,34 +63,23 @@ log = structlog.get_logger("core.agent_gateway.sts_verifier")
 # entirely-unknown hosts so a parse error catches them before replay.
 _STS_HOST_RE = re.compile(r"^sts(?:\.(?P<region>[a-z0-9-]+))?\.amazonaws\.com$")
 
-# Non-prod only: allow an additional STS host via env var. Used in dev/test
-# to point at the local mock-aws container. The env var is read exactly once
-# at module import; the result is compiled into a secondary regex that the
-# parser tries only when `YAAOS_ENV` is non-prod.
-#
-# Startup assertion: if `YAAOS_ENV=prod` but this override is also set, the
-# process must refuse to boot — a prod deployment should never talk to a mock.
-_STS_HOST_OVERRIDE_ENV = "YAAOS_STS_HOST_OVERRIDE"
-_YAAOS_ENV = os.environ.get("YAAOS_ENV", "prod")
-
-_sts_override_host: str | None = os.environ.get(_STS_HOST_OVERRIDE_ENV)
-
-if _sts_override_host and _YAAOS_ENV == "prod":
-    raise RuntimeError(
-        f"{_STS_HOST_OVERRIDE_ENV} is set but YAAOS_ENV=prod. "
-        "A production deployment must never use a mock STS host. "
-        "Unset the override or change YAAOS_ENV."
-    )
+# Non-prod only: allow an additional STS host (e.g. the local mock-aws
+# container). Sourced from `Settings.yaaos_sts_host_override`, read once at
+# module import and compiled into a secondary regex the parser tries only when
+# the override is present. `Settings` validates that the override is unset in
+# production (the model validator refuses to boot otherwise), so by the time
+# we read it here a non-empty value guarantees a non-production deployment.
+_sts_override_host: str | None = get_settings().yaaos_sts_host_override
 
 _STS_OVERRIDE_RE: re.Pattern[str] | None = None
-if _sts_override_host and _YAAOS_ENV != "prod":
+if _sts_override_host:
     # Escape the host to prevent regex injection, then allow an optional port.
     _escaped = re.escape(_sts_override_host)
     _STS_OVERRIDE_RE = re.compile(rf"^{_escaped}(?::\d+)?$")
     log.info(
         "sts_verifier.mock_host_enabled",
         host=_sts_override_host,
-        yaaos_env=_YAAOS_ENV,
+        app_mode=get_settings().app_mode,
     )
 
 # The only body the replay endpoint accepts. Agents that signed anything
@@ -295,8 +285,8 @@ def parse_signed_request(raw: str) -> SignedSTSRequest:
     except Exception as exc:
         raise InvalidSignedRequestError(f"unparseable url: {exc}", FailureCategory.PARSE_ERROR) from exc
 
-    # Check override first (non-prod only; None in prod because startup assertion
-    # refuses to boot with override + YAAOS_ENV=prod).
+    # Check override first (non-prod only; None in production because startup assertion
+    # refuses to boot with override + APP_MODE=production).
     if _STS_OVERRIDE_RE is not None and (
         _STS_OVERRIDE_RE.match(parsed_host) or _STS_OVERRIDE_RE.match(parsed_host_with_port)
     ):

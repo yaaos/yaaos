@@ -102,7 +102,7 @@ class CodingAgentRunSinkImpl:
             status=status,
             session=session,
         )
-        log.info(
+        log.debug(
             "coding_agent.run.finalized_via_sink",
             run_id=str(run_id),
             command_id=str(command_id),

@@ -60,7 +60,7 @@ async def _current_session_user_id(
 
 
 def require(action: Action) -> Callable[..., None]:
-    """Dependency factory. Resolves `X-Org-Slug` → org → membership → role check.
+    """Dependency factory. Resolves `X-Yaaos-Org-Slug` → org → membership → role check.
 
     On success, sets `org_id`, `user_id`, `actor_kind`, `actor_id` contextvars
     + `route_security_resolved = "org_scoped"`. The middleware reads these
@@ -68,7 +68,7 @@ def require(action: Action) -> Callable[..., None]:
 
     Error shape:
       - No session → 401 unauthenticated.
-      - No X-Org-Slug header → middleware already 400'd; this dep won't run.
+      - No X-Yaaos-Org-Slug header → middleware already 400'd; this dep won't run.
       - Org not found OR caller has no membership → 404 (don't leak existence).
       - Role insufficient → 403.
     """
@@ -77,7 +77,7 @@ def require(action: Action) -> Callable[..., None]:
 
     async def _dep(
         request: Request,
-        x_org_slug: Annotated[str | None, Header(alias="X-Org-Slug")] = None,
+        x_org_slug: Annotated[str | None, Header(alias="X-Yaaos-Org-Slug")] = None,
         user_id=Depends(_current_session_user_id),
     ) -> AuthOrg:
         if user_id is None:
@@ -86,7 +86,7 @@ def require(action: Action) -> Callable[..., None]:
             # Browser's next request starts clean → no cascading 401 loop.
             raise AuthFailure("unauthenticated")
         # SSE routes accept the slug via the `org` query param because the
-        # browser EventSource API cannot set the X-Org-Slug header. Same
+        # browser EventSource API cannot set the X-Yaaos-Org-Slug header. Same
         # membership check applies (see `org_slug_in_query_allowed`).
         slug = x_org_slug
         if not slug and org_slug_in_query_allowed(request.url.path):

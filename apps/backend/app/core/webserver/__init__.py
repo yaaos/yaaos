@@ -1,6 +1,7 @@
 """core/webserver — FastAPI app factory, RouteSpec registry, SPA serving."""
 
 from app.core.webserver.app_factory import create_app, mount_specs
+from app.core.webserver.csp import CSP_POLICY, CSPMiddleware
 from app.core.webserver.registry import RouteSpec, get_specs, register_routes
 from app.core.webserver.service import (
     ShutdownHook,
@@ -11,6 +12,8 @@ from app.core.webserver.service import (
 )
 
 __all__ = [
+    "CSP_POLICY",
+    "CSPMiddleware",
     "RouteSpec",
     "ShutdownHook",
     "create_app",

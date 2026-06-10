@@ -205,7 +205,7 @@ class InstallStartResponse(BaseModel):
 async def github_install_start() -> InstallStartResponse:
     """Owner-initiated GitHub App install. Returns the App's install URL with
     a signed `state=<org_id>` query param. The SPA's button click POSTs here
-    (so `X-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets
+    (so `X-Yaaos-Org-Slug` + `X-CSRF-Token` reach the auth chain) and then sets
     `window.location.href = redirect_url` to send the browser to GitHub.
 
     The callback at `/install_callback` verifies the signed state and writes

@@ -53,7 +53,7 @@ async def test_list_emails(seeded) -> None:
         r = await c.get(
             "/api/user/emails",
             cookies={"yaaos_session": seeded["session"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -70,7 +70,7 @@ async def test_delete_non_last_verified_email_ok(seeded) -> None:
                 "yaaos_session": seeded["session"].raw_token,
                 "yaaos_csrf": seeded["session"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["session"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["session"].csrf_token},
         )
     assert r.status_code == 200
 
@@ -92,7 +92,7 @@ async def test_delete_last_verified_email_blocked(db_session) -> None:
         r = await c.delete(
             f"/api/user/emails/{only.id}",
             cookies={"yaaos_session": s.raw_token, "yaaos_csrf": s.csrf_token},
-            headers={"X-Org-Slug": org.slug, "X-CSRF-Token": s.csrf_token},
+            headers={"X-Yaaos-Org-Slug": org.slug, "X-CSRF-Token": s.csrf_token},
         )
     assert r.status_code == 409
     assert r.json()["detail"]["error"] == "last_verified_email"
@@ -108,7 +108,7 @@ async def test_add_email_unverified(seeded) -> None:
                 "yaaos_session": seeded["session"].raw_token,
                 "yaaos_csrf": seeded["session"].csrf_token,
             },
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["session"].csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["session"].csrf_token},
         )
     assert r.status_code == 200
     assert r.json()["verified"] is False

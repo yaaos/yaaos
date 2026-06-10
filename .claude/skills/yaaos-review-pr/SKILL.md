@@ -49,12 +49,12 @@ Record `$RUN_DIR` (the `/tmp/yaaos-runs/<uuid>/` path the core used). The core's
 
 ## Step 4 — Post findings to the PR
 
-Read `<run-dir>/final.json`. For each finding, build the comment body using the template below, then route based on whether the `(file, line)` lies inside the PR diff:
+Read `<run-dir>/final.json`. For each finding, render the comment body with the template below, then route:
 
-- **In-diff** → include as a `comments[]` entry in a single PR review.
-- **Out-of-diff (wider-pattern findings)** → post as a top-level issue comment after the review is created.
+- **Has a line AND it's in-diff** → include as a `comments[]` entry in a single PR review, anchored inline at `file:line`.
+- **No line number (`line: null`), OR line outside the diff** → post as a top-level **general** issue comment. These are the legitimately line-less / wider-pattern findings — they get the *identical* rendered body, never a bare file path or link.
 
-To determine in-diff: parse `<run-dir>/diff.patch` once into a set of `(file, line)` tuples on the RIGHT side (added/context lines belonging to the new file). A finding is in-diff iff its `(file, line)` is in that set.
+To determine in-diff: parse `<run-dir>/diff.patch` once into a set of `(file, line)` tuples on the RIGHT side (added/context lines belonging to the new file). A finding with a non-null `line` is in-diff iff its `(file, line)` is in that set. A finding with `line: null` is always a general comment — do not try to anchor it.
 
 ### 4.1 Comment body template
 
@@ -64,40 +64,31 @@ All field sourcing and rendering rules live in the template skill; do not redefi
 
 ### 4.2 Build and post the review
 
-Group all in-diff findings into a single review payload. The review `body` carries the tally header:
+Group all in-diff findings into a single PR review. **Do NOT add a summary/tally body.** A "blocker: N, should_fix: N, …" recap is noise — the per-finding comments carry all the signal, and the tally is already in `final.json`. Submit the review with an empty `body` and `event=COMMENT`.
 
-```
-**yaaos review**
-
-- blocker: N
-- should_fix: N
-- nit: N
-- speculative_dropped: N
-```
-
-Post via the GitHub API:
+Write the payload to a temp JSON file and post with `--input` (the `comments[]` array is unwieldy on the command line):
 
 ```bash
-gh api -X POST /repos/<owner>/<repo>/pulls/<number>/reviews \
-  -f commit_id=<HEAD_SHA> \
-  -f event=COMMENT \
-  -f body=@<review-body.md> \
-  -F 'comments[][path]=<file>' \
-  -F 'comments[][line]=<line>' \
-  -F 'comments[][side]=RIGHT' \
-  -F 'comments[][body]=<rendered-body>' \
-  ...
+gh api -X POST /repos/<owner>/<repo>/pulls/<number>/reviews --input <review.json>
 ```
 
-In practice, write the JSON payload to a temp file and post with `gh api ... --input <file>` because the `comments[]` array gets unwieldy on the command line.
+Payload shape:
 
-### 4.3 Post wider-pattern findings as issue comments
+```json
+{ "commit_id": "<HEAD_SHA>", "event": "COMMENT", "body": "",
+  "comments": [ { "path": "<file>", "line": <line>, "side": "RIGHT", "body": "<rendered-body>" } ] }
+```
 
-For each out-of-diff finding, post a separate issue comment:
+If there are **zero** in-diff findings, skip the review entirely — don't post an empty-bodied, comment-less review.
+
+### 4.3 Post line-less / wider-pattern findings as general comments
+
+For each finding routed here (Step 4), post a separate top-level (general) PR comment. The body is the same rendered template as an inline comment — full formatting, never a path or link.
+
+**Use `--body-file` — NOT `-f body=@…`.** `gh api -f`/`--raw-field` does NOT expand `@file`; it posts the literal path string as the comment body. Read the rendered body from the file:
 
 ```bash
-gh api -X POST /repos/<owner>/<repo>/issues/<number>/comments \
-  -f body=@<comment-body.md>
+gh pr comment <number> --repo <owner>/<repo> --body-file <comment-body.md>
 ```
 
 ## Step 5 — Confirm to the user

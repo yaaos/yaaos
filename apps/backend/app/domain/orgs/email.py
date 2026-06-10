@@ -84,7 +84,7 @@ async def send_plain(*, to: str, subject: str, body: str) -> None:
     inbox and skip the SMTP round-trip; tests read the inbox via the
     `email_inbox_isolation` fixture's accessor."""
     settings = get_settings()
-    if settings.yaaos_env == "test":
+    if settings.is_test:
         get_email_inbox().messages.append(SentEmail(to=to, subject=subject, body=body))
         return
     msg = EmailMessage()

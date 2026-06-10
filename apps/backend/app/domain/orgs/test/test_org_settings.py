@@ -86,7 +86,7 @@ async def test_patch_org_unauthenticated_401(seeded) -> None:
         r = await c.patch(
             "/api/orgs",
             json={"session_timeout_override": 30},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": "x"},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": "x"},
             cookies={"yaaos_csrf": "x"},
         )
     assert r.status_code == 401
@@ -100,7 +100,7 @@ async def test_patch_org_member_forbidden(seeded) -> None:
             "/api/orgs",
             json={"session_timeout_override": 30},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 403
 
@@ -124,7 +124,7 @@ async def test_get_org_settings_returns_current_values(seeded, db_session) -> No
         r = await c.get(
             "/api/orgs",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -143,7 +143,7 @@ async def test_get_org_settings_defaults_when_unset(seeded) -> None:
         r = await c.get(
             "/api/orgs",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -159,7 +159,7 @@ async def test_patch_org_admin_can_set_override(seeded, db_session) -> None:
             "/api/orgs",
             json={"session_timeout_override": 30},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -183,7 +183,7 @@ async def test_patch_org_admin_can_clear_override(seeded, db_session) -> None:
             "/api/orgs",
             json={"session_timeout_override": None},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["session_timeout_override"] is None
@@ -197,7 +197,7 @@ async def test_patch_org_rejects_non_positive(seeded) -> None:
             "/api/orgs",
             json={"session_timeout_override": 0},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 422
 
@@ -216,7 +216,7 @@ async def test_patch_org_admin_can_set_arn_and_region(seeded, db_session) -> Non
                 "aws_region": "us-east-1",
             },
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -229,7 +229,7 @@ async def test_patch_org_admin_can_set_arn_and_region(seeded, db_session) -> Non
         r2 = await c.get(
             "/api/orgs",
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r2.status_code == 200
     assert r2.json()["registered_iam_arn"] == "arn:aws:iam::123456789012:role/yaaos-agent"
@@ -253,7 +253,7 @@ async def test_patch_org_can_clear_arn(seeded, db_session) -> None:
             "/api/orgs",
             json={"registered_iam_arn": None, "aws_region": None},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -295,7 +295,7 @@ async def test_patch_org_rejects_malformed_arn(seeded, bad_arn: str) -> None:
                 "aws_region": "us-east-1",
             },
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "invalid_registered_iam_arn"
@@ -316,7 +316,7 @@ async def test_patch_org_lowercases_arn(seeded) -> None:
                 "aws_region": "us-east-1",
             },
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["registered_iam_arn"] == "arn:aws:iam::123456789012:role/yaaos-agent"
@@ -333,7 +333,7 @@ async def test_patch_org_ignores_unrelated_keys(seeded, db_session) -> None:
             "/api/orgs",
             json={"future_field": "ignored", "session_timeout_override": 45},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 200, r.text
     assert r.json()["session_timeout_override"] == 45
@@ -366,7 +366,7 @@ async def test_idle_session_rejected_when_override_set(seeded, db_session) -> No
         r = await c.get(
             "/api/memberships",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 401, r.text
     assert r.json()["detail"]["error"] == "session_idle_expired"
@@ -385,7 +385,7 @@ async def test_idle_session_within_override_passes(seeded, db_session) -> None:
         r = await c.get(
             "/api/memberships",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
 
@@ -402,6 +402,6 @@ async def test_idle_default_used_when_override_null(seeded, db_session) -> None:
         r = await c.get(
             "/api/memberships",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text

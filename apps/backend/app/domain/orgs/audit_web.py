@@ -1,7 +1,7 @@
 """HTTP wiring for `/api/audit` — org-scoped read of the audit log.
 
 Lives under `domain/orgs` because it's an org-admin view tied to the current
-`X-Org-Slug`. Owners/Admins (`Action.AUDIT_READ` → Admin minimum) can list.
+`X-Yaaos-Org-Slug`. Owners/Admins (`Action.AUDIT_READ` → Admin minimum) can list.
 """
 
 from __future__ import annotations

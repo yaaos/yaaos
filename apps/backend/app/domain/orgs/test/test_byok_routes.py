@@ -58,7 +58,7 @@ async def seeded(db_session):
 @pytest.mark.asyncio
 async def test_list_unauthenticated_401(seeded) -> None:
     async with _client() as c:
-        r = await c.get("/api/api-keys", headers={"X-Org-Slug": seeded["org"].slug})
+        r = await c.get("/api/api-keys", headers={"X-Yaaos-Org-Slug": seeded["org"].slug})
     assert r.status_code == 401
 
 
@@ -68,7 +68,7 @@ async def test_list_member_forbidden(seeded) -> None:
         r = await c.get(
             "/api/api-keys",
             cookies={"yaaos_session": seeded["member_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -79,7 +79,7 @@ async def test_list_admin_sees_not_set_initially(seeded) -> None:
         r = await c.get(
             "/api/api-keys",
             cookies={"yaaos_session": seeded["admin_sess"].raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -90,7 +90,7 @@ async def test_list_admin_sees_not_set_initially(seeded) -> None:
 @pytest.mark.asyncio
 async def test_set_validate_clear_round_trip(seeded) -> None:
     sess = seeded["admin_sess"]
-    headers = {"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token}
+    headers = {"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token}
     cookies = {"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token}
     async with _client() as c:
         # Set.
@@ -130,7 +130,7 @@ async def test_set_rejects_empty(seeded) -> None:
             "/api/api-keys/anthropic",
             json={"value": ""},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 422
 
@@ -143,6 +143,6 @@ async def test_unknown_provider_404(seeded) -> None:
             "/api/api-keys/ghost",
             json={"value": "x"},
             cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-            headers={"X-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
         )
     assert r.status_code == 404

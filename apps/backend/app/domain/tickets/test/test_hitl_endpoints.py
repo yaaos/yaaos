@@ -85,7 +85,7 @@ async def seeded(db_session):
 def _auth(sess, slug: str):  # type: ignore[no-untyped-def]
     return {
         "cookies": {"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-        "headers": {"X-Org-Slug": slug, "X-CSRF-Token": sess.csrf_token},
+        "headers": {"X-Yaaos-Org-Slug": slug, "X-CSRF-Token": sess.csrf_token},
     }
 
 

@@ -38,7 +38,7 @@ test.describe("SAML SSO", () => {
         exempt_owner_user_id: null,
       },
       headers: {
-        "X-Org-Slug": "ssoacme",
+        "X-Yaaos-Org-Slug": "ssoacme",
         cookie: `yaaos_session=${OWNER_SESSION}`,
       },
     });

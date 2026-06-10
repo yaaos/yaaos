@@ -110,14 +110,14 @@ async def test_me_without_session_clears_cookies() -> None:
 
 @pytest.mark.asyncio
 async def test_org_scoped_no_session_clears_cookies(seeded) -> None:
-    """Org-scoped endpoint with X-Org-Slug but no session cookie → 401
+    """Org-scoped endpoint with X-Yaaos-Org-Slug but no session cookie → 401
     `unauthenticated` + cleared cookies. This is the "cold deeplink
     while logged out" path — central SPA handler will then redirect to
     /login?reason=signed_out."""
     async with _client() as c:
         resp = await c.get(
             "/api/memberships/ok",
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 401
     # Handler returns {"error": "unauthenticated"} directly — no FastAPI
@@ -149,7 +149,7 @@ async def test_org_scoped_idle_timeout_clears_cookies_and_writes_audit(seeded, d
         resp = await c.get(
             "/api/memberships/ok",
             cookies={"yaaos_session": seeded["token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
 
     assert resp.status_code == 401

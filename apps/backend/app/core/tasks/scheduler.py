@@ -206,7 +206,7 @@ async def scheduler_loop(*, tick_interval_seconds: float = 20.0) -> None:
                 fired = await tick_once(session=s)
                 await s.commit()
             if fired:
-                log.info("tasks.scheduler.fired", schedule_ids=fired)
+                log.debug("tasks.scheduler.fired", schedule_ids=fired)
             consecutive_failures = 0
             sleep_seconds = tick_interval_seconds
         except Exception:

@@ -65,7 +65,7 @@ async def try_claim(
     )
     claimed = bool(result.rowcount)
     if not claimed:
-        log.info(
+        log.debug(
             "workspace.claim.busy_or_inactive",
             workspace_id=str(workspace_id),
             workflow_execution_id=str(workflow_execution_id),

@@ -26,7 +26,7 @@ Environment variables consumed by `agent supervisor`:
 | `YAAOS_AGENT_VERSION` | `0.0.0-dev` | Reported during identity exchange. |
 | `AWS_EC2_METADATA_SERVICE_ENDPOINT` | auto (IMDS v2) | Override IMDS endpoint. Set to `http://mock-aws:4566` in dev/test compose to use mock-aws. |
 | `YAAOS_STS_ENDPOINT_URL` | `https://sts.amazonaws.com/` | URL the agent signs `GetCallerIdentity` against and embeds in the signed envelope. SigV4 binds the host into the signature, so the backend replays against the same URL. Set to `http://mock-aws:4566/` in dev/test compose. |
-| `YAAOS_STS_HOST_OVERRIDE` | (none) | Allow an additional STS host (e.g. `mock-aws:4566`). Non-prod only; the backend refuses to boot if set with `YAAOS_ENV=prod`. |
+| `YAAOS_STS_HOST_OVERRIDE` | (none) | Allow an additional STS host (e.g. `mock-aws:4566`). Non-prod only; the backend refuses to boot if set with `APP_MODE=production`. |
 
 ## Wire protocol
 
@@ -44,13 +44,12 @@ Two-stage `golang:1.26-alpine` builder → `debian:bookworm-slim` runtime. ~80 M
 
 ### Registry + tagging
 
-Published to **`ghcr.io/yaaos/yaaos-agent`**. Tags:
+Published to **`docker.io/yaaos/agent`** (Docker Hub). Tags:
 
-- `vX.Y.Z` — immutable release tag; pin this in production.
-- `latest` — most recent stable; getting-started only.
-- `sha-<short>` — every CI build; for bisection/rollback.
+- `MAJOR.MINOR` — immutable release tag (e.g. `0.1`); pin this in production. Minor increments on every `main` merge that changes `apps/agent/**`; major is the human-edited value in `apps/agent/VERSION`.
+- `latest` — points to the most recent release; getting-started only.
 
-Multi-arch: `linux/amd64` + `linux/arm64` (built with `docker buildx`).
+Build target: `linux/amd64` (built with `docker buildx --platform linux/amd64` from the arm64 RWX CI runner).
 
 ## Deployment (ECS Fargate)
 
@@ -99,7 +98,7 @@ Register the role ARN in yaaos: `PATCH /api/orgs` with `{workspace_provider: "re
   "taskRoleArn": "arn:aws:iam::ACCOUNT:role/yaaos-agent",
   "containerDefinitions": [{
     "name": "agent",
-    "image": "ghcr.io/yaaos/yaaos-agent:vX.Y.Z",
+    "image": "yaaos/agent:MAJOR.MINOR",
     "essential": true,
     "command": ["supervisor"],
     "environment": [

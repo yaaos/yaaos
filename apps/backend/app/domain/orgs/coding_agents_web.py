@@ -7,7 +7,7 @@
 | PATCH  | `/api/coding-agents/{plugin_id}`      | `CODING_AGENT_WRITE`  — replace settings |
 | DELETE | `/api/coding-agents/{plugin_id}`      | `CODING_AGENT_WRITE`  — uninstall |
 
-Org context via `X-Org-Slug` header (RouteSecurity.ORG_SCOPED).
+Org context via `X-Yaaos-Org-Slug` header (RouteSecurity.ORG_SCOPED).
 """
 
 from __future__ import annotations

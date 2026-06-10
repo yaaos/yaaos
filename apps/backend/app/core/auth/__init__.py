@@ -4,7 +4,7 @@ role enum, and role-policy map.
 Pure infrastructure. The role-resolving dependency factories
 (`require(action)`, `public_route`) live in `core/sessions` because they
 depend on `core/identity` + `domain/orgs`. The middleware here enforces
-the X-Org-Slug requirement for ORG_SCOPED routes and the default-deny
+the X-Yaaos-Org-Slug requirement for ORG_SCOPED routes and the default-deny
 post-response guard.
 
 Intra-core layer order: core/auth < core/tenancy < core/identity < core/sessions.
@@ -15,10 +15,12 @@ from app.core.auth.auth_failure import (
     auth_failure_response,
     register_handler,
 )
+from app.core.auth.cloudflare import CLOUDFLARE_INGRESS_HEADER, CloudflareIngressMiddleware
 from app.core.auth.context import (
     actor_id_var,
     actor_kind_var,
     bind_request_structlog_vars,
+    command_id_var,
     current_actor_kind,
     current_org_id,
     current_user_id,
@@ -28,6 +30,7 @@ from app.core.auth.context import (
     require_org_context,
     route_security_resolved,
     user_id_var,
+    workflow_execution_id_var,
 )
 from app.core.auth.cookies import (
     CSRF_COOKIE_NAME,
@@ -57,6 +60,7 @@ from app.core.auth.types import (
 
 __all__ = [
     "AUTH_LIMIT",
+    "CLOUDFLARE_INGRESS_HEADER",
     "CSRF_COOKIE_NAME",
     "CSRF_HEADER_NAME",
     "MUTATE_LIMIT",
@@ -72,6 +76,7 @@ __all__ = [
     "Action",
     "AuthFailure",
     "AuthMiddleware",
+    "CloudflareIngressMiddleware",
     "Role",
     "RouteSecurity",
     "actor_id_var",
@@ -80,6 +85,7 @@ __all__ = [
     "bind_request_structlog_vars",
     "classify_route",
     "clear_cookie_attrs",
+    "command_id_var",
     "csrf_cookie_attrs",
     "current_actor_kind",
     "current_org_id",
@@ -96,4 +102,5 @@ __all__ = [
     "route_security_resolved",
     "session_cookie_attrs",
     "user_id_var",
+    "workflow_execution_id_var",
 ]

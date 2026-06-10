@@ -28,7 +28,7 @@ export interface StartGithubInstallResponse {
 
 /** Owner-only — POSTs to start the GitHub App install handshake and returns
  *  the state-signed github.com URL the SPA should navigate to. The auth chain
- *  needs `X-Org-Slug` + `X-CSRF-Token` on the request, which `apiFetch` sets;
+ *  needs `X-Yaaos-Org-Slug` + `X-CSRF-Token` on the request, which `apiFetch` sets;
  *  a top-level browser nav to the same route would 401 (no headers). */
 export function useStartGithubInstall() {
   return useMutation({

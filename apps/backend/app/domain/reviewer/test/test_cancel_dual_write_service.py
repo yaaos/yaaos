@@ -80,7 +80,7 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
 def _auth(sess) -> dict:  # type: ignore[no-untyped-def]
     return {
         "cookies": {"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-        "headers": {"X-Org-Slug": _ORG_SLUG, "X-CSRF-Token": sess.csrf_token},
+        "headers": {"X-Yaaos-Org-Slug": _ORG_SLUG, "X-CSRF-Token": sess.csrf_token},
     }
 
 

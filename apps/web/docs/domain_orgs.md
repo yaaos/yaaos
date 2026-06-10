@@ -10,7 +10,7 @@
 
 ## Key behavior
 
-- Picker: `useMyOrgs` → `GET /api/orgs/mine` (USER_SCOPED — no `X-Org-Slug`). Sorted alphabetically by slug.
+- Picker: `useMyOrgs` → `GET /api/orgs/mine` (USER_SCOPED — no `X-Yaaos-Org-Slug`). Sorted alphabetically by slug.
 - Create org: `POST /api/orgs` (USER_SCOPED); slug regex validated client-side. 409 → slug-taken error; 422 → slug format error.
 
 ## Tests

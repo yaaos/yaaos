@@ -1,6 +1,6 @@
 # plugins/saml_test
 
-> Test-only stub SAML IdP. Refuses to load outside `YAAOS_ENV=test`.
+> Test-only stub SAML IdP. Refuses to load outside `APP_MODE=test`.
 
 See [core_saml.md](core_saml.md) for the full SAML SP design. `plugins/saml_test` registers a stub verifier into the assertion-verifier registry in [`domain/orgs.sso`](domain_orgs.md); the ACS handler dispatches to whichever returns a non-None payload first.
 
@@ -8,7 +8,7 @@ See [core_saml.md](core_saml.md) for the full SAML SP design. `plugins/saml_test
 
 Issues `itsdangerous`-signed dicts standing in for real SAML Response XML so backend integration tests + Playwright SSO specs can exercise `/api/sso/{slug}/acs` without `libxmlsec1` or a live IdP.
 
-**Never enable in production.** Module asserts `yaaos_env == "test"` at import time.
+**Never enable in production.** Module asserts `is_test` at import time.
 
 ## Public interface
 

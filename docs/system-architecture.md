@@ -13,9 +13,9 @@
 ## Runtime topology
 
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
-- Claude Code CLI baked into the workspace agent image; spawned once per review inside the ticket's workspace. The CLI owns all LLM calls — yaaos makes zero direct LLM calls.
+- Claude Code CLI runs inside the WorkspaceAgent container (customer-deployed); spawned once per review by the agent. The CLI owns all LLM calls — the backend makes zero direct LLM calls and never execs the CLI in-process.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
-- OTel collector optional; `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is gated on `VITE_OTEL_COLLECTOR_ENDPOINT`.
+- OTel collector optional; backend `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is triple-gated on `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET`.
 
 ## Inter-app flows
 
@@ -31,7 +31,7 @@ Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
 ### UI live update via SSE
 
-SPA mounts one org-keyed `EventSource` on `GET /api/sse/general?org=<slug>` (`withCredentials: true`) from the root `AppShell`. The `?org=` query param carries the org because the browser `EventSource` API cannot set the `X-Org-Slug` header that `/api/sse` routes otherwise require; the backend accepts it for SSE routes and applies the same membership check. Each event invalidates TanStack Query caches:
+SPA mounts one org-keyed `EventSource` on `GET /api/sse/general?org=<slug>` (`withCredentials: true`) from the root `AppShell`. The `?org=` query param carries the org because the browser `EventSource` API cannot set the `X-Yaaos-Org-Slug` header that `/api/sse` routes otherwise require; the backend accepts it for SSE routes and applies the same membership check. Each event invalidates TanStack Query caches:
 
 | Event `kind` | Invalidates |
 |---|---|
@@ -131,10 +131,12 @@ One append-only `audit_log` table owned by `core/audit_log`. Row shape: `{id, or
 
 ### Org scoping
 
-Every domain function takes `org_id` kwarg; every query filters by it. Per-request org from `X-Org-Slug` header (HTTP) or `org_context()` async-context-manager (background jobs).
+Every domain function takes `org_id` kwarg; every query filters by it. Per-request org from `X-Yaaos-Org-Slug` header (HTTP) or `org_context()` async-context-manager (background jobs).
 
 ### Identity & access
 
+- **CSP header injection** (`core/webserver.CSPMiddleware`, outermost): emits `Content-Security-Policy` or `…-Report-Only` on every response — including Cloudflare's 403s. Mode via `YAAOS_CSP_MODE`; policy directives live in `core/webserver/csp.py`.
+- **Cloudflare ingress gate** (`core/auth.CloudflareIngressMiddleware`, outermost security gate): rejects any request not carrying the `X-Yaaos-cf-Ingress` header with HTTP 403. `/api/health` is exempt (Fly's internal checker bypasses Cloudflare). No-op when `YAAOS_CLOUDFLARE_INGRESS_SECRET` is empty (dev/test/e2e). Runs before auth and routes — direct `.fly.dev` hits are blocked before they reach any business logic.
 - Auth middleware (`core/auth`): every `/api/*` route declares security via `Depends(require(action))` or `Depends(public_route)`; a post-response guard 500s any 2xx that left `route_security_resolved` unset.
 - Sessions: opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure` cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with 8h TTL.
 - Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets.
@@ -162,7 +164,7 @@ Two static specs are committed under `apps/backend/openapi/`:
 - Web SPA runs `@opentelemetry/sdk-trace-web`. `FetchInstrumentation` injects a W3C `traceparent` header on same-origin `/api/*` fetches — browser spans become children of the backend trace automatically. Cross-origin fetches (collector, CDN, third-party) never receive `traceparent`.
 - `FastAPIInstrumentor` on the backend extracts `traceparent` and continues the same trace. The backend stamps `yaaos.org_id`/`yaaos.user_id` on its spans authoritatively from session context.
 - **No baggage crosses the wire.** Identity is stamped independently on each side. `traceparent` is the only cross-wire trace context.
-- Export is endpoint-gated on both sides: backend via `OTEL_EXPORTER_OTLP_ENDPOINT`, web via `VITE_OTEL_COLLECTOR_ENDPOINT`.
+- Backend export is gated on `OTEL_EXPORTER_OTLP_ENDPOINT`. Web export is triple-gated: `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET` must all be set; any missing field falls back to a no-op span processor. All three are `VITE_*` vars (embedded in the bundle at build time); the auth token must be a web-signal-restricted, ingest-only Dash0 token.
 
 ### Dumb frontend
 

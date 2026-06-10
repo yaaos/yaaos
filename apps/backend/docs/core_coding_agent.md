@@ -12,8 +12,8 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 
 ## Why / invariants
 
-- **Status-not-exception contract:** in-process task methods (`review`, `incremental_review`, …) MUST NOT raise on agent-level failures (timeout, bad JSON, non-zero exit) — those become `status` + `error_message`. Only infrastructure errors (`WorkspaceExecError`, etc.) are raised. Consumers (`reviewer`) branch on `result.status`.
-- **Five named in-process methods, plus five remote-dispatch methods.** Five in-process task methods (`review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`) and five remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`). Adding a mode requires a Protocol change.
+- **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process. The `CodingAgentPlugin` Protocol owns the exec-spec build (`build_review_invocation`) and the parse step (`parse_review_output`, `parse_usage`, `render_activity`); dispatch is the caller's responsibility.
+- **Five remote-dispatch methods.** `build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`. Adding a mode requires a Protocol change.
 - **Remote path: plugin owns exec spec + parse; caller dispatches.** `build_review_invocation` returns a typed `Invocation{kind, exec: ExecSpec, limits}` — the exact command the Go agent spawns. `parse_review_output` receives the agent's raw stream-json stdout and returns `list[ReportedFinding]` or raises `ValueError`. The caller (`CodeReview.dispatch` + `PostFindings.execute`) drives dispatch and parse; the plugin owns translation.
 - **`ExecSpec.env` carries the Anthropic key.** Documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate). The key is never logged or placed in audit rows; it's decrypted on the control plane and placed into the exec block.
 - **`ReviewContext` is the remote dispatch context.** Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`, `output_schema`. No diff blob — the skill clones the repo and computes `git diff base..head` itself.
@@ -22,21 +22,11 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 
 Signatures in `app/core/coding_agent/types.py`.
 
-### In-process task methods
-
-Each takes a `Workspace`, a mode-specific Pydantic context, and an optional `OnActivity` callback.
-
-- `review` — full base..head diff → `ReviewResult{findings: list[ReportedFinding]}`.
-- `incremental_review` — `prev_sha..head` only → `list[ReportedFinding]`.
-- `verify_fix` — original finding + original code + current code → still-present verdict.
-- `stale_check` — original finding + current code + diff summary → still-applies verdict.
-- `answer_question` — finding + anchor code + thread history + question → `answer: str`.
-
-### Remote-dispatch methods (Shape B)
+### Remote-dispatch methods
 
 - `build_review_invocation(ctx: ReviewContext, *, session) -> Invocation` — resolves the skill handle, decrypts the API key, assembles the prompt + output-schema appendix, returns the exec spec. Never dispatches.
 - `parse_review_output(stdout: str) -> list[ReportedFinding]` — finds the terminal `type=result` stream event, extracts `result`, parses against `FindingDraftList`. Raises `ValueError` on any failure.
-- `review_preflight_steps(ctx, *, session) -> tuple[str, ...]` — returns `WorkflowCommand` kind strings to insert before the review step. Returns `()` — skill-assignment resolution is a follow-up.
+- `review_preflight_steps(ctx, *, session) -> tuple[str, ...]` — returns `WorkflowCommand` kind strings to insert before the review step. Returns `()` — no preflight needed.
 - `parse_usage(stdout: str) -> Usage` — reads the terminal `type=result` stream event and extracts `input_tokens` / `output_tokens` / `duration_ms`. Returns an empty `Usage()` if there's no terminal event or the stream is empty. Never raises.
 - `render_activity(stdout: str) -> ActivityLog` — walks every parseable stream event, drops null renders, stamps a monotonic `seq` (starting at 0) onto each surviving `ActivityEvent`, and returns the full log. Never raises.
 

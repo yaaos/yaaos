@@ -11,7 +11,7 @@
 | DELETE | `/api/mcp-proxy/{provider}`             | `INTEGRATIONS_WRITE` — clear |
 
 Architecture writes paths as `/api/orgs/{slug}/integrations/{provider}/...`
-for human readability; the working implementation mirrors other settings endpoints (vcs, coding-agents, byok) — slug comes via the `X-Org-Slug`
+for human readability; the working implementation mirrors other settings endpoints (vcs, coding-agents, byok) — slug comes via the `X-Yaaos-Org-Slug`
 header so the SPA's `apiFetch` wrapper carries it automatically.
 
 The callback path is the exception: it's hit by the upstream OAuth provider,
@@ -135,7 +135,7 @@ async def list_integrations() -> list[IntegrationStatus]:
 async def connect_start(request: Request, provider: str) -> RedirectResponse:
     """Mint a signed `state` carrying `(org_id, user_initiating)` and 303 to
     the provider's authorize URL. The callback verifies the signature + uses
-    the embedded org_id (since the upstream doesn't know our X-Org-Slug)."""
+    the embedded org_id (since the upstream doesn't know our X-Yaaos-Org-Slug)."""
     org_id = org_id_var.get()
     user_id = user_id_var.get()
     if org_id is None or user_id is None:

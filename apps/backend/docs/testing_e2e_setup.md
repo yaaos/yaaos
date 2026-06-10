@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Dev-only HTTP surface so each Playwright spec composes its own preconditions in `beforeEach` rather than depending on batch-seeded fixtures. Excluded from production wheel builds; every route guards on `yaaos_env == "dev"` and returns 404 otherwise — same shape FastAPI returns for an unmounted route, so prod scans can't detect the surface.
+Non-prod HTTP surface so each Playwright spec composes its own preconditions in `beforeEach` rather than depending on batch-seeded fixtures. Excluded from production wheel builds; every route guards on `is_non_prod` and returns 404 otherwise — same shape FastAPI returns for an unmounted route, so prod scans can't detect the surface.
 
 ## Public interface
 

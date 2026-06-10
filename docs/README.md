@@ -9,6 +9,11 @@ Present-tense documentation for shipped code.
 - [glossary.md](glossary.md) — shared vocabulary.
 - [system-security.md](system-security.md) — security posture and threat model.
 
+## Runbooks
+
+- [runbooks/prod-deploy.md](runbooks/prod-deploy.md) — manual-config checklist + deploy flow + rollback for `app.yaaos.cloud`.
+- [runbooks/secret-rotation.md](runbooks/secret-rotation.md) — rotating every secret yaaos depends on.
+
 ## Per-app
 
 - [`apps/backend/docs/`](../apps/backend/docs/README.md) — FastAPI service.

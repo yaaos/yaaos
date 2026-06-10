@@ -43,7 +43,7 @@ Each customer registers an IAM-role ARN at `PATCH /api/orgs` (`registered_iam_ar
 
 **Audience binding** — the `X-Yaaos-Audience` header in the signed payload must be present and match the backend's public hostname — the host[:port] of the required `YAAOS_PUBLIC_ORIGIN`. Missing or mismatched → 401 `audience_mismatch`. This prevents a valid signature produced for one yaaos instance from being replayed against another. `YAAOS_PUBLIC_ORIGIN` is a required boot-time setting; the backend refuses to start without it.
 
-**Host allowlist** — the STS endpoint URL in the signed request is validated against a regex allowlist of known AWS STS hostnames. In non-prod, `YAAOS_STS_HOST_OVERRIDE` extends the allowlist to admit a mock STS host; the process refuses to boot if `YAAOS_ENV=prod` and the override are set simultaneously.
+**Host allowlist** — the STS endpoint URL in the signed request is validated against a regex allowlist of known AWS STS hostnames. In non-production, `YAAOS_STS_HOST_OVERRIDE` extends the allowlist to admit a mock STS host; the process refuses to boot if `APP_MODE=production` and the override are set simultaneously.
 
 ### Workspace isolation (what ships)
 

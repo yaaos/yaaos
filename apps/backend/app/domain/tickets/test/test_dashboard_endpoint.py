@@ -72,17 +72,17 @@ async def seeded(db_session):
 def _auth(sess, slug: str):  # type: ignore[no-untyped-def]
     return {
         "cookies": {"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
-        "headers": {"X-Org-Slug": slug, "X-CSRF-Token": sess.csrf_token},
+        "headers": {"X-Yaaos-Org-Slug": slug, "X-CSRF-Token": sess.csrf_token},
     }
 
 
 @pytest.mark.asyncio
 async def test_dashboard_unauthenticated_rejects(seeded) -> None:
-    """No cookie → 401; cookie but no X-Org-Slug → 400. Either way, no body."""
+    """No cookie → 401; cookie but no X-Yaaos-Org-Slug → 400. Either way, no body."""
     async with _client() as c:
         r_no_cookie = await c.get(
             "/api/tickets/dashboard",
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
         r_no_slug = await c.get(
             "/api/tickets/dashboard",

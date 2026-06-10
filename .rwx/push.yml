@@ -111,7 +111,7 @@ tasks:
       trap "docker compose -f '$COMPOSE_FILE' down -v" EXIT
       export DATABASE_URL="postgresql+asyncpg://yaaos:yaaos@localhost:55432/yaaos"
       export REDIS_URL="redis://localhost:56379/0"
-      export YAAOS_ENV=dev
+      export APP_MODE=dev
       cd apps/backend && bin/ci
     outputs:
       test-results:
@@ -257,4 +257,86 @@ tasks:
       curl -L https://fly.io/install.sh | sh
       export FLYCTL_INSTALL="$HOME/.fly"
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
-      flyctl deploy --remote-only --config fly.production.toml
+      flyctl deploy --remote-only --config fly.production.toml \
+        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.europe-west4.gcp.dash0.com \
+        --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
+        --build-arg VITE_DASH0_DATASET=${{ vaults.yaaos.secrets.VITE_DASH0_DATASET }} \
+        --build-arg VITE_SERVICE_VERSION=${{ init.sha }} \
+        --build-arg VITE_ENVIRONMENT=production
+
+  # ─── agent image publish ─────────────────────────────────────────────
+  #
+  # Publishes the WorkspaceAgent image to Docker Hub on every `main` push
+  # that changes `apps/agent/**`. Reads the major version from the
+  # committed `apps/agent/VERSION` file and derives the minor by querying
+  # existing Docker Hub tags for the current major — true +1-per-release,
+  # no git topology needed. Builds linux/amd64 (this RWX runner is arm64,
+  # so --platform must be explicit). The task fails if the computed tag
+  # already exists (race guard for concurrent publishes). Docker Hub repo:
+  # yaaos/agent. Creds from the `yaaos` vault.
+  - key: publish-agent-image
+    if: ${{ init.branch == 'main' }}
+    after: [docs-ci, backend-ci, web-ci, agent-ci, e2e-ci]
+    use: [code]
+    filter:
+      - apps/agent/**
+    docker: true
+    env:
+      DOCKERHUB_USERNAME: ${{ vaults.yaaos.secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ vaults.yaaos.secrets.DOCKERHUB_TOKEN }}
+    run: |
+      set -e
+
+      # --- 1. Read the major version from the committed VERSION file. ---
+      MAJOR="$(cat apps/agent/VERSION | tr -d '[:space:]')"
+      echo "Major version: ${MAJOR}"
+
+      # --- 2. List existing Docker Hub tags and derive the next minor. ---
+      # Paginate through all tags (page_size=100) and collect those
+      # matching MAJOR.* . If none exist yet, MINOR=0.
+      DOCKER_HUB_REPO="yaaos/agent"
+      NEXT_PAGE="https://hub.docker.com/v2/repositories/${DOCKER_HUB_REPO}/tags/?page_size=100"
+      MAX_MINOR=-1
+
+      while [ -n "${NEXT_PAGE}" ] && [ "${NEXT_PAGE}" != "null" ]; do
+        RESPONSE="$(curl -fsSL "${NEXT_PAGE}")"
+        # Extract tag names matching MAJOR.<digits> exactly.
+        MATCHING="$(echo "${RESPONSE}" | jq -r --arg major "${MAJOR}" \
+          '.results[].name | select(test("^" + $major + "\\.[0-9]+$"))' 2>/dev/null || true)"
+        for tag in ${MATCHING}; do
+          minor="${tag#${MAJOR}.}"
+          if [ "${minor}" -gt "${MAX_MINOR}" ] 2>/dev/null; then
+            MAX_MINOR="${minor}"
+          fi
+        done
+        NEXT_PAGE="$(echo "${RESPONSE}" | jq -r '.next // empty' 2>/dev/null || true)"
+      done
+
+      MINOR=$(( MAX_MINOR + 1 ))
+      VERSION="${MAJOR}.${MINOR}"
+      echo "Computed version: ${VERSION} (max existing minor was ${MAX_MINOR})"
+
+      # --- 3. Race guard: fail if the tag already exists. ---
+      # Re-query to catch a concurrent publish that just pushed the same tag.
+      EXISTING="$(curl -fsSL \
+        "https://hub.docker.com/v2/repositories/${DOCKER_HUB_REPO}/tags/${VERSION}/" \
+        2>/dev/null | jq -r '.name // empty' 2>/dev/null || true)"
+      if [ -n "${EXISTING}" ]; then
+        echo "ERROR: tag ${VERSION} already exists on Docker Hub — concurrent publish detected. Rerun to pick the next minor." >&2
+        exit 1
+      fi
+
+      # --- 4. Authenticate and build for linux/amd64. ---
+      # This RWX runner is arm64; --platform linux/amd64 produces the
+      # correct image for the ECS/Fly deployment target.
+      echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      docker buildx create --use --name agent-builder 2>/dev/null || true
+      docker buildx build \
+        --platform linux/amd64 \
+        --build-arg VERSION="${VERSION}" \
+        --tag "${DOCKER_HUB_REPO}:${VERSION}" \
+        --tag "${DOCKER_HUB_REPO}:latest" \
+        --push \
+        -f apps/agent/Dockerfile \
+        apps/agent

@@ -1,7 +1,7 @@
 """Service tests for GET /api/sse/general — auth gate + cross-org isolation.
 
 Tests the full auth-chain contract end-to-end: 401 without session,
-400 without X-Org-Slug, 403 for non-member, and org-scoped stream
+400 without X-Yaaos-Org-Slug, 403 for non-member, and org-scoped stream
 isolation (org-A subscriber must not receive org-B events).
 
 Note on the streaming test: httpx-ASGITransport hangs on close for
@@ -83,7 +83,7 @@ async def test_general_endpoint_returns_401_without_session() -> None:
     async with _client() as c:
         resp = await c.get(
             "/api/sse/general",
-            headers={"X-Org-Slug": "any-org"},
+            headers={"X-Yaaos-Org-Slug": "any-org"},
         )
     assert resp.status_code == 401
 
@@ -91,7 +91,7 @@ async def test_general_endpoint_returns_401_without_session() -> None:
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_general_endpoint_returns_400_without_org_slug(db_session) -> None:
-    """`GET /api/sse/general` with session but no X-Org-Slug → 400."""
+    """`GET /api/sse/general` with session but no X-Yaaos-Org-Slug → 400."""
     user = await identity_repo.insert_user(db_session, display_name="NoOrgUser")
     raw_token = f"noorg-{uuid.uuid4().hex[:8]}"
     await identity_repo.insert_session(
@@ -117,12 +117,12 @@ async def test_general_endpoint_returns_400_without_org_slug(db_session) -> None
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_general_endpoint_returns_403_for_non_member(seeded) -> None:
-    """Session valid, X-Org-Slug for org the user is not a member of → 403 (or 404 mask)."""
+    """Session valid, X-Yaaos-Org-Slug for org the user is not a member of → 403 (or 404 mask)."""
     async with _client() as c:
         resp = await c.get(
             "/api/sse/general",
             cookies={"yaaos_session": seeded["token"]},
-            headers={"X-Org-Slug": seeded["org_b"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org_b"].slug},
         )
     # require() masks org existence as 404 when membership is absent.
     assert resp.status_code in (403, 404)
@@ -132,7 +132,7 @@ async def test_general_endpoint_returns_403_for_non_member(seeded) -> None:
 @pytest.mark.asyncio
 async def test_sse_route_accepts_org_query_param_without_header(seeded) -> None:
     """An `/api/sse/*` route authenticates from the `org` query param alone
-    (no X-Org-Slug header) → 200.
+    (no X-Yaaos-Org-Slug header) → 200.
 
     The browser `EventSource` API cannot set request headers, so SSE routes
     accept the org slug in the `org` query param. Driven against a tiny

@@ -52,7 +52,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a separate port and proxies /api/* to FastAPI.
     _install_spa_serving(app)
 
-    log.info("yaaos.boot.complete", env=settings.yaaos_env, port=settings.yaaos_port)
+    log.info("yaaos.boot.complete", env=settings.app_mode, port=settings.yaaos_port)
     yield
 
     # 5. Per-module shutdown hooks.
@@ -163,8 +163,8 @@ def _install_middleware(app: FastAPI) -> None:
     # # slowapi rate limiting. Per-IP on /api/auth/* (anonymous
     # endpoints); per-user on mutating /api/* paths. Limits live on
     # individual route decorators (`@limiter.limit(AUTH_LIMIT)`). Only
-    # mounted in `prod` so dev + Playwright suites aren't throttled.
-    if settings.yaaos_env == "prod":
+    # mounted in production so dev + Playwright suites aren't throttled.
+    if settings.is_production:
         from slowapi import _rate_limit_exceeded_handler  # noqa: PLC0415
         from slowapi.errors import RateLimitExceeded  # noqa: PLC0415
         from slowapi.middleware import SlowAPIMiddleware  # noqa: PLC0415
@@ -174,6 +174,24 @@ def _install_middleware(app: FastAPI) -> None:
         app.state.limiter = _limiter
         app.add_middleware(SlowAPIMiddleware)
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Cloudflare-only ingress gate. Outermost SECURITY layer — rejects direct
+    # .fly.dev / Fly-IP hits with 403; /api/health is exempt so Fly's internal
+    # machine checker still passes. No-op when the secret is empty (dev/test/e2e).
+    # Registered second-to-last so CSPMiddleware (registered last → runs outermost)
+    # still sets the CSP header on Cloudflare's 403 responses.
+    from app.core.auth import CloudflareIngressMiddleware  # noqa: PLC0415
+
+    app.add_middleware(CloudflareIngressMiddleware)
+
+    # Content-Security-Policy header injection. Must be the LAST add_middleware
+    # call so it runs OUTERMOST (FastAPI reverses registration order) — that way
+    # it sets the CSP header on every response, including Cloudflare's 403s,
+    # auth 401s, and rate-limit 429s. Mode (`report-only` / `enforce`) is
+    # controlled by `YAAOS_CSP_MODE`.
+    from app.core.webserver.csp import CSPMiddleware  # noqa: PLC0415
+
+    app.add_middleware(CSPMiddleware)
 
     # AuthFailure → 401 with cleared yaaos_session + yaaos_csrf cookies.
     # Registered before the catch-all Exception handler below so it gets
@@ -190,11 +208,11 @@ def _install_middleware(app: FastAPI) -> None:
 
 
 def _check_required_prod_secrets() -> None:
-    """In `prod`, refuse to start when any required secret is at its dev
+    """In production, refuse to start when any required secret is at its dev
     default. `dev`/`test` get to boot with stubs so the suite + onboarding
     flow keep working."""
     s = get_settings()
-    if s.yaaos_env != "prod":
+    if not s.is_production:
         return
     missing: list[str] = []
     if s.yaaos_oauth_state_secret.get_secret_value() == "dev-only-oauth-state-secret":
@@ -215,6 +233,10 @@ def _check_required_prod_secrets() -> None:
         missing.append("YAAOS_GITHUB_OAUTH_CLIENT_SECRET")
     if not s.yaaos_totp_master_key.get_secret_value():
         missing.append("YAAOS_TOTP_MASTER_KEY")
+    # Cloudflare ingress secret: empty → CloudflareIngressMiddleware becomes a
+    # transparent pass-through, silently disabling the outermost defense layer.
+    if not s.yaaos_cloudflare_ingress_secret.get_secret_value():
+        missing.append("YAAOS_CLOUDFLARE_INGRESS_SECRET")
     if missing:
         raise RuntimeError(f"yaaos refuses to start in prod with missing/stub secrets: {', '.join(missing)}")
 

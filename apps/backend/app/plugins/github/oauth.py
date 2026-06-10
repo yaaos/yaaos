@@ -125,6 +125,6 @@ def bootstrap_oauth() -> None:
     """
     s = get_settings()
     if not s.yaaos_github_oauth_client_id or not s.yaaos_github_oauth_client_secret.get_secret_value():
-        log.info("oauth_github.skipped_unconfigured")
+        log.debug("oauth_github.skipped_unconfigured")
         return
     register_provider(GitHubOAuthProvider())

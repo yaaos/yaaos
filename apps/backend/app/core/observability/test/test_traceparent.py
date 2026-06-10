@@ -17,12 +17,17 @@ from app.core.observability import (
 
 @pytest.fixture
 def in_memory_spans():
+    """Provide a local TracerProvider with an in-memory exporter.
+
+    Creates a fresh TracerProvider so the fixture is independent of whether
+    configure() has been called. The yielded exporter captures spans from
+    tracers created via the yielded provider.
+    """
     exporter = InMemorySpanExporter()
     processor = SimpleSpanProcessor(exporter)
-    provider = trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider)
+    provider = TracerProvider()
     provider.add_span_processor(processor)
-    yield exporter
+    yield provider, exporter
     processor.shutdown()
 
 
@@ -33,7 +38,10 @@ def test_current_traceparent_returns_none_without_span() -> None:
 
 
 def test_current_traceparent_inside_span_is_well_formed() -> None:
-    tracer = trace.get_tracer("test")
+    # Use a local TracerProvider so the test is independent of whether
+    # configure() has been called (global provider may still be a proxy).
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("unit-traceparent"):
         tp = current_traceparent()
     assert tp is not None
@@ -46,7 +54,8 @@ def test_current_traceparent_inside_span_is_well_formed() -> None:
 
 
 def test_restore_traceparent_context_returns_valid_context() -> None:
-    tracer = trace.get_tracer("test")
+    provider = TracerProvider()
+    tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("upstream"):
         upstream = current_traceparent()
     assert upstream is not None
@@ -64,12 +73,13 @@ def test_restore_traceparent_context_rejects_empty_or_malformed() -> None:
 
 
 def test_span_emitted_under_remote_parent_inherits_trace_id(
-    in_memory_spans: InMemorySpanExporter,
+    in_memory_spans: tuple,
 ) -> None:
     """Open a span; capture its traceparent; in a *fresh* context, open
     a span under the captured parent. Both spans must share the same
     `trace_id`."""
-    tracer = trace.get_tracer("test")
+    provider, exporter = in_memory_spans
+    tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("origin") as origin:
         origin_traceparent = current_traceparent()
         origin_trace_id = origin.get_span_context().trace_id
@@ -83,7 +93,7 @@ def test_span_emitted_under_remote_parent_inherits_trace_id(
 
     assert downstream_trace_id == origin_trace_id
 
-    spans = in_memory_spans.get_finished_spans()
+    spans = exporter.get_finished_spans()
     by_name = {s.name: s for s in spans}
     assert "origin" in by_name
     assert "downstream" in by_name
@@ -92,12 +102,13 @@ def test_span_emitted_under_remote_parent_inherits_trace_id(
 
 
 def test_with_remote_parent_span_without_traceparent_starts_fresh_trace(
-    in_memory_spans: InMemorySpanExporter,
+    in_memory_spans: tuple,
 ) -> None:
     """When no traceparent is supplied (None / empty), the helper still
     emits a span — just under a fresh trace."""
-    tracer = trace.get_tracer("test")
+    provider, exporter = in_memory_spans
+    tracer = provider.get_tracer("test")
     with with_remote_parent_span(tracer, "fresh", None) as span:
         assert span.get_span_context().is_valid
-    spans = in_memory_spans.get_finished_spans()
+    spans = exporter.get_finished_spans()
     assert any(s.name == "fresh" for s in spans)

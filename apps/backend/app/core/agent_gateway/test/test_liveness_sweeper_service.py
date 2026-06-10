@@ -300,7 +300,7 @@ async def test_agents_list_endpoint_returns_200(db_session) -> None:
     async with _client() as c:
         resp = await c.get(
             f"/api/orgs/{slug}/agents",
-            headers={"X-Org-Slug": slug, "Cookie": f"yaaos_session={session_token}"},
+            headers={"X-Yaaos-Org-Slug": slug, "Cookie": f"yaaos_session={session_token}"},
         )
     assert resp.status_code == 200, resp.text
     data = resp.json()
@@ -316,7 +316,7 @@ async def test_agents_list_endpoint_requires_auth(db_session) -> None:
     async with _client() as c:
         resp = await c.get(
             "/api/orgs/some-org/agents",
-            headers={"X-Org-Slug": "some-org"},
+            headers={"X-Yaaos-Org-Slug": "some-org"},
         )
     assert resp.status_code in (401, 403)
 

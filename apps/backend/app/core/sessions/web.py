@@ -333,7 +333,7 @@ async def me(
 @router.get("/providers", dependencies=[Depends(public_route)])
 async def providers() -> dict[str, list[str]]:
     """List registered provider ids. The SPA renders one button per id on
-    the login page; the test stub appears only when YAAOS_ENV=test."""
+    the login page; the test stub appears only when APP_MODE=test."""
     return {"providers": list_providers()}
 
 

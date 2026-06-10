@@ -153,7 +153,7 @@ async def run_sweep_loop() -> None:
                 n_swept = await sweep_expired(session=s)
                 await s.commit()
             if n_swept:
-                log.info("mcp_proxy.tokens.swept", removed=n_swept)
+                log.debug("mcp_proxy.tokens.swept", removed=n_swept)
         except Exception:
             log.exception("mcp_proxy.sweep_loop.failed")
         await asyncio.sleep(interval)

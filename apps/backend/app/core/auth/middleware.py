@@ -8,7 +8,7 @@ Behavior:
      - `USER_SCOPED` → set `route_security_resolved = "user_scoped"`, pass
        through. Session enforcement is the route dep's job (no header
        requirement here).
-     - `ORG_SCOPED`  → if the request lacks `X-Org-Slug`, return 400; if it
+     - `ORG_SCOPED`  → if the request lacks `X-Yaaos-Org-Slug`, return 400; if it
        mutates without a valid CSRF token, return 403. Otherwise call the
        route; `require(action)` sets `route_security_resolved = "org_scoped"`
        once it resolves the membership.
@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 
 import structlog
-from opentelemetry import trace
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -115,7 +114,7 @@ class AuthMiddleware:
             return
 
         if category is RouteSecurity.USER_SCOPED:
-            # No X-Org-Slug requirement; the route dep enforces session.
+            # No X-Yaaos-Org-Slug requirement; the route dep enforces session.
             route_security_resolved.set("user_scoped")
             # CSRF still applies — session-cookie mutations are vulnerable
             # regardless of whether an org is in scope.
@@ -128,12 +127,12 @@ class AuthMiddleware:
             return
 
         if category is RouteSecurity.ORG_SCOPED:
-            # Org slug required — normally via the `X-Org-Slug` header. SSE
+            # Org slug required — normally via the `X-Yaaos-Org-Slug` header. SSE
             # stream routes also accept it in the `org` query param because the
             # browser `EventSource` API cannot set headers (see
             # `org_slug_in_query_allowed`). The slug runs through the same
             # membership check either way.
-            has_org = bool(request.headers.get("X-Org-Slug")) or (
+            has_org = bool(request.headers.get("X-Yaaos-Org-Slug")) or (
                 org_slug_in_query_allowed(path) and bool(request.query_params.get("org"))
             )
             if not has_org:
@@ -195,15 +194,5 @@ class AuthMiddleware:
             # request scope.
             unbind_request_structlog_vars()
 
-        # Tag the OTel span (best-effort).
-        span = trace.get_current_span()
-        if span is not None:
-            org_id = org_id_var.get()
-            user_id = user_id_var.get()
-            actor_kind = actor_kind_var.get()
-            if org_id is not None:
-                span.set_attribute("yaaos.org_id", str(org_id))
-            if user_id is not None:
-                span.set_attribute("yaaos.user_id", str(user_id))
-            if actor_kind is not None:
-                span.set_attribute("yaaos.actor_kind", actor_kind.value)
+        # Dims are stamped on every span (including this request-root span) by
+        # YaaosDimensionsSpanProcessor.on_start — no manual set_attribute needed.

@@ -26,7 +26,7 @@ def configure_gateway() -> None:
     """
     settings = get_settings()
     if not (settings.braintrust_api_key and settings.braintrust_api_url):
-        log.info("llm.gateway.skipped", reason="settings_missing")
+        log.debug("llm.gateway.skipped", reason="settings_missing")
         return
 
     os.environ["ANTHROPIC_API_BASE"] = settings.braintrust_api_url

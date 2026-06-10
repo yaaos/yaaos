@@ -57,7 +57,7 @@ async def test_connection_status_unauthenticated_401(seeded) -> None:
     async with _client() as c:
         r = await c.get(
             "/api/workspaces/connection_status",
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 401
 
@@ -70,7 +70,7 @@ async def test_connection_status_builder_forbidden(seeded) -> None:
         r = await c.get(
             "/api/workspaces/connection_status",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 403
 
@@ -83,7 +83,7 @@ async def test_connection_status_returns_not_configured(seeded) -> None:
         r = await c.get(
             "/api/workspaces/connection_status",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
     body = r.json()

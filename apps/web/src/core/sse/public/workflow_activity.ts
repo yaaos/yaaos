@@ -25,7 +25,7 @@ export function useWorkflowActivityStream(
 
   useEffect(() => {
     if (!workflowExecutionId) return;
-    // `/api/sse` is org-scoped, but EventSource can't send X-Org-Slug — the
+    // `/api/sse` is org-scoped, but EventSource can't send X-Yaaos-Org-Slug — the
     // slug rides in the `?org=` query param instead (backend accepts it for
     // SSE routes). Read it from the URL; the hook only runs inside an org.
     const slug = getCurrentOrgSlug();

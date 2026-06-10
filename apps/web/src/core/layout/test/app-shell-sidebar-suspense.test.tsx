@@ -53,7 +53,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 // OrgSwitcher calls useCurrentOrgSlug which reads router context — stub it.
-// apiFetch calls getCurrentOrgSlug() to inject X-Org-Slug header — stub that too.
+// apiFetch calls getCurrentOrgSlug() to inject X-Yaaos-Org-Slug header — stub that too.
 vi.mock("@core/api/public/org-context", () => ({
   useCurrentOrgSlug: () => "acme",
   setCurrentOrgSlug: () => {},

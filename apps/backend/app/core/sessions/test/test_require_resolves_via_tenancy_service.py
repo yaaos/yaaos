@@ -104,7 +104,7 @@ async def test_require_resolves_via_tenancy_no_domain_import(seeded) -> None:
         resp = await c.get(
             "/api/memberships/probe",
             cookies={"yaaos_session": seeded["token"]},
-            headers={"X-Org-Slug": seeded["org"].slug},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": "yes"}
@@ -125,7 +125,7 @@ async def test_require_returns_404_for_non_member(db_session) -> None:
         resp = await c.get(
             "/api/memberships/probe",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": org.slug},
+            headers={"X-Yaaos-Org-Slug": org.slug},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"]["error"] == "org_not_found"
@@ -157,7 +157,7 @@ async def test_require_returns_403_for_insufficient_role(db_session) -> None:
         resp = await c.get(
             "/api/memberships/admin-only",
             cookies={"yaaos_session": sess.raw_token},
-            headers={"X-Org-Slug": org.slug},
+            headers={"X-Yaaos-Org-Slug": org.slug},
         )
     assert resp.status_code == 403
     assert resp.json()["detail"]["error"] == "insufficient_role"

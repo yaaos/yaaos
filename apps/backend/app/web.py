@@ -19,6 +19,11 @@ from app.core import observability
 
 redis.bind_pubsub(redis.RedisPubsub())
 
+import asyncio  # noqa: E402
+from app.core import sse as _core_sse  # noqa: E402
+
+_core_sse.bind_shutdown_event(asyncio.Event())
+
 observability.configure(role="app")
 
 # 3. Webserver registry must exist before any domain module registers routes.
@@ -98,8 +103,8 @@ from app.plugins import claude_code, github, linear, notion  # noqa: F401, E402
 # both bootstrap() (VCS) and bootstrap_oauth() (identity).
 from app.core.config import get_settings  # noqa: E402
 
-# 6b. Test-only providers — env-gated; modules assert on yaaos_env=="test".
-if get_settings().yaaos_env == "test":
+# 6b. Test-only providers — env-gated; modules assert on app_mode=="test".
+if get_settings().is_test:
     from app.plugins import oauth_test  # noqa: F401
     from app.plugins import saml_test  # noqa: F401
 
@@ -108,10 +113,10 @@ if get_settings().yaaos_env == "test":
 #    plugins (`core < domain < plugins < testing`) — nothing in production code
 #    depends on it. If the testing layer has been stripped from the deployment
 #    (per the wheel exclude in pyproject.toml), this import fails loud — stub
-#    mode cannot be silently enabled in a stripped production artifact.
-import os  # noqa: E402
-
-if os.environ.get("YAAOS_CODING_AGENT_STUB", "").lower() in {"1", "true", "yes"}:
+#    mode cannot be silently enabled in a stripped production artifact. Settings
+#    also refuses to boot if the flag is set in production, so this branch is
+#    unreachable in prod regardless of whether the testing tree is present.
+if get_settings().yaaos_coding_agent_stub:
     from app.testing.stub_coding_agent import wrap_all_registered_plugins
     from app.testing.stub_workspace import wrap_all_registered_workspace_providers
 
@@ -153,4 +158,17 @@ if __name__ == "__main__":
         # trusting all forwarded IPs is the standard, safe setting on Fly.
         proxy_headers=True,
         forwarded_allow_ips="*",
+        # log_config=None: don't let uvicorn run its own dict-config. Our
+        # observability.configure() already owns the root logger (structlog
+        # ProcessorFormatter + OTel LoggingHandler + secret-scrub + dim filters).
+        # uvicorn's default config sets uvicorn.access propagate=False with its
+        # own handler — which both skips the OTLP pipe and clobbers the
+        # access-log DEBUG-demotion filter. With None, uvicorn.* loggers
+        # propagate to root and flow through one pipe.
+        log_config=None,
+        # Allow active HTTP connections (long polls, SSE streams) to finish
+        # on SIGTERM before the process exits.  30 s is generous enough for
+        # long-poll endpoints to return and short enough to fit within the
+        # kill_timeout budget in fly.production.toml.
+        timeout_graceful_shutdown=30,
     )

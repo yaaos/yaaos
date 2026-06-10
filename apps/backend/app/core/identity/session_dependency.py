@@ -24,7 +24,7 @@ async def require_session(
 ) -> None:
     """Dependency for `RouteSecurity.USER_SCOPED` routes. Requires a valid
     session cookie; sets `user_id_var`, `actor_kind_var`, `actor_id_var`.
-    Does **not** require `X-Org-Slug` or perform any membership / role check —
+    Does **not** require `X-Yaaos-Org-Slug` or perform any membership / role check —
     the route operates on the user, not on an org.
 
     Raises `AuthFailure("unauthenticated")` (→ 401, clearing cookies) when no

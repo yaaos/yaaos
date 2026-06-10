@@ -27,6 +27,13 @@ user_id_var: ContextVar[UUID | None] = ContextVar("yaaos_user_id", default=None)
 actor_kind_var: ContextVar[ActorKind | None] = ContextVar("yaaos_actor_kind", default=None)
 actor_id_var: ContextVar[UUID | None] = ContextVar("yaaos_actor_id", default=None)
 
+# Workflow scope contextvars. None outside an active workflow task body.
+# Set/reset by workflow task bodies in `core/workflow/service.py` around each
+# dispatch so the span processor stamps them on every child span and structlog
+# log lines carry them as queryable attributes.
+workflow_execution_id_var: ContextVar[str | None] = ContextVar("yaaos_workflow_execution_id", default=None)
+command_id_var: ContextVar[str | None] = ContextVar("yaaos_command_id", default=None)
+
 # Set by the middleware (for PUBLIC / USER_SCOPED paths) and by route deps
 # (`require(action)` sets "org_scoped" once it resolves a membership;
 # `public_route` sets "public" as a marker for explicitly-public routes).
@@ -88,7 +95,14 @@ async def org_context(
         org_id_var.reset(org_token)
 
 
-_REQUEST_STRUCTLOG_KEYS = ("yaaos_org_id", "yaaos_user_id", "yaaos_actor_kind", "yaaos_actor_id")
+_REQUEST_STRUCTLOG_KEYS = (
+    "yaaos_org_id",
+    "yaaos_user_id",
+    "yaaos_actor_kind",
+    "yaaos_actor_id",
+    "yaaos_workflow_execution_id",
+    "yaaos_command_id",
+)
 
 
 def bind_request_structlog_vars() -> None:

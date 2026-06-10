@@ -262,7 +262,7 @@ export async function ticketJobStatus(
   request: APIRequestContext,
 ): Promise<string | null> {
   const listResp = await request.get(`${YAAOS_URL}/api/tickets?q=${encodeURIComponent(title)}`, {
-    headers: { "X-Org-Slug": orgSlug },
+    headers: { "X-Yaaos-Org-Slug": orgSlug },
   });
   if (!listResp.ok()) return null;
   const body = (await listResp.json()) as { items: Array<{ id: string; title: string }> };
@@ -271,7 +271,7 @@ export async function ticketJobStatus(
   if (!ticket) return null;
 
   const runsResp = await request.get(`${YAAOS_URL}/api/tickets/${ticket.id}/workflow-runs`, {
-    headers: { "X-Org-Slug": orgSlug },
+    headers: { "X-Yaaos-Org-Slug": orgSlug },
   });
   if (!runsResp.ok()) return null;
   const runs = (await runsResp.json()) as Array<{ state: string }>;
