@@ -25,6 +25,7 @@ explicitly skips the per-signal append, causing bare-base 404s.
 import logging
 import re
 import sys
+from contextlib import contextmanager
 from typing import Any, Literal
 
 import structlog
@@ -543,6 +544,31 @@ async def shutdown() -> None:
             _logger_provider.shutdown()
         except Exception:
             pass
+
+
+@contextmanager
+def _scoped_otel_providers(
+    *,
+    tracer: Any = None,
+    meter: Any = None,
+    logger: Any = None,
+):
+    """Test seam: temporarily point the module-level provider refs that
+    `shutdown()` flushes at the supplied providers, restoring the PRIOR refs
+    (not None) on exit. Intra-module only — not in `__all__`; reached via a
+    direct submodule import from `observability/test/`."""
+    global _tracer_provider, _meter_provider, _logger_provider
+    prior = (_tracer_provider, _meter_provider, _logger_provider)
+    if tracer is not None:
+        _tracer_provider = tracer
+    if meter is not None:
+        _meter_provider = meter
+    if logger is not None:
+        _logger_provider = logger
+    try:
+        yield
+    finally:
+        _tracer_provider, _meter_provider, _logger_provider = prior
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

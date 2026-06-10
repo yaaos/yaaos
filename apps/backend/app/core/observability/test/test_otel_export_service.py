@@ -245,12 +245,6 @@ async def test_shutdown_flushes_buffered_records(
 
     tracer_provider, meter_provider, logger_provider = _build_providers(otlp_stub, monkeypatch)
 
-    # Point the module-level provider refs at our stub-wired providers so that
-    # svc.shutdown() flushes them.
-    svc._tracer_provider = tracer_provider
-    svc._meter_provider = meter_provider
-    svc._logger_provider = logger_provider
-
     # Emit a log record that may still be in the batch buffer.
     # Set the logger level to INFO — root stdlib logger defaults to WARNING in
     # test environments and would silently drop INFO records before the OTel
@@ -261,16 +255,15 @@ async def test_shutdown_flushes_buffered_records(
     test_logger.setLevel(logging.INFO)
     test_logger.addHandler(handler)
     try:
-        test_logger.info("pre-shutdown-flush-record")
-        # Call shutdown; it must force-flush all three providers.
-        await svc.shutdown()
+        # Inject the stub-wired providers as the refs svc.shutdown() flushes;
+        # the seam restores the prior refs on exit (not None).
+        with svc._scoped_otel_providers(tracer=tracer_provider, meter=meter_provider, logger=logger_provider):
+            test_logger.info("pre-shutdown-flush-record")
+            # Call shutdown; it must force-flush all three providers.
+            await svc.shutdown()
     finally:
         test_logger.removeHandler(handler)
         test_logger.setLevel(prior_level)
-        # Restore module state so other tests aren't affected.
-        svc._tracer_provider = None
-        svc._meter_provider = None
-        svc._logger_provider = None
 
     paths = otlp_stub.paths_received()
     assert "/v1/logs" in paths, f"shutdown() did not flush log records to stub. Paths received: {paths}"

@@ -43,11 +43,6 @@ async def test_drain_loop_exits_cleanly_on_stop_signal() -> None:
             stop.set()
         return 0  # empty batch -- loop would sleep poll_idle_seconds
 
-    import app.core.tasks.drain as drain_mod  # noqa: PLC0415
-
-    original_drain_once = drain_mod.drain_once
-    original_session = drain_mod.session
-
     class _FakeSession:
         """Context-manager stub -- no real DB."""
 
@@ -67,19 +62,19 @@ async def test_drain_loop_exits_cleanly_on_stop_signal() -> None:
     async def _fake_drain_once(*args: object, **kwargs: object) -> int:
         return await _mock_drain_once(*args, **kwargs)
 
-    # Temporarily replace session and drain_once so the loop doesn't need
-    # real Postgres.  We restore them on exit.
-    drain_mod.session = _FakeContextManager()  # type: ignore[assignment]
-    drain_mod.drain_once = _fake_drain_once  # type: ignore[assignment]
-    try:
-        # Must complete without hanging -- stop is set inside _mock_drain_once.
-        await asyncio.wait_for(
-            drain_loop(None, stop=stop, poll_idle_seconds=0.0),  # type: ignore[arg-type]
-            timeout=5.0,
-        )
-    finally:
-        drain_mod.session = original_session
-        drain_mod.drain_once = original_drain_once
+    # Inject the fakes via drain_loop's DI seam so the loop needs no real
+    # Postgres -- no module-attribute mutation. broker is unused here because
+    # the fake drain returns an empty batch and never dispatches.
+    await asyncio.wait_for(
+        drain_loop(
+            None,  # type: ignore[arg-type]
+            stop=stop,
+            poll_idle_seconds=0.0,
+            session_factory=_FakeContextManager(),
+            drain_fn=_fake_drain_once,
+        ),
+        timeout=5.0,
+    )
 
     assert call_count >= 1, "drain_loop never polled before exiting"
 
