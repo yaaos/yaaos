@@ -6,7 +6,7 @@
 
 | Boundary | What crosses | Direction |
 |---|---|---|
-| **GitHub webhook → backend** | HMAC-signed JSON payload | Inbound to `POST /api/intake/github_pr` ([`plugins/github/intake_type.py`](../apps/backend/app/plugins/github/intake_type.py)). |
+| **GitHub webhook → backend** | HMAC-signed JSON payload | Inbound to `POST /api/intake/github` ([`plugins/github/intake_type.py`](../apps/backend/app/plugins/github/intake_type.py)). |
 | **Backend ↔ WorkspaceAgent** | AgentCommand + AgentEvent JSON over HTTPS long-poll + WebSocket. Bearer in `Authorization`. | Outbound-only from agent's TCP perspective. |
 | **WorkspaceAgent ↔ workspace process** | JSON-newline IPC over stdin/stdout. | Bidirectional, in-process, no TCP. |
 | **Workspace process ↔ Claude Code subprocess** | CLI argv + env + stdio. | Local subprocess. |
@@ -27,8 +27,8 @@
 
 ### Secrets at rest
 
-- `core/secrets` Fernet-encrypts everything that lives in the database. Key is `YAAOS_ENCRYPTION_KEY` env var — never derived, never hard-coded.
-- Encrypted columns: `byok_keys.encrypted_value`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`.
+- `core/secrets` Fernet-encrypts everything that lives in the database. Master key is `YAAOS_TOTP_MASTER_KEY` (env var); `YAAOS_ENCRYPTION_KEY` is honored only as a non-prod fallback. Key bytes are read directly from the env on each encrypt/decrypt — not KDF-derived, not hard-coded.
+- Encrypted columns: `byok_keys.encrypted_value`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`, `mcp_credentials.encrypted_access_token`, `mcp_credentials.encrypted_refresh_token`.
 - Platform GitHub App private key + webhook secret live in env vars (`YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`), not the DB.
 
 ### Audit log
@@ -80,13 +80,14 @@ Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{
 
 ### `traceparent` on every wire payload
 
-W3C trace context is a required field on every AgentCommand, AgentEvent, WorkspaceEvent, and Heartbeat. The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers.
+W3C trace context is a required field on every AgentCommand and AgentEvent (it is optional on WorkspaceEvent and Heartbeat, which carry their own correlation identifiers). The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers.
 
 ## Data at rest
 
 | Class | Where | Encryption |
 |---|---|---|
-| OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | Refresh tokens in `oauth_identities.encrypted_refresh_token` (Fernet). Session bearers sha256-hashed — raw value only on user's cookie. |
+| OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | `oauth_identities` stores only `(provider, external_subject)` — no credential bytes. Session bearers sha256-hashed in `sessions.token_hash`; raw value only on the user's cookie. |
+| MCP integration credentials | `mcp_credentials` | `encrypted_access_token` + `encrypted_refresh_token`, Fernet via `core/secrets`. |
 | BYOK provider keys | `byok_keys.encrypted_value` | Fernet via `core/secrets`. |
 | GitHub webhook secret + App private key | `YAAOS_GITHUB_APP_WEBHOOK_SECRET` + `YAAOS_GITHUB_APP_PRIVATE_KEY` env vars | Platform-deployment secrets (env vars, not DB). One App per yaaos deployment; never per-customer. |
 | SAML SP private key | `sso_configs.sp_private_key_encrypted` | Fernet via `core/secrets`. |
@@ -103,7 +104,7 @@ W3C trace context is a required field on every AgentCommand, AgentEvent, Workspa
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
-| Activity events leaking source content | Not yet defended — WebSocket plumbing exists but no pre-renderer audit on `core/coding_agent` ActivityEvents. |
+| Activity event payloads carrying unexpected content | Producer-side discipline: `core/coding_agent` ActivityEvents are assumed source-free by the producer; payloads are not independently audited downstream. |
 | Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by workflow state-machine tests. |
 
 ## Not defended against (yet)

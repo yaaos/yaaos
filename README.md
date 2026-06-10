@@ -15,7 +15,7 @@ A few principles drive the design.
 **Product principles**
 
 - **Orchestrator, not an agent.** Reviews, refactors, and code writing are delegated to a CLI agent — Claude Code today, with Codex, Aider, and others available as plugins. yaaos owns the workflow around the agent, not the intelligence inside it.
-- **Bring your favourite coding agent and your own account.** EYou bring the API key, and your prompts go straight to the agent — yaaos doesn't sit in the middle.
+- **Bring your favorite coding agent and your own account.** You bring the API key, and your prompts go straight to the agent — yaaos doesn't sit in the middle.
 - **Integrates into your stack.** GitHub is wired up today. Notion, Linear, and other tools your team already lives in will land as plugins over time.
 - **Workspaces in your cloud.** Workspaces run on infrastructure you own and configure, so your code never leaves your VPC.
 - **Configurable.** yaaos ships with opinions on how SDLC workflows should run, but none of them are locked in. You can shape the workflow around how your team actually works.
@@ -43,7 +43,7 @@ Three components, two trust zones.
 
 - **Sessions.** OAuth login issues session + CSRF cookies.
 - **Authorization.** Per-action role policy. Sensitive mutations (IAM ARN, region) are restricted to org admins.
-- **MFA + SSO.** TOTP per-user; SAML SSO per-org for enterprise tenants.
+- **MFA + SSO.** TOTP per-user; SAML SSO per-org for enterprise tenants (coming soon!).
 - **Secrets at rest.** Fernet-encrypted columns for BYOK provider keys, SAML SP private keys, TOTP secrets, and OAuth refresh tokens. Master key in env, never in the DB. Session bearers stored as sha256 hashes only.
 - **Platform secrets.** GitHub App private key and webhook secret live in env vars, not the database.
 - **Webhook integrity.** Inbound GitHub webhooks are HMAC-verified against a shared secret; unsigned or tampered payloads are rejected before any application logic runs.
