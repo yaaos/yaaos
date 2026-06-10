@@ -63,6 +63,8 @@ Native `EventSource` auto-reconnects with exponential backoff; `onerror` transit
 
 `onopen` reconciles on every (re)connect: it invalidates the list-level keys (`["tickets"]`, `["reviewer", "metrics"]`) so a refetch recovers anything created while the stream was not OPEN. The stream connects asynchronously and pub/sub has no replay, so an event published in that window is lost on the bus — the refetch reads it from persisted state instead. The server emits a connect prelude so `onopen` fires immediately rather than waiting for the first event (see [backend `core/sse`](../../backend/docs/core_sse.md)).
 
+On web process shutdown (rolling deploy), the backend emits a `retry: 1000\n: server closing\n\n` frame before closing the stream. The `retry:` directive tells `EventSource` to reconnect in ~1 s, so the gap is one RTT rather than the browser's TCP-timeout window. The `onopen` reconciliation on reconnect picks up any state changed during the shutdown window.
+
 ## Data owned
 
 None. The `EventSource` is per-mount.

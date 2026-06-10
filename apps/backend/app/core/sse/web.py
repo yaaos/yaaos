@@ -9,10 +9,19 @@ The `/api/sse` prefix is classified as `ORG_SCOPED` in `core/auth/types.py`,
 so `AuthMiddleware` enforces the `X-Org-Slug` header before the handler runs.
 `require(Action.ORG_READ)` resolves the session → membership → sets
 `org_id_var` and marks the route security resolved.
+
+Graceful close on deploy: both stream generators race their subscription
+`__anext__` against `_shutdown_event`.  When the event fires (set by
+`shutdown()`), the generator emits a final `retry:`+comment frame that tells
+the browser's `EventSource` to reconnect within ~1 s, then returns — the
+`StreamingResponse` completes cleanly instead of hanging on a dead socket.
+The `retry:` value is 1000 ms; any already-pending `__anext__` task is
+cancelled before the generator exits.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -31,6 +40,58 @@ from app.core.webserver import RouteSpec, register_routes
 
 router = APIRouter()
 
+# Process-wide shutdown event — lazily initialised the first time `_get_event()`
+# is called within each event loop.  Lazy init avoids binding to the wrong loop
+# when the module is imported in a test environment (pytest creates a new event
+# loop per test; a module-level `asyncio.Event()` would bind to the loop active
+# at import time and raise "bound to a different event loop" in subsequent
+# tests).  In production there is exactly one event loop for the process
+# lifetime, so the singleton is created once and never replaced.
+_shutdown_event: asyncio.Event | None = None
+
+# The final frame sent to the client on deploy.  `retry: 1000` asks the
+# browser to reconnect in ~1 s; the comment line is ignored by `onmessage`
+# so it never surfaces as a spurious event.
+_SHUTDOWN_FRAME = "retry: 1000\n: server closing\n\n"
+
+
+def _get_event() -> asyncio.Event:
+    """Return the current shutdown event, creating it lazily if needed.
+
+    Called at the start of each stream generator iteration so the event is
+    always bound to the running event loop.
+    """
+    global _shutdown_event
+    if _shutdown_event is None:
+        _shutdown_event = asyncio.Event()
+    return _shutdown_event
+
+
+async def shutdown() -> None:
+    """Signal all active SSE stream generators to close gracefully.
+
+    Sets the process-wide shutdown event.  Each stream generator races its
+    next-event await against this event; when it fires the generator emits
+    a final `retry:`+comment frame and returns.  The `StreamingResponse`
+    then completes cleanly so the browser's `EventSource` reconnects
+    immediately instead of hanging on a dead socket.
+
+    Registered with the web shutdown registry only — SSE is web-presence.
+    """
+    _get_event().set()
+
+
+def _reset_shutdown_event_for_tests() -> None:
+    """Replace the module-level shutdown event with a fresh (unset) instance.
+
+    Test-only.  Each test that exercises shutdown behaviour calls this before
+    the test body so a previously-set event from an earlier test does not
+    immediately terminate the new generator.  Setting to None forces lazy
+    re-init in the current event loop on the next `_get_event()` call.
+    """
+    global _shutdown_event
+    _shutdown_event = None
+
 
 async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
     """Translate general pub/sub events into SSE frames for the caller's org.
@@ -38,21 +99,56 @@ async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
     Yields a connect prelude first so the client's EventSource fires `onopen`
     immediately (see `sse_prelude`); the stream would otherwise not flush
     headers until its first event.
+
+    Races each subscription `__anext__` against the shutdown event.  When the
+    event fires, emits the final close frame and returns so the
+    `StreamingResponse` completes rather than hanging.
     """
     yield sse_prelude()
-    async for event in subscribe_general(org_id):
-        yield serialize_for_sse(event)
+    it = subscribe_general(org_id).__aiter__()
+    while True:
+        next_task = asyncio.ensure_future(it.__anext__())
+        shutdown_task = asyncio.ensure_future(_get_event().wait())
+        done, pending = await asyncio.wait(
+            {next_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        if shutdown_task in done:
+            yield _SHUTDOWN_FRAME
+            return
+        try:
+            yield serialize_for_sse(next_task.result())
+        except StopAsyncIteration:
+            return
 
 
 async def _workspace_activity_stream(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[str]:
     """Translate workspace-activity pub/sub events into SSE frames.
 
     Yields a connect prelude first (see `sse_prelude`) for the same
-    header-flush reason as `_general_stream`.
+    header-flush reason as `_general_stream`.  Races each subscription
+    `__anext__` against the shutdown event for the same graceful-close reason.
     """
     yield sse_prelude()
-    async for event in subscribe_workspace_activity(org_id, workflow_execution_id):
-        yield serialize_for_sse(event)
+    it = subscribe_workspace_activity(org_id, workflow_execution_id).__aiter__()
+    while True:
+        next_task = asyncio.ensure_future(it.__anext__())
+        shutdown_task = asyncio.ensure_future(_get_event().wait())
+        done, pending = await asyncio.wait(
+            {next_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        if shutdown_task in done:
+            yield _SHUTDOWN_FRAME
+            return
+        try:
+            yield serialize_for_sse(next_task.result())
+        except StopAsyncIteration:
+            return
 
 
 @router.get("/general", dependencies=[Depends(require(Action.ORG_READ))])
