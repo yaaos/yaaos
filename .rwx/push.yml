@@ -261,7 +261,7 @@ tasks:
         --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.europe-west4.gcp.dash0.com \
         --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
         --build-arg VITE_DASH0_DATASET=default \
-        --build-arg VITE_SERVICE_VERSION=${{ init.sha }} \
+        --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
         --build-arg VITE_ENVIRONMENT=production
 
   # ─── agent image publish ─────────────────────────────────────────────
