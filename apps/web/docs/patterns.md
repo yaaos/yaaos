@@ -150,7 +150,7 @@ Module-scoped arrays. Canonical keys:
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`
 - `["plugin-health", pluginId]`
-- `["onboarding"]`, `["health"]`
+- `["onboarding"]`
 - `["notifications", readState]`, `["notifications", "popover"]`
 
 Mutations and the SSE subscriber ([core_sse.md](core_sse.md)) invalidate exactly the keys they affect.

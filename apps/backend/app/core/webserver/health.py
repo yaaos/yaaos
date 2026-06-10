@@ -6,13 +6,15 @@ by `core/webserver` itself as a framework concern (alongside `/openapi.json`,
 only.
 """
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core import database
 from app.core import redis as redis_client
-
-_VERSION = "0.0.1"
+from app.core.config import get_settings
 
 health_router = APIRouter()
 
@@ -24,13 +26,27 @@ class HealthResponse(BaseModel):
     version: str
 
 
+async def _db_ping() -> bool:
+    return await database.ping()
+
+
+async def _redis_ping() -> bool:
+    return await redis_client.ping()
+
+
 @health_router.get("/api/health", response_model=HealthResponse, tags=["health"])
-async def get_health() -> HealthResponse:
-    db_ok = await database.ping()
-    redis_ok = await redis_client.ping()
-    return HealthResponse(
-        status="ok" if (db_ok and redis_ok) else "degraded",
+async def get_health(
+    db_ok: Annotated[bool, Depends(_db_ping)],
+    redis_ok: Annotated[bool, Depends(_redis_ping)],
+) -> JSONResponse:
+    healthy = db_ok and redis_ok
+    body = HealthResponse(
+        status="ok" if healthy else "degraded",
         db_ok=db_ok,
         redis_ok=redis_ok,
-        version=_VERSION,
+        version=get_settings().service_version,
+    )
+    return JSONResponse(
+        content=body.model_dump(),
+        status_code=200 if healthy else 503,
     )

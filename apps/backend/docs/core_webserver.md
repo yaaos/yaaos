@@ -8,6 +8,13 @@
 - Does NOT own: auth/CSRF/rate limiting (those are in [`core/auth`](core_auth.md)).
 - `/api/health` is a framework carve-out (`core/webserver/health.py`) — not registered via `RouteSpec`.
 
+## Health endpoint (`/api/health`)
+
+- Returns **200** when both `db_ok` and `redis_ok` are true; returns **503** when either is false.
+- Body shape: `{status: "ok"|"degraded", db_ok: bool, redis_ok: bool, version: str}` — unchanged regardless of status code.
+- `version` is read from `settings.service_version` (`SERVICE_VERSION` env var, default `"0.0.0-dev"`). Set by the deploy pipeline (e.g. git SHA or semver tag).
+- Exempt from Cloudflare ingress middleware; no auth required.
+
 ## Why / invariants
 
 **One URL prefix per module** — `register_routes(spec)` enforces: empty `router.prefix`, unique `module_name`, non-overlapping effective prefix, starts with `/api/`, no trailing `/`. Violations surface at import time. See `app/core/webserver/registry.py`.

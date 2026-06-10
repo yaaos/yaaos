@@ -181,6 +181,11 @@ class Settings(BaseSettings):
     # dev/test/e2e are unaffected.
     yaaos_cloudflare_ingress_secret: SecretStr = SecretStr("")
 
+    # Service version string exposed in /api/health and OTel resource attrs.
+    # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
+    # safe sentinel so local/dev boots don't require the env var.
+    service_version: str = "0.0.0-dev"
+
     # Invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: SecretStr = SecretStr("dev-only-invitation-secret")
     yaaos_invitation_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days
