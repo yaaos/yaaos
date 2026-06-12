@@ -223,18 +223,17 @@ async def _post_findings_via_vcs(
     vcs_plugin_id: str,
     findings: list[Finding],
 ) -> None:
-    """Post each finding to the VCS plugin via `post_finding`.
+    """Post each finding to the VCS plugin via `vcs.post_finding` dispatch helper.
 
     Passes named primitive args — no value object crosses the `vcs` boundary.
     Each finding is posted independently; the plugin renders per-platform.
     """
-    from app.core.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
-
-    plugin = get_vcs_plugin(vcs_plugin_id)
+    from app.core import vcs  # noqa: PLC0415
 
     for f in findings:
         try:
-            await plugin.post_finding(
+            await vcs.post_finding(
+                vcs_plugin_id,
                 org_id,
                 pr_external_id,
                 file=f.file,
@@ -250,7 +249,8 @@ async def _post_findings_via_vcs(
                 suggested_fix=f.suggested_fix,
             )
         except Exception as exc:
-            # inside-span failure: workflow.command.PostFindings span is active
+            # inside-span failure: workflow.command.PostFindings span is active;
+            # vcs.post_finding span already recorded the exception on itself.
             trace.get_current_span().record_exception(exc)
             log.exception(
                 "publish_findings.vcs_post_failed",

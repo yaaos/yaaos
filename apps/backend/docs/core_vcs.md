@@ -27,9 +27,13 @@ Signatures in `app/core/vcs/types.py`:
 - Auth: `get_installation_token(org_id)`.
 - Repo enumeration: `list_installation_repos(org_id) -> list[str]` — live repo full-names the org's install can see; the plugin resolves its own credentials. Sibling plugins read repo lists through this (via the registry), never by importing the VCS plugin. Returns `[]` when the install is absent or the call fails.
 
-## Registry
+## Registry and dispatch helpers
 
-`app/core/vcs/registry.py` — `VCSRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_vcs_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_vcs_plugin` rejects duplicates. Module-level dispatchers `get_installation_token(plugin_id, org_id)` and `list_installation_repos(plugin_id, org_id)` resolve the plugin by id and delegate — the seam sibling plugins use instead of importing the VCS plugin. `scoped_vcs_plugin(plugin)` in `app/testing/isolation` is the context manager for ad-hoc per-test swaps — it binds a fresh copy with the plugin replaced and restores the prior binding on exit.
+`app/core/vcs/registry.py` — `VCSRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_vcs_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_vcs_plugin` rejects duplicates. `scoped_vcs_plugin(plugin)` in `app/testing/isolation` is the context manager for ad-hoc per-test swaps.
+
+**Typed dispatch helpers** — callers always use the module-level helpers exported from `core/vcs` rather than calling `get_plugin(id).method(...)` directly. Each async helper opens a `vcs.{plugin_id}.{op}` OTel span around the underlying plugin call so every VCS network hop appears as a named child span in the trace. Exceptions propagate unchanged; `start_as_current_span` automatically records the exception and sets `StatusCode.ERROR` on the span. Synchronous helpers (`install_url`, `validate_settings`, `clone_url`) have no span — they do no network I/O.
+
+Exported helpers: `fetch_pr`, `fetch_diff`, `list_yaaos_comments`, `is_repo_accessible`, `detect_force_push`, `list_commit_messages`, `post_finding`, `post_comment`, `post_comment_reply`, `mark_comments_outdated`, `install_url`, `validate_settings`, `clone_url`, `get_installation_token`, `list_installation_repos`.
 
 ## Events
 
@@ -41,4 +45,6 @@ None. Registry is in-memory. PR mirror state is in `domain/tickets` (`pull_reque
 
 ## How it's tested
 
-`app/core/vcs/test/test_events_discriminator.py` — `VCSEvent` round-trips via `TypeAdapter` for each kind. Plugin behaviour in `app/plugins/<plugin>/test/`.
+- `app/core/vcs/test/test_events_discriminator.py` — `VCSEvent` round-trips via `TypeAdapter` for each kind.
+- `app/core/vcs/test/test_dispatch_spans_service.py` — two service tests (marked `@pytest.mark.service`): one verifies that a raising plugin produces a `vcs.{plugin_id}.post_finding` span with an `exception` event and `StatusCode.ERROR`; the other verifies that an httpx request made inside a plugin produces a child HTTP span via `HTTPXClientInstrumentor`.
+- Plugin behaviour in `app/plugins/<plugin>/test/`.

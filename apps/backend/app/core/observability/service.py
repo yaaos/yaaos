@@ -503,6 +503,17 @@ def _configure_otel(
         SystemMetricsInstrumentor().instrument(meter_provider=meter_provider)
     except Exception:
         pass
+    # Auto-span every httpx.AsyncClient request (used by plugins/github and any
+    # future VCS/coding-agent plugin). Patches AsyncClient at the class level so
+    # ad-hoc clients constructed later in tests also get spans.
+    try:
+        from opentelemetry.instrumentation.httpx import (  # noqa: PLC0415
+            HTTPXClientInstrumentor,
+        )
+
+        HTTPXClientInstrumentor().instrument()
+    except Exception:
+        pass
 
 
 async def shutdown() -> None:

@@ -283,18 +283,17 @@ class SecretsScan:
         if ticket_ctx is None or ticket_ctx.pr_id is None:
             return Outcome.success(outputs={"rule_id": None})
 
-        from app.core.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
+        from app.core import vcs as _vcs  # noqa: PLC0415
         from app.domain.reviewer.secrets_detection import (  # noqa: PLC0415
             detect_secrets,
             secrets_warning_body,
         )
 
         try:
-            vcs_plugin = get_vcs_plugin(ticket_ctx.plugin_id)
             pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
             if not pr_external_id:
                 return Outcome.success(outputs={"rule_id": None})
-            diff = await vcs_plugin.fetch_diff(ticket_ctx.org_id, pr_external_id)
+            diff = await _vcs.fetch_diff(ticket_ctx.plugin_id, ticket_ctx.org_id, pr_external_id)
         except Exception as exc:
             log.warning(
                 "secrets_scan.diff_fetch_failed",
@@ -308,8 +307,8 @@ class SecretsScan:
             return Outcome.success(outputs={"rule_id": None})
 
         try:
-            await vcs_plugin.post_comment(
-                ticket_ctx.org_id, pr_external_id, body=secrets_warning_body(rule_id)
+            await _vcs.post_comment(
+                ticket_ctx.plugin_id, ticket_ctx.org_id, pr_external_id, body=secrets_warning_body(rule_id)
             )
         except Exception as exc:
             # inside-span failure: workflow.command.SecretsScan span is active

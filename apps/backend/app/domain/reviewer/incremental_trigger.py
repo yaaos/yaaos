@@ -29,9 +29,9 @@ from uuid import UUID
 import structlog
 from sqlalchemy import desc, select, update
 
+from app.core import vcs as _vcs
 from app.core.database import session as db_session
 from app.core.observability import spawn
-from app.core.vcs import get_plugin as get_vcs_plugin
 from app.domain import tickets
 from app.domain.reviewer.constants import DEFAULT_EFFORT as _DEFAULT_EFFORT
 from app.domain.reviewer.constants import DEFAULT_MODEL as _DEFAULT_MODEL
@@ -306,9 +306,8 @@ async def _new_commit_messages(
 ) -> list[str]:
     if not prev_sha or prev_sha == head_sha:
         return []
-    plugin = get_vcs_plugin(plugin_id)
     try:
-        return await plugin.list_commit_messages(org_id, repo_external_id, prev_sha, head_sha)
+        return await _vcs.list_commit_messages(plugin_id, org_id, repo_external_id, prev_sha, head_sha)
     except Exception:
         log.warning(
             "incremental.list_commit_messages_failed",
@@ -326,9 +325,8 @@ async def _is_ancestor(
         return False
     if prev_sha == head_sha:
         return True
-    plugin = get_vcs_plugin(plugin_id)
     try:
-        force_push = await plugin.detect_force_push(org_id, repo_external_id, prev_sha, head_sha)
+        force_push = await _vcs.detect_force_push(plugin_id, org_id, repo_external_id, prev_sha, head_sha)
         return not force_push
     except Exception:
         log.warning("incremental.is_ancestor_failed", repo=repo_external_id, prev=prev_sha, head=head_sha)

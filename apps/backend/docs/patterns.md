@@ -415,10 +415,10 @@ A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ..
 
 ### When to add a manual span
 
-Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`). Add manual spans only at meaningful boundaries:
+Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`; httpx via `HTTPXClientInstrumentor` installed in `core/observability._configure_otel`). Add manual spans only at meaningful boundaries:
 
-- Every external call — VCS API, coding-agent CLI, webhook signature verification.
-- Every plugin entry point — `VCSPlugin.post_finding`, `VCSPlugin.post_comment`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
+- Every external call — VCS API, coding-agent CLI, webhook signature verification. **VCS calls are already spanned by `core/vcs` dispatch helpers** (`vcs.{plugin_id}.{op}`); callers must use those helpers rather than calling `get_plugin(id).method(...)` directly. The httpx calls inside each plugin method appear as auto-instrumented child spans under the VCS dispatch span.
+- Every plugin entry point — `CodingAgentPlugin.review`, `WorkspaceProvider.provision` (VCS Protocol methods are covered by the dispatch helpers above).
 - Long phases inside a background coro — review_job phase transitions each get a span so the trace shows where wall time went.
 
 Don't wrap every domain function — noise hurts more than detail helps.
