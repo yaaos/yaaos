@@ -85,6 +85,7 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 	// when set in the environment — the dev compose sets it to mock-aws.
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithCredentialsProvider(ec2rolecreds.New()),
+		config.WithEC2IMDSRegion(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: load aws config: %w", err)
