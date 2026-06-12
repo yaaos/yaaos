@@ -8,6 +8,7 @@ from typing import Any
 
 import structlog
 from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.coding_agent.types import (
     AnswerQuestionContext,
@@ -223,6 +224,9 @@ async def health_check_all() -> dict[str, HealthStatus]:
             try:
                 out[plugin_id] = await plugin.health_check()
             except Exception as e:
+                span = trace.get_current_span()
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR, str(e))
                 out[plugin_id] = HealthStatus(healthy=False, message=str(e), checked_at=datetime.now(UTC))
     return out
 
