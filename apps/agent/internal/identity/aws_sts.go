@@ -83,10 +83,18 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 	// Load AWS config using EC2 instance role credentials from IMDS.
 	// AWS_EC2_METADATA_SERVICE_ENDPOINT is picked up automatically by the SDK
 	// when set in the environment — the dev compose sets it to mock-aws.
-	cfg, err := config.LoadDefaultConfig(ctx,
+	//
+	// WithEC2IMDSRegion opts the SDK into querying IMDS for the region (it does
+	// not do so by default). We only opt in when YAAOS_STS_ENDPOINT_URL is unset
+	// — when the override is set, resolveSTSEndpointAndRegion ignores cfg.Region
+	// entirely, and mock-aws may not serve /latest/meta-data/placement/region.
+	opts := []func(*config.LoadOptions) error{
 		config.WithCredentialsProvider(ec2rolecreds.New()),
-		config.WithEC2IMDSRegion(),
-	)
+	}
+	if os.Getenv(stsEndpointEnvVar) == "" {
+		opts = append(opts, config.WithEC2IMDSRegion())
+	}
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("identity: load aws config: %w", err)
 	}
