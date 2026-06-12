@@ -1,6 +1,6 @@
 # Fly.io deployment manifest — yaaos production (app.yaaos.dev).
 #
-# One app, two process groups (web + worker) built from the shared backend
+# One app, two process groups (api + worker) built from the shared backend
 # image (apps/backend/Dockerfile). The `web` and `worker` stages differ only
 # in CMD, so we build the `web` target and let [processes] supply each group's
 # command; the tini ENTRYPOINT is preserved, so SIGTERM still reaches the
@@ -59,13 +59,13 @@ kill_timeout = "180s"
   # SMTP non-secret identifiers (SMTP_HOST/PORT/USERNAME/USE_TLS/FROM) remain
   # set in the Fly dashboard env for now; SMTP_PASSWORD stays a secret.
 
-# ── web: FastAPI/uvicorn HTTP + SSE ──────────────────────────────────────
+# ── api: FastAPI/uvicorn HTTP + SSE ──────────────────────────────────────
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "off"
   min_machines_running = 1
-  processes = ["web"]
+  processes = ["api"]
 
   # Fly's internal checker hits the machine directly (not via Cloudflare), so
   # /api/health stays reachable. Generous grace_period: the web process runs
@@ -101,7 +101,7 @@ kill_timeout = "180s"
 
 # ── process commands (override image CMD; tini entrypoint preserved) ──────
 [processes]
-  web = "python apps/backend/app/web.py"
+  api = "python apps/backend/app/web.py"
   worker = "python apps/backend/app/worker.py"
 
 # Single small machine per group (fixed 1+1, no autoscaling).

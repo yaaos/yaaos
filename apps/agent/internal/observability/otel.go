@@ -157,7 +157,7 @@ func buildResource(cfg Config) (*resource.Resource, error) {
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceName("yaaos-workspace-agent"),
+			semconv.ServiceName("agent"),
 			semconv.ServiceVersion(cfg.ServiceVersion),
 			// service.instance.id is the backend-assigned instance_id
 			// (workspace_agents.instance_id = role-session-name from the STS

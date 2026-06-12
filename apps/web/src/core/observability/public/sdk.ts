@@ -77,7 +77,7 @@ export function configure(config: ObservabilityConfig): void {
   if (_provider !== null) return;
 
   const resourceAttrs: Record<string, string> = {
-    [ATTR_SERVICE_NAME]: "yaaos-web",
+    [ATTR_SERVICE_NAME]: "web",
   };
   if (config.serviceVersion) {
     resourceAttrs[ATTR_SERVICE_VERSION] = config.serviceVersion;
@@ -168,7 +168,7 @@ export function recordException(err: unknown): void {
   }
 
   // No active span — open a short-lived span to carry the exception event.
-  const tracer = trace.getTracer("yaaos-web");
+  const tracer = trace.getTracer("web");
   tracer.startActiveSpan("client.unhandled_error", (span) => {
     span.recordException(errObj);
     span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });

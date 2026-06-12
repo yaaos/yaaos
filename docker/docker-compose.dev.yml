@@ -4,7 +4,7 @@
 # pattern where saving a half-broken multi-file change triggers uvicorn
 # --reload to attempt an import and dump a traceback.
 #
-# Builds the SAME `web` / `worker` stages prod will use — only bind mounts +
+# Builds the SAME `api` / `worker` stages prod will use — only bind mounts +
 # APP_MODE=dev differ, so dev image content matches prod.
 #
 # Usage:
@@ -46,8 +46,8 @@ services:
       - "1025:1025"
       - "8025:8025"
 
-  web:
-    image: yaaos-web
+  api:
+    image: yaaos-api
     build:
       context: ..
       dockerfile: apps/backend/Dockerfile
@@ -112,6 +112,7 @@ services:
       # a fresh `pnpm --filter ./apps/web build` on the host shows up
       # immediately on browser refresh. No backend restart needed.
       - ../apps/web/dist:/app/apps/web/dist
+
 
   # The worker process runs taskiq's broker consumer + the
   # outbox→Redis drain loop. Without it, every
@@ -191,9 +192,9 @@ services:
       args:
         BUILD_TAGS: agent_dev
     environment:
-      YAAOS_BACKEND_URL: http://web:8080
+      YAAOS_BACKEND_URL: http://api:8080
       YAAOS_AGENT_VERSION: dev
-      # The agent connects to the backend over the Docker network (web:8080) but
+      # The agent connects to the backend over the Docker network (api:8080) but
       # the backend's YAAOS_PUBLIC_ORIGIN is localhost:8080 so browser-facing
       # OAuth/email links resolve from the host. Override the audience the agent
       # embeds in its signed STS claim to match what the backend expects.
@@ -208,7 +209,7 @@ services:
       # STS override: the backend's sts_verifier allows this host in non-prod.
       YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
     depends_on:
-      web:
+      api:
         condition: service_started
       mock-aws:
         condition: service_healthy

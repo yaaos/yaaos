@@ -151,7 +151,7 @@ OTel signals (when endpoint is set):
   - `yaaos.agent.connection.backoff_seconds{surface}`
 - **Logs** — every `slog` record fans to the collector via `otelslog` bridge.
 
-Resource attributes: `service.name=yaaos-workspace-agent`, `service.version`, `service.instance.id`. Standard OTel env vars apply (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED`).
+Resource attributes: `service.name=agent`, `service.version`, `service.instance.id`. Standard OTel env vars apply (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED`).
 
 ## Connection resilience
 

@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     # must differ across separately-deployed roles even when they share a code
     # base. Both env-overridable for downstream collectors that need a custom
     # naming scheme.
-    otel_service_name_app: str = "yaaos-web"
-    otel_service_name_worker: str = "yaaos-worker"
+    otel_service_name_app: str = "api"
+    otel_service_name_worker: str = "worker"
     log_level: str = "INFO"
 
     # GitHub API base URL — overridden in the test stack to point at `apps/fake-github`.

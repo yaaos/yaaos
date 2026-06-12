@@ -14,7 +14,7 @@
 Every signal carries two kinds of attributes:
 
 - **Resource attributes** (static for the process lifetime, set before BindExporter):
-  - `service.name` = `yaaos-workspace-agent`
+  - `service.name` = `agent`
   - `service.version` = binary version — sourced from `main.agentVersion` (ldflags-injectable `var`, defaults to `"0.0.0-dev"`); `YAAOS_AGENT_VERSION` env wins at runtime. Both the OTel `Init` call and `supervisor.Config.Version` read the same `envOr("YAAOS_AGENT_VERSION", agentVersion)` expression — there is no split-brain fallback.
   - `service.instance.id` = `instance_id` — the backend-assigned role-session-name from the STS ARN (`workspace_agents.instance_id`). Correlates OTel signals to a specific `workspace_agents` row. Empty until set via `SetInstanceID` after identity exchange; populated before `BindExporter` runs in the normal ConfigUpdate path.
 - **Span / metric attributes** (set after identity exchange):
