@@ -215,13 +215,16 @@ tasks:
       - .npmrc
       - pyproject.toml
       - uv.lock
-    docker: preserve-data
+    docker: true
     # Docker is on so `apps/e2e/bin/ci` can `docker compose up --build`
     # the test stack. Playwright runs natively on the agent.
     # `tool-cache` preserves node_modules + ~/.cache/ms-playwright/
-    # across runs; `preserve-data` keeps the Docker daemon's built
-    # images + build cache, so unchanged layers in the web/worker/fake-*
-    # images don't need to rebuild on every push.
+    # across runs. The Docker daemon's image store is NOT preserved:
+    # measurements showed zero CACHED layers on real runs (BuildKit
+    # cache location + `ghcr.io/astral-sh/uv:latest` digest checks
+    # invalidate everything), while the post-run snapshot upload was
+    # 40–120s and growing. Cold rebuild is ~32s — faster than the
+    # upload it replaced.
     run: |
       set -e
       corepack enable
