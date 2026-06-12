@@ -122,8 +122,8 @@ All three OTel signals (traces, metrics, logs) share two standard dimensions on 
 | `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
 | `workspace.clone` | `workspace.handle.ProvisionWorkspace` | `realhandler.go` `ProvisionWorkspace` | |
 | `workspace.runclaude` | `workspace.handle.InvokeClaudeCode` | `realhandler.go` `RunClaude` | |
-| `agent.identity_exchange` | none (fresh root per call) | `supervisor.go` `exchangeIdentity` | |
-| `agent.identity_refresh` | none (fresh root per call) | `supervisor.go` `runOneRefreshCycle` | |
+| `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
+| `agent.identity_refresh` | inherits caller context; root at current call sites | `supervisor.go` `runOneRefreshCycle` | |
 | `agent.claim` | none (per HTTP call, NOT per loop iteration) | `supervisor.go` `claimLoop` | |
 | `agent.activity_ws.dial` | none (per dial attempt, NOT per message) | `supervisor.go` `dialAndStartWS` | |
 
