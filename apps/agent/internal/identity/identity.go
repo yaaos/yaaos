@@ -77,7 +77,7 @@ type Provider interface {
 // Environment variables read by each provider:
 //
 //	aws-sts: AWS_EC2_METADATA_SERVICE_ENDPOINT (IMDS URL, default auto-detected)
-//	         AWS_REGION (optional; the signed URL carries the region instead)
+//	         AWS_REGION (or IMDS /latest/meta-data/placement/region) — determines the regional STS endpoint; must resolve to a non-empty string
 func NewProvider() Provider {
 	kind := os.Getenv(providerEnvVar)
 	if kind == "" {
