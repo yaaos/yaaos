@@ -14,7 +14,6 @@ import uuid
 from typing import get_args
 
 import structlog
-from opentelemetry import trace
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -248,10 +247,11 @@ async def _post_findings_via_vcs(
                 rule_source=f.rule_source,
                 suggested_fix=f.suggested_fix,
             )
-        except Exception as exc:
-            # inside-span failure: workflow.command.PostFindings span is active;
-            # vcs.post_finding span already recorded the exception on itself.
-            trace.get_current_span().record_exception(exc)
+        except Exception:
+            # inside-span failure: the vcs.post_finding span already recorded the
+            # exception on itself, and PostFindings.execute's outer catch records
+            # it + sets ERROR on the active workflow.command.PostFindings span.
+            # Re-raise without recording here to avoid a duplicate exception event.
             log.exception(
                 "publish_findings.vcs_post_failed",
                 pr_external_id=pr_external_id,
