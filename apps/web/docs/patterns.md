@@ -173,6 +173,21 @@ One surface in `core/api/public/client.ts`: `apiFetch<T>` (generic helper, throw
 - **Queries** — `useSuspenseQuery`; `<ErrorBoundary>` catches thrown errors; `<Suspense>` shows skeletons while pending.
 - **Validation errors** — 4xx field-keyed map surfaces under the relevant input.
 
+## Observability
+
+Rule: every `catch` block that swallows or transforms an error MUST call `recordException(err)` from `@core/observability/public/sdk` before silently dropping the error, rethrowing, or surfacing UI feedback. Never silent-catch without either `recordException` or a deliberate rethrow.
+
+Grep recipe — audit all catch sites:
+```
+rg "\.catch\(|catch \(" apps/web/src --type ts
+```
+
+Sanctioned exceptions (catches that do NOT need `recordException`):
+- `sdk.ts:204` — `_resetObservabilityForTests` ignores shutdown errors in tests only (not shipped code).
+- `queries.ts:52` and `queries.ts:104` — conditional 401-rethrows (`if message.startsWith("401") return null`). A 401 is a routing signal (`handleAuthFailure` redirects to `/login`), not a client error; recording it as an exception would generate noise.
+
+Any new catch site that isn't a routing signal must call `recordException`.
+
 ## Code style
 
 - Function components only. Hooks for shared logic; no HOCs unless forced by a library.

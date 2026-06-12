@@ -2,6 +2,7 @@
  * Tests for core/observability:
  * - SDK configure + no-op export when collector endpoint is unset
  * - recordException is called on the active span when a boundary catches an error
+ * - recordException opens a fallback client.unhandled_error span when no active span exists
  * - recordException is called when window.onerror fires
  * - recordException is called when window.onunhandledrejection fires
  * - SpanProcessor.onStart stamps yaaos.org_id / yaaos.user_id from the identity holder
@@ -9,8 +10,8 @@
  * - setIdentity updates the identity used by SpanProcessor.onStart
  */
 
-import { type SpanContext, context, propagation, trace } from "@opentelemetry/api";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type SpanContext, SpanStatusCode, context, propagation, trace } from "@opentelemetry/api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Module reset helpers — each test reimports to get a clean module state.
 import {
@@ -168,6 +169,76 @@ describe("recordException — active span", () => {
   it("does not throw when there is no active span", () => {
     configure({ collectorEndpoint: undefined });
     expect(() => recordException(new Error("orphan error"))).not.toThrow();
+  });
+});
+
+// ── recordException — fallback span when no active span ──────────────────────
+
+describe("recordException — fallback span", () => {
+  afterEach(() => {
+    _resetObservabilityForTests();
+    vi.restoreAllMocks();
+  });
+
+  it("test_recordException_opens_fallback_span_when_no_active_span", () => {
+    configure({ collectorEndpoint: undefined });
+
+    // Simulate no active span by ensuring we're outside any startActiveSpan context.
+    // recordException checks trace.getActiveSpan()?.isRecording() — that returns
+    // undefined outside a span context, so no mocking needed.
+
+    // Inject a fake tracer via the getTracer seam so we can assert on the
+    // span the fallback path creates. The fake records calls in-memory.
+    const capturedSpans: Array<{
+      name: string;
+      exceptions: unknown[];
+      statusCode: number;
+      statusMessage: string;
+      ended: boolean;
+    }> = [];
+
+    vi.spyOn(trace, "getTracer").mockReturnValue({
+      startActiveSpan(
+        name: string,
+        fn: (span: {
+          recordException: (e: unknown) => void;
+          setStatus: (s: { code: number; message: string }) => void;
+          end: () => void;
+        }) => void,
+      ): void {
+        const span = {
+          name,
+          exceptions: [] as unknown[],
+          statusCode: 0,
+          statusMessage: "",
+          ended: false,
+          recordException(e: unknown) {
+            this.exceptions.push(e);
+          },
+          setStatus(s: { code: number; message: string }) {
+            this.statusCode = s.code;
+            this.statusMessage = s.message;
+          },
+          end() {
+            this.ended = true;
+            capturedSpans.push({ ...this });
+          },
+        };
+        fn(span);
+      },
+    } as ReturnType<typeof trace.getTracer>);
+
+    const err = new Error("orphan render crash");
+    recordException(err);
+
+    expect(capturedSpans).toHaveLength(1);
+    const span = capturedSpans[0];
+    if (!span) throw new Error("expected a captured span");
+    expect(span.name).toBe("client.unhandled_error");
+    expect(span.statusCode).toBe(SpanStatusCode.ERROR);
+    expect(span.exceptions).toHaveLength(1);
+    expect(span.exceptions[0]).toBe(err);
+    expect(span.ended).toBe(true);
   });
 });
 
