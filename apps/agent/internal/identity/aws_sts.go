@@ -17,10 +17,6 @@ import (
 )
 
 const (
-	// stsGlobalEndpoint is the default STS endpoint. Used when
-	// YAAOS_STS_ENDPOINT_URL is unset.
-	stsGlobalEndpoint = "https://sts.amazonaws.com/"
-
 	// stsEndpointEnvVar overrides the STS endpoint URL the agent signs against
 	// and embeds in the signed envelope. Non-prod only — set to the mock-aws
 	// URL in dev/test compose so the backend replays against the same mock.
@@ -35,16 +31,27 @@ const (
 	// audienceHeader is embedded inside the signed envelope to bind the claim
 	// to the backend's canonical hostname. The backend checks this header.
 	audienceHeader = "X-Yaaos-Audience"
+
+	// mockSTSRegion is the region used when YAAOS_STS_ENDPOINT_URL is set
+	// (dev/test mock-aws, which is not regional).
+	mockSTSRegion = "us-east-1"
 )
 
-// resolveSTSEndpoint returns the URL the agent signs GetCallerIdentity against.
-// Defaults to the global STS endpoint; overridden by YAAOS_STS_ENDPOINT_URL
-// (dev/test only, points at mock-aws).
-func resolveSTSEndpoint() string {
+// resolveSTSEndpointAndRegion returns the STS endpoint URL and AWS region the
+// agent signs GetCallerIdentity against. In production the regional endpoint
+// is derived from the IMDS-supplied region so the signed URL matches the
+// org's configured aws_region. YAAOS_STS_ENDPOINT_URL overrides both (dev/test
+// only, points at mock-aws which is always treated as us-east-1).
+// Returns an error when no override is set and imdsRegion is empty — the
+// caller would produce a malformed double-dot URL otherwise.
+func resolveSTSEndpointAndRegion(imdsRegion string) (endpoint, region string, err error) {
 	if v := os.Getenv(stsEndpointEnvVar); v != "" {
-		return v
+		return v, mockSTSRegion, nil
 	}
-	return stsGlobalEndpoint
+	if imdsRegion == "" {
+		return "", "", fmt.Errorf("identity: no AWS region available; set AWS_REGION or ensure IMDS /latest/meta-data/placement/region is reachable")
+	}
+	return fmt.Sprintf("https://sts.%s.amazonaws.com/", imdsRegion), imdsRegion, nil
 }
 
 // signedEnvelope is the JSON shape expected by sts_verifier.parse_signed_request.
@@ -90,8 +97,13 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 	}
 
 	// Build the GetCallerIdentity HTTP request. Body must be exactly stsAPIBody.
+	// Endpoint and region are derived from IMDS so the signed URL matches the
+	// org's configured aws_region on the backend.
 	body := stsAPIBody
-	endpoint := resolveSTSEndpoint()
+	endpoint, region, err := resolveSTSEndpointAndRegion(cfg.Region)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, fmt.Errorf("identity: build sts request: %w", err)
@@ -102,11 +114,10 @@ func (p *awsSTSProvider) SignClaim(ctx context.Context, audience string) (json.R
 	// is configured, and callers must not pass an empty audience in production.
 	req.Header.Set(audienceHeader, audience)
 
-	// SigV4 sign the request. Region "us-east-1" for the global endpoint.
 	signer := awssigner.NewSigner()
 	h := sha256.Sum256([]byte(body))
 	payloadHash := fmt.Sprintf("%x", h)
-	if err := signer.SignHTTP(ctx, creds, req, payloadHash, "sts", "us-east-1", time.Now()); err != nil {
+	if err := signer.SignHTTP(ctx, creds, req, payloadHash, "sts", region, time.Now()); err != nil {
 		return nil, fmt.Errorf("identity: sigv4 sign: %w", err)
 	}
 

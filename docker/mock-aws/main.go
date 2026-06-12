@@ -212,6 +212,16 @@ func main() {
 	// IMDS credentials (profile list + specific profile).
 	mux.HandleFunc("/latest/meta-data/iam/security-credentials/", handleIMDSCredentials)
 	mux.HandleFunc("/latest/meta-data/iam/security-credentials", handleIMDSCredentials)
+	// The IMDS region endpoint (/latest/meta-data/placement/region) is intentionally
+	// absent from the real handler list because YAAOS_STS_ENDPOINT_URL is always set
+	// in dev/test compose, which makes resolveSTSEndpointAndRegion return the mock
+	// override and never read cfg.Region. Stub it for defensive completeness so
+	// future test paths that exercise the production code path don't silently get
+	// an empty region.
+	mux.HandleFunc("/latest/meta-data/placement/region", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "us-east-1")
+	})
 	// STS endpoint.
 	mux.HandleFunc("/", handleSTS)
 

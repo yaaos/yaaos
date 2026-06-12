@@ -50,6 +50,7 @@ def test_parse_signed_request_happy_path() -> None:
     assert parsed.body == "Action=GetCallerIdentity&Version=2011-06-15"
     # Headers normalized to lowercase keys (AWS sigv4 is case-insensitive).
     assert "authorization" in parsed.headers
+    assert parsed.region == "us-east-1"
 
 
 def test_parse_signed_request_regional_endpoint_ok() -> None:
@@ -57,6 +58,7 @@ def test_parse_signed_request_regional_endpoint_ok() -> None:
     d["url"] = "https://sts.us-west-2.amazonaws.com/"
     parsed = parse_signed_request(json.dumps(d))
     assert "sts.us-west-2" in parsed.url
+    assert parsed.region == "us-west-2"
 
 
 def test_parse_signed_request_rejects_non_sts_host() -> None:

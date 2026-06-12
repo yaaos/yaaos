@@ -38,9 +38,9 @@ func TestAWSSTSProvider_SignClaim_EnvelopeShape(t *testing.T) {
 		// Build a minimal envelope matching the wire contract and verify the
 		// parse contract (what sts_verifier.parse_signed_request would check).
 		envelope := signedEnvelope{
-			URL: stsGlobalEndpoint,
+			URL: "https://sts.us-east-2.amazonaws.com/",
 			Headers: map[string]string{
-				"authorization": "AWS4-HMAC-SHA256 Credential=test/20240101/us-east-1/sts/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=deadbeef",
+				"authorization": "AWS4-HMAC-SHA256 Credential=test/20240101/us-east-2/sts/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=deadbeef",
 				"x-amz-date":    "20240101T000000Z",
 				"content-type":  "application/x-www-form-urlencoded",
 			},
@@ -117,24 +117,66 @@ func TestNewProvider_UnknownPanics(t *testing.T) {
 	_ = NewProvider()
 }
 
-// TestResolveSTSEndpoint_DefaultIsGlobal verifies that with no override env var,
-// the agent signs against the real AWS global STS endpoint.
-func TestResolveSTSEndpoint_DefaultIsGlobal(t *testing.T) {
+// TestResolveSTSEndpointAndRegion_DefaultIsRegional verifies that with no override
+// env var the endpoint is derived from the IMDS region.
+func TestResolveSTSEndpointAndRegion_DefaultIsRegional(t *testing.T) {
 	t.Setenv(stsEndpointEnvVar, "")
-	if got := resolveSTSEndpoint(); got != stsGlobalEndpoint {
-		t.Errorf("resolveSTSEndpoint(): want %q, got %q", stsGlobalEndpoint, got)
+	endpoint, region, err := resolveSTSEndpointAndRegion("us-east-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "https://sts.us-east-2.amazonaws.com/"; endpoint != want {
+		t.Errorf("endpoint: want %q, got %q", want, endpoint)
+	}
+	if region != "us-east-2" {
+		t.Errorf("region: want %q, got %q", "us-east-2", region)
 	}
 }
 
-// TestResolveSTSEndpoint_OverrideRespected verifies that YAAOS_STS_ENDPOINT_URL
-// replaces the default. SigV4 binds the host into the signature, so signing
-// target and the URL embedded in the envelope must match — both come from this
-// helper, so a single-source override is sufficient.
-func TestResolveSTSEndpoint_OverrideRespected(t *testing.T) {
+// TestResolveSTSEndpointAndRegion_OverrideRespected verifies that
+// YAAOS_STS_ENDPOINT_URL replaces the default and forces the mock region.
+func TestResolveSTSEndpointAndRegion_OverrideRespected(t *testing.T) {
 	const override = "http://mock-aws:4566/"
 	t.Setenv(stsEndpointEnvVar, override)
-	if got := resolveSTSEndpoint(); got != override {
-		t.Errorf("resolveSTSEndpoint(): want %q, got %q", override, got)
+	endpoint, region, err := resolveSTSEndpointAndRegion("us-east-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if endpoint != override {
+		t.Errorf("endpoint: want %q, got %q", override, endpoint)
+	}
+	if region != mockSTSRegion {
+		t.Errorf("region: want %q, got %q", mockSTSRegion, region)
+	}
+}
+
+// TestResolveSTSEndpointAndRegion_OverrideBypassesEmptyRegion verifies that
+// YAAOS_STS_ENDPOINT_URL overrides even when cfg.Region is empty — the override
+// path never reads imdsRegion, so the e2e mock-aws environment (which doesn't
+// serve IMDS region) can still complete identity exchange.
+func TestResolveSTSEndpointAndRegion_OverrideBypassesEmptyRegion(t *testing.T) {
+	const override = "http://mock-aws:4566/"
+	t.Setenv(stsEndpointEnvVar, override)
+	endpoint, region, err := resolveSTSEndpointAndRegion("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if endpoint != override {
+		t.Errorf("endpoint: want %q, got %q", override, endpoint)
+	}
+	if region != mockSTSRegion {
+		t.Errorf("region: want %q, got %q", mockSTSRegion, region)
+	}
+}
+
+// TestResolveSTSEndpointAndRegion_EmptyRegionNoOverrideErrors verifies that
+// when no override is set and IMDS returns no region, an error is returned
+// rather than producing a malformed double-dot URL.
+func TestResolveSTSEndpointAndRegion_EmptyRegionNoOverrideErrors(t *testing.T) {
+	t.Setenv(stsEndpointEnvVar, "")
+	_, _, err := resolveSTSEndpointAndRegion("")
+	if err == nil {
+		t.Error("expected error for empty region with no override, got nil")
 	}
 }
 
