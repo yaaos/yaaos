@@ -189,9 +189,10 @@ func wireProviders(res *resource.Resource, traceExp sdktrace.SpanExporter, metri
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExp),
-		// DimProcessor stamps org_id + agent_id on every span after identity
-		// exchange. Placed after the batcher so the export pipeline already sees
-		// the attributes when the batch is flushed.
+		// DimProcessor stamps org_id + agent_id on every span at OnStart (after
+		// identity exchange). BatchSpanProcessor reads the span at OnEnd, and span
+		// attributes stay mutable until then, so processor registration order does
+		// not affect which attributes reach the exporter.
 		sdktrace.WithSpanProcessor(NewDimProcessor()),
 		sdktrace.WithResource(res),
 	)
