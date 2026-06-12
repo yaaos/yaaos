@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dash0": {
+      "type": "http",
+      "url": "https://api.us-west-2.aws.dash0.com/mcp"
+    }
+  }
+}

@@ -54,7 +54,7 @@ test.describe("integrations + multi-org", () => {
     // Log in. We end up on the org dashboard.
     await page.goto(`${BASE}/login`);
     await page.getByTestId("login-test").click();
-    await page.waitForURL(/\/orgs\/acme\/dashboard$/);
+    await page.waitForURL(/\/org\/acme\/dashboard$/);
 
     // Red banner is visible in the app-shell.
     const banner = page.getByTestId("broken-integrations-banner");
@@ -64,7 +64,7 @@ test.describe("integrations + multi-org", () => {
     // Click the banner → land on the MCP Proxy settings page (
     // renamed `/settings/integrations` → `/settings/mcp-proxy`).
     await banner.click();
-    await page.waitForURL(/\/orgs\/acme\/settings\/mcp-proxy$/);
+    await page.waitForURL(/\/org\/acme\/settings\/mcp-proxy$/);
 
     // The broken provider's "Reconnect required" badge is visible.
     await expect(page.getByTestId("badge-linear-broken")).toBeVisible();

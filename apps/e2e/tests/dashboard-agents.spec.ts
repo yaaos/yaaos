@@ -35,7 +35,7 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
 
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();
-  await page.waitForURL(/\/orgs\/acme\/dashboard$/);
+  await page.waitForURL(/\/org\/acme\/dashboard$/);
 }
 
 /** Seed a workspace agent row via the testing surface. */
@@ -65,7 +65,7 @@ test.describe("dashboard workspace agents row", () => {
     // The empty-state link should point to the workspaces settings page.
     const link = page.getByTestId("agent-card-empty-settings-link");
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute("href", /\/orgs\/acme\/settings\/workspaces/);
+    await expect(link).toHaveAttribute("href", /\/org\/acme\/settings\/workspaces/);
   });
 
   test("agent card shows online after seeding; SSE flips state without reload", async ({

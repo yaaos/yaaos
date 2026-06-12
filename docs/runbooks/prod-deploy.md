@@ -238,7 +238,7 @@ Before pushing to `main`, run all CI scripts:
 Push to `main` → RWX triggers `push.yml`:
 
 1. `ci-docs`, `ci-backend`, `ci-web`, `ci-agent`, `ci-e2e` run in parallel.
-2. `deploy-production` fires only when **all five** pass.
+2. `deploy-production` fires only when **all five** pass **and** the push touched deploy-relevant files — it carries a `filter:` block (`apps/backend/**`, `apps/web/**`, the Python/pnpm workspace manifests, and `fly.production.toml`). An agent-only push (`apps/agent/**`) skips `deploy-production` (its image ships via `publish-agent-image`); a doc-only push skips deployment entirely. The `filter:` list in `.rwx/push.yml` is the canonical source.
 3. `flyctl deploy --remote-only --config fly.production.toml` builds the amd64 image on Fly's remote builder and deploys.
 
 ### Bluegreen cutover

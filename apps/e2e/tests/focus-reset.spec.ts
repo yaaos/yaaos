@@ -37,7 +37,7 @@ test.describe("focus-reset on route navigation", () => {
 
     // Navigate to Tickets.
     await page.getByRole("link", { name: /tickets/i }).first().click();
-    await page.waitForURL(/\/orgs\/acme\/tickets/);
+    await page.waitForURL(/\/org\/acme\/tickets/);
 
     // After navigation: focus must be on <main> or the <h1> inside it.
     await expect
@@ -53,13 +53,13 @@ test.describe("focus-reset on route navigation", () => {
   }) => {
     await loginAsOwner(page, request);
     await page.goto(`${YAAOS_URL}/org/acme/tickets`);
-    await page.waitForURL(/\/orgs\/acme\/tickets/);
+    await page.waitForURL(/\/org\/acme\/tickets/);
 
     // Move focus to the sidebar so we can assert it moves after navigation.
     await page.getByRole("link", { name: /lessons/i }).focus();
 
     await page.getByRole("link", { name: /lessons/i }).click();
-    await page.waitForURL(/\/orgs\/acme\/lessons/);
+    await page.waitForURL(/\/org\/acme\/lessons/);
 
     await expect
       .poll(() => page.evaluate(focusPlacement), {
