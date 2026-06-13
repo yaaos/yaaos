@@ -150,7 +150,7 @@ class CodeReview:
             org_id=owner.org_id,
             agent_id=owner.owning_agent_id,
             invocation=invocation.model_dump(mode="json"),
-            traceparent=ctx.traceparent or "",
+            traceparent="",
             session=session,
             workflow_execution_id=_UUID(ctx.workflow_execution_id),
         )

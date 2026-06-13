@@ -7,7 +7,7 @@ forbid_circular_dependencies = true
 
 [[modules]]
 path = "app.core.agent_gateway"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.redis", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.core.audit_log"

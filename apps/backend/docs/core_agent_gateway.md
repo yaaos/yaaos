@@ -72,6 +72,8 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 
 The span is a child of whatever span is current at the call site (typically a `workflow.start_step` or `workflow.command.{kind}` span). On the agent side, `supervisor.dispatch.{kind}` continues the trace via the `traceparent` injected into the `AgentCommand` wire payload.
 
+**`traceparent` ownership rule:** `enqueue_command` unconditionally overwrites `AgentCommand.traceparent` with the dispatch span's own traceparent (via `current_traceparent()`) before serializing the row. Callers must not pre-fill this field — pass `traceparent=""` when constructing an `AgentCommand`; `enqueue_command` owns the value.
+
 Service test: `test/test_dispatch_service.py`.
 
 ## Command dispatch — `agent_commands` durable queue
@@ -130,6 +132,8 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 ## How it's tested
 
 `test/test_dispatch_service.py` covers: `enqueue_command` emits an `agent_command.dispatch.{kind}` span with `kind`, `command_id`, `workspace_id`, and `workflow_id` attributes; no-workflow-id enqueue sets `workflow_id` to `""`; a duplicate-PK flush error sets `StatusCode.ERROR` and records an exception event.
+
+`test/test_agent_command_dispatch_traceparent.py` covers: the `traceparent` stored in `agent_commands.payload` carries the dispatch span's own span-id, not the outer caller's — verifying the agent's `supervisor.dispatch.<kind>` will parent to `agent_command.dispatch.<kind>` at runtime.
 
 `test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff.
 

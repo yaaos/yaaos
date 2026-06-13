@@ -129,7 +129,7 @@ class ProvisionWorkspace(_LifecycleCommand):
             ws_id,
             repo=repo,
             auth=auth,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
@@ -212,7 +212,7 @@ class CleanupWorkspace(_LifecycleCommand):
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
         )
         await enqueue_command(
             org_id=org_id,
@@ -283,7 +283,7 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
         )
         await enqueue_command(
             org_id=org_id,

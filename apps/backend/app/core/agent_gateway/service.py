@@ -51,6 +51,7 @@ from app.core.agent_gateway.types import (
     WorkspaceEvent,
     WriteFilesCommand,
 )
+from app.core.observability import current_traceparent
 from app.core.tasks import enqueue
 
 log = structlog.get_logger("core.agent_gateway")
@@ -129,6 +130,14 @@ async def enqueue_command(
             str(workflow_execution_id) if workflow_execution_id is not None else "",
         )
         try:
+            # Overwrite the command's traceparent with the dispatch span's own
+            # traceparent so the agent's supervisor.dispatch.<kind> span is
+            # parented to agent_command.dispatch.<kind>, not the outer caller's
+            # span. `enqueue_command` is the sole owner of this field on the
+            # wire; callers must not pre-fill it.
+            dispatch_tp = current_traceparent()
+            if dispatch_tp is not None:
+                command = command.model_copy(update={"traceparent": dispatch_tp})
             # Override the command_id with the DB-minted UUIDv7 after flush so that
             # producers stop generating their own UUID4 ids. For now we honour the
             # caller-supplied id and treat it as the primary key.
