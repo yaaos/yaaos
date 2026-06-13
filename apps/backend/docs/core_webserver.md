@@ -48,6 +48,7 @@ When you change the API shape (routes, response models, query params), run `apps
 
 - In dev (no `apps/web/dist`), non-`/api/` paths 404. Run `pnpm dev` separately.
 - SPA catch-all guards path traversal via `relative_to(dist)`.
+- The catch-all rewrites its own OTel span name to `{method} {path-up-to-3-segments}` so the SPA shell and static fall-through requests don't collapse into a single bucket in trace UIs. The `http.route` attribute stays at `/{full_path:path}` per the OTel spec — only the span name changes. `_install_spa_serving` accepts an optional `dist_path` kwarg for tests that supply a stub dist tree via `tmp_path`.
 - `RouteSpec` is a Pydantic model; construction validates prefix rules before anything is registered.
 - The OpenAPI artifact is generated under `APP_MODE=dev` (or `test` — both work); the dump script sets no environment itself, so the caller must supply the required env vars (`DATABASE_URL`, `YAAOS_ENCRYPTION_KEY`, `REDIS_URL`, `YAAOS_PUBLIC_ORIGIN`). No actual connections are made.
 
