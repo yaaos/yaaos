@@ -422,7 +422,18 @@ def _configure_otel(
     )
 
     # ── TracerProvider ─────────────────────────────────────────────────────
-    tracer_provider = TracerProvider(resource=resource)
+    # Default sampler is ParentBased(ALWAYS_ON); wrap it so name-denied spans
+    # never enter the BSP buffer. `connect` spans (SQLAlchemy auto-instrumentation)
+    # are the current target — see `_samplers.TRACE_SAMPLER_DENY_NAMES`.
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased  # noqa: PLC0415
+
+    from app.core.observability._samplers import (  # noqa: PLC0415
+        TRACE_SAMPLER_DENY_NAMES,
+        DenyByNameSampler,
+    )
+
+    _sampler = DenyByNameSampler(inner=ParentBased(ALWAYS_ON), deny=TRACE_SAMPLER_DENY_NAMES)
+    tracer_provider = TracerProvider(resource=resource, sampler=_sampler)
     # Stamp standard dims on every span at creation so child spans always
     # carry org_id/user_id/actor_kind/workflow_id/command_id without per-span
     # set_attribute calls.  SynchronousMultiSpanProcessor runs on_start in the
