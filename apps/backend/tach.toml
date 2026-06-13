@@ -1052,10 +1052,6 @@ expose = ["shutdown_runtime"]
 from = ["app.testing.lifecycle"]
 
 [[interfaces]]
-expose = ["span_capture"]
-from = ["app.testing.observability"]
-
-[[interfaces]]
 expose = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]
 from = ["app.testing.stub_coding_agent"]
 
