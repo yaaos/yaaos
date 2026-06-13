@@ -1,11 +1,12 @@
 """Trace-linkage audit: all workflow task-body spans share one trace_id.
 
-The three workflow task bodies (`start_step`, `route_workflow`,
-`handle_agent_event`) each open a span via `with_remote_parent_span`,
-extracting the upstream span from the `traceparent` task arg. This test
-drives a complete workflow run with an `InMemorySpanExporter` attached
-and asserts every emitted span shares the same `trace_id` — proving one
-trace covers webhook → workflow start → all task bodies → terminal.
+`start_step` and `handle_agent_event` open spans via `with_remote_parent_span`,
+extracting the upstream span from the `traceparent` task arg. `route_workflow`
+does NOT open a custom span — taskiq's auto-emitted `task:workflow.route_workflow`
+span covers the hop. This test drives a complete workflow run with an
+`InMemorySpanExporter` attached and asserts every emitted custom span shares the
+same `trace_id` — proving one trace covers webhook → workflow start → all task
+bodies → terminal.
 
 Trace ID stays continuous from webhook to PR comment through the
 workflow-engine layer here; the final hop (`vcs.post_finding`) emits its own
@@ -133,18 +134,23 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
 
     # Inspect the spans that fired during the workflow run.
     spans = in_memory_spans.get_finished_spans()
-    workflow_span_names = {
-        "workflow.start_step",
-        "workflow.route_workflow",
-    }
-    emitted_workflow_spans = [s for s in spans if s.name in workflow_span_names]
-    # Two steps x (start_step + route_workflow) = at least 4 task-body spans.
-    assert len(emitted_workflow_spans) >= 4, (
-        f"expected >=4 workflow task-body spans, got {[s.name for s in emitted_workflow_spans]}"
+
+    # `route_workflow` no longer opens a custom span — taskiq's own
+    # `task:workflow.route_workflow` span covers the hop.  Only
+    # `workflow.start_step` (and `workflow.run.*`) are custom spans here.
+    route_workflow_custom_spans = [s for s in spans if s.name == "workflow.route_workflow"]
+    assert route_workflow_custom_spans == [], (
+        f"expected no workflow.route_workflow custom span, got {route_workflow_custom_spans}"
     )
 
-    # Critically: every workflow task-body span shares the upstream trace_id.
-    for span in emitted_workflow_spans:
+    start_step_spans = [s for s in spans if s.name == "workflow.start_step"]
+    # Two-step workflow → two start_step spans.
+    assert len(start_step_spans) >= 2, (
+        f"expected >=2 workflow.start_step spans, got {[s.name for s in start_step_spans]}"
+    )
+
+    # Critically: every workflow.start_step span shares the upstream trace_id.
+    for span in start_step_spans:
         assert span.context.trace_id == upstream_trace_id, (
             f"span {span.name!r} has trace_id {span.context.trace_id:032x}, expected {upstream_trace_id:032x}"
         )

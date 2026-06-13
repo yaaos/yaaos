@@ -406,22 +406,22 @@ async def route_workflow(
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     try:
-        with with_remote_parent_span(_tracer, "workflow.route_workflow", traceparent) as span:
-            if completed_step_id is not None:
-                span.set_attribute("workflow.completed_step_id", completed_step_id)
-            if outcome_label is not None:
-                span.set_attribute("workflow.outcome_label", outcome_label)
-            await _route_workflow_impl(
-                workflow_execution_id=workflow_execution_id,
-                completed_step_id=completed_step_id,
-                outcome_label=outcome_label,
-                outputs=outputs,
-                traceparent=traceparent,
-            )
-            # Propagate failure status to the outer span so the trace shows
-            # the routing span red when it routed a failed step outcome.
-            if outcome_label is not None and outcome_label != "success":
-                span.set_status(StatusCode.ERROR, outcome_label)
+        # Stamp attributes onto the taskiq-emitted task span rather than
+        # opening a redundant custom span.  Taskiq's auto-instrumentation
+        # already emits `task:workflow.route_workflow`; a second custom span
+        # adds noise without adding signal.
+        _task_span = trace.get_current_span()
+        if completed_step_id is not None:
+            _task_span.set_attribute("workflow.completed_step_id", completed_step_id)
+        if outcome_label is not None:
+            _task_span.set_attribute("workflow.outcome_label", outcome_label)
+        await _route_workflow_impl(
+            workflow_execution_id=workflow_execution_id,
+            completed_step_id=completed_step_id,
+            outcome_label=outcome_label,
+            outputs=outputs,
+            traceparent=traceparent,
+        )
     finally:
         workflow_execution_id_var.reset(wf_token)
 

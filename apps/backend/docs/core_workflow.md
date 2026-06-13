@@ -47,10 +47,11 @@ All spans emitted by `core/workflow`. Every span carries `org_id` + `yaaos.workf
 |---|---|---|---|
 | `workflow.run.<workflow_name>` | caller's `traceparent` (e.g. the intake request span) | `service.py` `WorkflowEngine.start` | `workflow.name`, `workflow.execution_id`, `workflow.version`; closes when `engine.start()` returns |
 | `workflow.start_step` | `workflow.run.<name>` span (via stored `otel_trace_context`) | `service.py` `start_step` task body | `workflow.step_id`, `workflow.attempt` |
-| `workflow.route_workflow` | `workflow.start_step` (via `traceparent` task arg) | `service.py` `route_workflow` task body | `completed_step_id`, `outcome_label` |
 | `workflow.command.<Kind>` | `workflow.start_step` | `service.py` `_start_step_impl` (Workspace) and `_safe_execute` (Local/HITL) — same name, same parent for all categories | `command.kind`, `command.category`, `workflow.step_id`, `workflow.attempt`; `StatusCode.ERROR` on raise or `Outcome.failure`; for Workspace commands the span closes before `dispatch()` returns so `agent_command.dispatch.<Kind>` is a child of it |
 
-**`otel_trace_context` semantics:** `workflow_executions.otel_trace_context` stores the `workflow.run.<name>` span's own traceparent — not the caller's upstream traceparent. Task bodies (`start_step`, `route_workflow`, `handle_agent_event`) use this value via `with_remote_parent_span` so they nest under the run span, not directly under the intake request.
+`route_workflow` hops are visible as taskiq's auto-emitted `task:workflow.route_workflow` spans. No custom span is opened; `completed_step_id` and `outcome_label` are stamped as attributes on the taskiq task span via `trace.get_current_span()`.
+
+**`otel_trace_context` semantics:** `workflow_executions.otel_trace_context` stores the `workflow.run.<name>` span's own traceparent — not the caller's upstream traceparent. Task bodies (`start_step`, `handle_agent_event`) use this value via `with_remote_parent_span` so they nest under the run span, not directly under the intake request.
 
 ## Data owned
 

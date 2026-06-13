@@ -57,7 +57,6 @@
 |---|---|---|
 | `spawn:{name}` | `core/observability/spawn.py` | coro raises |
 | `workflow.start_step` | `core/workflow/service.py` | command raises or returns `Outcome.failure` |
-| `workflow.route_workflow` | `core/workflow/service.py` | `outcome_label` is not `"success"` |
 | `workflow.handle_agent_event` | `core/workflow/service.py` | (never set to ERROR currently) |
 | `workflow.command.{kind}` | `core/workflow/service.py` (`_start_step_impl` for Workspace; `_safe_execute` for Local/HITL) | command raises (with `exception` event) or returns `Outcome.failure` (no event) |
 
