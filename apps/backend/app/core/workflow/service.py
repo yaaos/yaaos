@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import command_id_var, workflow_execution_id_var
 from app.core.database import session as db_session
-from app.core.observability import with_remote_parent_span
+from app.core.observability import current_traceparent, with_remote_parent_span
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
@@ -1539,39 +1539,49 @@ class WorkflowEngine:
         if ticket_payload is not None:
             initial_state[_TICKET_PAYLOAD_KEY] = dict(ticket_payload)
 
-        row = WorkflowExecutionRow(
-            ticket_id=ticket_id,
-            workflow_name=wf.name,
-            workflow_version=wf.version,
-            state=WorkflowState.PENDING.value,
-            current_step_id=None,
-            pending_agent_command_id=None,
-            step_state=initial_state,
-            cancel_requested=False,
-            otel_trace_context=traceparent,
-        )
-        session.add(row)
-        await session.flush()
+        with with_remote_parent_span(_tracer, f"workflow.run.{wf.name}", traceparent) as run_span:
+            # Capture the run span's own traceparent — task bodies and the stored
+            # otel_trace_context use this so they parent to the run span, not to
+            # the caller's (intake request) span.
+            run_traceparent = current_traceparent()
 
-        await enqueue(
-            ROUTE_WORKFLOW,
-            args={
-                "workflow_execution_id": str(row.id),
-                "completed_step_id": None,
-                "outcome_label": None,
-                "outputs": {},
-                "traceparent": traceparent,
-            },
-            session=session,
-        )
-        log.info(
-            "workflow.started",
-            workflow_execution_id=str(row.id),
-            workflow_name=wf.name,
-            workflow_version=wf.version,
-            ticket_id=ticket_id,
-        )
-        return str(row.id)
+            row = WorkflowExecutionRow(
+                ticket_id=ticket_id,
+                workflow_name=wf.name,
+                workflow_version=wf.version,
+                state=WorkflowState.PENDING.value,
+                current_step_id=None,
+                pending_agent_command_id=None,
+                step_state=initial_state,
+                cancel_requested=False,
+                otel_trace_context=run_traceparent,
+            )
+            session.add(row)
+            await session.flush()
+
+            run_span.set_attribute("workflow.name", wf.name)
+            run_span.set_attribute("workflow.version", wf.version)
+            run_span.set_attribute("workflow.execution_id", str(row.id))
+
+            await enqueue(
+                ROUTE_WORKFLOW,
+                args={
+                    "workflow_execution_id": str(row.id),
+                    "completed_step_id": None,
+                    "outcome_label": None,
+                    "outputs": {},
+                    "traceparent": run_traceparent,
+                },
+                session=session,
+            )
+            log.info(
+                "workflow.started",
+                workflow_execution_id=str(row.id),
+                workflow_name=wf.name,
+                workflow_version=wf.version,
+                ticket_id=ticket_id,
+            )
+            return str(row.id)
 
 
 _engine: WorkflowEngine | None = None
