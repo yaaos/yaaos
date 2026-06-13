@@ -2,16 +2,19 @@
 for Workspace commands — mirrors the span `_safe_execute` already opens for
 Local/HITL commands.
 
+The `workflow.start_step` custom span no longer exists.  The taskiq
+auto-span (`task:workflow.start_step`) is the task boundary; the
+`workflow.command.<Kind>` span is its direct child.
+
 Three tests:
 
 - `test_workspace_command_span_emitted` — a Workspace command that dispatches
-  successfully → a `workflow.command.ProvisionWs` span exists as a child of
-  `workflow.start_step`; the `CommandContext.traceparent` that reached
-  `dispatch()` matches the command span's own traceparent (not the outer task's).
+  successfully → a `workflow.command.ProvisionWs` span exists; the
+  `CommandContext.traceparent` that reached `dispatch()` matches the command
+  span's own traceparent.
 
 - `test_workspace_command_span_error_on_dispatch_raise` — dispatch raises →
-  command span is `StatusCode.ERROR` with an `exception` event; outer
-  `workflow.start_step` span is also `StatusCode.ERROR`.
+  command span is `StatusCode.ERROR` with an `exception` event.
 
 - `test_local_command_span_category_attribute` — regression guard; the Local
   path still emits `workflow.command.<Kind>` with a `command.category` attribute
@@ -123,10 +126,9 @@ class _SucceedingLocal:
 
 
 async def test_workspace_command_span_emitted(db_session) -> None:  # type: ignore[no-untyped-def]
-    """A Workspace command dispatch emits `workflow.command.ProvisionWs` as a
-    child of `workflow.start_step`. The `CommandContext.traceparent` that
-    arrived at `dispatch()` is the command span's own traceparent — not the
-    outer task's traceparent."""
+    """A Workspace command dispatch emits `workflow.command.ProvisionWs`.
+    The `CommandContext.traceparent` that arrived at `dispatch()` is the
+    command span's own traceparent."""
     _RecordingWs.received_ctx = None
     _RecordingWs.received_traceparent = None
 
@@ -170,15 +172,9 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
     assert cmd_spans, f"expected workflow.command.ProvisionWs span; got {span_names}"
     cmd_span = cmd_spans[0]
 
-    # (a) parent is workflow.start_step
+    # No workflow.start_step custom span exists (taskiq auto-span is the boundary).
     start_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert start_spans, f"expected workflow.start_step span; got {span_names}"
-    start_span = start_spans[0]
-    assert cmd_span.parent is not None, "command span must have a parent"
-    assert cmd_span.parent.span_id == start_span.context.span_id, (
-        f"command span parent {cmd_span.parent.span_id:016x} != "
-        f"start_step span {start_span.context.span_id:016x}"
-    )
+    assert not start_spans, f"workflow.start_step custom span must not exist; got {start_spans}"
 
     # (b) ctx.traceparent that reached dispatch() is the command span's traceparent
     assert _RecordingWs.received_ctx is not None, "dispatch() was not called"
@@ -198,7 +194,7 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
 
 async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> None:  # type: ignore[no-untyped-def]
     """dispatch() raises → `workflow.command.ProvisionWsRaises` span is
-    `StatusCode.ERROR` with an `exception` event; `workflow.start_step` is also ERROR."""
+    `StatusCode.ERROR` with an `exception` event."""
     ws_cmd = _RaisingWs()
     wf = Workflow(
         name="ws-span-raise-test",
@@ -238,13 +234,9 @@ async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> Non
     exception_events = [e for e in cmd_span.events if e.name == "exception"]
     assert exception_events, "expected an 'exception' event on the command span"
 
-    # Outer start_step span is also ERROR
+    # No workflow.start_step custom span exists.
     start_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert start_spans, f"expected workflow.start_step span; got {span_names}"
-    outer = start_spans[0]
-    assert outer.status.status_code == StatusCode.ERROR, (
-        f"workflow.start_step expected ERROR, got {outer.status.status_code}"
-    )
+    assert not start_spans, f"workflow.start_step custom span must not exist; got {start_spans}"
 
     # Workflow recorded as FAILED
     wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))

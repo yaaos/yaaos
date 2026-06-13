@@ -70,7 +70,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 
 `org_id`, `actor_kind`, and other process-wide dimensions are auto-stamped by the `YaaosDimensionsSpanProcessor` — callers must not set them manually. On exception the span records the exception event and sets `StatusCode.ERROR` before re-raising. This is the single span site for all agent-command dispatches; no caller may bypass it.
 
-The span is a child of whatever span is current at the call site (typically a `workflow.start_step` or `workflow.command.{kind}` span). On the agent side, `supervisor.dispatch.{kind}` continues the trace via the `traceparent` injected into the `AgentCommand` wire payload.
+The span is a child of whatever span is current at the call site (typically a `workflow.command.{kind}` span). On the agent side, `supervisor.dispatch.{kind}` continues the trace via the `traceparent` injected into the `AgentCommand` wire payload.
 
 **`traceparent` ownership rule:** `enqueue_command` unconditionally overwrites `AgentCommand.traceparent` with the dispatch span's own traceparent (via `current_traceparent()`) before serializing the row. Callers must not pre-fill this field — pass `traceparent=""` when constructing an `AgentCommand`; `enqueue_command` owns the value.
 

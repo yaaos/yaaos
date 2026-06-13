@@ -54,7 +54,7 @@
 | **WorkflowExecution** | In-flight workflow run. State: `pending → running → (awaiting_agent \| awaiting_human)* → done \| failed \| cancelled`. Carries `step_state` JSONB + `otel_trace_context`. |
 | **Pending human decision** | HITL pause row in `pending_human_decisions`. Resumed via `core/workflow.resume_hitl()`; resolution + re-enqueue in one transaction. |
 | **Outbox** | DB-atomic outbound queue (`outbox_entries`). Written in the caller's transaction; drained post-commit. Backs `core/tasks.enqueue`. |
-| **`core/tasks`** | Thin taskiq + Redis wrapper. Three task names: `workflow.start_step`, `workflow.handle_agent_event`, `workflow.route_workflow` (taskiq auto-emits `task:workflow.route_workflow`; no custom span is opened). |
+| **`core/tasks`** | Thin taskiq + Redis wrapper. Three task names: `workflow.start_step`, `workflow.handle_agent_event`, `workflow.route_workflow`. Taskiq auto-emits `task:workflow.start_step` and `task:workflow.route_workflow`; no redundant custom engine spans for those two. Only `handle_agent_event` opens its own custom span. |
 | **Activity event** | High-frequency CodingAgent telemetry. Flows WebSocket → `core/sse` → SSE → UI. Never persisted; demand-pull. |
 | **InstanceID** | The role-session-name extracted from the STS assumed-role ARN (`arn:aws:sts::ACCT:assumed-role/ROLE/SESSION` → `SESSION`). Derived by the backend at identity exchange; stable across pod restarts when the ECS task reuses the same session name. Stored as `workspace_agents.instance_id`. The agent learns its own `instance_id` from the exchange response — it never supplies it. |
 | **VerifiedInstanceID** | Synonym for `instance_id` when emphasizing that it was derived from a backend-verified STS ARN rather than self-reported by the agent. |

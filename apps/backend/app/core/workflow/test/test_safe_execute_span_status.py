@@ -1,18 +1,20 @@
 """Service tests: `_safe_execute` records span status on raises and failure outcomes.
 
-Three tests covering the child `workflow.command.{kind}` span emitted by
-`_safe_execute`, and outer `workflow.start_step` span propagation:
+Three tests covering the `workflow.command.{kind}` span emitted by
+`_safe_execute`.  The `workflow.start_step` custom span no longer exists —
+the taskiq auto-span (`task:workflow.start_step`) is the task boundary;
+the engine opens no redundant custom span there.
 
 - `test_safe_execute_records_exception_on_raise` — a command that raises →
-  child span is `StatusCode.ERROR` with an `exception` event; outer
-  `workflow.start_step` span is also `StatusCode.ERROR`.
+  `workflow.command.RaisingLocalCmd` span is `StatusCode.ERROR` with an
+  `exception` event.
 
 - `test_safe_execute_sets_error_status_on_failure_outcome` — a command that
-  returns `Outcome.failure(reason="...")` → both spans are `StatusCode.ERROR`;
-  no `exception` event (none was raised).
+  returns `Outcome.failure(reason="...")` → span is `StatusCode.ERROR` with
+  the reason as description; no `exception` event (none was raised).
 
 - `test_safe_execute_ok_on_success_outcome` — regression guard; a command
-  that returns `Outcome.success()` leaves both spans unset (not ERROR).
+  that returns `Outcome.success()` leaves the span unset (not ERROR).
 """
 
 from __future__ import annotations
@@ -104,9 +106,8 @@ async def _drain(db_session) -> None:  # type: ignore[no-untyped-def]
 
 
 async def test_safe_execute_records_exception_on_raise(db_session) -> None:
-    """A command that raises → child `workflow.command.RaisingLocalCmd` span is
-    `StatusCode.ERROR` with an `exception` event; the outer
-    `workflow.start_step` span is also `StatusCode.ERROR`."""
+    """A command that raises → `workflow.command.RaisingLocalCmd` span is
+    `StatusCode.ERROR` with an `exception` event."""
     cmd = _RaisingLocal()
     wf = Workflow(
         name="span-raise-test",
@@ -139,7 +140,7 @@ async def test_safe_execute_records_exception_on_raise(db_session) -> None:
     spans = exporter.get_finished_spans()
     span_names = [s.name for s in spans]
 
-    # Child span: workflow.command.RaisingLocalCmd
+    # Command span: ERROR with exception event.
     child_spans = [s for s in spans if s.name == "workflow.command.RaisingLocalCmd"]
     assert child_spans, f"expected workflow.command.RaisingLocalCmd span, got {span_names}"
     child = child_spans[0]
@@ -149,19 +150,15 @@ async def test_safe_execute_records_exception_on_raise(db_session) -> None:
     exception_events = [e for e in child.events if e.name == "exception"]
     assert exception_events, "expected an 'exception' event on the child span"
 
-    # Outer span: workflow.start_step also ERROR
-    outer_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert outer_spans, f"expected workflow.start_step span, got {span_names}"
-    outer = outer_spans[0]
-    assert outer.status.status_code == StatusCode.ERROR, (
-        f"outer start_step span expected ERROR, got {outer.status.status_code}"
-    )
+    # No workflow.start_step custom span emitted (taskiq auto-span covers the boundary).
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert not start_step_custom, f"workflow.start_step custom span must not exist; got {start_step_custom}"
 
 
 async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> None:
-    """A command returning `Outcome.failure(reason=...)` → both
-    `workflow.command.FailingLocalCmd` and `workflow.start_step` are
-    `StatusCode.ERROR` with the reason as description; NO `exception` event."""
+    """A command returning `Outcome.failure(reason=...)` →
+    `workflow.command.FailingLocalCmd` is `StatusCode.ERROR` with the reason
+    as description; NO `exception` event."""
     cmd = _FailingLocal()
     wf = Workflow(
         name="span-failure-test",
@@ -194,7 +191,7 @@ async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> 
     spans = exporter.get_finished_spans()
     span_names = [s.name for s in spans]
 
-    # Child span
+    # Command span: ERROR with failure reason in description.
     child_spans = [s for s in spans if s.name == "workflow.command.FailingLocalCmd"]
     assert child_spans, f"expected workflow.command.FailingLocalCmd span, got {span_names}"
     child = child_spans[0]
@@ -208,16 +205,9 @@ async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> 
     exception_events = [e for e in child.events if e.name == "exception"]
     assert not exception_events, f"unexpected exception event on child span: {exception_events}"
 
-    # Outer span
-    outer_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert outer_spans, f"expected workflow.start_step span, got {span_names}"
-    outer = outer_spans[0]
-    assert outer.status.status_code == StatusCode.ERROR, (
-        f"outer start_step span expected ERROR, got {outer.status.status_code}"
-    )
-    assert "planned-failure" in (outer.status.description or ""), (
-        f"expected failure reason in outer status description, got {outer.status.description!r}"
-    )
+    # No workflow.start_step custom span emitted.
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert not start_step_custom, f"workflow.start_step custom span must not exist; got {start_step_custom}"
 
 
 async def test_safe_execute_ok_on_success_outcome(db_session) -> None:
@@ -264,10 +254,6 @@ async def test_safe_execute_ok_on_success_outcome(db_session) -> None:
     exception_events = [e for e in child.events if e.name == "exception"]
     assert not exception_events, f"unexpected exception event: {exception_events}"
 
-    # Outer span: no ERROR status
-    outer_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert outer_spans, "expected workflow.start_step span"
-    outer = outer_spans[0]
-    assert outer.status.status_code != StatusCode.ERROR, (
-        f"outer span must not be ERROR on success, got {outer.status.status_code}"
-    )
+    # No workflow.start_step custom span emitted.
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert not start_step_custom, f"workflow.start_step custom span must not exist; got {start_step_custom}"

@@ -108,34 +108,23 @@ async def start_step(
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
       writes the `pending_human_decisions` row, sets `state = awaiting_human`.
 
-    Span: emits a `workflow.start_step` span whose parent is the
-    `workflow.run.<name>` span stored in `workflow_executions.otel_trace_context`.
-    The `traceparent` arg is accepted for backwards-compatibility with
-    in-flight task rows but is NOT used — the DB row is the single source of
-    truth so task bodies always nest under the run span regardless of which
-    process or HTTP request triggered the enqueue. `yaaos.workflow_id` is
-    stamped on every span and log record inside this scope via the span
-    processor + `_YaaosLogDimsFilter`; `step_id` and `attempt` remain
-    explicit attrs.
+    Span: taskiq's auto-instrumented `task:workflow.start_step` span is the
+    task boundary.  The engine does not open a redundant custom span here —
+    the inner `workflow.command.<Kind>` span (opened by `_safe_execute` for
+    Local/HITL and by `_start_step_impl` for Workspace) is a direct child
+    of the taskiq task span.  `workflow.step_id` and `workflow.attempt` are
+    stamped on the command span.  `yaaos.workflow_id` is stamped on every
+    span and log record in this scope via the span processor +
+    `_YaaosLogDimsFilter`.
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     try:
-        # Load otel_trace_context from the DB row so the span always parents
-        # to workflow.run.*, not to whatever called enqueue (e.g. the agent's
-        # HTTP POST span). The `traceparent` task arg is stale once any hop
-        # runs in a different process or request context.
-        async with db_session() as _span_session:
-            _wfx_for_tp = await _load_execution(_span_session, workflow_execution_id)
-            _db_traceparent = _wfx_for_tp.otel_trace_context if _wfx_for_tp is not None else traceparent
-        with with_remote_parent_span(_tracer, "workflow.start_step", _db_traceparent) as span:
-            span.set_attribute("workflow.step_id", step_id)
-            span.set_attribute("workflow.attempt", attempt)
-            await _start_step_impl(
-                workflow_execution_id=workflow_execution_id,
-                step_id=step_id,
-                attempt=attempt,
-                inputs=inputs,
-            )
+        await _start_step_impl(
+            workflow_execution_id=workflow_execution_id,
+            step_id=step_id,
+            attempt=attempt,
+            inputs=inputs,
+        )
     finally:
         workflow_execution_id_var.reset(wf_token)
 
@@ -196,9 +185,9 @@ async def _start_step_impl(
             await s.commit()
             return
 
-        # The cmd_ctx traceparent is the currently-active span (workflow.start_step),
-        # not the task arg — by the time we're here, with_remote_parent_span has
-        # already installed the correct run span as the OTel context.
+        # cmd_ctx traceparent is the currently-active span's traceparent —
+        # the taskiq auto-span for this task body.  Workspace commands rebuild
+        # cmd_ctx inside the command span so the agent receives that span's id.
         cmd_ctx = CommandContext(
             workflow_execution_id=str(wfx.id),
             ticket_id=str(wfx.ticket_id),
@@ -1463,7 +1452,7 @@ async def _safe_execute(
     child span.
 
     On exception: records the exception on the child span + marks it ERROR,
-    then propagates ERROR to the caller's active span (workflow.start_step)
+    then propagates ERROR to the caller's active span (the taskiq task span)
     and returns a failure outcome. Does NOT re-raise — the engine keeps
     state consistent.
 
@@ -1480,6 +1469,8 @@ async def _safe_execute(
     with _tracer.start_as_current_span(f"workflow.command.{kind}") as child_span:
         child_span.set_attribute("command.kind", kind)
         child_span.set_attribute("command.category", command.category.value)  # type: ignore[attr-defined]
+        child_span.set_attribute("workflow.step_id", ctx.step_id)
+        child_span.set_attribute("workflow.attempt", ctx.attempt)
         try:
             # Pass raw inputs through; commands are responsible for parsing
             # their typed inputs from the raw dict via Pydantic if they care.

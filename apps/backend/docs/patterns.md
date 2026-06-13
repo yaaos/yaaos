@@ -431,7 +431,7 @@ Canonical shape: `span.record_exception(exc)` → `span.set_status(StatusCode.ER
 
 Two enforced sites:
 
-- **`workflow.command.{kind}` in `core/workflow/service.py`** — opened for every command category at the dispatch site. `_start_step_impl` wraps Workspace `dispatch()` calls; `_safe_execute` wraps Local/HITL `execute()` calls. Both follow the same contract: on exception `record_exception` + `set_status(ERROR)` on both the child span and the outer `workflow.start_step` span; on `Outcome.failure(reason=...)` `set_status(ERROR, reason)` on both spans with no exception event; on success spans left at UNSET status.
+- **`workflow.command.{kind}` in `core/workflow/service.py`** — opened for every command category at the dispatch site. `_start_step_impl` wraps Workspace `dispatch()` calls; `_safe_execute` wraps Local/HITL `execute()` calls. Both follow the same contract: on exception `record_exception` + `set_status(ERROR)` on the child span and propagate ERROR to the outer taskiq task span; on `Outcome.failure(reason=...)` `set_status(ERROR, reason)` on both spans with no exception event; on success spans left at UNSET status.
 - **FastAPI catch-all in `core/webserver/app_factory.py`** — the `@app.exception_handler(Exception)` handler calls `trace.get_current_span().record_exception(exc)` + `set_status(ERROR, "internal_server_error")` before logging and returning the 500 JSON. This marks the HTTP request span red in Dash0 so unhandled server errors are visible in traces, not just logs.
 
 Signal-selection order when adding observability to a new catch site:

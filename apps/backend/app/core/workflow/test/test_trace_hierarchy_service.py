@@ -1,24 +1,29 @@
-"""Service tests: workflow.start_step spans are always children of workflow.run.<name>.
+"""Service tests: workflow.command.<Kind> spans are always within workflow.run.<name>'s trace.
 
-The bug: after a Workspace command parks in AWAITING_AGENT and the agent
-posts a terminal event, `handle_agent_event` enqueues `route_workflow` with
-the agent's HTTP-request traceparent.  Every subsequent `start_step` then
-hangs off the agent's request span instead of `workflow.run.<name>`.
+The bug (now fixed): after a Workspace command parks in AWAITING_AGENT and
+the agent posts a terminal event, `handle_agent_event` used to enqueue
+`route_workflow` with the agent's HTTP-request traceparent.  Every subsequent
+`start_step` then hung off the agent's request span instead of the
+`workflow.run.<name>` trace.
 
-The fix: task bodies read `wfx.otel_trace_context` from the DB row and use
-that as the parent — never the caller-supplied `traceparent` arg, which may
-be stale or from a different trace.
+The fix: task bodies read `wfx.otel_trace_context` from the DB row so the
+engine's spans always belong to the workflow trace.
+
+The `workflow.start_step` custom span no longer exists.  The engine asserts
+trace continuity at the `workflow.command.<Kind>` level: every command span
+must share the upstream `trace_id` and the run span must be reachable in the
+same trace.
 
 Two tests:
 
 - `test_workflow_trace_hierarchy_after_workspace_command` — Workspace step
   followed by a Local terminal step.  Injects the terminal event with a
   *different* traceparent (simulating the agent's own HTTP request context).
-  Asserts both `workflow.start_step` spans are children of `workflow.run.*`.
+  Asserts all `workflow.command.<Kind>` spans share the upstream trace_id.
 
 - `test_workflow_trace_hierarchy_pure_local` — two Local steps, no agent
-  hop.  All start_step spans must still be children of `workflow.run.*`.
-  Regression pin for the pre-existing case that already worked.
+  hop.  All command spans must still share the upstream trace_id.
+  Regression pin for the pre-existing case.
 """
 
 from __future__ import annotations
@@ -113,12 +118,12 @@ class _NoopLocal:
 
 
 async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> None:  # type: ignore[no-untyped-def]
-    """All workflow.start_step spans are children of workflow.run.* even when
+    """All workflow.command.<Kind> spans share the upstream trace_id even when
     handle_agent_event is triggered with a *different* traceparent (the agent's
     own HTTP request context).
 
-    Failure mode before the fix: the second start_step (terminal local step)
-    is a child of the agent-request span, not workflow.run.*."""
+    Failure mode before the fix: the second start_step would hang off the
+    agent-request span instead of the workflow.run.* trace."""
     _MinimalWs.dispatched_id = None
 
     ws_cmd = _MinimalWs()
@@ -203,37 +208,30 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
 
     spans = exporter.get_finished_spans()
 
-    # Locate the workflow.run span — must be the single source of truth for
-    # the parent of every workflow.start_step span.
+    # workflow.run span must exist.
     run_spans = [s for s in spans if s.name == "workflow.run.hierarchy-ws-test"]
     assert run_spans, f"expected workflow.run.hierarchy-ws-test; got {[s.name for s in spans]}"
-    run_span = run_spans[0]
-    run_span_id = run_span.context.span_id
 
-    # Both start_step spans (ws_step and terminal) must be direct children of
-    # workflow.run.hierarchy-ws-test.
-    start_step_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert len(start_step_spans) >= 2, (
-        f"expected >=2 workflow.start_step spans; got {[s.name for s in spans]}"
-    )
+    # No workflow.start_step custom span exists (taskiq auto-span covers the boundary).
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert not start_step_custom, f"workflow.start_step custom span must not exist; got {start_step_custom}"
 
-    for ss in start_step_spans:
-        assert ss.parent is not None, f"start_step span {ss} has no parent"
-        assert ss.parent.span_id == run_span_id, (
-            f"start_step span parent {ss.parent.span_id:016x} != "
-            f"workflow.run span {run_span_id:016x}; "
-            "handle_agent_event must use wfx.otel_trace_context, not the alien traceparent"
-        )
-        # All spans must share the upstream trace_id (no alien trace leaking in).
-        assert ss.context.trace_id == upstream_trace_id, (
-            f"start_step span trace_id {ss.context.trace_id:032x} != upstream {upstream_trace_id:032x}; "
+    # All workflow.command.<Kind> spans must share the upstream trace_id —
+    # proving the alien traceparent did not bleed into the workflow trace.
+    cmd_spans = [s for s in spans if s.name.startswith("workflow.command.")]
+    assert len(cmd_spans) >= 2, f"expected >=2 workflow.command.* spans; got {[s.name for s in spans]}"
+
+    for cs in cmd_spans:
+        assert cs.context.trace_id == upstream_trace_id, (
+            f"command span {cs.name!r} trace_id {cs.context.trace_id:032x} != "
+            f"upstream {upstream_trace_id:032x}; "
             "agent's HTTP request traceparent must not leak into the workflow trace"
         )
 
 
 async def test_workflow_trace_hierarchy_pure_local(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Regression pin: two Local steps — both start_step spans are direct
-    children of workflow.run.*, sharing the upstream trace_id.
+    """Regression pin: two Local steps — all workflow.command.<Kind> spans
+    share the upstream trace_id.
 
     This path already worked before the fix; this test ensures it stays green."""
     noop = _NoopLocal()
@@ -279,19 +277,17 @@ async def test_workflow_trace_hierarchy_pure_local(db_session) -> None:  # type:
 
     run_spans = [s for s in spans if s.name == "workflow.run.hierarchy-local-test"]
     assert run_spans, f"expected workflow.run.hierarchy-local-test; got {[s.name for s in spans]}"
-    run_span = run_spans[0]
-    run_span_id = run_span.context.span_id
 
-    start_step_spans = [s for s in spans if s.name == "workflow.start_step"]
-    assert len(start_step_spans) >= 2, (
-        f"expected >=2 workflow.start_step spans; got {[s.name for s in spans]}"
-    )
+    # No workflow.start_step custom span.
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert not start_step_custom, f"workflow.start_step custom span must not exist; got {start_step_custom}"
 
-    for ss in start_step_spans:
-        assert ss.parent is not None, "start_step span has no parent"
-        assert ss.parent.span_id == run_span_id, (
-            f"start_step parent {ss.parent.span_id:016x} != run span {run_span_id:016x}"
-        )
-        assert ss.context.trace_id == upstream_trace_id, (
-            f"start_step trace_id {ss.context.trace_id:032x} != upstream {upstream_trace_id:032x}"
+    # All workflow.command.<Kind> spans share the upstream trace_id.
+    cmd_spans = [s for s in spans if s.name.startswith("workflow.command.")]
+    assert len(cmd_spans) >= 2, f"expected >=2 workflow.command.* spans; got {[s.name for s in spans]}"
+
+    for cs in cmd_spans:
+        assert cs.context.trace_id == upstream_trace_id, (
+            f"command span {cs.name!r} trace_id {cs.context.trace_id:032x} != "
+            f"upstream {upstream_trace_id:032x}"
         )
