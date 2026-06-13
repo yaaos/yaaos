@@ -495,6 +495,7 @@ expose = [
   "SLOW_REQUEST_THRESHOLD_MS",
   "SlowRequestLogMiddleware",
   "TRACE_EXCLUDED_URLS",
+  "TRACE_EXCLUDE_INTERNAL_SPANS",
   "YaaosDimensionsSpanProcessor",
   "active_task_count",
   "configure",
@@ -1049,6 +1050,10 @@ from = ["app.testing.fake_coding_agent"]
 [[interfaces]]
 expose = ["shutdown_runtime"]
 from = ["app.testing.lifecycle"]
+
+[[interfaces]]
+expose = ["span_capture"]
+from = ["app.testing.observability"]
 
 [[interfaces]]
 expose = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]

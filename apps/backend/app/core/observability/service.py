@@ -37,6 +37,13 @@ Role = Literal["app", "worker"]
 # request path, so the bare substring covers the leading-slash form.
 TRACE_EXCLUDED_URLS = "api/health"
 
+# ASGI low-level lifecycle spans the FastAPI instrumentor emits as INTERNAL
+# children of every request span. They carry no attributes (no body size, no
+# status), no descendants — pure trace-tree noise. Pass to `exclude_spans=`
+# on `FastAPIInstrumentor.instrument(...)`. Available since OTel-contrib
+# 0.49b0; the lock pins 0.58b0.
+TRACE_EXCLUDE_INTERNAL_SPANS: tuple[str, ...] = ("send", "receive")
+
 _initialized = False
 
 # Module-level provider references for shutdown — set once by _configure_otel.
@@ -418,7 +425,18 @@ def _configure_otel(
     )
 
     # ── TracerProvider ─────────────────────────────────────────────────────
-    tracer_provider = TracerProvider(resource=resource)
+    # Default sampler is ParentBased(ALWAYS_ON); wrap it so name-denied spans
+    # never enter the BSP buffer. `connect` spans (SQLAlchemy auto-instrumentation)
+    # are the current target — see `_samplers.TRACE_SAMPLER_DENY_NAMES`.
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased  # noqa: PLC0415
+
+    from app.core.observability._samplers import (  # noqa: PLC0415
+        TRACE_SAMPLER_DENY_NAMES,
+        DenyByNameSampler,
+    )
+
+    _sampler = DenyByNameSampler(inner=ParentBased(ALWAYS_ON), deny=TRACE_SAMPLER_DENY_NAMES)
+    tracer_provider = TracerProvider(resource=resource, sampler=_sampler)
     # Stamp standard dims on every span at creation so child spans always
     # carry org_id/user_id/actor_kind/workflow_id/command_id without per-span
     # set_attribute calls.  SynchronousMultiSpanProcessor runs on_start in the
@@ -491,7 +509,10 @@ def _configure_otel(
     # Idempotent: already-instrumented raises on a second call, which only
     # matters for tests that reload the module. Swallow that case explicitly.
     try:
-        FastAPIInstrumentor().instrument(excluded_urls=TRACE_EXCLUDED_URLS)
+        FastAPIInstrumentor().instrument(
+            excluded_urls=TRACE_EXCLUDED_URLS,
+            exclude_spans=list(TRACE_EXCLUDE_INTERNAL_SPANS),
+        )
     except Exception:
         pass
     try:

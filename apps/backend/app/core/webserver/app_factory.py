@@ -18,11 +18,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from opentelemetry import trace
 from starlette.requests import Request
 
 from app.core import database
 from app.core.config import get_settings
-from app.core.observability import TRACE_EXCLUDED_URLS, get_logger
+from app.core.observability import TRACE_EXCLUDE_INTERNAL_SPANS, TRACE_EXCLUDED_URLS, get_logger
 from app.core.shutdown_registry import iter_web_shutdown_hooks
 from app.core.webserver.health import health_router
 from app.core.webserver.registry import get_specs
@@ -94,19 +95,43 @@ class _ImmutableStaticFiles(StaticFiles):
 # so a new deploy is picked up quickly.
 _INDEX_CACHE_CONTROL = "public, max-age=60, must-revalidate"
 
+# Span-name cap: first N path segments. Beyond this, paths bucket together
+# so SPA routes with UUIDs (`/org/<slug>/tickets/<id>`) don't explode the
+# cardinality of `http.route`-style queries in Dash0.
+_SPA_CATCHALL_SEGMENT_CAP = 3
 
-def _install_spa_serving(app: FastAPI) -> None:
+
+def _rename_catchall_span(request: Request, full_path: str) -> None:
+    """Rewrite the active OTel span name so SPA shell + static fall-through
+    requests show their actual path (bucketed) instead of `/{full_path:path}`.
+
+    Runs AFTER FastAPI routing has set `http.route` to the catch-all template,
+    so the new name sticks until the ASGI middleware ends the span.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    segments = [s for s in full_path.split("/") if s][:_SPA_CATCHALL_SEGMENT_CAP]
+    bucketed = "/" + "/".join(segments) if segments else "/"
+    span.update_name(f"{request.method} {bucketed}")
+
+
+def _install_spa_serving(app: FastAPI, *, dist_path: Path | None = None) -> None:
     """Mount /assets/* + a catch-all that returns index.html for client-side routes.
 
     If `apps/web/dist` doesn't exist (dev workflow), this is a no-op.
+
+    `dist_path` overrides the default location (`apps/web/dist`) — used in
+    tests that pass a stub dist tree via `tmp_path`.
     """
-    spa_dist = Path(__file__).resolve().parents[4] / "web" / "dist"
+    spa_dist = dist_path if dist_path is not None else Path(__file__).resolve().parents[4] / "web" / "dist"
     if not spa_dist.exists():
         return
     app.mount("/assets", _ImmutableStaticFiles(directory=spa_dist / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def _spa_catchall(full_path: str) -> FileResponse:
+    async def _spa_catchall(full_path: str, request: Request) -> FileResponse:
+        _rename_catchall_span(request, full_path)
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404)
         # Vite copies `apps/web/public/` (favicon.svg, og-image.png, etc.)
@@ -139,7 +164,11 @@ def _install_middleware(app: FastAPI) -> None:
         # FastAPIInstrumentor().instrument() in observability is the authoritative
         # path in prod (this call is a no-op once that ran); the kwarg here covers
         # the path where the global instrument didn't run (e.g. apps built in tests).
-        FastAPIInstrumentor.instrument_app(app, excluded_urls=TRACE_EXCLUDED_URLS)
+        FastAPIInstrumentor.instrument_app(
+            app,
+            excluded_urls=TRACE_EXCLUDED_URLS,
+            exclude_spans=list(TRACE_EXCLUDE_INTERNAL_SPANS),
+        )
     except Exception:
         # OTel not installed or already instrumented — non-fatal.
         pass

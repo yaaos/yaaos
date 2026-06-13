@@ -17,6 +17,10 @@
 
 **Health probes are not traced** — `TRACE_EXCLUDED_URLS` (`"api/health"`) is passed to the FastAPI instrumentor (both the global `instrument()` in `_configure_otel` and the fallback `instrument_app()` in `core/webserver`), so `/api/health` produces no HTTP server span. The health DB ping (`core/database.ping()`, used by web `/api/health` and worker `/health`) runs inside `suppress_instrumentation()` so the constant probes emit no SQLAlchemy span either. Fly's machine checker hits health every few seconds; tracing each probe would be pure noise.
 
+**ASGI lifecycle child spans are suppressed** — `TRACE_EXCLUDE_INTERNAL_SPANS` (`("send", "receive")`) is passed as `exclude_spans=` to the FastAPI instrumentor (same two call sites as `TRACE_EXCLUDED_URLS`). The FastAPI instrumentor's underlying ASGI middleware can emit two empty INTERNAL child spans on every request span (`<method> <path> http send` and `<method> <path> http receive`); they carry no attributes and no descendants — pure trace-tree noise. Both constants are exported from `app.core.observability`.
+
+**Span sampling — name-deny list** — `DenyByNameSampler` (private to `app.core.observability._samplers`) wraps the default `ParentBased(ALWAYS_ON)` sampler and short-circuits `DROP` at `start_span()` time for any span whose name appears in `TRACE_SAMPLER_DENY_NAMES` (currently `("connect",)`). SQLAlchemy's auto-instrumentation emits a CLIENT span named `connect` on every `engine.connect` event; it carries only `net.peer.{name,port}` and no query detail — never useful at any signal level. Sampler-level filtering is cheaper than a processor: the span never enters the BSP buffer and has zero memory cost. To add a name: append to `TRACE_SAMPLER_DENY_NAMES` in `_samplers.py`. Keep the list short (≤ 3 entries); if it grows, extract a builder.
+
 **Explicit exporter construction** — exporters are constructed with explicit `endpoint=f"{YAAOS_DASH0_ENDPOINT}/v1/{signal}"` and `headers={"Authorization": "Bearer …", "Dash0-Dataset": "…"}` kwargs. The app does not rely on `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` env vars for routing or auth. `YAAOS_BACKEND_DASH0_BEARER_TOKEN` is a `SecretStr` — `.get_secret_value()` is called only inside `configure()` before passing the string to `_configure_otel`; it never reaches logs or repr.
 
 **`configure(role=...)` must be called once at boot** — `"app"` from `web.py`, `"worker"` from `core/tasks/runtime.py`. Sets `service.name` accordingly. Idempotent (module-level `_initialized` flag + OTel "already instrumented" guard).
@@ -69,6 +73,8 @@
 - `spawn(name, coro, *, tracer?)` — fire-and-forget background task: OTel span + exception recording + error log. `tracer=` injection point for tests.
 - `current_traceparent()`, `restore_traceparent_context(tp)`, `with_remote_parent_span(tracer, name, tp)` — wire-protocol trace helpers.
 - `SlowRequestLogMiddleware`, `SLOW_REQUEST_THRESHOLD_MS` — slow-request logging middleware.
+- `TRACE_EXCLUDED_URLS` — comma-delimited path regexes passed as `excluded_urls=` to `FastAPIInstrumentor`; suppresses spans for matching paths (currently `/api/health`).
+- `TRACE_EXCLUDE_INTERNAL_SPANS` — tuple of ASGI span name suffixes passed as `exclude_spans=` to `FastAPIInstrumentor`; suppresses the empty `http send` / `http receive` INTERNAL child spans on every request span.
 - `active_task_count()` — number of in-flight spawned tasks (test helper).
 - `YaaosDimensionsSpanProcessor` — `SpanProcessor` that stamps standard yaaos dims on every span at creation (see § Standard dims below).
 

@@ -9,7 +9,7 @@
 
 ## Why / invariants
 
-**`NullPool` in dev/test** — avoids cross-event-loop contamination (`TestClient` brings up a fresh loop per test). `QueuePool` in prod with `pool_pre_ping=True`.
+**`NullPool` in test only** — avoids cross-event-loop pool contamination under pytest-asyncio + TestClient; every test runs in a fresh asyncio loop and a pooled connection bound to a dead loop is a hard-to-debug hang. Dev + prod use `QueuePool` with `pool_pre_ping=True` — dev intentionally mirrors prod so real pool behavior (overflow, pre-ping cost) surfaces in development.
 
 **Pool sizing rule of thumb** — pool size tracks concurrent in-flight queries, not connections or coroutines. For the worker: `db_pool_size >= WORKER_CONCURRENCY + 2`. Tune via env at deploy time; defaults (`db_pool_size=10`, `db_max_overflow=5`) suit dev.
 

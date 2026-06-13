@@ -149,7 +149,7 @@ bin/dev-rebuild                  # builds image + starts stack
 | Web `.tsx` (auto) | `pnpm exec vite build --watch` in separate terminal | ~1-2s |
 | Deps change | `docker compose … up -d --build app` | 30-60s |
 
-`apps/web/dist/` is bind-mounted and served by FastAPI's `StaticFiles` — FE rebuilds refresh without restarting the backend. Dev compose sets `APP_MODE=dev` (switches to `NullPool`, enables `/api/testing/*` routes).
+`apps/web/dist/` is bind-mounted and served by FastAPI's `StaticFiles` — FE rebuilds refresh without restarting the backend. Dev compose sets `APP_MODE=dev` (enables permissive CORS + `/api/testing/*` routes; uses `QueuePool` to mirror prod pool behavior).
 
 ## Local dev — fully native (no Docker for app/web)
 
