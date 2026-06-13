@@ -53,6 +53,18 @@ All spans emitted by `core/workflow`. Every span carries `org_id` + `yaaos.workf
 
 **`otel_trace_context` semantics:** `workflow_executions.otel_trace_context` stores the `workflow.run.<name>` span's own traceparent — not the caller's upstream traceparent. Task bodies (`start_step`, `handle_agent_event`) use this value via `with_remote_parent_span` so they nest under the run span, not directly under the intake request.
 
+## Trace propagation
+
+`workflow_executions.otel_trace_context` is the **single source of truth** for the `workflow.run.<name>` span's traceparent. Every engine task body that opens a span or enqueues a downstream task reads it off the loaded `wfx` row:
+
+- **`start_step` task body** — opens `workflow.start_step` under `wfx.otel_trace_context`, ignoring the `traceparent` task arg. The arg is preserved for backwards-compatibility with in-flight rows but is never trusted.
+- **`_start_step_impl` Local branch** — enqueues `route_workflow` with `traceparent=wfx.otel_trace_context`.
+- **`_handle_agent_event_impl`** — enqueues `route_workflow` with `traceparent=wfx.otel_trace_context`. This is the critical site: the caller's traceparent is the agent's HTTP POST request span (a different trace); ignoring it keeps all subsequent `start_step` spans nested under `workflow.run.*`.
+- **`_enqueue_start_step`** — enqueues `start_step` with `traceparent=wfx.otel_trace_context` on every call path (entry step, retry, recovery, finalizer, append queue, static transition).
+- **`resume_hitl`** — already followed this pattern; serves as the canonical reference.
+
+The `traceparent` argument on taskiq task signatures is preserved for backwards-compatibility with in-flight rows but task bodies overwrite it from `wfx.otel_trace_context` after loading. The result: all six `workflow.start_step` spans in a `pr_review_v1` run appear as direct children of `workflow.run.pr_review_v1` in Dash0, regardless of which process or HTTP request triggered each enqueue.
+
 ## Data owned
 
 - `workflow_executions` — indexes on `state`, `pending_agent_command_id`, `ticket_id`. `failure_reason TEXT` column (nullable; added migration 041). Migration 015 (table).
@@ -71,3 +83,4 @@ All spans emitted by `core/workflow`. Every span carries `org_id` + `yaaos.workf
 `test/test_state_changed_sse_service.py` — every transition emits `workflow_state_changed`; the failure path also emits `state=failed`. Catches the most common regression — adding a new state assignment without wiring the publish.
 `test/test_workflow_run_root_span.py` — `engine.start()` emits a finished `workflow.run.<name>` span parented to the caller's traceparent, with correct attributes; `otel_trace_context` stores the run span's own traceparent (not the caller's).
 `test/test_workspace_command_span.py` — Workspace branch of `_start_step_impl` emits `workflow.command.<Kind>` as a child of `workflow.start_step`; `CommandContext.traceparent` passed to `dispatch()` is the command span's own traceparent; dispatch raise → span ERROR + exception event; Local path carries `command.category="local"` attribute.
+`test/test_trace_hierarchy_service.py` — all `workflow.start_step` spans are direct children of `workflow.run.*` even when `handle_agent_event` is triggered with a foreign traceparent (the agent's HTTP POST context); regression pin for the pure-Local path.

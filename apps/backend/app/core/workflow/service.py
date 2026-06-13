@@ -108,15 +108,26 @@ async def start_step(
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
       writes the `pending_human_decisions` row, sets `state = awaiting_human`.
 
-    Span: emits a `workflow.start_step` span whose parent is the upstream
-    span encoded in `traceparent`, so all task bodies in one workflow run
-    nest under the same trace ID. `yaaos.workflow_id` is stamped on every
-    span and log record inside this scope via the span processor +
-    `_YaaosLogDimsFilter`; `step_id` and `attempt` remain explicit attrs.
+    Span: emits a `workflow.start_step` span whose parent is the
+    `workflow.run.<name>` span stored in `workflow_executions.otel_trace_context`.
+    The `traceparent` arg is accepted for backwards-compatibility with
+    in-flight task rows but is NOT used — the DB row is the single source of
+    truth so task bodies always nest under the run span regardless of which
+    process or HTTP request triggered the enqueue. `yaaos.workflow_id` is
+    stamped on every span and log record inside this scope via the span
+    processor + `_YaaosLogDimsFilter`; `step_id` and `attempt` remain
+    explicit attrs.
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     try:
-        with with_remote_parent_span(_tracer, "workflow.start_step", traceparent) as span:
+        # Load otel_trace_context from the DB row so the span always parents
+        # to workflow.run.*, not to whatever called enqueue (e.g. the agent's
+        # HTTP POST span). The `traceparent` task arg is stale once any hop
+        # runs in a different process or request context.
+        async with db_session() as _span_session:
+            _wfx_for_tp = await _load_execution(_span_session, workflow_execution_id)
+            _db_traceparent = _wfx_for_tp.otel_trace_context if _wfx_for_tp is not None else traceparent
+        with with_remote_parent_span(_tracer, "workflow.start_step", _db_traceparent) as span:
             span.set_attribute("workflow.step_id", step_id)
             span.set_attribute("workflow.attempt", attempt)
             await _start_step_impl(
@@ -124,7 +135,6 @@ async def start_step(
                 step_id=step_id,
                 attempt=attempt,
                 inputs=inputs,
-                traceparent=traceparent,
             )
     finally:
         workflow_execution_id_var.reset(wf_token)
@@ -136,7 +146,6 @@ async def _start_step_impl(
     step_id: str,
     attempt: int,
     inputs: dict[str, Any],
-    traceparent: str | None,
 ) -> None:
     async with db_session() as s:
         wfx = await _load_execution(s, workflow_execution_id)
@@ -187,12 +196,15 @@ async def _start_step_impl(
             await s.commit()
             return
 
+        # The cmd_ctx traceparent is the currently-active span (workflow.start_step),
+        # not the task arg — by the time we're here, with_remote_parent_span has
+        # already installed the correct run span as the OTel context.
         cmd_ctx = CommandContext(
             workflow_execution_id=str(wfx.id),
             ticket_id=str(wfx.ticket_id),
             step_id=step_id,
             attempt=attempt,
-            traceparent=traceparent,
+            traceparent=current_traceparent(),
         )
 
         wfx.current_step_id = step_id
@@ -281,6 +293,8 @@ async def _start_step_impl(
             return
 
         # Local command — persist outcome + enqueue route_workflow.
+        # Use wfx.otel_trace_context as the traceparent so downstream hops
+        # always parent to workflow.run.*, not to the caller's context.
         _persist_attempt(wfx, step_id, attempt)
         await enqueue(
             ROUTE_WORKFLOW,
@@ -289,7 +303,7 @@ async def _start_step_impl(
                 "completed_step_id": step_id,
                 "outcome_label": outcome.label,
                 "outputs": _outcome_payload(outcome),
-                "traceparent": traceparent,
+                "traceparent": wfx.otel_trace_context,
             },
             session=s,
         )
@@ -372,6 +386,12 @@ async def _handle_agent_event_impl(
         wfx.state = WorkflowState.RUNNING.value
         _publish_state_changed(s, wfx)
 
+        # Use wfx.otel_trace_context — NOT the caller-supplied traceparent.
+        # The caller's traceparent is the agent's HTTP POST request span, which
+        # belongs to a different trace. The DB row is the single source of truth
+        # for the workflow.run.* span's traceparent so all subsequent start_step
+        # spans nest under workflow.run.*, not the agent's request.
+        # This is the canonical pattern that resume_hitl also follows.
         await enqueue(
             ROUTE_WORKFLOW,
             args={
@@ -379,7 +399,7 @@ async def _handle_agent_event_impl(
                 "completed_step_id": completed_step_id,
                 "outcome_label": outcome_label,
                 "outputs": outputs,
-                "traceparent": traceparent,
+                "traceparent": wfx.otel_trace_context,
             },
             session=s,
         )
@@ -468,7 +488,7 @@ async def _route_workflow_impl(
         if completed_step_id is None:
             wfx.state = WorkflowState.RUNNING.value
             _publish_state_changed(s, wfx)
-            await _enqueue_start_step(s, wfx, wf, wf.entry_step_id, traceparent, attempt=0)
+            await _enqueue_start_step(s, wfx, wf, wf.entry_step_id, attempt=0)
             await s.commit()
             return
 
@@ -515,7 +535,7 @@ async def _route_workflow_impl(
                 # Drain the appended step (the recovery) immediately.
                 head = _dequeue_appended(wfx)
                 assert head is not None  # we just queued it
-                await _enqueue_start_step(s, wfx, wf, head.id, traceparent, attempt=0)
+                await _enqueue_start_step(s, wfx, wf, head.id, attempt=0)
                 await s.commit()
                 return
 
@@ -527,7 +547,7 @@ async def _route_workflow_impl(
             if attempts < step.retry_policy.max_attempts - 1:
                 wfx.state = WorkflowState.RUNNING.value
                 _publish_state_changed(s, wfx)
-                await _enqueue_start_step(s, wfx, wf, completed_step_id, traceparent, attempt=attempts + 1)
+                await _enqueue_start_step(s, wfx, wf, completed_step_id, attempt=attempts + 1)
                 await s.commit()
                 return
 
@@ -544,7 +564,7 @@ async def _route_workflow_impl(
         if head is not None:
             wfx.state = WorkflowState.RUNNING.value
             _publish_state_changed(s, wfx)
-            await _enqueue_start_step(s, wfx, wf, head.id, traceparent, attempt=0)
+            await _enqueue_start_step(s, wfx, wf, head.id, attempt=0)
             await s.commit()
             return
 
@@ -590,7 +610,7 @@ async def _route_workflow_impl(
                     finalizer_step_id=wf.finalizer_step_id,
                     failed_step_id=completed_step_id,
                 )
-                await _enqueue_start_step(s, wfx, wf, wf.finalizer_step_id, traceparent, attempt=0)
+                await _enqueue_start_step(s, wfx, wf, wf.finalizer_step_id, attempt=0)
                 await s.commit()
                 return
 
@@ -630,7 +650,7 @@ async def _route_workflow_impl(
         # Otherwise it's a string step id.
         wfx.state = WorkflowState.RUNNING.value
         _publish_state_changed(s, wfx)
-        await _enqueue_start_step(s, wfx, wf, target, traceparent, attempt=0)
+        await _enqueue_start_step(s, wfx, wf, target, attempt=0)
         await s.commit()
 
 
@@ -694,6 +714,11 @@ async def resume_hitl(
     wfx.state = WorkflowState.RUNNING.value
     _publish_state_changed(session, wfx)
 
+    # wfx.otel_trace_context is the canonical pattern: the DB row is the single
+    # source of truth for the workflow.run.* span's traceparent. All task-body
+    # enqueues (handle_agent_event, _start_step_impl Local branch, _enqueue_start_step)
+    # follow this same rule so downstream start_step spans always parent to
+    # workflow.run.*, not to the caller's request context.
     await enqueue(
         ROUTE_WORKFLOW,
         args={
@@ -1083,12 +1108,17 @@ async def _enqueue_start_step(
     wfx: WorkflowExecutionRow,
     wf: Workflow,
     step_id: str,
-    traceparent: str | None,
     *,
     attempt: int,
 ) -> None:
     """Resolve the step's `inputs` map against ticket payload + prior step
-    outputs, then enqueue `workflow.start_step`."""
+    outputs, then enqueue `workflow.start_step`.
+
+    The `traceparent` in the enqueued args always comes from
+    `wfx.otel_trace_context` — the single source of truth for the
+    `workflow.run.*` span's traceparent. `start_step` reads the DB row
+    directly and ignores the arg, but we populate it for in-flight row
+    backwards-compatibility."""
     step = _resolve_step(wfx, wf, step_id)
     resolved_inputs: dict[str, Any] = {}
     if step is not None:
@@ -1104,7 +1134,7 @@ async def _enqueue_start_step(
             "step_id": step_id,
             "attempt": attempt,
             "inputs": resolved_inputs,
-            "traceparent": traceparent,
+            "traceparent": wfx.otel_trace_context,
         },
         session=session,
     )
