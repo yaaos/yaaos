@@ -309,7 +309,19 @@ class GatewayError(Exception):
 
 class StaleClaimError(GatewayError):
     """Raised when an event's `command_id` no longer matches the workspace's
-    `current_command_id`. Endpoint returns 410 Gone."""
+    `current_command_id`. Endpoint maps this to `stale_claim_dropped` outcome."""
+
+
+class CommandEventAck(BaseModel):
+    """Response body for `POST /api/v1/commands/{id}/events`.
+
+    `command_event_outcome` classifies what the backend did with the event:
+    - `event_recorded` — persisted and any workflow side-effects fired.
+    - `stale_claim_dropped` — backend no longer holds this command's claim;
+      agent treats this as a successful no-op and stops retrying.
+    """
+
+    command_event_outcome: str
 
 
 class UnauthorizedError(GatewayError):

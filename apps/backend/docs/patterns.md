@@ -222,6 +222,8 @@ Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has r
 
 `@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (in `apps/backend/app/worker.py`) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits. The outbox table is private to `core/tasks` — domain modules never import it directly.
 
+`enqueue` auto-stamps `current_traceparent()` into `TaskMetadata.traceparent`. `TaskSpanMiddleware` on the consumer side extracts it and uses it as the parent context for `task:<name>` spans — so all task spans land in the producer's trace rather than orphan per-task traces. No caller action required; the pipe is automatic.
+
 Task bodies must be idempotent — a drain crash between dispatch and `dispatched_at` stamp can redispatch. Bodies look up state from DB (don't carry "do this once" semantics in the args).
 
 ## Secrets

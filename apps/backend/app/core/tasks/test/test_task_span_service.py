@@ -201,3 +201,75 @@ async def test_span_created_in_task_body_nests_under_task_span(db_session) -> No
     assert child_span.context.trace_id == task_span.context.trace_id, (
         "child span must share the task span's trace"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_task_span_uses_metadata_traceparent_as_parent(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Regression guard: when `TaskMetadata.traceparent` is present in the
+    message labels, `TaskSpanMiddleware.pre_execute` opens the `task:<name>` span
+    as a child of the encoded remote span — placing it in the producer's trace.
+
+    Flow:
+    1. Open a producer span in a test-local TracerProvider.
+    2. Capture its traceparent string.
+    3. Build a `TaskiqMessage` whose `metadata` label carries that traceparent.
+    4. Call `TaskSpanMiddleware.pre_execute` directly (no broker needed).
+    5. Assert the resulting `task:<name>` span shares the producer's trace_id.
+    """
+    from taskiq import TaskiqMessage  # noqa: PLC0415
+
+    from app.core.observability import current_traceparent  # noqa: PLC0415
+    from app.core.tasks import TaskMetadata  # noqa: PLC0415
+
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider = TracerProvider()
+    provider.add_span_processor(processor)
+    tracer = provider.get_tracer("test_task_span_traceparent_parent")
+
+    # Open a producer span to capture its traceparent.
+    with tracer.start_as_current_span("producer-span") as producer_span:
+        producer_trace_id = producer_span.get_span_context().trace_id
+        producer_tp = current_traceparent()
+
+    assert producer_tp is not None, "current_traceparent() must return a value inside a span"
+
+    # Build metadata with the producer's traceparent.
+    meta = TaskMetadata(org_id=None, traceparent=producer_tp)
+    meta_json = meta.model_dump_json()
+
+    middleware = TaskSpanMiddleware(tracer=tracer)
+
+    task_name = f"tp_parent_{uuid4().hex[:8]}"
+    task_id = uuid4().hex
+
+    # Simulate a taskiq message carrying the metadata label.
+    msg = TaskiqMessage(
+        task_id=task_id,
+        task_name=task_name,
+        labels={"metadata": meta_json},
+        args=[],
+        kwargs={},
+    )
+
+    # Run pre_execute to open the task span.
+    await middleware.pre_execute(msg)
+
+    # Simulate the task completing (we don't care about outcome here).
+    from taskiq.result import TaskiqResult  # noqa: PLC0415
+
+    result: TaskiqResult[None] = TaskiqResult(is_err=False, log=None, return_value=None, execution_time=0.0)
+    await middleware.post_execute(msg, result)
+
+    spans = exporter.get_finished_spans()
+    task_spans = [s for s in spans if task_name in s.name]
+    assert len(task_spans) == 1, f"expected one task span; got {[s.name for s in spans]}"
+
+    task_span = task_spans[0]
+    assert task_span.context.trace_id == producer_trace_id, (
+        f"task span trace_id {task_span.context.trace_id:032x} != "
+        f"producer trace_id {producer_trace_id:032x}; "
+        "task span must be in the producer's trace when traceparent is supplied"
+    )
+    assert task_span.parent is not None, "task span must have a parent (the producer span)"

@@ -608,7 +608,8 @@ async def record_agent_event(
     `claimed` to `delivered`, cancelling the lease requeue.
 
     Raises `StaleClaimError` when the command row no longer exists (already
-    retired by an earlier terminal event); the endpoint maps this to `410 Gone`.
+    retired by an earlier terminal event); the endpoint catches it and returns
+    HTTP 200 with `CommandEventAck(command_event_outcome="stale_claim_dropped")`.
 
     Workflow correlation is independent of the workspace row — the engine
     stamps `workflow_execution_id` on the command at enqueue time. An agent
@@ -620,7 +621,8 @@ async def record_agent_event(
     `agent_commands.completion_token_hash` (sha256; raw never persisted) and
     echoed back on the event's `completion_token`. The presented token is
     re-hashed and compared constant-time against the stored hash; a mismatch
-    raises `StaleClaimError` (mapped to 410). Authorization binds to the COMMAND,
+    raises `StaleClaimError` (the endpoint returns 200 with
+    `command_event_outcome="stale_claim_dropped"`). Authorization binds to the COMMAND,
     not to the worker's mutable `(org_id, agent_id)` — so an agent whose identity
     legitimately rotated on re-auth still completes its in-flight command. When
     `completion_token_hash` is NULL (command never went through `claim_next`,
@@ -776,6 +778,11 @@ async def record_workspace_event(
     applies the stale-claim guard and the kind→status map, returning an
     outcome VO. agent_gateway maps `accepted=False` to `StaleClaimError`
     so the endpoint can return `410 Gone`.
+
+    Asymmetry: the sibling `record_agent_event` (terminal events on the
+    command-event endpoint) returns 200 with `command_event_outcome=
+    "stale_claim_dropped"` instead of 410. The workspace-event endpoint
+    retains 410 because it does not yet share the outcome-ack contract.
 
     `agent_id` is the bearer's `WorkspaceAgentRow.id`. Passed to the sink so
     lean row creation (on the agent's first workspace event) can stamp

@@ -96,21 +96,36 @@ func TestClaimCommand200ReturnsRawBytes(t *testing.T) {
 	}
 }
 
-func TestPostCommandEvent410IsStaleClaim(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusGone)
-	}))
-	defer server.Close()
+func TestPostCommandEvent200ReturnsAck(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		outcome string
+	}{
+		{"event_recorded", CommandEventOutcomeRecorded},
+		{"stale_claim_dropped", CommandEventOutcomeStaleClaimDropped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"command_event_outcome":"` + tc.outcome + `"}`))
+			}))
+			defer server.Close()
 
-	cli := NewClient(server.URL, nil)
-	cli.SetBearer("x")
-	err := cli.PostCommandEvent(context.Background(), "cmd-1", AgentEvent{
-		CommandID:   "cmd-1",
-		Kind:        EventCompletedSuccess,
-		Traceparent: "00-...",
-	})
-	if !errors.Is(err, ErrStaleClaim) {
-		t.Fatalf("expected ErrStaleClaim, got %v", err)
+			cli := NewClient(server.URL, nil)
+			cli.SetBearer("x")
+			ack, err := cli.PostCommandEvent(context.Background(), "cmd-1", AgentEvent{
+				CommandID:   "cmd-1",
+				Kind:        EventCompletedSuccess,
+				Traceparent: "00-...",
+			})
+			if err != nil {
+				t.Fatalf("PostCommandEvent: %v", err)
+			}
+			if ack.Outcome != tc.outcome {
+				t.Errorf("outcome: want %q, got %q", tc.outcome, ack.Outcome)
+			}
+		})
 	}
 }
 

@@ -15,9 +15,21 @@ import (
 // timed out without work — the agent re-arms the poll.
 var ErrNoCommand = errors.New("protocol: no command available (204)")
 
-// ErrStaleClaim is returned by event endpoints when the backend says
-// the command/workspace no longer holds the claim — agent abandons.
-var ErrStaleClaim = errors.New("protocol: stale claim (410)")
+// CommandEventAck is the response body returned by POST /api/v1/commands/{id}/events.
+// The backend always returns 200; CommandEventOutcome classifies the result.
+type CommandEventAck struct {
+	Outcome string `json:"command_event_outcome"`
+}
+
+// CommandEventOutcome values for CommandEventAck.Outcome.
+const (
+	// CommandEventOutcomeRecorded means the event was persisted and any
+	// workflow side-effects fired.
+	CommandEventOutcomeRecorded = "event_recorded"
+	// CommandEventOutcomeStaleClaimDropped means the backend no longer holds
+	// this command's claim; the agent treats this as a successful no-op.
+	CommandEventOutcomeStaleClaimDropped = "stale_claim_dropped"
+)
 
 // Client is the HTTP client wrapper for the 5 backend endpoints. Safe
 // for concurrent use — http.Client itself is concurrency-safe.
@@ -101,14 +113,19 @@ func (c *Client) ClaimCommand(ctx context.Context, req ClaimRequest) ([]byte, er
 	}
 }
 
-// PostCommandEvent reports progress or terminal outcome for an
-// AgentCommand. ErrStaleClaim → agent silently drops the command.
-func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event AgentEvent) error {
+// PostCommandEvent reports progress or terminal outcome for an AgentCommand.
+// The backend always returns 200; the returned CommandEventAck.Outcome
+// classifies the result (event_recorded or stale_claim_dropped).
+func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event AgentEvent) (*CommandEventAck, error) {
 	path := fmt.Sprintf("/api/v1/commands/%s/events", commandID)
 	if event.ReportedAt.IsZero() {
 		event.ReportedAt = time.Now().UTC()
 	}
-	return c.doJSON(ctx, http.MethodPost, path, event, nil, true)
+	var ack CommandEventAck
+	if err := c.doJSON(ctx, http.MethodPost, path, event, &ack, true); err != nil {
+		return nil, err
+	}
+	return &ack, nil
 }
 
 // doJSON is the generic POST helper. `out` may be nil for endpoints that
@@ -147,8 +164,6 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any, w
 		return json.NewDecoder(resp.Body).Decode(out)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("%s %s: unauthorized", method, path)
-	case http.StatusGone:
-		return ErrStaleClaim
 	default:
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, string(raw))

@@ -3,7 +3,6 @@ package supervisor
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,18 +21,19 @@ import (
 
 // fakeEventServer is an httptest.Server that handles
 // POST /api/v1/commands/{id}/events. It can be configured to fail a fixed
-// number of times before returning 200, and can return 410 Gone immediately.
+// number of times before returning 200, and can return a stale-claim outcome
+// immediately (200 with command_event_outcome=stale_claim_dropped).
 type fakeEventServer struct {
-	mu         sync.Mutex
-	failCount  int   // return 500 this many times before succeeding
-	returnGone bool  // always return 410
-	callCount  int32 // atomic counter for total POSTs received
-	server     *httptest.Server
+	mu                      sync.Mutex
+	failCount               int   // return 500 this many times before succeeding
+	returnStaleClaimOutcome bool  // always return 200 stale_claim_dropped
+	callCount               int32 // atomic counter for total POSTs received
+	server                  *httptest.Server
 }
 
-func newFakeEventServer(t *testing.T, failCount int, returnGone bool) *fakeEventServer {
+func newFakeEventServer(t *testing.T, failCount int, returnStaleClaimOutcome bool) *fakeEventServer {
 	t.Helper()
-	fs := &fakeEventServer{failCount: failCount, returnGone: returnGone}
+	fs := &fakeEventServer{failCount: failCount, returnStaleClaimOutcome: returnStaleClaimOutcome}
 	fs.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/commands/") {
 			http.NotFound(w, r)
@@ -45,18 +45,20 @@ func newFakeEventServer(t *testing.T, failCount int, returnGone bool) *fakeEvent
 		if remaining > 0 {
 			fs.failCount--
 		}
-		gone := fs.returnGone
+		stale := fs.returnStaleClaimOutcome
 		fs.mu.Unlock()
 
-		if gone {
-			w.WriteHeader(http.StatusGone)
-			return
-		}
 		if remaining > 0 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if stale {
+			_, _ = w.Write([]byte(`{"command_event_outcome":"stale_claim_dropped"}`))
+		} else {
+			_, _ = w.Write([]byte(`{"command_event_outcome":"event_recorded"}`))
+		}
 	}))
 	t.Cleanup(fs.server.Close)
 	return fs
@@ -173,10 +175,10 @@ func TestEventPostRetry_SucceedsAfterTransientFailures(t *testing.T) {
 	}
 }
 
-// TestEventPostRetry_StaleClaimStopsImmediately verifies that a 410 Gone
-// response stops the retry loop without further attempts.
+// TestEventPostRetry_StaleClaimStopsImmediately verifies that a 200
+// stale_claim_dropped response stops the retry loop without further attempts.
 func TestEventPostRetry_StaleClaimStopsImmediately(t *testing.T) {
-	srv := newFakeEventServer(t, 0, true) // always 410
+	srv := newFakeEventServer(t, 0, true) // always stale_claim_dropped
 	s := buildSupervisorForRetryTest(t, srv, nil)
 	defer s.pool.CloseAll(context.Background())
 
@@ -187,9 +189,9 @@ func TestEventPostRetry_StaleClaimStopsImmediately(t *testing.T) {
 	s.routeCommand(ctx, cmd)
 
 	calls := atomic.LoadInt32(&srv.callCount)
-	// Exactly one attempt — 410 stops the loop.
+	// Exactly one attempt — stale_claim_dropped is a success, loop stops.
 	if calls != 1 {
-		t.Errorf("want exactly 1 POST attempt on 410 Got, got %d", calls)
+		t.Errorf("want exactly 1 POST attempt on stale_claim_dropped, got %d", calls)
 	}
 }
 
@@ -223,26 +225,5 @@ func TestDedupReplay_RetryLoopActive(t *testing.T) {
 	if callsAfterSecond-callsAfterFirst < failN+1 {
 		t.Errorf("dedup replay: want at least %d additional POST attempts, got %d",
 			failN+1, callsAfterSecond-callsAfterFirst)
-	}
-}
-
-// ── Protocol client sentinel ──────────────────────────────────────────────
-
-// TestProtocolClient_410ReturnsErrStaleClaim verifies that the protocol
-// client maps a 410 HTTP response to protocol.ErrStaleClaim.
-func TestProtocolClient_410ReturnsErrStaleClaim(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusGone)
-	}))
-	defer srv.Close()
-
-	c := protocol.NewClient(srv.URL, nil)
-	err := c.PostCommandEvent(context.Background(), "cmd-x", protocol.AgentEvent{
-		CommandID:  "cmd-x",
-		Kind:       protocol.EventCompletedSuccess,
-		ReportedAt: time.Now().UTC(),
-	})
-	if !errors.Is(err, protocol.ErrStaleClaim) {
-		t.Errorf("want ErrStaleClaim, got %v", err)
 	}
 }

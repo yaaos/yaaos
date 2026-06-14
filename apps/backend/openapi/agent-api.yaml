@@ -149,7 +149,8 @@ paths:
         Triggers `core/workflow.handle_agent_event` when the event is
         terminal. The control plane validates `command_id` against the
         workspace's `current_command_id` (single-flight claim); a stale
-        command (workspace already moved on) returns 410.
+        command (workspace already moved on) is recorded as
+        `stale_claim_dropped` in the response body — always 200.
       operationId: postCommandEvent
       parameters:
         - $ref: '#/components/parameters/CommandId'
@@ -163,11 +164,13 @@ paths:
               $ref: '#/components/schemas/AgentEvent'
       responses:
         '200':
-          description: Accepted.
+          description: Event was processed. The `command_event_outcome` field classifies the result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandEventAck'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '410':
-          $ref: '#/components/responses/StaleClaim'
 
 components:
   parameters:
@@ -201,7 +204,11 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
     StaleClaim:
-      description: The supplied command_id no longer holds the workspace claim. Agent abandons silently.
+      description: |
+        The workspace's `current_command_id` no longer matches the event's
+        `command_id` — the claim has rotated. Used by
+        `/api/v1/workspaces/{workspace_id}/events`; the command-event endpoint
+        uses the 200 + `CommandEventAck` shape instead.
       content:
         application/json:
           schema:
@@ -213,6 +220,17 @@ components:
       scheme: bearer
 
   schemas:
+    CommandEventAck:
+      type: object
+      required: [command_event_outcome]
+      properties:
+        command_event_outcome:
+          type: string
+          enum: [event_recorded, stale_claim_dropped]
+          description: |
+            - `event_recorded`: the event was persisted and any workflow side-effects fired.
+            - `stale_claim_dropped`: the backend no longer holds this command's claim (workspace moved on or command row was reaped); the agent should treat this as a successful no-op and stop retrying.
+
     ErrorEnvelope:
       type: object
       required: [error]

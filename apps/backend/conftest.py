@@ -39,6 +39,7 @@ os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
 # app.core.redis → app.core.config at import time.
 from app.testing.isolation import (  # noqa: F401
     _canonical_registries,
+    bearer_verify_isolation,
     email_inbox_isolation,
     plugin_registries_isolation,
     pubsub_isolation,

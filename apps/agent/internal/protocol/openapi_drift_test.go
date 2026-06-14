@@ -54,6 +54,7 @@ var schemaToStruct = map[string]struct {
 	t          reflect.Type
 	skipFields map[string]struct{}
 }{
+	"CommandEventAck":             {reflect.TypeOf(CommandEventAck{}), nil},
 	"AgentMetadata":               {reflect.TypeOf(AgentMetadata{}), nil},
 	"IdentityExchangeRequest":     {reflect.TypeOf(IdentityExchangeRequest{}), nil},
 	"IdentityExchangeResponse":    {reflect.TypeOf(IdentityExchangeResponse{}), nil},
