@@ -44,6 +44,7 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from app.core.agent_gateway import bearers
@@ -487,10 +488,12 @@ async def post_command_event(
                 _require_workspace_owner(agent, owning_agent_id)
                 await record_agent_event(event, agent_id=agent.agent_id, session=s)
                 await s.commit()
-        except StaleClaimError as exc:
-            log.debug("agent.command_event.stale", command_id=str(command_id), error=str(exc))
-            return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
-    return Response(status_code=200)
+            outcome = "event_recorded"
+        except StaleClaimError:
+            outcome = "stale_claim_dropped"
+    trace.get_current_span().set_attribute("command_event.outcome", outcome)
+    log.info("agent.command_event.posted", command_id=str(command_id), command_event_outcome=outcome)
+    return JSONResponse(status_code=200, content={"command_event_outcome": outcome})
 
 
 # ── Activity WebSocket ──────────────────────────────────────────────────

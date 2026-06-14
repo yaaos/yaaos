@@ -274,8 +274,8 @@ async def test_command_event_rejects_foreign_owner(db_session) -> None:
 async def test_command_event_config_update_not_regressed(db_session) -> None:
     """An agent-scoped command (e.g. ConfigUpdate) resolves to no workspace,
     so there is no ownership edge to enforce — the per-agent authz check must
-    NOT 403 it. It falls through to the stale-claim guard (410), the same
-    behavior the Go agent already drops silently. Proves no authz regression."""
+    NOT 403 it. It falls through to the stale-claim guard (stale_claim_dropped),
+    returned as 200 with a typed outcome body. Proves no authz regression."""
     agent_a, _agent_b, token = await _two_agents_one_org(db_session)
     # No workspace holds this command_id — mirrors a ConfigUpdate terminal event.
     cmd_id = uuid4()
@@ -291,9 +291,9 @@ async def test_command_event_config_update_not_regressed(db_session) -> None:
                 "traceparent": "00-aabb-1122-01",
             },
         )
-    # 410 (stale-claim), NOT 403 — authz let the agent-scoped command through.
-    assert resp.status_code == 410, resp.text
-    assert resp.json()["error"] == "stale_claim"
+    # 200 stale_claim_dropped, NOT 403 — authz let the agent-scoped command through.
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"command_event_outcome": "stale_claim_dropped"}
 
 
 @pytest.mark.asyncio

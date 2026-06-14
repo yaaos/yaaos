@@ -42,6 +42,7 @@ _SPEC_PATH = Path(__file__).resolve().parents[4] / "openapi" / "agent-api.yaml"
 # YAML schema → (Python class name, optional[set of fields to skip])
 # Skipping is for fields that are spec-only (e.g. computed-on-wire).
 _SCHEMA_TO_CLASS: dict[str, tuple[str, set[str]]] = {
+    "CommandEventAck": ("CommandEventAck", set()),
     "IdentityExchangeRequest": ("IdentityExchangeRequest", set()),
     "IdentityExchangeResponse": ("IdentityExchangeResponse", set()),
     "HeartbeatRequest": ("HeartbeatRequest", set()),
