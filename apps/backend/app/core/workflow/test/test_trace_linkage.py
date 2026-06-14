@@ -1,10 +1,13 @@
 """Trace-linkage audit: all workflow task-body spans share one trace_id.
 
-The three workflow task bodies (`start_step`, `route_workflow`,
-`handle_agent_event`) each open a span via `with_remote_parent_span`,
-extracting the upstream span from the `traceparent` task arg. This test
-drives a complete workflow run with an `InMemorySpanExporter` attached
-and asserts every emitted span shares the same `trace_id` — proving one
+`handle_agent_event` opens a span via `with_remote_parent_span`. `start_step`
+no longer opens a custom span — taskiq's auto-emitted `task:workflow.start_step`
+span covers the hop; the inner `workflow.command.<Kind>` span is its direct child.
+`route_workflow` also does not open a custom span — taskiq's own
+`task:workflow.route_workflow` covers it.
+
+This test drives a complete workflow run with an `InMemorySpanExporter` and
+asserts every emitted custom span shares the same `trace_id` — proving one
 trace covers webhook → workflow start → all task bodies → terminal.
 
 Trace ID stays continuous from webhook to PR comment through the
@@ -95,10 +98,9 @@ async def _drain(db_session):  # type: ignore[no-untyped-def]
 
 
 async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_session) -> None:  # type: ignore[no-untyped-def]
-    """All three workflow task bodies emit spans nested under the
-    `traceparent` passed at workflow start. Drive a two-Local-step
-    workflow under one upstream span and assert every emitted span
-    carries the same trace_id."""
+    """Workflow task bodies emit spans within the upstream trace when drained
+    under the upstream span context.  Drive a two-Local-step workflow and
+    assert the custom spans emitted share the upstream trace_id."""
     eng = get_engine()
     eng.register_command(_NoopLocal())
     workflow = Workflow(
@@ -125,7 +127,11 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
         )
         await db_session.commit()
 
-    await _drain(db_session)
+        # Drain inside the upstream span context so command spans inherit it.
+        # In production, taskiq extracts the trace context from the task message
+        # envelope and installs it on the worker thread — the in-process drain
+        # helper inherits whatever span context is currently active.
+        await _drain(db_session)
 
     # Workflow reached DONE.
     wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
@@ -133,18 +139,22 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
 
     # Inspect the spans that fired during the workflow run.
     spans = in_memory_spans.get_finished_spans()
-    workflow_span_names = {
-        "workflow.start_step",
-        "workflow.route_workflow",
-    }
-    emitted_workflow_spans = [s for s in spans if s.name in workflow_span_names]
-    # Two steps x (start_step + route_workflow) = at least 4 task-body spans.
-    assert len(emitted_workflow_spans) >= 4, (
-        f"expected >=4 workflow task-body spans, got {[s.name for s in emitted_workflow_spans]}"
-    )
 
-    # Critically: every workflow task-body span shares the upstream trace_id.
-    for span in emitted_workflow_spans:
+    # Neither route_workflow nor start_step open custom spans — both are covered
+    # by taskiq auto-instrumentation.
+    route_workflow_custom_spans = [s for s in spans if s.name == "workflow.route_workflow"]
+    assert route_workflow_custom_spans == [], (
+        f"expected no workflow.route_workflow custom span, got {route_workflow_custom_spans}"
+    )
+    start_step_custom = [s for s in spans if s.name == "workflow.start_step"]
+    assert start_step_custom == [], f"expected no workflow.start_step custom span, got {start_step_custom}"
+
+    # workflow.command.<Kind> spans exist for both steps.
+    cmd_spans = [s for s in spans if s.name.startswith("workflow.command.")]
+    assert len(cmd_spans) >= 2, f"expected >=2 workflow.command.* spans, got {[s.name for s in spans]}"
+
+    # Every command span shares the upstream trace_id.
+    for span in cmd_spans:
         assert span.context.trace_id == upstream_trace_id, (
             f"span {span.name!r} has trace_id {span.context.trace_id:032x}, expected {upstream_trace_id:032x}"
         )

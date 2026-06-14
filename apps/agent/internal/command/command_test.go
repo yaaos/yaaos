@@ -163,6 +163,7 @@ func TestDecodeRoundTrip(t *testing.T) {
 				"otlp_endpoint":  "https://otel.example.com",
 				"otlp_token":     "secret-tok",
 				"otlp_dataset":   "yaaos-prod",
+				"environment":    "staging",
 			},
 		})
 		cmd, err := command.Decode(raw)
@@ -191,6 +192,9 @@ func TestDecodeRoundTrip(t *testing.T) {
 		}
 		if cu.Config.OTLPDataset != "yaaos-prod" {
 			t.Errorf("Config.OTLPDataset = %q, want yaaos-prod", cu.Config.OTLPDataset)
+		}
+		if cu.Config.Environment != "staging" {
+			t.Errorf("Config.Environment = %q, want staging", cu.Config.Environment)
 		}
 	})
 

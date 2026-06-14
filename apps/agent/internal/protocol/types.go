@@ -36,6 +36,11 @@ type CommandHeader struct {
 	// echoes on every AgentEvent it posts for this command. The backend
 	// verifies it by hash before accepting the event.
 	CompletionToken string `json:"completion_token,omitempty"`
+	// WorkflowExecutionID is the workflow execution that dispatched this
+	// command. Stamped at enqueue time so agent-side spans can carry
+	// workflow_id without a separate lookup. Empty for agent-scoped commands
+	// (e.g. ConfigUpdate) that do not correlate to a workflow.
+	WorkflowExecutionID string `json:"workflow_execution_id,omitempty"`
 }
 
 // RepoRef matches the spec's nested `repo` object on ProvisionWorkspace.
@@ -185,12 +190,14 @@ type ClaimRequest struct {
 // command.AgentConfig — the typed form Decode produces, whose OTLPToken is a
 // secret.Secret. OTLPToken is a plain string here (the raw wire value); Decode
 // wraps it in secret.Secret immediately, so this struct must never be logged
-// before that wrapping.
+// before that wrapping. Environment is a plain string — the OTel
+// `deployment.environment.name` resource attribute.
 type AgentConfigWire struct {
 	MaxWorkspaces int    `json:"max_workspaces"`
 	OTLPEndpoint  string `json:"otlp_endpoint"`
 	OTLPToken     string `json:"otlp_token"` // secret — wrapped by Decode; never log raw
 	OTLPDataset   string `json:"otlp_dataset"`
+	Environment   string `json:"environment"`
 }
 
 // ConfigUpdateCommand is the agent-scoped command that delivers runtime

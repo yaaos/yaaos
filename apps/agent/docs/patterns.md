@@ -59,6 +59,23 @@ If adding a new enum value causes `exhaustive` to fail, add the matching `case` 
 - Leaf packages take no logger; they return errors. Activity logs via the injected `Logger` interface on `Conductor`.
 - Never log auth tokens or `Secret` values. Use `.Value()` only at the OTLP-exporter install site.
 
+## Observability
+
+### Span instrumentation
+
+`tracing.StartSpan` is the sole span primitive for agent code. Use it at every meaningful IO boundary (clone, subprocess launch, identity exchange, claim HTTP call, WS dial). Never wrap a loop iteration — one span per call, not per iteration.
+
+**Rule:** always call `end(err)` with the function's returned error. If the function doesn't return `error` (e.g. `runOneRefreshCycle`), capture failures into a local `spanErr` variable and pass it to `end` via a `defer`. Never call `end(nil)` when an error occurred.
+
+**Sanctioned no-span locations** (per-loop and per-message are anti-patterns):
+
+- The `claimLoop` iteration itself — only the `ClaimCommand` HTTP call inside it gets a span.
+- Individual WS message reads in the activity read-loop — only the `dialAndStartWS` dial gets a span.
+
+Full span inventory → [architecture.md § Observability](architecture.md#observability).
+
+Grep recipe: `rg -n "tracing.StartSpan" apps/agent/internal/`
+
 ## Depguard layer rule
 
 The full rule set lives in `apps/agent/.golangci.yml`. When adding a new internal package, decide which layer it belongs to (leaf, `activity`/`command`/`workspace`, or `supervisor`) and add a `list-mode: strict` rule with the appropriate `allow:` list. See the **Module boundaries** section above. Running `golangci-lint run` after the addition confirms placement.

@@ -21,7 +21,7 @@
 
 **`APP_MODE` vs `ENVIRONMENT` — two orthogonal axes.**
 
-- `APP_MODE` (field `app_mode`, `Literal["dev","test","production"]`, default `"production"`) is a **behavior switch**: `dev` enables permissive CORS and NullPool; `test` enables the test OAuth stub and routes emails to the in-memory inbox; `production` activates rate limiting, `Secure` cookies, and the prod-secrets gate.
+- `APP_MODE` (field `app_mode`, `Literal["dev","test","production"]`, default `"production"`) is a **behavior switch**: `dev` enables permissive CORS; `test` enables the test OAuth stub, routes emails to the in-memory inbox, and switches to `NullPool` (avoids cross-event-loop contamination under pytest-asyncio); `production` activates rate limiting, `Secure` cookies, and the prod-secrets gate.
 - `ENVIRONMENT` (field `environment`, free-form `str`, **required** — Settings refuses to construct without it) is the **deployment tier** for telemetry (`deployment.environment.name`). A staging deploy runs `APP_MODE=production` (prod-like behavior) but `ENVIRONMENT=staging` (distinct OTel dataset). No default and no Literal whitelist: a new deploy that forgets the var fails-fast at boot rather than silently tagging telemetry with a wrong-tier default, and a new tier name (e.g. `staging-eu`) works without a code change.
 
 **Canonical accessors** — the literal string `"production"` appears in exactly one file (`service.py`). Call-sites use the properties:
@@ -43,7 +43,7 @@
 
 **`SERVICE_VERSION`** — `service_version: str = "0.0.0-dev"`. Version string embedded in the OTel resource (`service.version`) and served at `/api/health`. Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a safe sentinel for local/dev boots.
 
-**OTLP auth headers — no Settings field.** `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Bearer <token>,Dash0-Dataset=<name>`) is set as a Fly secret and read by the OTel SDK directly at exporter construction time. Nothing in our code parses it. Exporter wiring is gated on `otel_exporter_otlp_endpoint` being set; the SDK then reads the standard OTLP env vars.
+**Dash0 OTLP settings — four fields.** `YAAOS_DASH0_ENDPOINT` (`yaaos_dash0_endpoint: str | None`) and `YAAOS_DASH0_DATASET` (`yaaos_dash0_dataset: str | None`) are non-secret; both set in `fly.production.toml` `[env]`. `YAAOS_BACKEND_DASH0_BEARER_TOKEN` (`yaaos_backend_dash0_bearer_token: SecretStr | None`) and `YAAOS_AGENT_DASH0_BEARER_TOKEN` (`yaaos_agent_dash0_bearer_token: SecretStr | None`) are secrets; both set via `fly secrets`. All four must be set for `core/observability` to attach OTLP exporters. `otel_enabled` returns `bool(yaaos_dash0_endpoint)` — endpoint-only, for boot-time logging; the exporter gate requires all four.
 
 **`YAAOS_WORKER_HEALTH_PORT`** — `yaaos_worker_health_port: int = 8081`. TCP port the worker health server binds on `0.0.0.0`. The Fly top-level `[[checks]]` for the `worker` process group targets this port. Default 8081 is out of the way of the web process (8080) and is not publicly routed — Fly's machine checker reaches it directly inside the 6PN (private) network, bypassing Cloudflare.
 
@@ -53,4 +53,4 @@
 - `APP_MODE` and `ENVIRONMENT` are independent. Never derive one from the other.
 - The Dockerfile sets `APP_MODE=production` at image build time; tests in `conftest.py` override it to `test` before any import.
 - Tests that override `YAAOS_CLOUDFLARE_INGRESS_SECRET` must call `get_settings.cache_clear()` before and after — the cached singleton won't pick up the env change otherwise.
-- `OTEL_EXPORTER_OTLP_HEADERS` is never a Settings field — it's a standard OTel env var consumed directly by the SDK. Do not add a `SecretStr` field for it; auth headers must not cross the Python module boundary.
+- OTLP exporters require all four Dash0 settings (`yaaos_dash0_endpoint`, `yaaos_dash0_dataset`, `yaaos_backend_dash0_bearer_token`, `yaaos_agent_dash0_bearer_token`). Any partial config silently skips exporters rather than crashing — a deliberate no-op-when-absent policy.

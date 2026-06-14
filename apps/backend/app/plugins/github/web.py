@@ -13,6 +13,8 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -263,7 +265,11 @@ async def github_install_callback(request: Request) -> RedirectResponse:
     # degrade to "" — the webhook will populate it shortly when it arrives.
     try:
         account_login = await fetch_install_account_login(install_id_int)
-    except Exception:
+    except Exception as exc:
+        # inside-span failure: FastAPI span is active; record on it
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, str(exc))
         log.exception("github.install_callback.fetch_account_failed")
         account_login = ""
 

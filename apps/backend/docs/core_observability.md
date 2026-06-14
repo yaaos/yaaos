@@ -9,7 +9,7 @@
 
 ## Why / invariants
 
-**OTel always on, exporters optional** — all three providers are always initialized. OTLP/HTTP exporters are attached only when `otel_exporter_otlp_endpoint` is set. Adding a real exporter in prod is a single env-var flip (`OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS`); no code change or feature flags.
+**OTel always on, exporters optional** — all three providers are always initialized. OTLP/HTTP exporters are attached only when all three of `YAAOS_DASH0_ENDPOINT`, `YAAOS_DASH0_DATASET`, and `YAAOS_BACKEND_DASH0_BEARER_TOKEN` are set. Any missing setting silently skips exporters — providers exist but discard signals. This is a three-way AND gate (not endpoint-only) so a half-configured deploy never silently drops telemetry.
 
 **Metric sources** — the MeterProvider is non-empty from boot:
 - `FastAPIInstrumentor` emits `http.server.duration`, `http.server.active_requests`, and `http.server.response.size` automatically once the global MeterProvider is set (web process only).
@@ -17,7 +17,11 @@
 
 **Health probes are not traced** — `TRACE_EXCLUDED_URLS` (`"api/health"`) is passed to the FastAPI instrumentor (both the global `instrument()` in `_configure_otel` and the fallback `instrument_app()` in `core/webserver`), so `/api/health` produces no HTTP server span. The health DB ping (`core/database.ping()`, used by web `/api/health` and worker `/health`) runs inside `suppress_instrumentation()` so the constant probes emit no SQLAlchemy span either. Fly's machine checker hits health every few seconds; tracing each probe would be pure noise.
 
-**Exporter no-arg construction** — exporters are constructed with NO `endpoint=` / `headers=` kwargs. The SDK reads `OTEL_EXPORTER_OTLP_ENDPOINT` (base URL, e.g. `https://ingress.<region>.aws.dash0.com`) and appends `/v1/{traces,metrics,logs}` per signal; `OTEL_EXPORTER_OTLP_HEADERS` carries the `Authorization: Bearer …,Dash0-Dataset: …` pair. Passing `endpoint=` explicitly skips the per-signal append → bare-base 404, telemetry silently dropped.
+**ASGI lifecycle child spans are suppressed** — `TRACE_EXCLUDE_INTERNAL_SPANS` (`("send", "receive")`) is passed as `exclude_spans=` to the FastAPI instrumentor (same two call sites as `TRACE_EXCLUDED_URLS`). The FastAPI instrumentor's underlying ASGI middleware can emit two empty INTERNAL child spans on every request span (`<method> <path> http send` and `<method> <path> http receive`); they carry no attributes and no descendants — pure trace-tree noise. Both constants are exported from `app.core.observability`.
+
+**Span sampling — name-deny list** — `DenyByNameSampler` (private to `app.core.observability._samplers`) wraps the default `ParentBased(ALWAYS_ON)` sampler and short-circuits `DROP` at `start_span()` time for any span whose name appears in `TRACE_SAMPLER_DENY_NAMES` (currently `("connect",)`). SQLAlchemy's auto-instrumentation emits a CLIENT span named `connect` on every `engine.connect` event; it carries only `net.peer.{name,port}` and no query detail — never useful at any signal level. Sampler-level filtering is cheaper than a processor: the span never enters the BSP buffer and has zero memory cost. To add a name: append to `TRACE_SAMPLER_DENY_NAMES` in `_samplers.py`. Keep the list short (≤ 3 entries); if it grows, extract a builder.
+
+**Explicit exporter construction** — exporters are constructed with explicit `endpoint=f"{YAAOS_DASH0_ENDPOINT}/v1/{signal}"` and `headers={"Authorization": "Bearer …", "Dash0-Dataset": "…"}` kwargs. The app does not rely on `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` env vars for routing or auth. `YAAOS_BACKEND_DASH0_BEARER_TOKEN` is a `SecretStr` — `.get_secret_value()` is called only inside `configure()` before passing the string to `_configure_otel`; it never reaches logs or repr.
 
 **`configure(role=...)` must be called once at boot** — `"app"` from `web.py`, `"worker"` from `core/tasks/runtime.py`. Sets `service.name` accordingly. Idempotent (module-level `_initialized` flag + OTel "already instrumented" guard).
 
@@ -45,7 +49,17 @@
 
 **Standard dims on every span + log** — `YaaosDimensionsSpanProcessor` is registered on the `TracerProvider` during `_configure_otel`. Its `on_start` reads the auth contextvars (`org_id_var`, `user_id_var`, `actor_kind_var`, `workflow_execution_id_var`, `command_id_var` from `core/auth/context`) and stamps the non-None values as `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`, `yaaos.workflow_id`, `yaaos.command_id` on every new span. OTel attributes do not inherit to child spans — `on_start` is the only mechanism that makes dims universal without per-span code. The `_YaaosLogDimsFilter` (stdlib `logging.Filter` added to the root logger by `configure()`) does the same for log records: it sets matching `LogRecord` attributes (`yaaos_org_id`, `yaaos_user_id`, etc.) from contextvars, which the OTel `LoggingHandler._get_attributes` then maps to queryable log attributes in Dash0. Both filters only stamp when the var is set — background spans carry org+actor but no `user_id`; non-workflow spans carry no `workflow_id`/`command_id`.
 
-**`spawn(name, coro)`** — `asyncio.create_task` wrapped with an OTel span (`spawn:{name}`) + error recording. On exception: `span.record_exception(exc)` + `span.set_status(ERROR)` before the `spawn.crashed` log line. Does not re-raise. Task retained in a module-level set to prevent GC mid-flight.
+**`spawn(name, coro)`** — `asyncio.create_task` wrapped with an OTel span (`spawn:{name}`) + error recording. On exception: `span.record_exception(exc)` + `span.set_status(ERROR)` before the `spawn.crashed` log line. Does not re-raise. Task retained in a module-level set to prevent GC mid-flight. This is the canonical shape for non-re-raising exception handlers; `apps/backend/app/core/observability/spawn.py:56` is the reference.
+
+**Span inventory** — manually-emitted spans (auto-instrumented HTTP + SQLAlchemy spans are additional):
+
+| Span name | Emitter | Status set to ERROR when |
+|---|---|---|
+| `spawn:{name}` | `core/observability/spawn.py` | coro raises |
+| `workflow.handle_agent_event` | `core/workflow/service.py` | (never set to ERROR currently) |
+| `workflow.command.{kind}` | `core/workflow/service.py` (`_start_step_impl` for Workspace; `_safe_execute` for Local/HITL) | command raises (with `exception` event) or returns `Outcome.failure` (no event) |
+
+`workflow.command.{kind}` is the per-command child span opened for every command category. It is a direct child of taskiq's auto-span `task:workflow.start_step`. For Workspace commands it wraps the `dispatch()` call in `_start_step_impl`; for Local/HITL it wraps `execute()` inside `_safe_execute`. Both receive `StatusCode.ERROR` on any failure outcome; only the exception path adds an `exception` span event. See [`patterns.md § Exception visibility`](patterns.md#exception-visibility--record_exception-rule) for the rule and canonical shape.
 
 **`SlowRequestLogMiddleware`** — emits `http.slow_request` warn for requests ≥ `SLOW_REQUEST_THRESHOLD_MS` (default 500ms). Never throws.
 
@@ -57,6 +71,8 @@
 - `spawn(name, coro, *, tracer?)` — fire-and-forget background task: OTel span + exception recording + error log. `tracer=` injection point for tests.
 - `current_traceparent()`, `restore_traceparent_context(tp)`, `with_remote_parent_span(tracer, name, tp)` — wire-protocol trace helpers.
 - `SlowRequestLogMiddleware`, `SLOW_REQUEST_THRESHOLD_MS` — slow-request logging middleware.
+- `TRACE_EXCLUDED_URLS` — comma-delimited path regexes passed as `excluded_urls=` to `FastAPIInstrumentor`; suppresses spans for matching paths (currently `/api/health`).
+- `TRACE_EXCLUDE_INTERNAL_SPANS` — tuple of ASGI span name suffixes passed as `exclude_spans=` to `FastAPIInstrumentor`; suppresses the empty `http send` / `http receive` INTERNAL child spans on every request span.
 - `active_task_count()` — number of in-flight spawned tasks (test helper).
 - `YaaosDimensionsSpanProcessor` — `SpanProcessor` that stamps standard yaaos dims on every span at creation (see § Standard dims below).
 

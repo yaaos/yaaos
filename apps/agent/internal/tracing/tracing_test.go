@@ -93,6 +93,39 @@ func TestStartSpan_RecordsErrorOnEnd(t *testing.T) {
 	}
 }
 
+// TestStartSpan_RecordsErrorOnFailure asserts that calling end(err) with a
+// non-nil error both sets Status.Code = Error and records an exception event
+// (the "exception" event emitted by span.RecordError). Uses an InMemoryExporter
+// for deterministic, synchronous assertion.
+func TestStartSpan_RecordsErrorOnFailure(t *testing.T) {
+	exp := Init(true)
+	defer exp.Reset()
+
+	errSentinel := errString("sentinel-failure")
+	_, end := StartSpan(context.Background(), "test.error.failure")
+	end(errSentinel)
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("want 1 span, got %d", len(spans))
+	}
+	s := spans[0]
+	if s.Status.Code.String() != "Error" {
+		t.Errorf("Status.Code: want Error, got %s", s.Status.Code.String())
+	}
+	// span.RecordError emits an "exception" event per the OTel spec.
+	var sawException bool
+	for _, ev := range s.Events {
+		if ev.Name == "exception" {
+			sawException = true
+			break
+		}
+	}
+	if !sawException {
+		t.Errorf("expected RecordError exception event in span events, got %v", s.Events)
+	}
+}
+
 type errString string
 
 func (e errString) Error() string { return string(e) }

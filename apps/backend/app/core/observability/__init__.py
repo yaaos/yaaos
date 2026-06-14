@@ -7,6 +7,7 @@ boundary.
 """
 
 from app.core.observability.service import (
+    TRACE_EXCLUDE_INTERNAL_SPANS,
     TRACE_EXCLUDED_URLS,
     YaaosDimensionsSpanProcessor,
     configure,
@@ -31,6 +32,7 @@ from app.core.shutdown_registry import (
 __all__ = [
     "SLOW_REQUEST_THRESHOLD_MS",
     "TRACE_EXCLUDED_URLS",
+    "TRACE_EXCLUDE_INTERNAL_SPANS",
     "SlowRequestLogMiddleware",
     "YaaosDimensionsSpanProcessor",
     "active_task_count",

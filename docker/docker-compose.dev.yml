@@ -4,7 +4,7 @@
 # pattern where saving a half-broken multi-file change triggers uvicorn
 # --reload to attempt an import and dump a traceback.
 #
-# Builds the SAME `web` / `worker` stages prod will use — only bind mounts +
+# Builds the SAME `api` / `worker` stages prod will use — only bind mounts +
 # APP_MODE=dev differ, so dev image content matches prod.
 #
 # Usage:
@@ -46,55 +46,26 @@ services:
       - "1025:1025"
       - "8025:8025"
 
-  web:
-    image: yaaos-web
+  api:
+    image: yaaos-api
     build:
       context: ..
       dockerfile: apps/backend/Dockerfile
       target: web
+    # All non-container-network env comes straight from .env — adding a new
+    # var only requires editing .env, not this file. Container-network
+    # overrides (service hostnames the host doesn't see) live in `environment:`
+    # below and take precedence over .env.
+    env_file:
+      - ../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
-      YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       APP_MODE: dev
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      YAAOS_PUBLIC_ORIGIN: ${YAAOS_PUBLIC_ORIGIN:-http://localhost:8080}
       YAAOS_PORT: "8080"
-      # `service.name` is split per-role; observability.configure() picks the right field.
-      # OTEL_EXPORTER_OTLP_ENDPOINT is intentionally unset — OTel disabled silently
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Optional Braintrust gateway routing for direct LLM calls (core/llm).
-      # When BRAINTRUST_API_KEY is set, PromptRunnable injects base_url +
-      # api_key + `x-bt-parent` per call; unset = direct provider key via
-      # Anthropic SDK with no gateway logging.
-      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
-      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
-      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
-      # The platform yaaos GitHub App (installs + webhooks). All optional at
-      # boot; unset env vars silently disable the install flow.
-      YAAOS_GITHUB_APP_ID: ${YAAOS_GITHUB_APP_ID:-}
-      YAAOS_GITHUB_APP_SLUG: ${YAAOS_GITHUB_APP_SLUG:-}
-      YAAOS_GITHUB_APP_PRIVATE_KEY: ${YAAOS_GITHUB_APP_PRIVATE_KEY:-}
-      YAAOS_GITHUB_APP_WEBHOOK_SECRET: ${YAAOS_GITHUB_APP_WEBHOOK_SECRET:-}
-      # The platform yaaos GitHub *OAuth App* — distinct from the App above.
-      # Unset client_id silently de-registers the OAuth provider so the
-      # LoginPage shows "no providers configured" instead of 404ing on GitHub.
-      YAAOS_GITHUB_OAUTH_CLIENT_ID: ${YAAOS_GITHUB_OAUTH_CLIENT_ID:-}
-      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: ${YAAOS_GITHUB_OAUTH_CLIENT_SECRET:-}
-      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
-      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
-      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
-      # Dev SMTP sink (Mailpit). Override SMTP_HOST/PORT for prod relays.
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
-      # Redis backs taskiq workflow tasks + sse_pubsub fanout.
-      REDIS_URL: ${REDIS_URL}
-      # Non-prod: allow the STS verifier to accept the mock-aws host.
-      YAAOS_STS_HOST_OVERRIDE: ${YAAOS_STS_HOST_OVERRIDE:-mock-aws:4566}
-      # Org seed values — bootstrap reads these to set registered_iam_arn + aws_region
-      # on the first org in non-prod without the settings UI.
-      YAAOS_DEV_SEED_ARN: ${YAAOS_DEV_SEED_ARN:-arn:aws:iam::000000000000:role/yaaos-dev}
-      YAAOS_DEV_SEED_REGION: ${YAAOS_DEV_SEED_REGION:-us-east-1}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      REDIS_URL: redis://redis:6379
+      YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,6 +83,7 @@ services:
       # immediately on browser refresh. No backend restart needed.
       - ../apps/web/dist:/app/apps/web/dist
 
+
   # The worker process runs taskiq's broker consumer + the
   # outbox→Redis drain loop. Without it, every
   # workflow_execution created via `engine.start(...)` sits in `pending`
@@ -122,29 +94,14 @@ services:
       context: ..
       dockerfile: apps/backend/Dockerfile
       target: worker
+    env_file:
+      - ../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://yaaos:yaaos@postgres:5432/yaaos
-      YAAOS_ENCRYPTION_KEY: ${YAAOS_ENCRYPTION_KEY:?set YAAOS_ENCRYPTION_KEY in .env}
       APP_MODE: dev
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      YAAOS_PUBLIC_ORIGIN: ${YAAOS_PUBLIC_ORIGIN:-http://localhost:8080}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      BRAINTRUST_API_KEY: ${BRAINTRUST_API_KEY:-}
-      BRAINTRUST_API_URL: ${BRAINTRUST_API_URL:-}
-      BRAINTRUST_PROJECT: ${BRAINTRUST_PROJECT:-yaaos}
-      YAAOS_GITHUB_APP_ID: ${YAAOS_GITHUB_APP_ID:-}
-      YAAOS_GITHUB_APP_SLUG: ${YAAOS_GITHUB_APP_SLUG:-}
-      YAAOS_GITHUB_APP_PRIVATE_KEY: ${YAAOS_GITHUB_APP_PRIVATE_KEY:-}
-      YAAOS_GITHUB_APP_WEBHOOK_SECRET: ${YAAOS_GITHUB_APP_WEBHOOK_SECRET:-}
-      YAAOS_GITHUB_OAUTH_CLIENT_ID: ${YAAOS_GITHUB_OAUTH_CLIENT_ID:-}
-      YAAOS_GITHUB_OAUTH_CLIENT_SECRET: ${YAAOS_GITHUB_OAUTH_CLIENT_SECRET:-}
-      YAAOS_OAUTH_STATE_SECRET: ${YAAOS_OAUTH_STATE_SECRET:-}
-      YAAOS_INVITATION_TOKEN_SECRET: ${YAAOS_INVITATION_TOKEN_SECRET:-}
-      YAAOS_TOTP_MASTER_KEY: ${YAAOS_TOTP_MASTER_KEY:-}
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-      SMTP_FROM: ${SMTP_FROM:-yaaos@localhost}
-      REDIS_URL: ${REDIS_URL}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
@@ -190,9 +147,9 @@ services:
       args:
         BUILD_TAGS: agent_dev
     environment:
-      YAAOS_BACKEND_URL: http://web:8080
+      YAAOS_BACKEND_URL: http://api:8080
       YAAOS_AGENT_VERSION: dev
-      # The agent connects to the backend over the Docker network (web:8080) but
+      # The agent connects to the backend over the Docker network (api:8080) but
       # the backend's YAAOS_PUBLIC_ORIGIN is localhost:8080 so browser-facing
       # OAuth/email links resolve from the host. Override the audience the agent
       # embeds in its signed STS claim to match what the backend expects.
@@ -207,13 +164,14 @@ services:
       # STS override: the backend's sts_verifier allows this host in non-prod.
       YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
     depends_on:
-      web:
+      api:
         condition: service_started
       mock-aws:
         condition: service_healthy
 
-  # Optional OTel collector. Uncomment to enable; set OTEL_EXPORTER_OTLP_ENDPOINT
-  # on the `web` service to `http://otel-collector:4317` to wire it up.
+  # Optional local OTel collector. Uncomment to enable; set YAAOS_DASH0_ENDPOINT,
+  # YAAOS_DASH0_DATASET, and YAAOS_BACKEND_DASH0_BEARER_TOKEN on the `web` service
+  # pointing at this collector.
   #
   # otel-collector:
   #   image: otel/opentelemetry-collector-contrib:latest

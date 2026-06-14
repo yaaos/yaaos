@@ -501,6 +501,97 @@ async def test_redelivered_received_event_is_idempotent(db_session) -> None:
     assert row.status == "delivered"
 
 
+# ── workflow_execution_id wire-through ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
+    """`claim_next` injects `workflow_execution_id` from the DB row onto the
+    returned DTO so the field travels to the agent over the wire. When the
+    enqueued command carries a workflow_execution_id, the claimed DTO must
+    expose the same value; when it is NULL the DTO field is None."""
+    org_id = uuid4()
+    wfx_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+
+    # Enqueue with a workflow_execution_id.
+    cmd_with = _make_provision_cmd()
+    await enqueue_command(org_id=org_id, command=cmd_with, session=db_session, workflow_execution_id=wfx_id)
+    await db_session.flush()
+
+    claimed_with = await claim_next(
+        agent_id,
+        lifecycle="configured",
+        new_workspaces=1,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert claimed_with is not None
+    assert claimed_with.workflow_execution_id == wfx_id, (
+        f"expected workflow_execution_id={wfx_id}, got {claimed_with.workflow_execution_id}"
+    )
+
+    # Enqueue without a workflow_execution_id (agent-scoped / no correlation).
+    agent_id2 = await _make_agent(db_session, org_id=org_id)
+    cmd_without = _make_provision_cmd()
+    await enqueue_command(org_id=org_id, command=cmd_without, session=db_session)
+    await db_session.flush()
+
+    claimed_without = await claim_next(
+        agent_id2,
+        lifecycle="configured",
+        new_workspaces=1,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert claimed_without is not None
+    assert claimed_without.workflow_execution_id is None, (
+        f"expected workflow_execution_id=None, got {claimed_without.workflow_execution_id}"
+    )
+
+
+def test_command_base_workflow_execution_id_round_trip() -> None:
+    """ProvisionWorkspaceCommand round-trips workflow_execution_id through
+    JSON serialization. The field survives model_dump(mode='json') and
+    validate_python reconstruction."""
+    import json  # noqa: PLC0415
+
+    from app.core.agent_gateway.types import (  # noqa: PLC0415
+        AuthBlock,
+        ProvisionWorkspaceCommand,
+        RepoRef,
+    )
+
+    wfx_id = uuid4()
+    cmd = ProvisionWorkspaceCommand(
+        command_id=uuid4(),
+        workspace_id=uuid4(),
+        traceparent="00-aabbccdd-1122-01",
+        workflow_execution_id=wfx_id,
+        repo=RepoRef(plugin_id="github", external_id="1", clone_url="url", head_sha="abc"),
+        history=1,
+        auth=AuthBlock(kind="github_installation", token="tok"),
+        ttl_seconds=60,
+        max_idle_seconds=60,
+    )
+
+    payload = cmd.model_dump(mode="json")
+    assert payload["workflow_execution_id"] == str(wfx_id)
+
+    # Round-trip via JSON string.
+    raw = json.dumps(payload)
+    restored = ProvisionWorkspaceCommand.model_validate_json(raw)
+    assert restored.workflow_execution_id == wfx_id
+
+    # Absent field defaults to None.
+    del payload["workflow_execution_id"]
+    no_wf = ProvisionWorkspaceCommand.model_validate(payload)
+    assert no_wf.workflow_execution_id is None
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 

@@ -138,6 +138,7 @@ func Decode(raw []byte) (Command, error) {
 				OTLPEndpoint:  v.Config.OTLPEndpoint,
 				OTLPToken:     secretFrom(v.Config.OTLPToken),
 				OTLPDataset:   v.Config.OTLPDataset,
+				Environment:   v.Config.Environment,
 			},
 		}, nil
 	default:

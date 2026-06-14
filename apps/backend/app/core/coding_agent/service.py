@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.coding_agent.types import (
     AnswerQuestionContext,
@@ -28,6 +30,7 @@ from app.core.coding_agent.types import (
 from app.core.workspace import Workspace
 
 log = structlog.get_logger("coding_agent")
+_tracer = trace.get_tracer(__name__)
 
 
 class CodingAgentRegistry:
@@ -115,7 +118,8 @@ async def review(
     on_activity: OnActivity | None = None,
 ) -> ReviewResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.review(workspace, context, on_activity=on_activity)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.review"):
+        result = await plugin.review(workspace, context, on_activity=on_activity)
     log.info(
         "agent.reviewed",
         plugin_id=plugin_id,
@@ -135,7 +139,8 @@ async def incremental_review(
     on_activity: OnActivity | None = None,
 ) -> IncrementalReviewResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.incremental_review(workspace, context, on_activity=on_activity)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.incremental_review"):
+        result = await plugin.incremental_review(workspace, context, on_activity=on_activity)
     log.info(
         "agent.incremental_reviewed",
         plugin_id=plugin_id,
@@ -155,7 +160,8 @@ async def verify_fix(
     on_activity: OnActivity | None = None,
 ) -> VerifyFixResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.verify_fix(workspace, context, on_activity=on_activity)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.verify_fix"):
+        result = await plugin.verify_fix(workspace, context, on_activity=on_activity)
     log.info(
         "agent.verified_fix",
         plugin_id=plugin_id,
@@ -174,7 +180,8 @@ async def stale_check(
     on_activity: OnActivity | None = None,
 ) -> StaleCheckResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.stale_check(workspace, context, on_activity=on_activity)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.stale_check"):
+        result = await plugin.stale_check(workspace, context, on_activity=on_activity)
     log.info(
         "agent.stale_checked",
         plugin_id=plugin_id,
@@ -193,7 +200,8 @@ async def answer_question(
     on_activity: OnActivity | None = None,
 ) -> AnswerQuestionResult:
     plugin = get_plugin(plugin_id)
-    result = await plugin.answer_question(workspace, context, on_activity=on_activity)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.answer_question"):
+        result = await plugin.answer_question(workspace, context, on_activity=on_activity)
     log.info(
         "agent.answered_question",
         plugin_id=plugin_id,
@@ -205,16 +213,21 @@ async def answer_question(
 
 
 async def validate_config(plugin_id: str, agent_config: dict[str, Any]) -> ValidationResult:
-    return await get_plugin(plugin_id).validate_config(agent_config)
+    with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.validate_config"):
+        return await get_plugin(plugin_id).validate_config(agent_config)
 
 
 async def health_check_all() -> dict[str, HealthStatus]:
     out: dict[str, HealthStatus] = {}
     for plugin_id, plugin in current_coding_agent_registry().items():
-        try:
-            out[plugin_id] = await plugin.health_check()
-        except Exception as e:
-            out[plugin_id] = HealthStatus(healthy=False, message=str(e), checked_at=datetime.now(UTC))
+        with _tracer.start_as_current_span(f"coding_agent.{plugin_id}.health_check"):
+            try:
+                out[plugin_id] = await plugin.health_check()
+            except Exception as e:
+                span = trace.get_current_span()
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR, str(e))
+                out[plugin_id] = HealthStatus(healthy=False, message=str(e), checked_at=datetime.now(UTC))
     return out
 
 

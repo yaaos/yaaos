@@ -31,7 +31,7 @@ Every bearer endpoint authenticates by ledger lookup (`bearers.verify`) and runs
 
 ## ConfigUpdate kind
 
-`AgentCommandKind.CONFIG_UPDATE = "ConfigUpdate"` is the discriminator value. The command carries `AgentConfig{max_workspaces, otlp_endpoint, otlp_token, otlp_dataset}`. `otlp_token` is a secret — never log it.
+`AgentCommandKind.CONFIG_UPDATE = "ConfigUpdate"` is the discriminator value. The command carries `AgentConfig{max_workspaces, otlp_endpoint, otlp_token, otlp_dataset, environment}`. `otlp_token` is a secret — never log it. `environment` is the OTel `deployment.environment.name` resource attribute sourced from `Settings.environment`.
 
 ## Stale-claim guard
 

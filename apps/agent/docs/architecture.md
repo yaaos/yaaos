@@ -107,10 +107,27 @@ All auth tokens flow through `internal/secret.Secret`. `fmt.Sprintf`, `json.Mars
 
 All three OTel signals (traces, metrics, logs) share two standard dimensions on every record produced after identity exchange: `org_id` and `agent_id`. These are set once via `observability.SetStandardDimensions` immediately after the first successful identity exchange and never change for the process lifetime.
 
-- **Resource attributes** (static for the process lifetime): `service.name`, `service.version`, `service.instance.id` = `instance_id` (backend-assigned role-session-name from the STS ARN; stored via `observability.SetInstanceID` after identity exchange, before `BindExporter` runs).
-- **Span / metric attributes** (post-exchange): `org_id`, `agent_id`. Per-command spans also carry `workspace_id`, `command_id`, `kind`.
+- **Resource attributes** (per OTel signal): `service.name="agent"`, `service.version` (build-stamped), `service.instance.id` (backend-assigned via identity exchange), and `deployment.environment.name` (arrives via ConfigUpdate from backend `Settings.environment`; absent when ConfigUpdate carries an empty value).
+- **Span / metric attributes** (post-exchange): `org_id`, `agent_id` — stamped on every span automatically by `DimProcessor` (registered in `observability.wireProviders`); per-span code never sets them explicitly. Per-command spans also carry `workspace_id`, `command_id`, `kind`.
 - **Base slog logger**: the supervisor calls `slog.SetDefault(slog.Default().With("org_id", ..., "agent_id", ...))` after first exchange so every subsequent `slog.*` call emits both dimensions automatically.
-- **OTLP disabled**: `observability.Init` is a no-op; instruments resolve to no-op SDK providers. Zero overhead.
+- **Before ConfigUpdate**: SDK uninstalled — all instruments resolve to no-op providers; agent ships no telemetry. ConfigUpdate is the only install trigger. The agent reads no `OTEL_*` env vars.
+
+`DimProcessor` reads the current dim values at `OnStart` time from the module-level dim store. Pre-identity-exchange spans (e.g. `agent.identity_exchange`) emit without `org_id`/`agent_id` — the processor is a no-op while either value is empty.
+
+**Span inventory** — all spans the agent emits via `tracing.StartSpan`. Every span carries `org_id` + `agent_id` automatically via `DimProcessor` after identity exchange. Each is a child of the span in the "Parent" column (or a root if the context carries no parent):
+
+| Span name | Parent | Where | Notable attributes |
+|---|---|---|---|
+| `supervisor.dispatch.<kind>` | backend's `agent_command.dispatch.<kind>` span (propagated via the `traceparent` field in the `AgentCommand` wire payload) | `supervisor.go` `routeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
+| `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
+| `workspace.clone` | `workspace.handle.ProvisionWorkspace` | `realhandler.go` `ProvisionWorkspace` | |
+| `workspace.runclaude` | `workspace.handle.InvokeClaudeCode` | `realhandler.go` `RunClaude` | |
+| `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
+| `agent.identity_refresh` | inherits caller context; root at current call sites | `supervisor.go` `runOneRefreshCycle` | |
+| `agent.claim` | none (per HTTP call, NOT per loop iteration) | `supervisor.go` `claimLoop` | `ErrNoCommand` (HTTP 204 — no command available) is the normal long-poll outcome; it closes the span with status Unset, not Error |
+| `agent.activity_ws.dial` | none (per dial attempt, NOT per message) | `supervisor.go` `dialAndStartWS` | |
+
+Grep recipe: `rg -n "tracing.StartSpan" apps/agent/internal/`
 
 Details → [observability.md](observability.md).
 

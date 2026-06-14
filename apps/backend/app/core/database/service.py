@@ -51,12 +51,15 @@ def set_test_session_override(s: AsyncSession | None) -> None:
 def _engine_kwargs(settings) -> dict[str, object]:  # type: ignore[no-untyped-def]
     """Build create_async_engine kwargs from settings.
 
-    Dev/test → NullPool (avoids cross-event-loop contamination in TestClient
-    tests where each test brings up a fresh loop). Prod → QueuePool sized
-    from settings, with pool_pre_ping to weed stale connections.
+    Test → NullPool (avoids cross-event-loop pool contamination under
+    pytest-asyncio + TestClient — every test runs in a fresh asyncio loop;
+    a pooled connection bound to a dead loop is a hard-to-debug hang).
+    Dev + Prod → QueuePool sized from settings, with pool_pre_ping to weed
+    stale connections. Dev intentionally mirrors prod so real pool behavior
+    (overflow, pre-ping cost) surfaces in development.
     """
     kwargs: dict[str, object] = {"future": True}
-    if settings.is_non_prod:
+    if settings.is_test:
         from sqlalchemy.pool import NullPool  # noqa: PLC0415
 
         kwargs["poolclass"] = NullPool

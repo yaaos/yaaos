@@ -109,15 +109,15 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # always target `web` or `worker`.
 
 # ────────────────────────────────────────────────────────────────────────
-# Stage 3a: yaaos-web — FastAPI/uvicorn HTTP + SSE process
+# Stage 3a: api — FastAPI/uvicorn HTTP + SSE process
 # ────────────────────────────────────────────────────────────────────────
 FROM backend AS web
 
 CMD ["python", "apps/backend/app/web.py"]
 
 # ────────────────────────────────────────────────────────────────────────
-# Stage 3b: yaaos-worker — taskiq consumer + outbox drain process
-# Same build as `web`; only CMD differs. Run as a separate container so
+# Stage 3b: worker — taskiq consumer + outbox drain process
+# Same build as `api`; only CMD differs. Run as a separate container so
 # uvicorn worker count and taskiq concurrency can scale independently.
 # ────────────────────────────────────────────────────────────────────────
 FROM backend AS worker

@@ -16,6 +16,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from sqlalchemy import delete as sql_delete
 
 from app.core.audit_log import AUDIT_LOG_RETENTION
@@ -105,7 +107,11 @@ async def run_identity_purge() -> None:
         sessions_purged = await _purge_expired_sessions()
         totps_purged = await _purge_stale_unverified_totp_secrets()
         audit_purged = await _purge_old_audit_entries()
-    except Exception:
+    except Exception as exc:
+        # inside-span failure: taskiq wraps scheduled task bodies in a span
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, str(exc))
         log.exception("identity.cleanup.failed")
         raise
     if sessions_purged or totps_purged or audit_purged:

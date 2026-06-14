@@ -105,10 +105,10 @@ Set via the Fly dashboard Secrets UI:
 | `YAAOS_GITHUB_APP_WEBHOOK_SECRET` | GitHub App webhook secret |
 | `SMTP_PASSWORD` | Resend API key (`re_…`) |
 | `YAAOS_CLOUDFLARE_INGRESS_SECRET` | Shared token — see §6 (Cloudflare) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Dash0 OTLP base URL — see §7 |
-| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer <backend-token>,Dash0-Dataset=<name>` — see §7 |
+| `YAAOS_BACKEND_DASH0_BEARER_TOKEN` | Dash0 bearer for backend OTLP export — see §7 |
+| `YAAOS_AGENT_DASH0_BEARER_TOKEN` | Dash0 bearer for agent OTLP export — see §7 |
 
-`OTEL_EXPORTER_OTLP_HEADERS` is read directly by the OTel SDK at exporter construction. It is not a `Settings` field and must not be added as one. See [core_config.md](../../apps/backend/docs/core_config.md).
+The two Dash0 bearers are `SecretStr | None` fields in `Settings` (`yaaos_backend_dash0_bearer_token`, `yaaos_agent_dash0_bearer_token`). See [core_config.md](../../apps/backend/docs/core_config.md).
 
 ### Process groups
 
@@ -154,15 +154,21 @@ Two separate tokens are required — they have different scopes.
 
 | Token | Scope | Usage |
 |---|---|---|
-| **Backend token** | Full-signal (traces + metrics + logs), org-scoped | `OTEL_EXPORTER_OTLP_HEADERS` Fly secret; also `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| **Backend token** | Full-signal (traces + metrics + logs), org-scoped | `YAAOS_BACKEND_DASH0_BEARER_TOKEN` Fly secret |
+| **Agent token** | Full-signal, org-scoped | `YAAOS_AGENT_DASH0_BEARER_TOKEN` Fly secret |
 | **Browser token** | Web-signal restricted + dataset-scoped + ingest-only | `VITE_DASH0_AUTH_TOKEN` in the RWX `yaaos` vault |
 
-### Backend OTLP configuration (Fly secrets)
+### Backend OTLP configuration
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT` — the Dash0 OTLP base URL (e.g. `https://ingress.us-east-1.aws.dash0.com`).
-- `OTEL_EXPORTER_OTLP_HEADERS` — `Authorization=Bearer <backend-token>,Dash0-Dataset=<dataset-name>`.
+Non-secret values in `fly.production.toml [env]`:
+- `YAAOS_DASH0_ENDPOINT` — the Dash0 OTLP base URL (e.g. `https://ingress.us-west-2.aws.dash0.com`).
+- `YAAOS_DASH0_DATASET` — dataset name (e.g. `default`).
 
-Both are standard OTel env vars consumed directly by the SDK. They are Fly secrets, not `[env]` values.
+Fly secrets (sensitive):
+- `YAAOS_BACKEND_DASH0_BEARER_TOKEN` — backend bearer for OTLP export.
+- `YAAOS_AGENT_DASH0_BEARER_TOKEN` — agent bearer forwarded to the agent via `ConfigUpdateCommand`.
+
+All four must be set; any missing setting silently skips OTLP exporters.
 
 ### Browser OTLP configuration (RWX vault)
 

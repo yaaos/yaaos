@@ -24,6 +24,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,6 +156,10 @@ async def run_sweep_loop() -> None:
                 await s.commit()
             if n_swept:
                 log.debug("mcp_proxy.tokens.swept", removed=n_swept)
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: spawned inside spawn:mcp_proxy.sweep span
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception("mcp_proxy.sweep_loop.failed")
         await asyncio.sleep(interval)

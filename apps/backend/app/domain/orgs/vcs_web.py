@@ -17,11 +17,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core import vcs as _vcs
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require
 from app.core.vcs import PluginNotFoundError, VCSValidationError
-from app.core.vcs import get_plugin as get_vcs_plugin
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.orgs import vcs as vcs_service
 
@@ -69,19 +69,18 @@ async def set_vcs_endpoint(body: SetVcsRequest) -> SetVcsResponse:
         raise _err(400, "no_org_context")
     actor = current_actor()
     try:
-        plugin = get_vcs_plugin(body.plugin_id)
+        install_url = _vcs.install_url(body.plugin_id, org_id)
     except PluginNotFoundError as exc:
         raise _err(404, "plugin_not_found") from exc
 
     # Plugins with an install_url take precedence — the SPA navigates the
     # user to the plugin's install handshake (e.g. GitHub App) and the
     # handshake's callback writes `set_vcs(...)` itself.
-    install_url = plugin.install_url(org_id)
     if install_url:
         return SetVcsResponse(install_url=install_url)
 
     try:
-        validated = plugin.validate_settings(body.settings)
+        validated = _vcs.validate_settings(body.plugin_id, body.settings)
     except (VCSValidationError, ValueError) as exc:
         raise HTTPException(
             status_code=422, detail={"error": "invalid_settings", "message": str(exc)}

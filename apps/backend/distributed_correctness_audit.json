@@ -1,0 +1,43 @@
+{
+  "summary": "Call-structure map of every periodic loop, startup hook, and background sweep in apps/backend, grouped by guard mechanism.",
+  "entry_points": [
+    { "path": "app/core/webserver/app_factory.py:34", "trigger": "FastAPI lifespan on web pod startup" },
+    { "path": "app/core/tasks/runtime.py:98", "trigger": "asyncio.run() in app/worker.py:70 on worker pod startup" }
+  ],
+  "call_chains": [
+    { "from": "app/core/webserver/app_factory.py:48", "to": "app/domain/reviewer/web.py:147", "edge": "calls" },
+    { "from": "app/domain/reviewer/web.py:147", "to": "app/domain/reviewer/orphan_sweep.py:73", "edge": "spawns via observability.spawn" },
+    { "from": "app/core/webserver/app_factory.py:48", "to": "app/domain/orgs/web.py:246", "edge": "calls" },
+    { "from": "app/domain/orgs/web.py:246", "to": "app/domain/orgs/invitation_sweeper.py:19", "edge": "spawns via observability.spawn" },
+    { "from": "app/core/webserver/app_factory.py:48", "to": "app/domain/integrations/web.py:314", "edge": "calls" },
+    { "from": "app/domain/integrations/web.py:314", "to": "app/domain/integrations/scheduler.py:159", "edge": "spawns via observability.spawn" },
+    { "from": "app/core/webserver/app_factory.py:48", "to": "app/domain/mcp_proxy/web.py:242", "edge": "calls" },
+    { "from": "app/domain/mcp_proxy/web.py:242", "to": "app/domain/mcp_proxy/service.py:144", "edge": "spawns via observability.spawn" },
+    { "from": "app/core/tasks/runtime.py:173", "to": "app/core/tasks/scheduler.py:187", "edge": "calls via asyncio.create_task" },
+    { "from": "app/core/tasks/scheduler.py:136", "to": "app/core/tasks/scheduler.py:147", "edge": "calls" },
+    { "from": "app/core/workspace/service.py:786", "to": "app/core/workspace/service.py:615", "edge": "calls" },
+    { "from": "app/core/identity/scheduler.py:121", "to": "app/core/identity/scheduler.py:97", "edge": "calls" },
+    { "from": "app/core/coding_agent/partition_maintenance.py:40", "to": "app/core/coding_agent/partition_maintenance.py:29", "edge": "calls" }
+  ],
+  "module_dependencies": [
+    { "from": "app/domain/reviewer/web.py", "to": "app/domain/reviewer/orphan_sweep.py", "direction": "imports" },
+    { "from": "app/domain/orgs/web.py", "to": "app/domain/orgs/invitation_sweeper.py", "direction": "imports" },
+    { "from": "app/domain/integrations/web.py", "to": "app/domain/integrations/scheduler.py", "direction": "imports" },
+    { "from": "app/domain/mcp_proxy/web.py", "to": "app/domain/mcp_proxy/service.py", "direction": "imports" },
+    { "from": "app/core/tasks/runtime.py", "to": "app/core/tasks/scheduler.py", "direction": "imports" },
+    { "from": "app/core/workspace/service.py", "to": "app/core/tasks/scheduler.py", "direction": "imports" }
+  ],
+  "data_flow": [
+    { "stage": "entry", "where": "app/core/tasks/scheduler.py:125", "shape": "datetime slot floored to minute" },
+    { "stage": "transform", "where": "app/core/tasks/scheduler.py:159", "shape": "INSERT INTO scheduled_runs ON CONFLICT DO NOTHING → rowcount 0 or 1" },
+    { "stage": "exit", "where": "app/core/tasks/scheduler.py:142", "shape": "enqueue() writes outbox_entries row in same session; drain pushes to Redis after commit" }
+  ],
+  "integrations": [
+    { "kind": "db", "where": "app/core/tasks/scheduler.py:159", "target": "scheduled_runs table — per-slot dedup INSERT" },
+    { "kind": "db", "where": "app/core/workspace/service.py:638", "target": "workspaces table — UPDATE WHERE status IN (ACTIVE, DESTROYING)" },
+    { "kind": "db", "where": "app/domain/mcp_proxy/service.py:136", "target": "mcp_review_tokens table — DELETE WHERE expires_at < now()" },
+    { "kind": "db", "where": "app/domain/orgs/invitation_sweeper.py:24", "target": "invitations table — DELETE WHERE expires_at < now()" },
+    { "kind": "db", "where": "app/domain/reviewer/orphan_sweep.py:62", "target": "tickets table — UPDATE status to failed" },
+    { "kind": "db", "where": "app/domain/integrations/scheduler.py:114", "target": "mcp_credentials table — UPDATE last_refresh_status" }
+  ]
+}

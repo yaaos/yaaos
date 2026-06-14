@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.27",
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
     # opentelemetry-instrumentation-system-metrics: CPU/mem/GC metrics for both
     # web and worker processes. Pulls psutil, which is acceptable in the prod
     # image (pure C extension, no heavyweight deps).

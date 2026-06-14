@@ -276,7 +276,7 @@ tasks:
       export FLYCTL_INSTALL="$HOME/.fly"
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
       flyctl deploy --remote-only --config fly.production.toml \
-        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.europe-west4.gcp.dash0.com \
+        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.us-west-2.aws.dash0.com \
         --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
         --build-arg VITE_DASH0_DATASET=default \
         --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \

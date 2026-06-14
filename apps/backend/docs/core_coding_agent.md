@@ -40,6 +40,10 @@ Signatures in `app/core/coding_agent/types.py`.
 
 `app/core/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map; the live instance is held in a `ContextVar` (`_registry_var`). A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` of the session-scoped canonical snapshot via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
 
+## Dispatch spans
+
+Each IO dispatch function in `service.py` wraps its plugin call in a `coding_agent.{plugin_id}.{op}` OTel span. Covered: `review`, `incremental_review`, `verify_fix`, `stale_check`, `answer_question`, `validate_config`, and each iteration of `health_check_all`. CPU-only methods (`parse_review_output`, `parse_usage`, `render_activity`) do NOT get spans — they perform no IO. Dispatch functions that re-raise on error (all except `health_check_all`) let the OTel SDK auto-record the exception event and set `StatusCode.ERROR`. `health_check_all` swallows exceptions into an unhealthy `HealthStatus` result, so it explicitly calls `span.record_exception(e)` + `span.set_status(StatusCode.ERROR, ...)` before constructing the result row — ensuring the span is red even though no exception propagates.
+
 ## Run lifecycle
 
 `app/core/coding_agent/models.py` owns the `coding_agent_runs` table. One row per `InvokeClaudeCode` agent command; created at dispatch and finalized when the terminal `AgentEvent` arrives.
@@ -100,6 +104,8 @@ The row's SQLAlchemy mapped class (`CodingAgentActivityRow`) lives on the shared
 ## How it's tested
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection, `validate_config` forwarding, `health_check_all` exception-to-unhealthy.
+- `app/core/coding_agent/test/test_dispatch_spans_service.py` — service test: a plugin `review` that raises `CodingAgentError` produces a `coding_agent.{plugin_id}.review` span with `StatusCode.ERROR` and an `exception` event.
+- `app/core/coding_agent/test/test_health_check_span_service.py` — service test: a plugin `health_check` that raises produces a `coding_agent.{plugin_id}.health_check` span with `StatusCode.ERROR` and an `exception` event, while `health_check_all` still returns an unhealthy `HealthStatus` (no re-raise).
 - `app/core/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row; `plugin_id` persists), run-sink no-op for non-`InvokeClaudeCode`, run-sink resolves the plugin from the run row's `plugin_id` and skips (logs + returns, no raise, run stays unfinalised) when that plugin is unregistered, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `parse_usage` (extracts tokens + duration, tolerates missing usage block, empty stream) and `render_activity` (monotonic seq across the full stream, null-render filtering, empty-stream → empty log).

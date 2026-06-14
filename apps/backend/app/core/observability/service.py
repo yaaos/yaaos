@@ -3,9 +3,10 @@
 structlog is always initialized. The OTel SDK is **also** always initialized
 — a `TracerProvider` is configured, the W3C trace-context propagator is set as
 the global propagator, and FastAPI + SQLAlchemy auto-instrumentation runs. When
-`OTEL_EXPORTER_OTLP_ENDPOINT` is set all three signal providers (traces, metrics,
-logs) export to that endpoint via OTLP/HTTP; when unset (the default) providers
-are created but exporters are not attached — signals are created and discarded.
+all three of `YAAOS_DASH0_ENDPOINT`, `YAAOS_DASH0_DATASET`, and
+`YAAOS_BACKEND_DASH0_BEARER_TOKEN` are set, all three signal providers (traces,
+metrics, logs) export via OTLP/HTTP; when any is unset providers are created but
+exporters are not attached — signals are created and discarded.
 
 This shape lets:
 - wire-protocol code propagate `traceparent` headers across the agent boundary
@@ -13,13 +14,9 @@ This shape lets:
 - structlog log records carry `trace_id` + `span_id` whenever a span is active;
 - tests pull spans out of an in-memory exporter without ever wiring an OTLP endpoint.
 
-Adding or changing the export destination is a single env-var flip
-(`OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS`).
-
-Exporters are constructed with NO `endpoint=` / `headers=` kwargs so the SDK
-reads `OTEL_EXPORTER_OTLP_ENDPOINT` (base URL) and appends `/v1/{traces,metrics,logs}`
-per signal, and parses `OTEL_EXPORTER_OTLP_HEADERS` for auth. Passing `endpoint=`
-explicitly skips the per-signal append, causing bare-base 404s.
+Exporters are constructed with explicit `endpoint=` and `headers=` kwargs — the
+app does not rely on OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS
+env vars for routing or auth.
 """
 
 import logging
@@ -39,6 +36,13 @@ Role = Literal["app", "worker"]
 # checker; tracing each probe is pure noise. Matched with re.search against the
 # request path, so the bare substring covers the leading-slash form.
 TRACE_EXCLUDED_URLS = "api/health"
+
+# ASGI low-level lifecycle spans the FastAPI instrumentor emits as INTERNAL
+# children of every request span. They carry no attributes (no body size, no
+# status), no descendants — pure trace-tree noise. Pass to `exclude_spans=`
+# on `FastAPIInstrumentor.instrument(...)`. Available since OTel-contrib
+# 0.49b0; the lock pins 0.58b0.
+TRACE_EXCLUDE_INTERNAL_SPANS: tuple[str, ...] = ("send", "receive")
 
 _initialized = False
 
@@ -67,7 +71,11 @@ def configure(role: Role = "app") -> None:
     # Initialize BEFORE structlog so the structlog processor below can
     # capture the active tracer/span.
     _configure_otel(
-        endpoint=settings.otel_exporter_otlp_endpoint,
+        endpoint=settings.yaaos_dash0_endpoint,
+        dataset=settings.yaaos_dash0_dataset,
+        bearer_token=settings.yaaos_backend_dash0_bearer_token.get_secret_value()
+        if settings.yaaos_backend_dash0_bearer_token
+        else None,
         service_name=service_name,
         service_version=settings.service_version,
         environment=settings.environment,
@@ -370,19 +378,21 @@ class _AccessLogDebugFilter(logging.Filter):
 def _configure_otel(
     *,
     endpoint: str | None,
+    dataset: str | None,
+    bearer_token: str | None,
     service_name: str,
     service_version: str,
     environment: str,
 ) -> None:
     """Always-on TracerProvider + MeterProvider + LoggerProvider + W3C propagator.
 
-    Adds OTLP/HTTP exporters only when `endpoint` is set; otherwise all three
-    providers are initialized without exporters (signals created and discarded).
+    Adds OTLP/HTTP exporters only when all three of `endpoint`, `dataset`, and
+    `bearer_token` are set; otherwise all three providers are initialized without
+    exporters (signals created and discarded).
 
-    Exporters are constructed with NO `endpoint=` / `headers=` kwargs — the SDK
-    reads `OTEL_EXPORTER_OTLP_ENDPOINT` (base) and appends `/v1/{signal}` per
-    signal, and parses `OTEL_EXPORTER_OTLP_HEADERS` for auth. Passing `endpoint=`
-    explicitly bypasses the per-signal path append and causes 404s.
+    Exporters are constructed with explicit `endpoint=` and `headers=` kwargs so
+    the app does not rely on OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS
+    env vars.
 
     FastAPI + SQLAlchemy auto-instrumentation is wired here. Both libraries
     pick up the global tracer provider lazily; they emit spans whether or
@@ -415,22 +425,34 @@ def _configure_otel(
     )
 
     # ── TracerProvider ─────────────────────────────────────────────────────
-    tracer_provider = TracerProvider(resource=resource)
+    # Default sampler is ParentBased(ALWAYS_ON); wrap it so name-denied spans
+    # never enter the BSP buffer. `connect` spans (SQLAlchemy auto-instrumentation)
+    # are the current target — see `_samplers.TRACE_SAMPLER_DENY_NAMES`.
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased  # noqa: PLC0415
+
+    from app.core.observability._samplers import (  # noqa: PLC0415
+        TRACE_SAMPLER_DENY_NAMES,
+        DenyByNameSampler,
+    )
+
+    _sampler = DenyByNameSampler(inner=ParentBased(ALWAYS_ON), deny=TRACE_SAMPLER_DENY_NAMES)
+    tracer_provider = TracerProvider(resource=resource, sampler=_sampler)
     # Stamp standard dims on every span at creation so child spans always
     # carry org_id/user_id/actor_kind/workflow_id/command_id without per-span
     # set_attribute calls.  SynchronousMultiSpanProcessor runs on_start in the
     # calling thread — reading contextvars inside on_start is safe.
     tracer_provider.add_span_processor(YaaosDimensionsSpanProcessor())
-    if endpoint:
+    if endpoint and dataset and bearer_token:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: PLC0415
             OTLPSpanExporter,
         )
 
-        # No endpoint= / headers= kwargs — SDK reads OTEL_EXPORTER_OTLP_ENDPOINT
-        # (base) and appends /v1/traces, and parses OTEL_EXPORTER_OTLP_HEADERS.
         tracer_provider.add_span_processor(
             BatchSpanProcessor(
-                OTLPSpanExporter(),
+                OTLPSpanExporter(
+                    endpoint=f"{endpoint}/v1/traces",
+                    headers={"Authorization": f"Bearer {bearer_token}", "Dash0-Dataset": dataset},
+                ),
                 max_export_batch_size=512,
                 export_timeout_millis=30_000,
             )
@@ -439,14 +461,16 @@ def _configure_otel(
     _tracer_provider = tracer_provider
 
     # ── MeterProvider ──────────────────────────────────────────────────────
-    if endpoint:
+    if endpoint and dataset and bearer_token:
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import (  # noqa: PLC0415
             OTLPMetricExporter,
         )
 
-        # No endpoint= / headers= — SDK appends /v1/metrics to base endpoint.
         metric_reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(),
+            OTLPMetricExporter(
+                endpoint=f"{endpoint}/v1/metrics",
+                headers={"Authorization": f"Bearer {bearer_token}", "Dash0-Dataset": dataset},
+            ),
             export_interval_millis=60_000,
             export_timeout_millis=30_000,
         )
@@ -457,16 +481,18 @@ def _configure_otel(
     _meter_provider = meter_provider
 
     # ── LoggerProvider ─────────────────────────────────────────────────────
-    if endpoint:
+    if endpoint and dataset and bearer_token:
         from opentelemetry.exporter.otlp.proto.http._log_exporter import (  # noqa: PLC0415
             OTLPLogExporter,
         )
 
-        # No endpoint= / headers= — SDK appends /v1/logs to base endpoint.
         logger_provider = LoggerProvider(resource=resource)
         logger_provider.add_log_record_processor(
             BatchLogRecordProcessor(
-                OTLPLogExporter(),
+                OTLPLogExporter(
+                    endpoint=f"{endpoint}/v1/logs",
+                    headers={"Authorization": f"Bearer {bearer_token}", "Dash0-Dataset": dataset},
+                ),
                 max_export_batch_size=512,
                 export_timeout_millis=30_000,
             )
@@ -483,7 +509,10 @@ def _configure_otel(
     # Idempotent: already-instrumented raises on a second call, which only
     # matters for tests that reload the module. Swallow that case explicitly.
     try:
-        FastAPIInstrumentor().instrument(excluded_urls=TRACE_EXCLUDED_URLS)
+        FastAPIInstrumentor().instrument(
+            excluded_urls=TRACE_EXCLUDED_URLS,
+            exclude_spans=list(TRACE_EXCLUDE_INTERNAL_SPANS),
+        )
     except Exception:
         pass
     try:
@@ -501,6 +530,17 @@ def _configure_otel(
         )
 
         SystemMetricsInstrumentor().instrument(meter_provider=meter_provider)
+    except Exception:
+        pass
+    # Auto-span every httpx.AsyncClient request (used by plugins/github and any
+    # future VCS/coding-agent plugin). Patches AsyncClient at the class level so
+    # ad-hoc clients constructed later in tests also get spans.
+    try:
+        from opentelemetry.instrumentation.httpx import (  # noqa: PLC0415
+            HTTPXClientInstrumentor,
+        )
+
+        HTTPXClientInstrumentor().instrument()
     except Exception:
         pass
 

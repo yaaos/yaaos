@@ -18,6 +18,8 @@ from __future__ import annotations
 import secrets
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.secrets import encrypt
 
@@ -84,7 +86,11 @@ def verify_assertion(saml_response: str, idp_metadata_xml: str) -> dict | None:
         return None
     try:
         return parse_assertion(saml_response, {"idp_metadata_xml": idp_metadata_xml})
-    except Exception:
+    except Exception as exc:
+        # inside-span failure: SSO callback FastAPI span is active
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, str(exc))
         log.exception("core.saml.parse_failed")
         return None
 

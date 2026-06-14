@@ -408,6 +408,15 @@ components:
             at claim. The agent echoes it back on the terminal/progress AgentEvent;
             the backend verifies it (constant-time) before any side effect.
             Treated as a secret — never logged in cleartext.
+        workflow_execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The workflow execution that dispatched this command. Stamped at
+            enqueue time so agent-side spans can carry `workflow_id` without a
+            separate lookup. NULL for agent-scoped commands (e.g. ConfigUpdate)
+            that do not correlate to a workflow.
 
     ProvisionWorkspaceCommand:
       allOf:
@@ -595,6 +604,13 @@ components:
         otlp_dataset:
           type: string
           description: Dataset/service-name identifier for the OTLP exporter.
+        environment:
+          type: string
+          description: |
+            OTel `deployment.environment.name` resource attribute. Sourced
+            from backend `Settings.environment` (required at boot). Stamped
+            on every agent trace/metric/log so signals can be filtered by
+            `local` / `staging` / `production` in Dash0.
 
     ConfigUpdateCommand:
       type: object

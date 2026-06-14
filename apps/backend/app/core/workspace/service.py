@@ -8,6 +8,8 @@ from typing import Any
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -623,7 +625,11 @@ async def run_workspace_reaper() -> None:
     """
     try:
         await _reaper_sweep_once()
-    except Exception:
+    except Exception as exc:
+        # inside-span failure: taskiq wraps scheduled task bodies in a span
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, str(exc))
         log.exception("workspace.reaper_sweep_failed")
         raise
 

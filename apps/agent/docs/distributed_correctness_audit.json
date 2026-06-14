@@ -1,0 +1,43 @@
+{
+  "summary": "Multi-pod distributed-correctness audit: single-flight claim, completion-token, failsafe-agent-loss, claim-fairness, identity-fatal, activity-WS fanout, and startup_recovery across Go supervisor and Python backend",
+  "entry_points": [
+    { "path": "apps/backend/app/core/agent_gateway/web.py:427", "trigger": "POST /api/v1/agent/commands/claim — each of N agent claim-loop workers per pod" },
+    { "path": "apps/backend/app/core/agent_gateway/web.py:472", "trigger": "POST /api/v1/commands/{command_id}/events — agent posts AgentEvent (received, progress, terminal)" },
+    { "path": "apps/backend/app/core/agent_gateway/web.py:366", "trigger": "DELETE /api/v1/agent/identity — graceful shutdown going-away signal" },
+    { "path": "apps/backend/app/core/workspace/service.py:315", "trigger": "_reaper_sweep_once — per-minute scheduled task" },
+    { "path": "apps/agent/internal/supervisor/supervisor.go:645", "trigger": "claimLoop goroutine (x Concurrency, default 4) per supervisor process" }
+  ],
+  "call_chains": [
+    { "from": "apps/agent/internal/supervisor/supervisor.go:650", "to": "apps/backend/app/core/agent_gateway/service.py:230", "edge": "calls" },
+    { "from": "apps/backend/app/core/agent_gateway/service.py:362", "to": "apps/backend/app/core/agent_gateway/service.py:380", "edge": "calls" },
+    { "from": "apps/backend/app/core/agent_gateway/web.py:488", "to": "apps/backend/app/core/agent_gateway/service.py:556", "edge": "calls" },
+    { "from": "apps/backend/app/core/agent_gateway/service.py:663", "to": "apps/backend/app/core/agent_gateway/report_sink.py:150", "edge": "calls" },
+    { "from": "apps/backend/app/core/workspace/agent_report.py:215", "to": "apps/backend/app/core/workspace/dispatch.py:76", "edge": "calls" },
+    { "from": "apps/backend/app/core/workspace/service.py:389", "to": "apps/backend/app/core/workspace/service.py:426", "edge": "calls" },
+    { "from": "apps/backend/app/core/agent_gateway/web.py:395", "to": "apps/backend/app/core/agent_gateway/report_sink.py:135", "edge": "calls" },
+    { "from": "apps/agent/internal/supervisor/supervisor.go:383", "to": "apps/agent/internal/supervisor/supervisor.go:400", "edge": "calls" },
+    { "from": "apps/agent/internal/supervisor/pool.go:396", "to": "apps/agent/internal/supervisor/pool.go:416", "edge": "calls" }
+  ],
+  "module_dependencies": [
+    { "from": "apps/backend/app/core/agent_gateway/service.py", "to": "apps/backend/app/core/agent_gateway/report_sink.py", "direction": "imports" },
+    { "from": "apps/backend/app/core/workspace/agent_report.py", "to": "apps/backend/app/core/workspace/dispatch.py", "direction": "imports" },
+    { "from": "apps/backend/app/core/workspace/service.py", "to": "apps/backend/app/core/agent_gateway", "direction": "imports" },
+    { "from": "apps/agent/internal/supervisor/supervisor.go", "to": "apps/agent/internal/supervisor/pool.go", "direction": "imports" }
+  ],
+  "data_flow": [
+    { "stage": "entry", "where": "apps/backend/app/core/agent_gateway/service.py:367", "shape": "raw secrets.token_urlsafe(32); sha256 stored in agent_commands.completion_token_hash; raw injected into DTO returned to agent" },
+    { "stage": "transform", "where": "apps/backend/app/core/agent_gateway/service.py:629", "shape": "presented token sha256-hashed, hmac.compare_digest against stored hash; skipped when hash IS NULL" },
+    { "stage": "exit", "where": "apps/backend/app/core/agent_gateway/service.py:668", "shape": "retire_command + enqueue HANDLE_AGENT_EVENT in same transaction" },
+    { "stage": "entry", "where": "apps/backend/app/core/workspace/dispatch.py:57", "shape": "conditional UPDATE workspaces WHERE current_command_id IS NULL AND status='active'" },
+    { "stage": "exit", "where": "apps/backend/app/core/workspace/dispatch.py:85", "shape": "UPDATE workspaces SET current_command_id=NULL WHERE current_command_id=:command_id" }
+  ],
+  "integrations": [
+    { "kind": "db", "where": "apps/backend/app/core/agent_gateway/service.py:273", "target": "agent_commands table — FOR UPDATE SKIP LOCKED claim" },
+    { "kind": "db", "where": "apps/backend/app/core/workspace/dispatch.py:57", "target": "workspaces table — conditional UPDATE single-flight gate" },
+    { "kind": "db", "where": "apps/backend/app/core/workspace/service.py:639", "target": "workspaces table — startup_recovery bulk UPDATE (all orgs)" },
+    { "kind": "http", "where": "apps/agent/internal/supervisor/supervisor.go:650", "target": "POST /api/v1/agent/commands/claim" },
+    { "kind": "http", "where": "apps/agent/internal/supervisor/supervisor.go:709", "target": "POST /api/v1/commands/{id}/events" },
+    { "kind": "queue", "where": "apps/backend/app/core/agent_gateway/service.py:712", "target": "outbox → HANDLE_AGENT_EVENT task" },
+    { "kind": "http", "where": "apps/agent/internal/supervisor/supervisor.go:404", "target": "DELETE /api/v1/agent/identity (going-away)" }
+  ]
+}

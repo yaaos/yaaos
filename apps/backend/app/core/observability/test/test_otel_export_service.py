@@ -85,15 +85,17 @@ def otlp_stub():
 
 def _build_providers(
     stub: _RecordingServer,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Any, Any, Any]:
-    """Construct three OTLP/HTTP providers wired to the stub.
+    """Construct three OTLP/HTTP providers wired to the stub using explicit kwargs.
 
     Does NOT call configure() or set the OTel globals — the SDK permits setting
     globals only once per process. Instead we build the providers directly and
     exercise them through their own APIs.  This isolates the test from
     cross-test global state while still exercising the real OTLP/HTTP exporter
     path.
+
+    Exporters receive explicit endpoint= and headers= kwargs matching the new
+    _configure_otel discipline — no OTEL_EXPORTER_OTLP_* env vars used.
     """
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter  # noqa: PLC0415
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # noqa: PLC0415
@@ -107,31 +109,31 @@ def _build_providers(
     from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
 
     base_url = f"http://127.0.0.1:{stub.server_address[1]}"
-    headers_str = "Authorization=Bearer test-token,Dash0-Dataset=test-ds"
-
-    # Set env vars so no-arg exporter constructors pick them up.
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", base_url)
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", headers_str)
+    headers = {"Authorization": "Bearer test-token", "Dash0-Dataset": "test-ds"}
 
     resource = Resource.create(
         {
-            "service.name": "yaaos-web",
+            "service.name": "api",
             "service.version": "0.0.0-dev",
             "deployment.environment.name": "local",
         }
     )
 
-    # TracerProvider — no-arg exporter reads OTEL_EXPORTER_OTLP_ENDPOINT +
-    # appends /v1/traces, and parses OTEL_EXPORTER_OTLP_HEADERS.
+    # TracerProvider — explicit endpoint= and headers= kwargs.
     tracer_provider = TracerProvider(resource=resource)
-    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(), export_timeout_millis=5_000))
+    tracer_provider.add_span_processor(
+        BatchSpanProcessor(
+            OTLPSpanExporter(endpoint=f"{base_url}/v1/traces", headers=headers),
+            export_timeout_millis=5_000,
+        )
+    )
 
     # MeterProvider
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[
             PeriodicExportingMetricReader(
-                OTLPMetricExporter(),
+                OTLPMetricExporter(endpoint=f"{base_url}/v1/metrics", headers=headers),
                 export_interval_millis=60_000,
                 export_timeout_millis=5_000,
             )
@@ -141,7 +143,10 @@ def _build_providers(
     # LoggerProvider
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(OTLPLogExporter(), export_timeout_millis=5_000)
+        BatchLogRecordProcessor(
+            OTLPLogExporter(endpoint=f"{base_url}/v1/logs", headers=headers),
+            export_timeout_millis=5_000,
+        )
     )
 
     return tracer_provider, meter_provider, logger_provider
@@ -151,11 +156,11 @@ def _build_providers(
 
 
 @pytest.mark.service
-def test_all_three_signals_reach_stub(otlp_stub: _RecordingServer, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_three_signals_reach_stub(otlp_stub: _RecordingServer) -> None:
     """Traces, metrics, and logs all POST to the stub within 5 seconds."""
     from opentelemetry.sdk._logs import LoggingHandler  # noqa: PLC0415
 
-    tracer_provider, meter_provider, logger_provider = _build_providers(otlp_stub, monkeypatch)
+    tracer_provider, meter_provider, logger_provider = _build_providers(otlp_stub)
 
     # Emit one span directly via the provider.
     tracer = tracer_provider.get_tracer("test")
@@ -192,11 +197,9 @@ def test_all_three_signals_reach_stub(otlp_stub: _RecordingServer, monkeypatch: 
 
 
 @pytest.mark.service
-def test_requests_carry_auth_and_dataset_headers(
-    otlp_stub: _RecordingServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_requests_carry_auth_and_dataset_headers(otlp_stub: _RecordingServer) -> None:
     """Every OTLP trace request carries Authorization and Dash0-Dataset headers."""
-    tracer_provider, _mp, _lp = _build_providers(otlp_stub, monkeypatch)
+    tracer_provider, _mp, _lp = _build_providers(otlp_stub)
 
     tracer = tracer_provider.get_tracer("test")
     with tracer.start_as_current_span("header-check-span"):
@@ -215,13 +218,11 @@ def test_requests_carry_auth_and_dataset_headers(
 
 
 @pytest.mark.service
-def test_resource_carries_version_and_environment(
-    otlp_stub: _RecordingServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resource_carries_version_and_environment(otlp_stub: _RecordingServer) -> None:
     """Trace resource includes service.version and deployment.environment.name."""
     from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
 
-    tracer_provider, _mp, _lp = _build_providers(otlp_stub, monkeypatch)
+    tracer_provider, _mp, _lp = _build_providers(otlp_stub)
 
     assert isinstance(tracer_provider, TracerProvider)
     resource = tracer_provider.resource
@@ -235,15 +236,13 @@ def test_resource_carries_version_and_environment(
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_shutdown_flushes_buffered_records(
-    otlp_stub: _RecordingServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_shutdown_flushes_buffered_records(otlp_stub: _RecordingServer) -> None:
     """shutdown() force-flushes; a buffered log record arrives after shutdown()."""
     from opentelemetry.sdk._logs import LoggingHandler  # noqa: PLC0415
 
     import app.core.observability.service as svc  # noqa: PLC0415
 
-    tracer_provider, meter_provider, logger_provider = _build_providers(otlp_stub, monkeypatch)
+    tracer_provider, meter_provider, logger_provider = _build_providers(otlp_stub)
 
     # Emit a log record that may still be in the batch buffer.
     # Set the logger level to INFO — root stdlib logger defaults to WARNING in

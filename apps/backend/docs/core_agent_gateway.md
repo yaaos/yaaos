@@ -59,6 +59,23 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 - **`issued_iam_arn` on bearer row.** Every `bearer_tokens` row records the canonical IAM ARN verified at issuance.
 - **Host allowlist override** — the `Settings.yaaos_sts_host_override` field (`YAAOS_STS_HOST_OVERRIDE`) allows an additional STS host (e.g. `mock-aws:4566`) only in non-production. `Settings` validates this at config load — a `model_validator` refuses to construct (crashes boot) when `APP_MODE=production` and the override is set — so by the time `sts_verifier` reads it, a non-empty value guarantees non-prod. See [core_config.md](core_config.md).
 
+## Dispatch spans
+
+`enqueue_command` opens an `agent_command.dispatch.{kind}` OTel span covering the full DB insert. Attributes set on the span:
+
+- `kind` — the `AgentCommandKind` string (e.g. `ProvisionWorkspace`, `InvokeClaudeCode`).
+- `command_id` — the UUID of the command being enqueued.
+- `workspace_id` — the workspace UUID, or `""` for org-scoped commands (`ConfigUpdate`, etc.).
+- `workflow_id` — the `workflow_execution_id` UUID, or `""` when the command has no workflow correlation.
+
+`org_id`, `actor_kind`, and other process-wide dimensions are auto-stamped by the `YaaosDimensionsSpanProcessor` — callers must not set them manually. On exception the span records the exception event and sets `StatusCode.ERROR` before re-raising. This is the single span site for all agent-command dispatches; no caller may bypass it.
+
+The span is a child of whatever span is current at the call site (typically a `workflow.command.{kind}` span). On the agent side, `supervisor.dispatch.{kind}` continues the trace via the `traceparent` injected into the `AgentCommand` wire payload.
+
+**`traceparent` ownership rule:** `enqueue_command` unconditionally overwrites `AgentCommand.traceparent` with the dispatch span's own traceparent (via `current_traceparent()`) before serializing the row. Callers must not pre-fill this field — pass `traceparent=""` when constructing an `AgentCommand`; `enqueue_command` owns the value.
+
+Service test: `test/test_dispatch_service.py`.
+
 ## Command dispatch — `agent_commands` durable queue
 
 Commands are persisted in `agent_commands` before delivery. The queue provides:
@@ -100,6 +117,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 ## Vocabulary
 
+- **AgentConfig.otlp_token** — `SecretStr | None` end-to-end in Python. `.get_secret_value()` is called only at the JSON wire-encode boundary via a `field_serializer(when_used="json")` on the field — `str()`, `repr()`, and `model_dump()` (Python mode) all show `**********`. The wire JSON carries the raw token so the agent can pass it to its OTLP exporter.
 - **AgentCommand** — discriminated union: `ProvisionWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace`.
 - **AgentEvent** — `progress` or `received` (non-terminal) or `completed_{success|failure|skipped}` (terminal). `received` cancels the lease requeue.
 - **WorkspaceEvent** — `created | ready | exited | destroyed | failed`.
@@ -112,6 +130,10 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 - `agent_commands` — durable command queue. Columns: `id` (UUIDv7 PK = FIFO key), `org_id`, `workspace_id` (NULL for org-scoped commands), `workflow_execution_id` (NULL for agent-scoped commands like `ConfigUpdate`; set by `enqueue_command` when a Workspace `WorkflowCommand.dispatch` originates the row — owns the command→workflow correlation read by `record_agent_event`), `command_kind`, `payload` (JSONB), `status` (`pending|claimed|delivered|done`), `agent_id` (NULL until claimed), `claimed_at`, `attempt`, `created_at`. Indexes: `(agent_id, status, id)` + `(status, command_kind, id)`.
 
 ## How it's tested
+
+`test/test_dispatch_service.py` covers: `enqueue_command` emits an `agent_command.dispatch.{kind}` span with `kind`, `command_id`, `workspace_id`, and `workflow_id` attributes; no-workflow-id enqueue sets `workflow_id` to `""`; a duplicate-PK flush error sets `StatusCode.ERROR` and records an exception event.
+
+`test/test_agent_command_dispatch_traceparent.py` covers: the `traceparent` stored in `agent_commands.payload` carries the dispatch span's own span-id, not the outer caller's — verifying the agent's `supervisor.dispatch.<kind>` will parent to `agent_command.dispatch.<kind>` at runtime.
 
 `test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff.
 

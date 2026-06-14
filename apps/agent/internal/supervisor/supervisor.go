@@ -426,7 +426,11 @@ func (s *Supervisor) dialAndStartWS(ctx context.Context, bearer string) bool {
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	url := s.cfg.ActivityWSURL
+	_, endDial := tracing.StartSpan(dialCtx, "agent.activity_ws.dial",
+		attribute.String("url", url),
+	)
 	conn, err := activity.Dial(dialCtx, url, bearer)
+	endDial(err)
 	if err != nil {
 		recordBackoff(ctx, s.wsBackoff, surfaceWS, err)
 		s.log.Warn("supervisor.activity_ws_dial_failed",
@@ -483,6 +487,10 @@ func (s *Supervisor) wsReconnectLoop(ctx context.Context, bearer string) {
 }
 
 func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityExchangeResponse, error) {
+	ctx, end := tracing.StartSpan(ctx, "agent.identity_exchange")
+	var err error
+	defer func() { end(err) }()
+
 	// The provider signs the claim; the supervisor owns the HTTP exchange.
 	// Audience is derived from the backend's BaseURL host so the verifier can
 	// reject cross-instance replays. An empty host means BaseURL is misconfigured
@@ -494,20 +502,25 @@ func (s *Supervisor) exchangeIdentity(ctx context.Context) (*protocol.IdentityEx
 		audience = override
 	}
 	if audience == "" {
-		return nil, fmt.Errorf("identity: cannot derive audience: BaseURL %q has no host", s.cfg.BaseURL)
+		err = fmt.Errorf("identity: cannot derive audience: BaseURL %q has no host", s.cfg.BaseURL)
+		return nil, err
 	}
-	payload, err := s.provider.SignClaim(ctx, audience)
+	var payload []byte
+	payload, err = s.provider.SignClaim(ctx, audience)
 	if err != nil {
-		return nil, fmt.Errorf("identity: sign claim: %w", err)
+		err = fmt.Errorf("identity: sign claim: %w", err)
+		return nil, err
 	}
 
 	meta := gatherAgentMetadata()
-	return s.client.ExchangeIdentity(ctx, protocol.IdentityExchangeRequest{
+	var resp *protocol.IdentityExchangeResponse
+	resp, err = s.client.ExchangeIdentity(ctx, protocol.IdentityExchangeRequest{
 		Kind:          s.provider.Kind(),
 		AgentVersion:  s.cfg.Version,
 		AgentMetadata: meta,
 		Payload:       string(payload),
 	})
+	return resp, err
 }
 
 // hostFromURL extracts the host (and optional port) from a URL string.
@@ -547,9 +560,14 @@ type refreshResult struct {
 // is an identity-integrity violation — caller must treat fatal=true as a
 // process-exit signal rather than a retryable error.
 func (s *Supervisor) runOneRefreshCycle(ctx context.Context, currentExpiry time.Time) refreshResult {
+	_, end := tracing.StartSpan(ctx, "agent.identity_refresh")
+	var spanErr error
+	defer func() { end(spanErr) }()
+
 	const retryInterval = 60 * time.Second
 	resp, err := s.exchangeIdentity(ctx)
 	if err != nil {
+		spanErr = err
 		s.log.Warn("supervisor.bearer_refresh_failed", "err", err.Error())
 		return refreshResult{expiresAt: time.Now().Add(retryInterval)}
 	}
@@ -567,6 +585,7 @@ func (s *Supervisor) runOneRefreshCycle(ctx context.Context, currentExpiry time.
 				"returned_agent_id", resp.AgentID,
 				"returned_org_id", resp.OrgID,
 			)
+			spanErr = fmt.Errorf("identity mismatch: agent_id or org_id changed on renewal")
 			return refreshResult{fatal: true}
 		}
 		s.applyAcceptedIdentityChange(resp)
@@ -647,12 +666,15 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		if ctx.Err() != nil {
 			return
 		}
+		_, endClaim := tracing.StartSpan(ctx, "agent.claim")
 		raw, err := s.client.ClaimCommand(ctx, s.buildClaimRequest())
+		if err == protocol.ErrNoCommand {
+			endClaim(nil)
+			s.claimBackoff.Reset()
+			continue
+		}
+		endClaim(err)
 		if err != nil {
-			if err == protocol.ErrNoCommand {
-				s.claimBackoff.Reset()
-				continue
-			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -797,25 +819,22 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 	header := cmd.Header()
 
 	ctx = tracing.ExtractContext(ctx, header.Traceparent)
-	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch."+string(header.Kind),
+	spanAttrs := []attribute.KeyValue{
 		attribute.String("workspace_id", header.WorkspaceID),
 		attribute.String("command_id", header.CommandID),
 		attribute.String("kind", string(header.Kind)),
-		attribute.String("org_id", s.orgID),
-		attribute.String("agent_id", s.agentID),
-	)
+	}
+	if header.WorkflowExecutionID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("workflow_id", header.WorkflowExecutionID))
+	}
+	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch."+string(header.Kind), spanAttrs...)
 
 	// Dedup check: if this command_id already produced a terminal event,
 	// replay the cached result without re-dispatching. Records deduped=true
 	// on the span so dashboards can distinguish re-delivery from fresh dispatch.
 	if cached, hit := s.dedup.lookup(header.CommandID); hit {
 		s.log.Info("supervisor.command_deduped", "command_id", header.CommandID)
-		observability.Metrics().CommandsDeduped.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("org_id", s.orgID),
-				attribute.String("agent_id", s.agentID),
-			),
-		)
+		observability.Metrics().CommandsDeduped.Add(ctx, 1, observability.StandardAttrs())
 		oteltrace.SpanFromContext(ctx).SetAttributes(attribute.Bool("deduped", true))
 		postErr := s.postTerminalEvent(ctx, header, cached)
 		end(postErr)
@@ -899,9 +918,8 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 		metric.WithAttributes(
 			attribute.String("result", result),
 			attribute.String("kind", string(header.Kind)),
-			attribute.String("org_id", s.orgID),
-			attribute.String("agent_id", s.agentID),
 		),
+		observability.StandardAttrs(),
 	)
 	if event.Kind == protocol.EventCompletedFailure {
 		end(fmt.Errorf("dispatch failure: %s", event.FailureReason))
@@ -944,11 +962,8 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 		s.log.Warn("supervisor.event_post_failed",
 			"command_id", header.CommandID, "err", err.Error())
 		observability.Metrics().EventsPostRetries.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("kind", string(header.Kind)),
-				attribute.String("org_id", s.orgID),
-				attribute.String("agent_id", s.agentID),
-			),
+			metric.WithAttributes(attribute.String("kind", string(header.Kind))),
+			observability.StandardAttrs(),
 		)
 		if sleepErr := eventPostBackoff.Sleep(ctx); sleepErr != nil {
 			// Context cancelled (e.g. graceful shutdown) — return the
@@ -1015,8 +1030,15 @@ func (s *Supervisor) ApplyConfig(cfg command.AgentConfig) {
 		"max_workspaces", cfg.MaxWorkspaces,
 		"otlp_endpoint", cfg.OTLPEndpoint,
 		"otlp_dataset", cfg.OTLPDataset,
+		"environment", cfg.Environment,
 	)
 	// Late-bind the OTLP exporter. When OTLPEndpoint is set, installs the
 	// exporter into the global OTel providers. No-op when endpoint is empty.
-	observability.BindExporter(context.Background(), cfg.OTLPEndpoint, cfg.OTLPToken.Value(), cfg.OTLPDataset)
+	observability.BindExporter(
+		context.Background(),
+		cfg.OTLPEndpoint,
+		cfg.OTLPToken.Value(),
+		cfg.OTLPDataset,
+		cfg.Environment,
+	)
 }

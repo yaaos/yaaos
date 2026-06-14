@@ -1,21 +1,11 @@
-// Package observability wires the workspace agent's OpenTelemetry SDK
-// for logs, traces, and metrics. The Collector is vendor-neutral —
-// customers configure their exporter (Datadog, Honeycomb, New Relic,
-// AWS CloudWatch, Splunk, …) inside the collector itself, downstream
-// of the agent. The agent speaks OTLP/HTTP and nothing else.
+// Package observability wires the agent's OTel SDK.
 //
-// Init reads only standard OTEL_EXPORTER_OTLP_* env vars. When
-// OTEL_EXPORTER_OTLP_ENDPOINT is unset, Init is a no-op — no SDK
-// providers are initialized, no goroutines start, no overhead. The
-// returned shutdown is safe to call even in that mode.
-//
-// Result.SlogHandler is always the live log bridge — the caller passes it
-// into logging.Config.ExtraHandlers once at startup. The bridge drops records
-// until a logger provider is installed (by this Init when an env endpoint is
-// set, or by a later ConfigUpdate via BindExporter), then fans every slog
-// record out to the collector alongside stdout + the rotated file. Traces and
-// metrics are wired into the global providers; instrumentation reaches them
-// via otel.Tracer / otel.Meter or this package's Metrics() accessor.
+// Install model: the agent reads no OTel env vars. Init wires the live log
+// bridge and stashes the startup Config (service version, instance id placeholder).
+// SDK trace/metric/log providers install only via BindExporter, called from
+// the supervisor's ConfigUpdate handler with the endpoint/token/dataset/environment
+// the backend delivers. Before that call, instruments resolve to no-op providers
+// and the agent is telemetry-dark. There is no env-var startup path.
 package observability
 
 import (
@@ -24,14 +14,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -57,30 +46,34 @@ type Config struct {
 	// (workspace_agents.instance_id). Only known after identity exchange;
 	// set via SetInstanceID before BindExporter runs so the late-bind path
 	// emits the correct service.instance.id.
-	InstanceID string
+	InstanceID  string
+	Environment string // OTel deployment.environment.name; set via BindExporter from ConfigUpdate.
 }
 
 // installState tracks whether the SDK providers have been wired into the
-// global otel registries, so the env-var Init path and the late-binding
-// ConfigUpdate path (BindExporter) never double-install. startupCfg captures
-// the identity attributes Init received so BindExporter can build the same
-// resource when it late-binds.
+// global otel registries so BindExporter never double-installs. startupCfg
+// captures the identity attributes Init received so BindExporter can build
+// the same resource when it late-binds.
 var (
 	installMu  sync.Mutex
 	installed  bool
 	startupCfg Config
-	// installShutdown flushes + closes whichever providers got wired —
-	// whether by env-var Init or by a late BindExporter. Init's returned
-	// Shutdown reads it, so the process flushes late-bound telemetry on exit
-	// even though BindExporter ran after Init returned.
+	// installShutdown flushes + closes providers wired by BindExporter.
+	// Init's returned Shutdown reads it, so the process flushes late-bound
+	// telemetry on exit even though BindExporter ran after Init returned.
 	installShutdown func(context.Context) error
 )
+
+// metricExportInterval is the metric flush interval used by wireProviders.
+// Production uses the SDK's 30s default. Tests override it via
+// setMetricExportIntervalForTests. Never read from env vars.
+var metricExportInterval = 30 * time.Second
 
 // Result is what Init returns.
 type Result struct {
 	// SlogHandler is the live log bridge — always non-nil. The caller passes
 	// it to logging.Config.ExtraHandlers once at startup; it stays dormant
-	// until a logger provider is installed (env Init or BindExporter).
+	// until a logger provider is installed by BindExporter.
 	SlogHandler slog.Handler
 
 	// Shutdown flushes + closes every initialized provider. Safe to
@@ -88,49 +81,16 @@ type Result struct {
 	Shutdown func(context.Context) error
 }
 
-// Init wires the OTel providers. Returns a no-op Result (Shutdown is
-// still safe to call) when OTEL_EXPORTER_OTLP_ENDPOINT is unset — in that
-// mode the OTLP endpoint may still arrive later via ConfigUpdate, which
-// late-binds the exporter through BindExporter.
-func Init(ctx context.Context, cfg Config) (*Result, error) {
+func Init(_ context.Context, cfg Config) (*Result, error) {
 	installMu.Lock()
 	startupCfg = cfg
 	installMu.Unlock()
 
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		// No env endpoint: providers stay no-op, but still hand back the live
-		// log bridge so the caller wires it into the logging fan-out. A later
-		// ConfigUpdate (BindExporter) sets its delegate and logs start flowing.
-		// Shutdown reads installShutdown so a late-bound pipeline still flushes
-		// on exit.
-		return &Result{SlogHandler: liveLogBridge, Shutdown: shutdownInstalled}, nil
-	}
-
-	res, err := buildResource(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	// The exporters read OTEL_EXPORTER_OTLP_* env vars (endpoint, headers,
-	// protocol) when constructed with no explicit endpoint option.
-	traceExp, err := otlptracehttp.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("trace exporter: %w", err)
-	}
-	metricExp, err := otlpmetrichttp.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("metric exporter: %w", err)
-	}
-	logExp, err := otlploghttp.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("log exporter: %w", err)
-	}
-
-	wireProviders(res, traceExp, metricExp, logExp)
-	return &Result{
-		SlogHandler: liveLogBridge,
-		Shutdown:    shutdownInstalled,
-	}, nil
+	// Providers stay uninstalled until BindExporter is called from the
+	// ConfigUpdate handler. The live log bridge is returned now so the caller
+	// wires it into the logging fan-out at startup; BindExporter swaps its
+	// delegate once providers exist.
+	return &Result{SlogHandler: liveLogBridge, Shutdown: shutdownInstalled}, nil
 }
 
 // SetInstanceID updates the stored startup config with the backend-assigned
@@ -138,11 +98,10 @@ func Init(ctx context.Context, cfg Config) (*Result, error) {
 // identity exchange and before BindExporter so the late-bind path emits the
 // correct service.instance.id on every OTel signal.
 //
-// No-op when the SDK providers are already installed (env-var Init path
-// already ran), because rebuilding the resource after wireProviders would
-// require restarting the SDK — callers should ensure BindExporter hasn't
-// been called yet, which is the normal production ordering (ConfigUpdate
-// arrives after identity exchange).
+// No-op when BindExporter has already installed providers — rebuilding the
+// resource after wireProviders would require restarting the SDK. The supervisor's
+// ordering (identity exchange → SetInstanceID → first ConfigUpdate → BindExporter)
+// guarantees this never happens in production.
 func SetInstanceID(instanceID string) {
 	installMu.Lock()
 	startupCfg.InstanceID = instanceID
@@ -150,22 +109,28 @@ func SetInstanceID(instanceID string) {
 }
 
 // buildResource constructs the OTel resource from the startup identity
-// attributes. Shared by Init and BindExporter so both paths emit the same
-// service.name / service.version / service.instance.id.
+// attributes. Called by BindExporter to build the resource at install time
+// with the service.name / service.version / service.instance.id / deployment.environment.name.
 func buildResource(cfg Config) (*resource.Resource, error) {
+	attrs := []attribute.KeyValue{
+		semconv.ServiceName("agent"),
+		semconv.ServiceVersion(cfg.ServiceVersion),
+		// service.instance.id is the backend-assigned instance_id
+		// (workspace_agents.instance_id = role-session-name from the STS
+		// ARN). Operators use it to correlate OTel signals to a specific
+		// workspace_agents row. Empty at early startup (before identity
+		// exchange); populated via SetInstanceID before BindExporter.
+		semconv.ServiceInstanceID(cfg.InstanceID),
+	}
+	// Stamp deployment.environment.name only when non-empty. An empty string
+	// would pollute Dash0 with an explicit "" tag rather than the desired
+	// "no tag" state.
+	if cfg.Environment != "" {
+		attrs = append(attrs, semconv.DeploymentEnvironmentName(cfg.Environment))
+	}
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName("yaaos-workspace-agent"),
-			semconv.ServiceVersion(cfg.ServiceVersion),
-			// service.instance.id is the backend-assigned instance_id
-			// (workspace_agents.instance_id = role-session-name from the STS
-			// ARN). Operators use it to correlate OTel signals to a specific
-			// workspace_agents row. Empty at early startup (before identity
-			// exchange); populated via SetInstanceID before BindExporter.
-			semconv.ServiceInstanceID(cfg.InstanceID),
-		),
+		resource.NewWithAttributes(semconv.SchemaURL, attrs...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resource merge: %w", err)
@@ -189,6 +154,11 @@ func wireProviders(res *resource.Resource, traceExp sdktrace.SpanExporter, metri
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExp),
+		// DimProcessor stamps org_id + agent_id on every span at OnStart (after
+		// identity exchange). BatchSpanProcessor reads the span at OnEnd, and span
+		// attributes stay mutable until then, so processor registration order does
+		// not affect which attributes reach the exporter.
+		sdktrace.WithSpanProcessor(NewDimProcessor()),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
@@ -197,7 +167,7 @@ func wireProviders(res *resource.Resource, traceExp sdktrace.SpanExporter, metri
 	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(
 			metricExp,
-			sdkmetric.WithInterval(metricExportInterval()),
+			sdkmetric.WithInterval(metricExportInterval),
 		)),
 		sdkmetric.WithResource(res),
 	)
@@ -235,10 +205,9 @@ func wireProviders(res *resource.Resource, traceExp sdktrace.SpanExporter, metri
 	installMu.Unlock()
 }
 
-// shutdownInstalled flushes + closes whatever providers were wired (by env-var
-// Init or a late BindExporter), or no-ops when nothing was installed. Init
-// hands this back as Result.Shutdown so the process flushes late-bound
-// telemetry on exit.
+// shutdownInstalled flushes + closes whatever providers were wired by
+// BindExporter, or no-ops when nothing was installed. Init hands this back as
+// Result.Shutdown so the process flushes late-bound telemetry on exit.
 func shutdownInstalled(ctx context.Context) error {
 	installMu.Lock()
 	fn := installShutdown
@@ -249,31 +218,31 @@ func shutdownInstalled(ctx context.Context) error {
 	return fn(ctx)
 }
 
-// BindExporter late-binds the OTLP/HTTP exporter when the agent receives its
-// endpoint via ConfigUpdate (the no-OTEL_EXPORTER_OTLP_ENDPOINT-env startup
-// path). It constructs trace/metric/log exporters pointed at endpoint and
-// installs the SDK providers globally — the same wiring Init performs from
-// env vars — so the ConfigUpdate path genuinely exports.
+// BindExporter installs the OTel SDK providers from the ConfigUpdate-delivered
+// telemetry config. Constructs trace/metric/log exporters pointed at endpoint
+// with the bearer token in an Authorization header, then installs the SDK
+// providers globally. wireProviders points the live log bridge (wired into
+// the logging fan-out at startup) at the new log provider, so logs, traces,
+// and metrics all start flowing.
 //
-// No-op when endpoint is empty, or when the providers are already installed
-// (env-var Init already ran, or a prior ConfigUpdate already bound). Logs,
-// traces, and metrics all start flowing: wireProviders points the live log
-// bridge (wired into the logging fan-out at startup) at the new log provider,
-// so the ConfigUpdate path exports the same three signals the env-var path does.
-func BindExporter(ctx context.Context, endpoint, token, dataset string) {
+// No-op when endpoint is empty (control plane signaled "telemetry off") or
+// when providers are already installed (second ConfigUpdate, never expected
+// in production).
+func BindExporter(ctx context.Context, endpoint, token, dataset, environment string) {
 	if endpoint == "" {
 		return
 	}
 
 	installMu.Lock()
 	already := installed
+	startupCfg.Environment = environment // late-bind, mirroring SetInstanceID
 	cfg := startupCfg
 	installMu.Unlock()
 	if already {
-		// Providers were installed at startup from env vars (or a prior
-		// ConfigUpdate). Don't double-install.
+		// Providers were already installed by a prior BindExporter call.
+		// Don't double-install.
 		slog.InfoContext(ctx, "observability.otlp_endpoint_received_already_bound",
-			"endpoint", endpoint, "dataset", dataset)
+			"endpoint", endpoint, "dataset", dataset, "environment", environment)
 		return
 	}
 
@@ -283,11 +252,10 @@ func BindExporter(ctx context.Context, endpoint, token, dataset string) {
 		return
 	}
 
-	// The config endpoint is a BASE URL (like OTEL_EXPORTER_OTLP_ENDPOINT),
-	// so append the standard per-signal path. WithEndpointURL treats its path
-	// verbatim and does not default it — otlploghttp in particular would POST
-	// to "/" for a path-less base — so we expand the path ourselves to keep
-	// all three signals consistent with the env-var path.
+	// The config endpoint is a BASE URL so append the standard per-signal
+	// path. WithEndpointURL treats its path verbatim and does not default it —
+	// otlploghttp in particular would POST to "/" for a path-less base — so
+	// we expand the path ourselves to keep all three signals consistent.
 	traceURL, err := otlpSignalURL(endpoint, "/v1/traces")
 	if err != nil {
 		slog.ErrorContext(ctx, "observability.otlp_bind_endpoint_parse_failed", "err", err.Error())
@@ -326,13 +294,12 @@ func BindExporter(ctx context.Context, endpoint, token, dataset string) {
 
 	wireProviders(res, traceExp, metricExp, logExp)
 	slog.InfoContext(ctx, "observability.otlp_endpoint_bound",
-		"endpoint", endpoint, "dataset", dataset)
+		"endpoint", endpoint, "dataset", dataset, "environment", environment)
 }
 
 // otlpSignalURL appends the standard OTLP/HTTP signal path (e.g. "/v1/logs")
 // to a base endpoint URL, preserving any base path the customer set (so
-// "https://host/otlp" + "/v1/logs" → "https://host/otlp/v1/logs"). Mirrors how
-// OTEL_EXPORTER_OTLP_ENDPOINT is expanded per signal on the env-var path.
+// "https://host/otlp" + "/v1/logs" → "https://host/otlp/v1/logs").
 func otlpSignalURL(base, signalPath string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil {
@@ -340,16 +307,4 @@ func otlpSignalURL(base, signalPath string) (string, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + signalPath
 	return u.String(), nil
-}
-
-// metricExportInterval honors OTEL_METRIC_EXPORT_INTERVAL (in ms) and
-// falls back to 30s, matching the SDK default. The override exists for
-// tests that don't want to wait 30 s to see the first metric POST.
-func metricExportInterval() time.Duration {
-	if v := os.Getenv("OTEL_METRIC_EXPORT_INTERVAL"); v != "" {
-		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
-			return time.Duration(ms) * time.Millisecond
-		}
-	}
-	return 30 * time.Second
 }

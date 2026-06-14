@@ -15,7 +15,7 @@
 - Copy `.env.sample` to `.env`.
 - Generate the at-rest encryption key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` → paste into `.env` as `YAAOS_ENCRYPTION_KEY`. Persist out-of-band — losing it forces every operator to re-enter credentials via the Settings UI.
 - Leave `DATABASE_URL` at the default; compose provisions Postgres with matching credentials.
-- Optional: set `OTEL_EXPORTER_OTLP_ENDPOINT` for span export. Unset → OTel disabled.
+- Optional: set `YAAOS_DASH0_ENDPOINT` + `YAAOS_DASH0_DATASET` + `YAAOS_BACKEND_DASH0_BEARER_TOKEN` for OTLP export. Any missing → exporters skipped (OTel providers still active).
 
 Full env-var reference: [`apps/backend/docs/core_config.md`](../apps/backend/docs/core_config.md).
 
@@ -149,7 +149,7 @@ bin/dev-rebuild                  # builds image + starts stack
 | Web `.tsx` (auto) | `pnpm exec vite build --watch` in separate terminal | ~1-2s |
 | Deps change | `docker compose … up -d --build app` | 30-60s |
 
-`apps/web/dist/` is bind-mounted and served by FastAPI's `StaticFiles` — FE rebuilds refresh without restarting the backend. Dev compose sets `APP_MODE=dev` (switches to `NullPool`, enables `/api/testing/*` routes).
+`apps/web/dist/` is bind-mounted and served by FastAPI's `StaticFiles` — FE rebuilds refresh without restarting the backend. Dev compose sets `APP_MODE=dev` (enables permissive CORS + `/api/testing/*` routes; uses `QueuePool` to mirror prod pool behavior).
 
 ## Local dev — fully native (no Docker for app/web)
 

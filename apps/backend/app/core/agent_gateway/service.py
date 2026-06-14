@@ -25,6 +25,8 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from pydantic import Field, TypeAdapter
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,9 +51,11 @@ from app.core.agent_gateway.types import (
     WorkspaceEvent,
     WriteFilesCommand,
 )
+from app.core.observability import current_traceparent
 from app.core.tasks import enqueue
 
 log = structlog.get_logger("core.agent_gateway")
+_tracer = trace.get_tracer(__name__)
 
 # Default cap on concurrent Active workspaces per agent when no per-org
 # override exists. The control plane will add per-org configuration later;
@@ -104,29 +108,54 @@ async def enqueue_command(
 
     The DB-minted UUIDv7 PK serves as the idempotency key and FIFO sort key.
     `agent_id` is left NULL at enqueue time; it is stamped by `claim_next`.
+
+    Opens an `agent_command.dispatch.{kind}` OTel span covering the full insert.
+    `org_id`/`actor_kind`/`workflow_id` are auto-stamped by the
+    `YaaosDimensionsSpanProcessor`. `command_id` and `workspace_id` are set
+    explicitly here since they are command-scoped (not process-wide dimensions).
     """
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-    # workspace_id is NULL for org-scoped commands (ConfigUpdate,
-    # ProvisionWorkspace before an agent is assigned).
+    kind = str(command.kind)
     workspace_id: UUID | None = getattr(command, "workspace_id", None)
     if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
         workspace_id = None
 
-    # Override the command_id with the DB-minted UUIDv7 after flush so that
-    # producers stop generating their own UUID4 ids. For now we honour the
-    # caller-supplied id and treat it as the primary key.
-    row = AgentCommandRow(
-        id=command.command_id,
-        org_id=org_id,
-        workspace_id=workspace_id,
-        workflow_execution_id=workflow_execution_id,
-        command_kind=str(command.kind),
-        payload=command.model_dump(mode="json"),
-        status="pending",
-    )
-    session.add(row)
-    await session.flush()
+    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind}") as span:
+        span.set_attribute("kind", kind)
+        span.set_attribute("command_id", str(command.command_id))
+        span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
+        span.set_attribute(
+            "workflow_id",
+            str(workflow_execution_id) if workflow_execution_id is not None else "",
+        )
+        try:
+            # Overwrite the command's traceparent with the dispatch span's own
+            # traceparent so the agent's supervisor.dispatch.<kind> span is
+            # parented to agent_command.dispatch.<kind>, not the outer caller's
+            # span. `enqueue_command` is the sole owner of this field on the
+            # wire; callers must not pre-fill it.
+            dispatch_tp = current_traceparent()
+            if dispatch_tp is not None:
+                command = command.model_copy(update={"traceparent": dispatch_tp})
+            # Override the command_id with the DB-minted UUIDv7 after flush so that
+            # producers stop generating their own UUID4 ids. For now we honour the
+            # caller-supplied id and treat it as the primary key.
+            row = AgentCommandRow(
+                id=command.command_id,
+                org_id=org_id,
+                workspace_id=workspace_id,
+                workflow_execution_id=workflow_execution_id,
+                command_kind=kind,
+                payload=command.model_dump(mode="json"),
+                status="pending",
+            )
+            session.add(row)
+            await session.flush()
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
 
 
 async def pin_command_to_agent(
@@ -202,14 +231,21 @@ async def get_command_workflow_execution_id(
 
 
 def _build_config_update() -> ConfigUpdateCommand:
-    """Build a ConfigUpdateCommand from the global defaults."""
+    """Build a ConfigUpdateCommand from the global settings."""
     from uuid import uuid4  # noqa: PLC0415
 
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
     return ConfigUpdateCommand(
         command_id=uuid4(),
         traceparent="",
         config=AgentConfig(
             max_workspaces=DEFAULT_MAX_WORKSPACES,
+            otlp_endpoint=settings.yaaos_dash0_endpoint,
+            otlp_token=settings.yaaos_agent_dash0_bearer_token,
+            otlp_dataset=settings.yaaos_dash0_dataset,
+            environment=settings.environment,
         ),
     )
 
@@ -371,10 +407,15 @@ async def claim_next(
     row.completion_token_hash = hashlib.sha256(raw.encode()).hexdigest()
     await session.flush()
 
-    # Inject the raw token into the returned DTO without re-persisting it to
-    # `row.payload`. `_CommandBase` is frozen, so `model_copy(update=...)` returns
-    # a new typed instance of the concrete subtype carrying the token on the wire.
-    return _row_to_command(row).model_copy(update={"completion_token": raw})
+    # Inject the raw token and workflow_execution_id into the returned DTO without
+    # re-persisting them to `row.payload`. `_CommandBase` is frozen, so
+    # `model_copy(update=...)` returns a new typed instance of the concrete subtype.
+    # workflow_execution_id is read from the row's dedicated column (not the payload)
+    # so agent-side spans can carry workflow_id without a separate lookup.
+    updates: dict = {"completion_token": raw}
+    if row.workflow_execution_id is not None:
+        updates["workflow_execution_id"] = row.workflow_execution_id
+    return _row_to_command(row).model_copy(update=updates)
 
 
 async def acknowledge_command_received(

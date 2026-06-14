@@ -22,6 +22,8 @@ import asyncio
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
@@ -76,6 +78,10 @@ async def run_sweep_loop() -> None:
     while True:
         try:
             await _sweep_once()
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: spawned inside spawn:reviewer.orphan_sweep span
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception("orphan_sweep.failed")
         await asyncio.sleep(interval)

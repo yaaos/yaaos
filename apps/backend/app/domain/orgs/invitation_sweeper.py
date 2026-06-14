@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.config import get_settings
 from app.domain.orgs.service import delete_expired_invitations
@@ -24,6 +26,10 @@ async def run_invitation_sweep_loop() -> None:
             purged = await delete_expired_invitations()
             if purged:
                 log.debug("orgs.invitations.swept", purged=purged)
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: spawned inside spawn:orgs.invitation_sweep span
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception("orgs.invitations.sweep.failed")
         await asyncio.sleep(interval)

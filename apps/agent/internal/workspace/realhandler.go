@@ -180,10 +180,13 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 	// different workspace_ids don't serialize on the slot map. The
 	// tempdir is empty at this point (manifest write happens *after*
 	// the clone) — `git clone` refuses non-empty destinations.
-	if err := h.cfg.CloneFunc(ctx, path, cmd.Repo, cmd.Auth, cmd.History); err != nil {
+	_, endClone := tracing.StartSpan(ctx, "workspace.clone")
+	cloneErr := h.cfg.CloneFunc(ctx, path, cmd.Repo, cmd.Auth, cmd.History)
+	endClone(cloneErr)
+	if cloneErr != nil {
 		// Tear down the empty tempdir on clone failure so we don't leak.
 		_ = os.RemoveAll(path)
-		return command.ProvisionResult{}, fmt.Errorf("git clone: %w", err)
+		return command.ProvisionResult{}, fmt.Errorf("git clone: %w", cloneErr)
 	}
 
 	// Startup-reconciliation manifest: write the workspace_id to a
@@ -333,6 +336,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// retained for the success path.
 	emitter := EmitterFromContext(ctx)
 	var accumulated bytes.Buffer
+	_, endRun := tracing.StartSpan(ctx, "workspace.runclaude")
 	res, err := h.cfg.RunFunc(ctx, RunStreamingOptions{
 		Argv:  inv.Exec.Argv,
 		Stdin: []byte(inv.Exec.Stdin),
@@ -347,6 +351,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 			})
 		},
 	})
+	endRun(err)
 	if res != nil {
 		// RunStreaming leaves res.Stdout empty when a callback is set;
 		// we replace it with the accumulated bytes so downstream code

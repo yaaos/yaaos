@@ -12,6 +12,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -77,7 +79,11 @@ async def _notify_owners(row: McpCredentialRow) -> int:
         try:
             await send_plain(to=to, subject=subject, body=body)
             sent += 1
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: spawned inside spawn:integrations.scheduler span
+            _span = trace.get_current_span()
+            _span.record_exception(exc)
+            _span.set_status(StatusCode.ERROR, str(exc))
             log.exception("integrations.notify_owners.send_failed", to=to, provider=row.provider)
     return sent
 
@@ -102,13 +108,21 @@ async def run_health_check_once() -> dict[str, int]:
                 continue
             try:
                 access = decrypt(row.encrypted_access_token.encode()).decode()
-            except SecretsDecryptError:
+            except SecretsDecryptError as exc:
+                # inside-span failure: spawned inside spawn:integrations.scheduler span
+                _span = trace.get_current_span()
+                _span.record_exception(exc)
+                _span.set_status(StatusCode.ERROR, str(exc))
                 log.exception("integrations.health_check.decrypt_failed", provider=row.provider)
                 ok = False
             else:
                 try:
                     ok = await prov.validate(access)
-                except Exception:
+                except Exception as exc:
+                    # inside-span failure: spawned inside spawn:integrations.scheduler span
+                    _span = trace.get_current_span()
+                    _span.record_exception(exc)
+                    _span.set_status(StatusCode.ERROR, str(exc))
                     log.exception("integrations.health_check.validate_crashed", provider=row.provider)
                     ok = False
             async with db_session() as s:
@@ -165,6 +179,10 @@ async def run_scheduler_loop() -> None:
             counts = await run_health_check_once()
             if any(counts.values()):
                 log.debug("integrations.health_check.ran", **counts)
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: spawned inside spawn:integrations.scheduler span
+            _span = trace.get_current_span()
+            _span.record_exception(exc)
+            _span.set_status(StatusCode.ERROR, str(exc))
             log.exception("integrations.scheduler.failed")
         await asyncio.sleep(interval)

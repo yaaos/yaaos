@@ -38,7 +38,7 @@
 ## Vocabulary
 
 - **Wire struct** — a Go struct whose JSON tags exactly match the backend OpenAPI spec fields for one command kind or event.
-- **CommandHeader** — the routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`, plus the `completion_token` capability the agent echoes on its events.
+- **CommandHeader** — the routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`, plus the `completion_token` capability the agent echoes on its events, and `workflow_execution_id` (the workflow execution that dispatched the command; empty for agent-scoped commands like ConfigUpdate).
 - **Leaf** — a package with no internal imports; safe for any layer to import without cycles.
 
 ## Endpoint URLs

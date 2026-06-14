@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 
 from app.core.agent_gateway import (
@@ -127,7 +129,7 @@ class ProvisionWorkspace(_LifecycleCommand):
             ws_id,
             repo=repo,
             auth=auth,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
@@ -168,6 +170,10 @@ class CleanupWorkspace(_LifecycleCommand):
         try:
             await close_workspace(ws_id)
         except Exception as exc:
+            # inside-span failure: workflow.command.CleanupWorkspace span is active
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}")
             log.exception("cleanup_workspace.failed", workspace_id=str(ws_id))
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
@@ -206,7 +212,7 @@ class CleanupWorkspace(_LifecycleCommand):
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
         )
         await enqueue_command(
             org_id=org_id,
@@ -277,7 +283,7 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,
-            traceparent=ctx.traceparent or "",
+            traceparent="",
         )
         await enqueue_command(
             org_id=org_id,

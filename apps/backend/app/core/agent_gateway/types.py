@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer
 
 # ── Discriminator + shared base ─────────────────────────────────────────
 
@@ -39,6 +39,10 @@ class _CommandBase(BaseModel):
     # serialize its real value to the agent over the wire — same rationale as
     # `AuthBlock.token`. NEVER log this field.
     completion_token: str | None = None
+    # Workflow execution that dispatched this command. Stamped at enqueue time so
+    # agent-side spans can carry workflow_id without a separate lookup. NULL for
+    # agent-scoped commands (ConfigUpdate) that do not correlate to a workflow.
+    workflow_execution_id: UUID | None = None
 
 
 # ── The five concrete AgentCommand kinds ────────────────────────────────
@@ -111,13 +115,27 @@ class AgentConfig(BaseModel):
     max_workspaces is the org/global default cap on concurrent Active workspaces.
     The OTLP fields carry the agent's telemetry export destination;
     otlp_token is treated as a secret and must not be logged.
+    environment is the OTel deployment.environment.name resource attribute,
+    sourced from Settings.environment (required at backend boot).
     """
 
     model_config = ConfigDict(frozen=True)
     max_workspaces: int = Field(ge=1)
-    otlp_endpoint: str = ""
-    otlp_token: str = ""  # Secret on the wire — never log this field.
-    otlp_dataset: str = ""
+    otlp_endpoint: str | None = None
+    otlp_token: SecretStr | None = None
+    otlp_dataset: str | None = None
+    environment: str | None = None
+
+    @field_serializer("otlp_token", when_used="json")
+    def _serialize_otlp_token(self, v: SecretStr | None) -> str | None:
+        """Unwrap the bearer at the JSON wire-encode boundary only.
+
+        Pydantic's default SecretStr JSON serialization emits '**********';
+        this serializer replaces it with the raw value so the agent receives
+        the actual token. Never called by model_dump() (Python mode) so
+        str/repr/model_dump stay redacted.
+        """
+        return v.get_secret_value() if v is not None else None
 
 
 class ConfigUpdateCommand(BaseModel):

@@ -67,8 +67,8 @@ services:
       timeout: 2s
       retries: 30
 
-  web:
-    image: yaaos-web-test
+  api:
+    image: yaaos-api-test
     build:
       context: ..
       dockerfile: apps/backend/Dockerfile
@@ -82,13 +82,13 @@ services:
       # Canonical public hostname — required for boot (agent identity-exchange
       # audience binding). The e2e suite stubs the coding agent, so this only
       # needs to satisfy the required Settings field.
-      YAAOS_PUBLIC_ORIGIN: http://web:8080
+      YAAOS_PUBLIC_ORIGIN: http://api:8080
       GITHUB_API_BASE_URL: http://fake-github:8080
       # Install-picker URL — the BROWSER follows this redirect, so it must
       # be the host-mapped fake-github URL, not the docker service name.
       GITHUB_WEB_BASE_URL: http://localhost:58081
       # Git clone origin — the AGENT container clones from this, so it must be
-      # the docker-internal service name (the host-mapped web URL above is
+      # the docker-internal service name (the host-mapped SPA URL above is
       # unreachable from inside the agent network).
       GITHUB_GIT_BASE_URL: http://fake-github:8080
       # Agent identity exchange: bootstrap_owner stamps the seeded org's
@@ -179,7 +179,7 @@ services:
       YAAOS_ENCRYPTION_KEY: vrGOcrqpNIMof1qsuwOEVYvgxo-03dCX8lfVXm_G4JI=
       APP_MODE: test
       ENVIRONMENT: test
-      YAAOS_PUBLIC_ORIGIN: http://web:8080
+      YAAOS_PUBLIC_ORIGIN: http://api:8080
       GITHUB_API_BASE_URL: http://fake-github:8080
       GITHUB_WEB_BASE_URL: http://localhost:58081
       # Git clone origin — docker-internal so the agent container can reach it.
@@ -236,7 +236,7 @@ services:
         # this arg, so that env var is inert there. See apps/agent/Dockerfile.
         BUILD_TAGS: agent_test
     environment:
-      YAAOS_BACKEND_URL: http://web:8080
+      YAAOS_BACKEND_URL: http://api:8080
       YAAOS_AGENT_VERSION: test
       AWS_EC2_METADATA_SERVICE_ENDPOINT: http://mock-aws:4566
       YAAOS_STS_ENDPOINT_URL: http://mock-aws:4566/
@@ -258,7 +258,7 @@ services:
       - ../apps/fake-claude/claude:/usr/local/bin/claude:ro
       - ../apps/fake-claude/scenarios:/opt/fake-claude/scenarios:ro
     depends_on:
-      web:
+      api:
         condition: service_started
       mock-aws:
         condition: service_healthy

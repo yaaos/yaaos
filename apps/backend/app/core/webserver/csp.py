@@ -20,7 +20,7 @@ Directive rationale per directive — verified against actual SPA load behavior:
 - `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com` — bundled CSS (self) + Google Fonts CSS (external) + Radix/Tailwind inject inline styles at runtime (popovers, animations).
 - `font-src 'self' https://fonts.gstatic.com` — Geist font files served from gstatic.
 - `img-src 'self' data:` — SPA logos at `/logos/*.svg` only; `data:` covers inline SVGs.
-- `connect-src 'self' https://ingress.europe-west4.gcp.dash0.com` — same-origin `/api/*` + SSE + Dash0 OTLP from the browser.
+- `connect-src 'self' https://ingress.us-west-2.aws.dash0.com` — same-origin `/api/*` + SSE + Dash0 OTLP from the browser.
 - `frame-ancestors 'none'` — yaaos is a tool, not meant to be embedded. Blocks clickjacking. Only honored via header, not `<meta>` — which is one of the two reasons we use a header.
 - `form-action 'self'` — every SPA form is JS-handler (`onSubmit`); no external `action=`.
 - `base-uri 'self'` — prevents `<base href>` injection.
@@ -42,7 +42,7 @@ _CSP_DIRECTIVES: tuple[str, ...] = (
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
-    "connect-src 'self' https://ingress.europe-west4.gcp.dash0.com",
+    "connect-src 'self' https://ingress.us-west-2.aws.dash0.com",
     "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'self'",

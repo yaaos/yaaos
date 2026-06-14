@@ -17,7 +17,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 
 export const YAAOS_URL = process.env.YAAOS_BASE_URL ?? "http://localhost:58080";
 export const FAKE_GITHUB_URL = process.env.FAKE_GITHUB_URL ?? "http://localhost:58081";
-export const YAAOS_INTERNAL_URL = process.env.YAAOS_INTERNAL_URL ?? "http://web:8080";
+export const YAAOS_INTERNAL_URL = process.env.YAAOS_INTERNAL_URL ?? "http://api:8080";
 
 async function jsonPost(url: string, body: unknown): Promise<Response> {
   const r = await fetch(url, {

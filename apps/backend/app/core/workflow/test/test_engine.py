@@ -177,7 +177,16 @@ async def test_start_creates_execution_row_and_routes_to_done(db_session) -> Non
     assert row.current_step_id is None
     assert row.pending_agent_command_id is None
     assert row.step_state == {}
-    assert row.otel_trace_context == "00-aabb-ccdd-01"
+    # otel_trace_context stores the workflow.run span's own traceparent (not the
+    # caller's), so it differs from the input "00-aabb-ccdd-01" but is still a
+    # well-formed W3C traceparent string. When no OTel SDK is active the span is
+    # INVALID and current_traceparent() returns None — accept both.
+    stored = row.otel_trace_context
+    if stored is not None:
+        assert stored.startswith("00-"), f"otel_trace_context is not a valid traceparent: {stored!r}"
+        assert stored != "00-aabb-ccdd-01", (
+            "otel_trace_context must store the workflow.run span's traceparent, not the caller's"
+        )
 
     # Draining proves the initial route_workflow task was enqueued and the
     # single-step workflow completes.

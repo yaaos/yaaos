@@ -11,11 +11,14 @@ import (
 // AgentConfig carries the typed configuration the control plane delivers via
 // ConfigUpdateCommand. Fields grow only by addition — never a map[string]any
 // bag. OTLPToken is a Secret so it never leaks into logs or serialized structs.
+// Environment is the OTel `deployment.environment.name` resource attribute,
+// plain string, never logged with the token.
 type AgentConfig struct {
 	MaxWorkspaces int
 	OTLPEndpoint  string
 	OTLPToken     secret.Secret
 	OTLPDataset   string
+	Environment   string
 }
 
 // ConfigUpdateCommand is the only AgentCommand today. It carries an AgentConfig

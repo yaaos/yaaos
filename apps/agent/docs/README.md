@@ -137,7 +137,7 @@ Logging fan-out (via `internal/observability`):
 
 - **stdout** — ECS awslogs driver → CloudWatch (`/yaaos/agent`, 30-day retention).
 - **rotated file** at `${YAAOS_LOG_DIR:-/var/log/yaaos-agent}/agent.log` — 50 MB / 10 backups / 3-day age (gzipped). Pull via `aws ecs execute-command`. If the directory is unwritable the agent warns and continues stdout-only.
-- **OTel collector** — when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; zero overhead otherwise.
+- **OTel collector** — when the backend's `ConfigUpdate` carries a non-empty `otlp_endpoint`; zero overhead otherwise.
 
 OTel signals (when endpoint is set):
 
@@ -151,7 +151,7 @@ OTel signals (when endpoint is set):
   - `yaaos.agent.connection.backoff_seconds{surface}`
 - **Logs** — every `slog` record fans to the collector via `otelslog` bridge.
 
-Resource attributes: `service.name=yaaos-workspace-agent`, `service.version`, `service.instance.id`. Standard OTel env vars apply (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED`).
+Resource attributes: `service.name=agent`, `service.version`, `service.instance.id`. The agent reads no `OTEL_*` env vars. Endpoint, token, dataset, and `deployment.environment.name` arrive from the backend's `ConfigUpdate` payload.
 
 ## Connection resilience
 

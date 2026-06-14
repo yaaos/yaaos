@@ -94,11 +94,15 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, ops command.Workspace
 func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops command.WorkspaceOps, now time.Time, enc *ipc.Encoder) protocol.AgentEvent {
 	header := cmd.Header()
 	ctx = tracing.ExtractContext(ctx, header.Traceparent)
-	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(header.Kind),
+	spanAttrs := []attribute.KeyValue{
 		attribute.String("workspace_id", header.WorkspaceID),
 		attribute.String("command_id", header.CommandID),
 		attribute.String("kind", string(header.Kind)),
-	)
+	}
+	if header.WorkflowExecutionID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("workflow_id", header.WorkflowExecutionID))
+	}
+	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(header.Kind), spanAttrs...)
 	childTP := tracing.InjectTraceparent(ctx)
 	if enc != nil {
 		ctx = ContextWithEmitter(ctx, newEncoderEmitter(enc, header.CommandID, childTP, header.CompletionToken, time.Now))

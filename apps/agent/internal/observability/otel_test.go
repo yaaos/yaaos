@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 // resetInstallState clears the package-global install flags so a test that
@@ -26,24 +27,28 @@ func resetInstallState(t *testing.T) {
 	liveLogBridge.setDelegate(nil)
 }
 
-func TestInit_NoEndpoint_NoOp(t *testing.T) {
+func TestInit_AlwaysNoOp_ReturnsLiveLogBridge(t *testing.T) {
 	resetInstallState(t)
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	res, err := Init(context.Background(), Config{ServiceVersion: "test"})
+
+	// Set OTEL_EXPORTER_OTLP_ENDPOINT to confirm Init ignores it.
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://should-be-ignored.example.com")
+
+	result, err := Init(context.Background(), Config{ServiceVersion: "test"})
 	if err != nil {
-		t.Fatalf("Init no-op should not error: %v", err)
+		t.Fatalf("Init: %v", err)
 	}
-	if res == nil {
-		t.Fatal("Result must not be nil")
+	if result == nil {
+		t.Fatal("Init returned nil result")
 	}
-	if res.SlogHandler == nil {
-		t.Fatal("Init must always return the live log bridge, even in no-op mode")
+	if result.SlogHandler == nil {
+		t.Error("Init result.SlogHandler is nil; expected live log bridge")
 	}
-	if res.Shutdown == nil {
-		t.Fatal("Shutdown must not be nil")
-	}
-	if err := res.Shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown error: %v", err)
+
+	installMu.Lock()
+	wasInstalled := installed
+	installMu.Unlock()
+	if wasInstalled {
+		t.Error("Init installed providers; expected telemetry-dark until BindExporter")
 	}
 }
 
@@ -64,13 +69,11 @@ func TestBindExporter_InstallsExporter_TracesAndMetricsExport(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
-	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "100") // 100 ms, not the 30 s default
+	setMetricExportIntervalForTests(t, 100*time.Millisecond)
 
 	ctx := context.Background()
 
-	// Startup ran with no env endpoint → no-op Init. Capture identity cfg.
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	// Startup ran without BindExporter — Init is always a no-op. Capture identity cfg.
 	res, err := Init(ctx, Config{ServiceVersion: "test"})
 	if err != nil {
 		t.Fatalf("Init no-op: %v", err)
@@ -80,7 +83,7 @@ func TestBindExporter_InstallsExporter_TracesAndMetricsExport(t *testing.T) {
 	}
 
 	// ConfigUpdate delivers the endpoint → BindExporter installs the pipeline.
-	BindExporter(ctx, srv.URL, "tok-123", "yaaos-dataset")
+	BindExporter(ctx, srv.URL, "tok-123", "yaaos-dataset", "")
 
 	// The pipeline must now be marked installed (not a logging-only stub).
 	installMu.Lock()
@@ -126,7 +129,7 @@ func TestBindExporter_InstallsExporter_TracesAndMetricsExport(t *testing.T) {
 
 func TestBindExporter_EmptyEndpoint_NoOp(t *testing.T) {
 	resetInstallState(t)
-	BindExporter(context.Background(), "", "", "")
+	BindExporter(context.Background(), "", "", "", "")
 	installMu.Lock()
 	got := installed
 	installMu.Unlock()
@@ -135,68 +138,85 @@ func TestBindExporter_EmptyEndpoint_NoOp(t *testing.T) {
 	}
 }
 
-func TestInit_WithMockReceiver_TracesAndMetricsAndLogs(t *testing.T) {
+// TestBindExporter_StampsDeploymentEnvironmentName verifies that BindExporter
+// late-binds the environment string into startupCfg, and that buildResource
+// subsequently produces a resource carrying deployment.environment.name=staging.
+// Uses the simpler direct-inspection form (no OTLP protobuf roundtrip) because
+// the existing httptest receiver infrastructure does not decode resource attributes.
+func TestBindExporter_StampsDeploymentEnvironmentName(t *testing.T) {
 	resetInstallState(t)
-	var traceHits, metricHits, logHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/traces":
-			traceHits.Add(1)
-		case "/v1/metrics":
-			metricHits.Add(1)
-		case "/v1/logs":
-			logHits.Add(1)
-		}
+	setMetricExportIntervalForTests(t, 100*time.Millisecond)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
 
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", srv.URL)
-	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
-	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "100") // 100 ms, not the 30 s default
+	_, _ = Init(context.Background(), Config{ServiceVersion: "test", InstanceID: "i-1"})
+	BindExporter(context.Background(), srv.URL, "tok", "dataset", "staging")
 
-	ctx := context.Background()
-	res, err := Init(ctx, Config{ServiceVersion: "test", InstanceID: "task-test-42"})
+	// Verify the late-bind stored the environment in startupCfg.
+	installMu.Lock()
+	env := startupCfg.Environment
+	installMu.Unlock()
+	if env != "staging" {
+		t.Errorf("startupCfg.Environment = %q after BindExporter, want %q", env, "staging")
+	}
+
+	// Verify buildResource includes the attribute when Environment is non-empty.
+	res, err := buildResource(Config{ServiceVersion: "test", InstanceID: "i-1", Environment: "staging"})
 	if err != nil {
-		t.Fatalf("Init: %v", err)
+		t.Fatalf("buildResource: %v", err)
 	}
-	t.Cleanup(func() { _ = res.Shutdown(context.Background()) })
-
-	// Trace.
-	_, span := otel.Tracer("test").Start(ctx, "test.span")
-	span.End()
-
-	// Metric.
-	Metrics().CommandsClaimed.Add(ctx, 1)
-
-	// Log — drive through the handler the SDK plugged into the logging
-	// fan-out. Building a real slog.Record via a *slog.Logger is the
-	// least flaky path.
-	if res.SlogHandler == nil {
-		t.Fatal("expected non-nil slog handler when endpoint is set")
+	attrs := res.Attributes()
+	wantKey := semconv.DeploymentEnvironmentName("staging").Key
+	for _, kv := range attrs {
+		if kv.Key == wantKey {
+			if got := kv.Value.AsString(); got != "staging" {
+				t.Errorf("deployment.environment.name = %q, want %q", got, "staging")
+			}
+			_ = shutdownInstalled(context.Background())
+			return
+		}
 	}
-	l := slog.New(res.SlogHandler)
-	l.InfoContext(ctx, "hello.from.otel")
+	t.Errorf("resource missing deployment.environment.name attribute; attrs = %v", attrs)
+	_ = shutdownInstalled(context.Background())
+}
 
-	// Shutdown forces flush.
-	if err := res.Shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown: %v", err)
+// TestBindExporter_EmptyEnvironment_OmitsAttribute verifies that when BindExporter
+// is called with an empty environment string, buildResource does NOT include a
+// deployment.environment.name attribute (avoids stamping an explicit "" tag).
+func TestBindExporter_EmptyEnvironment_OmitsAttribute(t *testing.T) {
+	resetInstallState(t)
+	setMetricExportIntervalForTests(t, 100*time.Millisecond)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, _ = Init(context.Background(), Config{ServiceVersion: "test", InstanceID: "i-1"})
+	BindExporter(context.Background(), srv.URL, "tok", "dataset", "")
+
+	// Verify the late-bind stored the empty environment in startupCfg.
+	installMu.Lock()
+	env := startupCfg.Environment
+	installMu.Unlock()
+	if env != "" {
+		t.Errorf("startupCfg.Environment = %q after BindExporter with empty env, want %q", env, "")
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if traceHits.Load() > 0 && metricHits.Load() > 0 && logHits.Load() > 0 {
+	// Verify buildResource omits the attribute when Environment is empty.
+	res, err := buildResource(Config{ServiceVersion: "test", InstanceID: "i-1", Environment: ""})
+	if err != nil {
+		t.Fatalf("buildResource: %v", err)
+	}
+	wantKey := semconv.DeploymentEnvironmentName("").Key
+	for _, kv := range res.Attributes() {
+		if kv.Key == wantKey {
+			t.Errorf("resource carries deployment.environment.name=%q; want attribute absent", kv.Value.AsString())
 			break
 		}
-		time.Sleep(20 * time.Millisecond) // reason: real OTLP/HTTP export to httptest.Server — goroutine blocked on OS network I/O, not durably blocked in synctest sense.
 	}
-	if traceHits.Load() == 0 {
-		t.Errorf("no /v1/traces POSTs observed")
-	}
-	if metricHits.Load() == 0 {
-		t.Errorf("no /v1/metrics POSTs observed")
-	}
-	if logHits.Load() == 0 {
-		t.Errorf("no /v1/logs POSTs observed")
-	}
+	_ = shutdownInstalled(context.Background())
 }

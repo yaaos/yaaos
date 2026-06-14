@@ -32,7 +32,7 @@ def test_csp_header_present_in_report_only_mode(monkeypatch: pytest.MonkeyPatch)
     policy = resp.headers["Content-Security-Policy-Report-Only"]
     assert "default-src 'self'" in policy
     assert "script-src 'self'" in policy
-    assert "https://ingress.europe-west4.gcp.dash0.com" in policy
+    assert "https://ingress.us-west-2.aws.dash0.com" in policy
     assert "https://fonts.gstatic.com" in policy
     assert "frame-ancestors 'none'" in policy
 
@@ -57,7 +57,7 @@ def test_csp_header_present_in_enforce_mode(monkeypatch: pytest.MonkeyPatch) -> 
     assert "Content-Security-Policy-Report-Only" not in resp.headers
     policy = resp.headers["Content-Security-Policy"]
     assert "default-src 'self'" in policy
-    assert "https://ingress.europe-west4.gcp.dash0.com" in policy
+    assert "https://ingress.us-west-2.aws.dash0.com" in policy
 
     get_settings.cache_clear()
 

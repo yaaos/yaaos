@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.saml import generate_sp_keypair as _generate_sp_keypair
@@ -177,7 +179,11 @@ def run_assertion_verifier(saml_response: str, idp_metadata_xml: str) -> dict | 
     for fn in _verifiers:
         try:
             out = fn(saml_response, idp_metadata_xml)
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: SSO callback FastAPI span is active
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception("orgs.sso.verifier_failed")
             continue
         if out is not None:

@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core import redis as redis_client
+from app.core.observability import spawn
 
 log = structlog.get_logger("core.sse")
 
@@ -73,10 +74,6 @@ class GeneralEventKind(StrEnum):
 # ---------------------------------------------------------------------------
 
 _GENERAL_AFTER_COMMIT_KEY = "yaaos_sse_general_pending"
-
-# Strong refs to in-flight publish_general() tasks so asyncio doesn't GC them
-# mid-fan-out (Python's event loop only holds weak refs to create_task tasks).
-_inflight_general_tasks: set[asyncio.Task[None]] = set()
 
 
 def _channel_for_general(org_id: UUID) -> str:
@@ -115,7 +112,7 @@ def publish_general_after_commit(
 
     Rollback silently discards the stashed entry — rolled-back transactions
     never emit SPA events. No await needed at the call site; the flush runs
-    on the next event-loop tick after commit via `asyncio.create_task`.
+    fire-and-forget via `spawn()` on the next event-loop tick after commit.
     """
     pending: list[tuple[UUID, GeneralEventKind, dict[str, Any]]] = session.sync_session.info.setdefault(
         _GENERAL_AFTER_COMMIT_KEY, []
@@ -131,16 +128,14 @@ def _flush_general_pending(sync_session: Session) -> None:
     if not pending:
         return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         # No running loop — should not happen in production (AsyncSession.commit
         # is awaited). Drop with a warning rather than crash the commit path.
         log.warning("sse.general.flush.no_loop", count=len(pending))
         return
     for org_id, kind, payload in pending:
-        task = loop.create_task(publish_general(org_id=org_id, kind=kind, payload=payload))
-        _inflight_general_tasks.add(task)
-        task.add_done_callback(_inflight_general_tasks.discard)
+        spawn("sse.publish_general", publish_general(org_id=org_id, kind=kind, payload=payload))
 
 
 def subscribe_general(org_id: UUID) -> AsyncIterator[dict[str, Any]]:

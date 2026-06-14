@@ -415,13 +415,38 @@ A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ..
 
 ### When to add a manual span
 
-Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`). Add manual spans only at meaningful boundaries:
+Auto-instrumentation covers most paths (HTTP + SQLAlchemy via OTel contrib; background coroutines via `spawn`; httpx via `HTTPXClientInstrumentor` installed in `core/observability._configure_otel`). Add manual spans only at meaningful boundaries:
 
-- Every external call — VCS API, coding-agent CLI, webhook signature verification.
-- Every plugin entry point — `VCSPlugin.post_finding`, `VCSPlugin.post_comment`, `CodingAgentPlugin.review`, `WorkspaceProvider.provision`.
+- Every external call — VCS API, coding-agent CLI, webhook signature verification. **VCS calls are already spanned by `core/vcs` dispatch helpers** (`vcs.{plugin_id}.{op}`); callers must use those helpers rather than calling `get_plugin(id).method(...)` directly. The httpx calls inside each plugin method appear as auto-instrumented child spans under the VCS dispatch span. **Coding-agent IO calls are already spanned by `core/coding_agent` dispatch functions** (`coding_agent.{plugin_id}.{op}`); callers must use `core/coding_agent.review(...)` and siblings rather than calling `get_plugin(id).review(...)` directly. See [core_coding_agent.md § Dispatch spans](core_coding_agent.md#dispatch-spans). **AgentCommand dispatches are already spanned by `core/agent_gateway.enqueue_command`** (`agent_command.dispatch.{kind}`); all callers must go through `enqueue_command` — no direct inserts into `agent_commands`. See [core_agent_gateway.md § Dispatch spans](core_agent_gateway.md#dispatch-spans).
+- Every plugin entry point — `WorkspaceProvider.provision` (VCS and coding-agent Protocol methods are covered by the dispatch helpers above).
 - Long phases inside a background coro — review_job phase transitions each get a span so the trace shows where wall time went.
 
 Don't wrap every domain function — noise hurts more than detail helps.
+
+### Exception visibility — `record_exception` rule
+
+**Any `except` clause that does not re-raise must call `span.record_exception(exc)` + `span.set_status(ERROR, ...)` on the active span before returning.** Without this, OTel sees the span close without status and the error is invisible in traces even though a log line was emitted.
+
+Canonical shape: `span.record_exception(exc)` → `span.set_status(StatusCode.ERROR, str(exc))` → `log.exception(...)`. Reference: `apps/backend/app/core/observability/spawn.py:56`.
+
+Two enforced sites:
+
+- **`workflow.command.{kind}` in `core/workflow/service.py`** — opened for every command category at the dispatch site. `_start_step_impl` wraps Workspace `dispatch()` calls; `_safe_execute` wraps Local/HITL `execute()` calls. Both follow the same contract: on exception `record_exception` + `set_status(ERROR)` on the child span and propagate ERROR to the outer taskiq task span; on `Outcome.failure(reason=...)` `set_status(ERROR, reason)` on both spans with no exception event; on success spans left at UNSET status.
+- **FastAPI catch-all in `core/webserver/app_factory.py`** — the `@app.exception_handler(Exception)` handler calls `trace.get_current_span().record_exception(exc)` + `set_status(ERROR, "internal_server_error")` before logging and returning the 500 JSON. This marks the HTTP request span red in Dash0 so unhandled server errors are visible in traces, not just logs.
+
+Signal-selection order when adding observability to a new catch site:
+
+1. **Attribute** — if the error is expected and queryable (e.g. auth failures with a typed exception), set a span attribute (`span.set_attribute("error.kind", "auth_failure")`).
+2. **Child span** — for a unit of work with its own identity (e.g. `WorkflowCommand.execute`), open a child span and record the error there; propagate status to the outer span.
+3. **Log** — always emit at least a log line (exception log for unexpected errors; warn for expected but notable).
+
+**Grep recipe** to find non-re-raising catches that may be missing span recording: `rg "except Exception|except:" apps/backend/app/`. Review each hit — if it doesn't call `record_exception`, it should (or the exception should be re-raised).
+
+**Test infra** — `app.testing.observability.span_capture()` is the standard context manager for asserting span state in service tests. It installs an `InMemorySpanExporter` with a `SimpleSpanProcessor` on the current global `TracerProvider` and yields the exporter. Call `.get_finished_spans()` after the `with` block. Never import `span_capture` from production code — it lives under `app/testing/` exclusively.
+
+### Two bearer tokens — never cross
+
+The backend's own OTLP bearer (`YAAOS_BACKEND_DASH0_BEARER_TOKEN` → `Settings.yaaos_backend_dash0_bearer_token`) and the agent's OTLP bearer (`YAAOS_AGENT_DASH0_BEARER_TOKEN` → `Settings.yaaos_agent_dash0_bearer_token`) serve distinct principals and must never be swapped. Both are `SecretStr | None`; both unwrap only at their respective wire-encode boundaries. The backend bearer is consumed only inside `core/observability._configure_otel`; the agent bearer is consumed only inside `core/agent_gateway._build_config_update` (forwarded to the agent as `AgentConfig.otlp_token`).
 
 ## ContextVar-bound registries — test isolation model
 

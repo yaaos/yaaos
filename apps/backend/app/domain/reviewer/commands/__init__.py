@@ -16,6 +16,8 @@ from typing import Any
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
@@ -46,7 +48,11 @@ def _activity_publisher_for(ctx: CommandContext):  # type: ignore[no-untyped-def
                 workflow_execution_id=UUID(ctx.workflow_execution_id),
                 payload=event.model_dump(mode="json"),
             )
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: workflow.command.* span is active when callback fires
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception(
                 "workspace_review.activity_publish_failed",
                 workflow_execution_id=ctx.workflow_execution_id,
@@ -125,6 +131,10 @@ class CodeReview:
         try:
             invocation = await plugin.build_review_invocation(review_ctx, session=session)
         except Exception as exc:
+            # inside-span failure: workflow.start_step outer span is active during dispatch
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception(
                 "code_review.build_invocation_failed",
                 workflow_execution_id=ctx.workflow_execution_id,
@@ -140,7 +150,7 @@ class CodeReview:
             org_id=owner.org_id,
             agent_id=owner.owning_agent_id,
             invocation=invocation.model_dump(mode="json"),
-            traceparent=ctx.traceparent or "",
+            traceparent="",
             session=session,
             workflow_execution_id=_UUID(ctx.workflow_execution_id),
         )
@@ -262,6 +272,10 @@ class SecretsScan:
         try:
             ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
         except Exception as exc:
+            # inside-span failure: workflow.command.SecretsScan span is active
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception(
                 "secrets_scan.context_fetch_failed",
                 workflow_execution_id=ctx.workflow_execution_id,
@@ -271,18 +285,17 @@ class SecretsScan:
         if ticket_ctx is None or ticket_ctx.pr_id is None:
             return Outcome.success(outputs={"rule_id": None})
 
-        from app.core.vcs import get_plugin as get_vcs_plugin  # noqa: PLC0415
+        from app.core import vcs as _vcs  # noqa: PLC0415
         from app.domain.reviewer.secrets_detection import (  # noqa: PLC0415
             detect_secrets,
             secrets_warning_body,
         )
 
         try:
-            vcs_plugin = get_vcs_plugin(ticket_ctx.plugin_id)
             pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
             if not pr_external_id:
                 return Outcome.success(outputs={"rule_id": None})
-            diff = await vcs_plugin.fetch_diff(ticket_ctx.org_id, pr_external_id)
+            diff = await _vcs.fetch_diff(ticket_ctx.plugin_id, ticket_ctx.org_id, pr_external_id)
         except Exception as exc:
             log.warning(
                 "secrets_scan.diff_fetch_failed",
@@ -296,10 +309,14 @@ class SecretsScan:
             return Outcome.success(outputs={"rule_id": None})
 
         try:
-            await vcs_plugin.post_comment(
-                ticket_ctx.org_id, pr_external_id, body=secrets_warning_body(rule_id)
+            await _vcs.post_comment(
+                ticket_ctx.plugin_id, ticket_ctx.org_id, pr_external_id, body=secrets_warning_body(rule_id)
             )
-        except Exception:
+        except Exception as exc:
+            # inside-span failure: workflow.command.SecretsScan span is active
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception(
                 "secrets_scan.post_warning_failed",
                 workflow_execution_id=ctx.workflow_execution_id,
@@ -417,6 +434,10 @@ class PostFindings(_LocalReviewCommand):
         except ValueError as exc:
             return Outcome.failure(reason=f"finding validation failed: {exc}")
         except Exception as exc:
+            # inside-span failure: workflow.command.PostFindings span is active
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(StatusCode.ERROR, str(exc))
             log.exception(
                 "post_findings.failed",
                 workflow_execution_id=ctx.workflow_execution_id,

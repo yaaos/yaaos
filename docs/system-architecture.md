@@ -15,7 +15,7 @@
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
 - Claude Code CLI runs inside the WorkspaceAgent container (customer-deployed); spawned once per review by the agent. The CLI owns all LLM calls — the backend makes zero direct LLM calls and never execs the CLI in-process.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
-- OTel collector optional; backend `core/observability` skips SDK setup if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The web SPA also runs an OTel SDK (`core/observability`); export is triple-gated on `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET`.
+- OTel collector optional; backend `core/observability` attaches OTLP exporters only when `YAAOS_DASH0_ENDPOINT`, `YAAOS_DASH0_DATASET`, and `YAAOS_BACKEND_DASH0_BEARER_TOKEN` are all set. The web SPA also runs an OTel SDK (`core/observability`); export is triple-gated on `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET`.
 
 ## Inter-app flows
 
@@ -164,7 +164,7 @@ Two static specs are committed under `apps/backend/openapi/`:
 - Web SPA runs `@opentelemetry/sdk-trace-web`. `FetchInstrumentation` injects a W3C `traceparent` header on same-origin `/api/*` fetches — browser spans become children of the backend trace automatically. Cross-origin fetches (collector, CDN, third-party) never receive `traceparent`.
 - `FastAPIInstrumentor` on the backend extracts `traceparent` and continues the same trace. The backend stamps `yaaos.org_id`/`yaaos.user_id` on its spans authoritatively from session context.
 - **No baggage crosses the wire.** Identity is stamped independently on each side. `traceparent` is the only cross-wire trace context.
-- Backend export is gated on `OTEL_EXPORTER_OTLP_ENDPOINT`. Web export is triple-gated: `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET` must all be set; any missing field falls back to a no-op span processor. All three are `VITE_*` vars (embedded in the bundle at build time); the auth token must be a web-signal-restricted, ingest-only Dash0 token.
+- Backend export requires `YAAOS_DASH0_ENDPOINT` + `YAAOS_DASH0_DATASET` + `YAAOS_BACKEND_DASH0_BEARER_TOKEN` (three-way AND). Web export is triple-gated: `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET` must all be set; any missing field falls back to a no-op span processor. All three are `VITE_*` vars (embedded in the bundle at build time); the auth token must be a web-signal-restricted, ingest-only Dash0 token.
 
 ### Dumb frontend
 

@@ -39,6 +39,31 @@
 - **`Workflow.finalizer_step_id`** — optional step id; when set the engine routes to that step on terminal-fail (before recording `failed`). One-shot per execution. Absent / already-fired flag lives in `step_state[__finalizer_fired__]`.
 - **Recovery-policy insertion (Tier-1)** — engine checks `core/workflow.get_recovery_policy(label)` (via `app/core/workflow/recovery.py`) before Tier-2 retry; appends a synthetic recovery step and resets the failed step's attempt counter. Producers (e.g. `core/workspace`) register their policies via an explicit startup call (`register_workspace_recovery_policies()`), not at import time — both `web.py` and `worker.py` call this after importing workspace.
 
+## Observability — span inventory
+
+All spans emitted by `core/workflow`. Every span carries `org_id` + `yaaos.workflow_id` via the `YaaosDimensionsSpanProcessor` after those values are set on the context.
+
+| Span name | Parent | Where | Notable attributes |
+|---|---|---|---|
+| `workflow.run.<workflow_name>` | caller's `traceparent` (e.g. the intake request span) | `service.py` `WorkflowEngine.start` | `workflow.name`, `workflow.execution_id`, `workflow.version`; closes when `engine.start()` returns |
+| `workflow.command.<Kind>` | taskiq's auto-span `task:workflow.start_step` | `service.py` `_start_step_impl` (Workspace) and `_safe_execute` (Local/HITL) — same name for all categories | `command.kind`, `command.category`, `workflow.step_id`, `workflow.attempt`; `StatusCode.ERROR` on raise or `Outcome.failure`; for Workspace commands the span closes before `dispatch()` returns so `agent_command.dispatch.<Kind>` is a child of it |
+| `workflow.handle_agent_event` | upstream `traceparent` arg (agent's terminal-event request span) | `service.py` `handle_agent_event` task body | `workflow.outcome_label` |
+
+`start_step` and `route_workflow` hops are visible as taskiq's auto-emitted `task:workflow.start_step` and `task:workflow.route_workflow` spans. No redundant custom span is opened for either. `completed_step_id` and `outcome_label` are stamped as attributes on the `task:workflow.route_workflow` span via `trace.get_current_span()`.
+
+**`otel_trace_context` semantics:** `workflow_executions.otel_trace_context` stores the `workflow.run.<name>` span's own traceparent — not the caller's upstream traceparent. Task bodies use this value when enqueueing downstream tasks so all `start_step` invocations nest under the run span trace, not under the intake request or the agent's HTTP POST.
+
+## Trace propagation
+
+`workflow_executions.otel_trace_context` is the **single source of truth** for the `workflow.run.<name>` span's traceparent. Every engine task body that enqueues a downstream task reads it off the loaded `wfx` row:
+
+- **`_start_step_impl` Local branch** — enqueues `route_workflow` with `traceparent=wfx.otel_trace_context`.
+- **`_handle_agent_event_impl`** — enqueues `route_workflow` with `traceparent=wfx.otel_trace_context`. Critical site: the caller's traceparent is the agent's HTTP POST request span (a different trace); ignoring it keeps all subsequent command spans nested under `workflow.run.*`.
+- **`_enqueue_start_step`** — enqueues `start_step` with `traceparent=wfx.otel_trace_context` on every call path (entry step, retry, recovery, finalizer, append queue, static transition).
+- **`resume_hitl`** — follows the same pattern; serves as the canonical reference.
+
+The `traceparent` argument on taskiq task signatures is preserved for backwards-compatibility with in-flight rows but task bodies overwrite it from `wfx.otel_trace_context` after loading. The result: all `workflow.command.<Kind>` spans in a `pr_review_v1` run belong to the `workflow.run.pr_review_v1` trace in Dash0, regardless of which process or HTTP request triggered each enqueue.
+
 ## Data owned
 
 - `workflow_executions` — indexes on `state`, `pending_agent_command_id`, `ticket_id`. `failure_reason TEXT` column (nullable; added migration 041). Migration 015 (table).
@@ -55,3 +80,7 @@
 `test/test_state_machine.py::test_finalizer_runs_then_workflow_records_failed` — finalizer with `"success": COMPLETE_WORKFLOW` in its own transitions still ends in `FAILED`, not `DONE` (production-shape coverage).
 `test/test_run_views_service.py` — `list_run_views_for_ticket` projection: state derivation across done/running/pending/failed/skipped branches, terminal-execution-no-outcome resolves to pending (not running), oldest-first ordering, unknown workflow yields empty step tuple.
 `test/test_state_changed_sse_service.py` — every transition emits `workflow_state_changed`; the failure path also emits `state=failed`. Catches the most common regression — adding a new state assignment without wiring the publish.
+`test/test_workflow_run_root_span.py` — `engine.start()` emits a finished `workflow.run.<name>` span parented to the caller's traceparent, with correct attributes; `otel_trace_context` stores the run span's own traceparent (not the caller's).
+`test/test_workspace_command_span.py` — Workspace branch of `_start_step_impl` emits `workflow.command.<Kind>`; `CommandContext.traceparent` passed to `dispatch()` is the command span's own traceparent; dispatch raise → span ERROR + exception event; Local path carries `command.category="local"` attribute.
+`test/test_trace_hierarchy_service.py` — all `workflow.command.<Kind>` spans share the upstream trace_id even when `handle_agent_event` is triggered with a foreign traceparent (the agent's HTTP POST context); regression pin for the pure-Local path.
+`test/test_step_id_attempt_on_command_span.py` — `workflow.command.<Kind>` span carries `workflow.step_id` and `workflow.attempt` on both Local and Workspace branches.
