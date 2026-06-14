@@ -141,13 +141,23 @@ class AgentConfig(BaseModel):
 class ConfigUpdateCommand(BaseModel):
     """Agent-scoped command that delivers runtime config. Carries no workspace_id
     — the agent applies it globally. Workspace commands are gated until the
-    agent receives at least one ConfigUpdate."""
+    agent receives at least one ConfigUpdate.
+
+    `completion_token` follows the same bearer-token discipline as workspace
+    commands: minted at claim, echoed on the terminal AgentEvent, verified by
+    hash in `record_agent_event`. NULL when the field is absent on the wire
+    (pre-token agent versions).
+    """
 
     model_config = ConfigDict(frozen=True)
     command_id: UUID
     traceparent: str
     kind: Literal[AgentCommandKind.CONFIG_UPDATE] = AgentCommandKind.CONFIG_UPDATE
     config: AgentConfig
+    # Per-command completion capability token — minted at claim, echoed back on
+    # the terminal AgentEvent. Plain str; must serialize its real value to the
+    # agent over the wire. NEVER log this field.
+    completion_token: str | None = None
 
 
 AgentCommand = Annotated[
@@ -308,17 +318,17 @@ class GatewayError(Exception):
 
 
 class StaleClaimError(GatewayError):
-    """Raised when an event's `command_id` no longer matches the workspace's
-    `current_command_id`. Endpoint maps this to `stale_claim_dropped` outcome."""
+    """Raised when an event's `command_id` no longer matches a live command row
+    (already retired, or token mismatch). The endpoint maps this to `410 Gone` —
+    every 410 on `/events` is a real stale-claim, paging-worthy in steady state."""
 
 
 class CommandEventAck(BaseModel):
-    """Response body for `POST /api/v1/commands/{id}/events`.
+    """Response body for a successful `POST /api/v1/commands/{id}/events`.
 
-    `command_event_outcome` classifies what the backend did with the event:
-    - `event_recorded` — persisted and any workflow side-effects fired.
-    - `stale_claim_dropped` — backend no longer holds this command's claim;
-      agent treats this as a successful no-op and stops retrying.
+    `command_event_outcome` is `event_recorded` — the event was persisted and any
+    workflow side-effects fired. The stale-claim case does not return this body;
+    it returns `410 Gone` with `{"error": "stale_claim"}`.
     """
 
     command_event_outcome: str

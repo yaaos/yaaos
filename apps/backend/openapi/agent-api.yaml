@@ -648,6 +648,14 @@ components:
           enum: [ConfigUpdate]
         config:
           $ref: '#/components/schemas/AgentConfig'
+        completion_token:
+          type: string
+          nullable: true
+          description: |
+            Per-command capability token minted at claim. Agent echoes it on
+            the terminal AgentEvent; backend verifies it by hash before
+            accepting the event. Absent when the command was not claimed via
+            the normal FIFO path.
 
     AgentEvent:
       type: object

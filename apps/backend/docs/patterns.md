@@ -448,7 +448,7 @@ Signal-selection order when adding observability to a new catch site:
 
 ### Two bearer tokens — never cross
 
-The backend's own OTLP bearer (`YAAOS_BACKEND_DASH0_BEARER_TOKEN` → `Settings.yaaos_backend_dash0_bearer_token`) and the agent's OTLP bearer (`YAAOS_AGENT_DASH0_BEARER_TOKEN` → `Settings.yaaos_agent_dash0_bearer_token`) serve distinct principals and must never be swapped. Both are `SecretStr | None`; both unwrap only at their respective wire-encode boundaries. The backend bearer is consumed only inside `core/observability._configure_otel`; the agent bearer is consumed only inside `core/agent_gateway._build_config_update` (forwarded to the agent as `AgentConfig.otlp_token`).
+The backend's own OTLP bearer (`YAAOS_BACKEND_DASH0_BEARER_TOKEN` → `Settings.yaaos_backend_dash0_bearer_token`) and the agent's OTLP bearer (`YAAOS_AGENT_DASH0_BEARER_TOKEN` → `Settings.yaaos_agent_dash0_bearer_token`) serve distinct principals and must never be swapped. Both are `SecretStr | None`; both unwrap only at their respective wire-encode boundaries. The backend bearer is consumed only inside `core/observability._configure_otel`; the agent bearer is consumed only inside `core/agent_gateway._build_config_update_dto` (forwarded to the agent as `AgentConfig.otlp_token` on the ConfigUpdate row enqueued at identity exchange).
 
 ## ContextVar-bound registries — test isolation model
 

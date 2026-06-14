@@ -230,8 +230,13 @@ async def get_command_workflow_execution_id(
     return row[0]
 
 
-def _build_config_update() -> ConfigUpdateCommand:
-    """Build a ConfigUpdateCommand from the global settings."""
+def _build_config_update_dto() -> ConfigUpdateCommand:
+    """Construct a ConfigUpdateCommand DTO from current Settings.
+
+    No DB side effect. Used by `enqueue_config_update_for_agent` and by tests
+    that need to inspect the settings → AgentConfig mapping without going
+    through the claim channel.
+    """
     from uuid import uuid4  # noqa: PLC0415
 
     from app.core.config import get_settings  # noqa: PLC0415
@@ -248,6 +253,44 @@ def _build_config_update() -> ConfigUpdateCommand:
             environment=settings.environment,
         ),
     )
+
+
+async def enqueue_config_update_for_agent(
+    agent_id: UUID,
+    *,
+    org_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Insert a ConfigUpdate command row for the given agent in the caller's transaction.
+
+    Called during identity exchange alongside `ensure_agent_row` so the agent
+    can claim its runtime configuration via the normal FIFO claim path. Enqueues
+    unconditionally — duplicate ConfigUpdate rows are harmless since `ApplyConfig`
+    is idempotent (last-write-wins on the agent side). The row gets a real PK
+    (UUIDv7), is pre-stamped with `agent_id` so the unconfigured claim SELECT
+    finds it without a `workspace_ids` sweep, and carries a non-null
+    `completion_token_hash` placeholder — `claim_next` overwrites the hash with
+    a freshly-minted one before returning to the agent. The placeholder keeps
+    the row outside the `completion_token_hash IS NULL` carve-out used only by
+    test-seeded rows.
+
+    Caller commits.
+    """
+    cmd = _build_config_update_dto()
+    # Pre-stamp the agent_id so the unconfigured claim SELECT finds it without
+    # a workspace_ids sweep. `enqueue_command` leaves agent_id NULL; we patch it
+    # immediately after — also setting a placeholder `completion_token_hash`
+    # (claim-time mint overwrites it).
+    await enqueue_command(org_id=org_id, command=cmd, session=session)
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+    await session.execute(
+        update(AgentCommandRow)
+        .where(AgentCommandRow.id == cmd.command_id)
+        .values(agent_id=agent_id, completion_token_hash=placeholder_hash)
+    )
+    await session.flush()
 
 
 def _row_to_command(row: object) -> AgentCommand:
@@ -275,9 +318,11 @@ async def claim_next(
     """Claim exactly one command for the agent — the highest-priority eligible row.
 
     Lifecycle gate:
-    - `unconfigured` → return a single ConfigUpdateCommand (no DB claim).
-      The pending queue is untouched so commands accumulate while the agent
-      bootstraps.
+    - `unconfigured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across
+      pending ConfigUpdate rows pre-stamped to this agent (FIFO by UUIDv7 id).
+      Returns None when no ConfigUpdate row is pending for this agent. The rest
+      of the queue is untouched so non-ConfigUpdate commands accumulate while
+      the agent bootstraps.
     - `configured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across the
       eligible set (FIFO by UUIDv7 id):
         * A pending unassigned ProvisionWorkspace (status=pending, agent_id NULL,
@@ -293,45 +338,23 @@ async def claim_next(
     `wait_seconds=0` → non-blocking peek (returns None immediately if nothing
     claimable). Non-zero `wait_seconds` → short-interval re-SELECT loop.
     """
-    if lifecycle == "unconfigured":
-        return _build_config_update()
-
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
     now = datetime.now(UTC)
     row: AgentCommandRow | None = None
 
-    # Try unassigned ProvisionWorkspace first (capacity for new workspaces).
-    if new_workspaces > 0:
+    if lifecycle == "unconfigured":
+        # Unconfigured agents may only claim their pending ConfigUpdate row.
+        # `enqueue_config_update_for_agent` pre-stamps `agent_id` so this
+        # SELECT finds it without a workspace_ids sweep.
         row = (
             (
                 await session.execute(
                     select(AgentCommandRow)
                     .where(
                         AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
-                        AgentCommandRow.agent_id.is_(None),
-                    )
-                    .order_by(AgentCommandRow.id)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-            )
-            .scalars()
-            .one_or_none()
-        )
-
-    # If no ProvisionWorkspace, try the oldest pending command pinned to this agent
-    # for any of the named workspaces.
-    if row is None and workspace_ids:
-        row = (
-            (
-                await session.execute(
-                    select(AgentCommandRow)
-                    .where(
-                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
                         AgentCommandRow.agent_id == agent_id,
-                        AgentCommandRow.workspace_id.in_(workspace_ids),
                     )
                     .order_by(AgentCommandRow.id)
                     .limit(1)
@@ -341,59 +364,130 @@ async def claim_next(
             .scalars()
             .one_or_none()
         )
-
-    if row is None:
-        if wait_seconds <= 0:
-            return None
-        # Long-poll: sleep in short intervals and re-try the claim SELECTs
-        # until either a row is found or wait_seconds elapses.
-        import asyncio  # noqa: PLC0415
-
-        deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
-        while row is None and datetime.now(UTC) < deadline:
-            remaining = (deadline - datetime.now(UTC)).total_seconds()
-            await asyncio.sleep(min(2.0, remaining))
-            if datetime.now(UTC) >= deadline:
-                break
-            # Re-run the same claim SELECTs without recursion.
-            if new_workspaces > 0:
-                row = (
-                    (
-                        await session.execute(
-                            select(AgentCommandRow)
-                            .where(
-                                AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
-                                AgentCommandRow.agent_id.is_(None),
-                            )
-                            .order_by(AgentCommandRow.id)
-                            .limit(1)
-                            .with_for_update(skip_locked=True)
-                        )
-                    )
-                    .scalars()
-                    .one_or_none()
-                )
-            if row is None and workspace_ids:
-                row = (
-                    (
-                        await session.execute(
-                            select(AgentCommandRow)
-                            .where(
-                                AgentCommandRow.status == "pending",
-                                AgentCommandRow.agent_id == agent_id,
-                                AgentCommandRow.workspace_id.in_(workspace_ids),
-                            )
-                            .order_by(AgentCommandRow.id)
-                            .limit(1)
-                            .with_for_update(skip_locked=True)
-                        )
-                    )
-                    .scalars()
-                    .one_or_none()
-                )
         if row is None:
-            return None
+            if wait_seconds <= 0:
+                return None
+            import asyncio  # noqa: PLC0415
+
+            deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
+            while row is None and datetime.now(UTC) < deadline:
+                remaining = (deadline - datetime.now(UTC)).total_seconds()
+                await asyncio.sleep(min(2.0, remaining))
+                if datetime.now(UTC) >= deadline:
+                    break
+                row = (
+                    (
+                        await session.execute(
+                            select(AgentCommandRow)
+                            .where(
+                                AgentCommandRow.status == "pending",
+                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandRow.agent_id == agent_id,
+                            )
+                            .order_by(AgentCommandRow.id)
+                            .limit(1)
+                            .with_for_update(skip_locked=True)
+                        )
+                    )
+                    .scalars()
+                    .one_or_none()
+                )
+            if row is None:
+                return None
+    else:
+        # Try unassigned ProvisionWorkspace first (capacity for new workspaces).
+        if new_workspaces > 0:
+            row = (
+                (
+                    await session.execute(
+                        select(AgentCommandRow)
+                        .where(
+                            AgentCommandRow.status == "pending",
+                            AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
+                            AgentCommandRow.agent_id.is_(None),
+                        )
+                        .order_by(AgentCommandRow.id)
+                        .limit(1)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+
+        # If no ProvisionWorkspace, try the oldest pending command pinned to this agent
+        # for any of the named workspaces.
+        if row is None and workspace_ids:
+            row = (
+                (
+                    await session.execute(
+                        select(AgentCommandRow)
+                        .where(
+                            AgentCommandRow.status == "pending",
+                            AgentCommandRow.agent_id == agent_id,
+                            AgentCommandRow.workspace_id.in_(workspace_ids),
+                        )
+                        .order_by(AgentCommandRow.id)
+                        .limit(1)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+
+        if row is None:
+            if wait_seconds <= 0:
+                return None
+            # Long-poll: sleep in short intervals and re-try the claim SELECTs
+            # until either a row is found or wait_seconds elapses.
+            import asyncio  # noqa: PLC0415
+
+            deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
+            while row is None and datetime.now(UTC) < deadline:
+                remaining = (deadline - datetime.now(UTC)).total_seconds()
+                await asyncio.sleep(min(2.0, remaining))
+                if datetime.now(UTC) >= deadline:
+                    break
+                # Re-run the same claim SELECTs without recursion.
+                if new_workspaces > 0:
+                    row = (
+                        (
+                            await session.execute(
+                                select(AgentCommandRow)
+                                .where(
+                                    AgentCommandRow.status == "pending",
+                                    AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
+                                    AgentCommandRow.agent_id.is_(None),
+                                )
+                                .order_by(AgentCommandRow.id)
+                                .limit(1)
+                                .with_for_update(skip_locked=True)
+                            )
+                        )
+                        .scalars()
+                        .one_or_none()
+                    )
+                if row is None and workspace_ids:
+                    row = (
+                        (
+                            await session.execute(
+                                select(AgentCommandRow)
+                                .where(
+                                    AgentCommandRow.status == "pending",
+                                    AgentCommandRow.agent_id == agent_id,
+                                    AgentCommandRow.workspace_id.in_(workspace_ids),
+                                )
+                                .order_by(AgentCommandRow.id)
+                                .limit(1)
+                                .with_for_update(skip_locked=True)
+                            )
+                        )
+                        .scalars()
+                        .one_or_none()
+                    )
+            if row is None:
+                return None
 
     # Stamp agent_id + claimed_at on the single selected row, and mint the
     # per-command completion capability token. We persist only the sha256 hash;
@@ -608,8 +702,8 @@ async def record_agent_event(
     `claimed` to `delivered`, cancelling the lease requeue.
 
     Raises `StaleClaimError` when the command row no longer exists (already
-    retired by an earlier terminal event); the endpoint catches it and returns
-    HTTP 200 with `CommandEventAck(command_event_outcome="stale_claim_dropped")`.
+    retired by an earlier terminal event); the endpoint maps it to `410 Gone`
+    with `{"error": "stale_claim"}`.
 
     Workflow correlation is independent of the workspace row — the engine
     stamps `workflow_execution_id` on the command at enqueue time. An agent
@@ -621,8 +715,7 @@ async def record_agent_event(
     `agent_commands.completion_token_hash` (sha256; raw never persisted) and
     echoed back on the event's `completion_token`. The presented token is
     re-hashed and compared constant-time against the stored hash; a mismatch
-    raises `StaleClaimError` (the endpoint returns 200 with
-    `command_event_outcome="stale_claim_dropped"`). Authorization binds to the COMMAND,
+    raises `StaleClaimError` (the endpoint returns `410 Gone`). Authorization binds to the COMMAND,
     not to the worker's mutable `(org_id, agent_id)` — so an agent whose identity
     legitimately rotated on re-auth still completes its in-flight command. When
     `completion_token_hash` is NULL (command never went through `claim_next`,
@@ -779,10 +872,10 @@ async def record_workspace_event(
     outcome VO. agent_gateway maps `accepted=False` to `StaleClaimError`
     so the endpoint can return `410 Gone`.
 
-    Asymmetry: the sibling `record_agent_event` (terminal events on the
-    command-event endpoint) returns 200 with `command_event_outcome=
-    "stale_claim_dropped"` instead of 410. The workspace-event endpoint
-    retains 410 because it does not yet share the outcome-ack contract.
+    Both event endpoints share the same stale-claim contract: the sibling
+    `record_agent_event` (terminal events on the command-event endpoint) also
+    returns `410 Gone` on a missing/retired command row — every 410 on either
+    endpoint is a real stale-claim, paging-worthy in steady state.
 
     `agent_id` is the bearer's `WorkspaceAgentRow.id`. Passed to the sink so
     lean row creation (on the agent's first workspace event) can stamp
