@@ -52,12 +52,6 @@ def _app() -> FastAPI:
     return app
 
 
-@pytest.fixture(autouse=True)
-def _isolate() -> None:
-    yield
-    bearers.set_verify_override(None)
-
-
 def test_ws_close_4401_when_missing_bearer() -> None:
     """The WebSocket upgrade requires an Authorization: Bearer <token>
     header. Empty / missing → close with 4401 before any messages flow."""

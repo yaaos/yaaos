@@ -69,16 +69,6 @@ async def _two_agents_one_org(db_session) -> tuple[UUID, UUID, str]:
     return agent_a, agent_b, plaintext
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolate():
-    bearers.set_verify_override(None)
-    yield
-    bearers.set_verify_override(None)
-
-
 # ── Heartbeat: bearer-derived identity ────────────────────────────────────
 
 

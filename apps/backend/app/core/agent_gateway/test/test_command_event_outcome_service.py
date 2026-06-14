@@ -23,7 +23,6 @@ from app.core.agent_gateway import (
     enqueue_command,
 )
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.core.agent_gateway.types import AgentEvent, AgentEventKind
 from app.domain.orgs import repository as orgs_repo
 from app.testing.observability import span_capture
 from app.testing.seed import seed_workspace
@@ -76,13 +75,6 @@ async def _setup_agent_with_bearer(db_session):
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolate():
-    bearers.set_verify_override(None)
-    yield
-    bearers.set_verify_override(None)
 
 
 @pytest.mark.asyncio
@@ -167,36 +159,37 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
-    """The active span carries `command_event.outcome` after the endpoint handler runs.
-
-    `web.py` calls `trace.get_current_span().set_attribute("command_event.outcome", outcome)`.
-    We open an explicit test span so the attribute lands somewhere queryable.
+    """The FastAPI request span carries `command_event.outcome` after the
+    endpoint runs. Drives through the ASGI transport (same as the other two
+    tests) so the assertion exercises `org_context`, FastAPI DI, and the
+    backend's `set_attribute` call site at `web.py`.
     """
-    from opentelemetry import trace as otel_trace  # noqa: PLC0415
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
 
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
     del agent_id, org_id
-
-    from app.core.agent_gateway.web import post_command_event  # noqa: PLC0415
-
     cmd_id = uuid4()
-    event = AgentEvent(
-        command_id=cmd_id,
-        kind=AgentEventKind.COMPLETED_SUCCESS,
-        reported_at=datetime.now(UTC),
-        traceparent="00-aabb-1122-01",
-    )
-    bearer_ctx = await bearers.verify(token)
-    assert bearer_ctx is not None
 
     with span_capture() as exporter:
-        tracer = otel_trace.get_tracer(__name__)
-        with tracer.start_as_current_span("test.post_command_event"):
-            resp = await post_command_event(
-                event=event,
-                command_id=cmd_id,
-                agent=bearer_ctx,
-            )
+        # Per-app instrumentation against the provider span_capture() installed.
+        # Service tests don't run global configure_otel(), so we instrument the
+        # test app instance explicitly.
+        app = _app()
+        FastAPIInstrumentor.instrument_app(app)
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+                resp = await c.post(
+                    f"/api/v1/commands/{cmd_id}/events",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={
+                        "command_id": str(cmd_id),
+                        "kind": "completed_success",
+                        "reported_at": datetime.now(UTC).isoformat(),
+                        "traceparent": "00-aabb-1122-01",
+                    },
+                )
+        finally:
+            FastAPIInstrumentor.uninstrument_app(app)
 
     assert resp.status_code == 200
     spans = exporter.get_finished_spans()

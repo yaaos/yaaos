@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -130,18 +133,21 @@ async def issue(
     return plaintext, _to_record(row)
 
 
-_verify_override = None
+_VerifyCallback = Callable[[str], Awaitable[Optional["BearerContext"]]]
+_verify_override: ContextVar[_VerifyCallback | None] = ContextVar(
+    "agent_gateway.bearers._verify_override", default=None
+)
 
 
-def set_verify_override(callback) -> None:  # type: ignore[no-untyped-def]
+def set_verify_override(callback: _VerifyCallback | None) -> None:
     """Test hook: swap `bearers.verify` for a stub. Pass `None` to restore.
 
-    Lets WS / starlette TestClient tests sidestep cross-event-loop DB
-    issues without losing auth coverage — the bearer ledger has its own
-    direct tests in `test_bearers.py`.
+    Held in a ContextVar so the override is bounded by the calling test's
+    context. The autouse `_bearer_verify_isolation` fixture in
+    `app/testing/isolation.py` rebinds it to `None` before each test, so
+    individual tests never need to reset it themselves.
     """
-    global _verify_override
-    _verify_override = callback
+    _verify_override.set(callback)
 
 
 async def verify(token: str) -> BearerContext | None:
@@ -156,8 +162,9 @@ async def verify(token: str) -> BearerContext | None:
     request and shouldn't piggyback on the caller's transaction.
     Updates `last_seen_at` on success.
     """
-    if _verify_override is not None:
-        return await _verify_override(token)
+    override = _verify_override.get()
+    if override is not None:
+        return await override(token)
     if not token:
         return None
     token_hash = _hash(token)

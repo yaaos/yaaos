@@ -58,16 +58,6 @@ async def _fixture_org_and_agent(db_session):
     return agent.id, plaintext
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolate():
-    bearers.set_verify_override(None)
-    yield
-    bearers.set_verify_override(None)
-
-
 # ── Tests ─────────────────────────────────────────────────────────────────
 
 

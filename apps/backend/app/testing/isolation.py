@@ -34,6 +34,19 @@ async def pubsub_isolation() -> None:
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def bearer_verify_isolation() -> None:
+    """Reset the agent-gateway bearer-verify override before each test.
+
+    The override is ContextVar-bound; tests that need a stub call
+    `bearers.set_verify_override(stub)` inside the test body and never
+    have to restore it themselves.
+    """
+    from app.core.agent_gateway import bearers  # noqa: PLC0415
+
+    bearers.set_verify_override(None)
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def sse_shutdown_event_isolation() -> None:
     """Bind a fresh asyncio.Event as the SSE shutdown signal for each test.
 

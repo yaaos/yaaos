@@ -31,13 +31,6 @@ def _app() -> FastAPI:
     return app
 
 
-@pytest.fixture(autouse=True)
-def _isolate():
-    bearers.set_verify_override(None)
-    yield
-    bearers.set_verify_override(None)
-
-
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 

@@ -81,7 +81,9 @@ The `X-Yaaos-Audience` header inside the signed `payload` must be present and ma
 ## Ordering + idempotency
 
 - Commands are FIFO within the durable `agent_commands` queue, ordered by UUIDv7 PK.
-- Each command carries a `command_id` (UUID). The stale-claim guard on the backend matches the posted event's `command_id` against the workspace's current claim; a mismatch returns `200 {"command_event_outcome": "stale_claim_dropped"}`.
+- Each command carries a `command_id` (UUID). The stale-claim guard on the backend matches the posted event's `command_id` against the workspace's current claim. Two response shapes today:
+  - `POST /api/v1/commands/{id}/events` — mismatch returns `200 {"command_event_outcome": "stale_claim_dropped"}`.
+  - `POST /api/v1/workspaces/{id}/events` — mismatch returns `410 {"error": "stale_claim"}` (older shape; not yet migrated to the outcome-ack contract).
 
 ## At-least-once delivery + dedup
 

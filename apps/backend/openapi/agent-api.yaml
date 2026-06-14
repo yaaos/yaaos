@@ -203,6 +203,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
+    StaleClaim:
+      description: |
+        The workspace's `current_command_id` no longer matches the event's
+        `command_id` — the claim has rotated. Used by
+        `/api/v1/workspaces/{workspace_id}/events`; the command-event endpoint
+        uses the 200 + `CommandEventAck` shape instead.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
 
   securitySchemes:
     bearerAuth:
