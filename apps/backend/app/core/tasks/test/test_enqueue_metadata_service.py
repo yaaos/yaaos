@@ -42,7 +42,10 @@ async def test_enqueue_auto_fills_org_id_from_contextvar(db_session) -> None:  #
                 select(OutboxEntryRow).where(OutboxEntryRow.payload["task_name"].astext == "meta_auto_fill")
             )
         ).scalar_one()
-        assert row.payload.get("metadata") == {"org_id": str(some_org)}
+        meta = row.payload.get("metadata") or {}
+        assert meta.get("org_id") == str(some_org), f"org_id mismatch: {meta}"
+        # traceparent is auto-filled from the current span (None when no span is active).
+        assert "traceparent" in meta, f"traceparent key missing from metadata: {meta}"
 
 
 @pytest.mark.asyncio
@@ -73,7 +76,9 @@ async def test_enqueue_explicit_metadata_overrides_contextvar(db_session) -> Non
                 )
             )
         ).scalar_one()
-        assert row.payload.get("metadata") == {"org_id": str(other_org)}
+        meta = row.payload.get("metadata") or {}
+        assert meta.get("org_id") == str(other_org), f"org_id mismatch: {meta}"
+        assert "traceparent" in meta, f"traceparent key missing from metadata: {meta}"
 
 
 @pytest.mark.asyncio
@@ -101,3 +106,69 @@ async def test_enqueue_with_no_contextvar_and_no_metadata_leaves_metadata_empty(
         ).scalar_one()
         # metadata should be absent or None — no auto-fill, no crash.
         assert row.payload.get("metadata") is None
+
+
+def test_task_metadata_traceparent_roundtrip() -> None:
+    """Layer B: TaskMetadata serializes and deserializes traceparent correctly."""
+    from app.core.tasks import TaskMetadata  # noqa: PLC0415
+
+    tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    orig = TaskMetadata(org_id=None, traceparent=tp)
+    json_str = orig.model_dump_json()
+    restored = TaskMetadata.model_validate_json(json_str)
+    assert restored.traceparent == tp
+    assert restored.org_id is None
+
+    # Also verify dict round-trip (used by drain).
+    as_dict = orig.model_dump(mode="json")
+    from_dict = TaskMetadata.model_validate(as_dict)
+    assert from_dict.traceparent == tp
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_enqueue_autofills_traceparent(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Layer B: `enqueue` stamps the current OTel traceparent into the outbox
+    row's metadata when called inside an active span."""
+    from opentelemetry import trace  # noqa: PLC0415
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # noqa: PLC0415
+
+    from app.core.observability import current_traceparent  # noqa: PLC0415
+    from app.core.tasks.models import OutboxEntryRow  # noqa: PLC0415
+
+    # Set up a minimal TracerProvider so current_traceparent() returns a real value.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    prev_provider = trace.get_tracer_provider()
+    trace.set_tracer_provider(provider)
+
+    try:
+        tracer = provider.get_tracer("test_autofill_tp")
+
+        async def _task_d() -> None:
+            return None
+
+        ref = task("meta_autofill_tp")(_task_d)
+        with scoped_task_registration(ref):
+            with tracer.start_as_current_span("producer-span"):
+                expected_tp = current_traceparent()
+                assert expected_tp is not None, "must have an active span"
+                await enqueue(ref, args={}, session=db_session)
+                await db_session.commit()
+
+            row = (
+                await db_session.execute(
+                    select(OutboxEntryRow).where(
+                        OutboxEntryRow.payload["task_name"].astext == "meta_autofill_tp"
+                    )
+                )
+            ).scalar_one()
+            meta = row.payload.get("metadata") or {}
+            assert meta.get("traceparent") == expected_tp, (
+                f"expected traceparent={expected_tp!r}; got {meta.get('traceparent')!r}"
+            )
+    finally:
+        trace.set_tracer_provider(prev_provider)

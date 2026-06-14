@@ -25,6 +25,9 @@ from opentelemetry.trace import StatusCode, Tracer
 from taskiq import TaskiqMessage, TaskiqMiddleware
 from taskiq.result import TaskiqResult
 
+from app.core.observability import restore_traceparent_context
+from app.core.tasks.types import TaskMetadata
+
 _tracer = trace.get_tracer(__name__)
 
 
@@ -54,11 +57,28 @@ class TaskSpanMiddleware(TaskiqMiddleware):
         self._spans: dict[str, tuple[Any, object]] = {}
 
     async def pre_execute(self, message: TaskiqMessage) -> TaskiqMessage:
+        # Attempt to restore the producer's trace context from the metadata
+        # label so the task span nests under the enqueuing span's trace.
+        parent_ctx = None
+        raw_meta = message.labels.get("metadata")
+        if raw_meta is not None:
+            try:
+                if isinstance(raw_meta, str):
+                    meta = TaskMetadata.model_validate_json(raw_meta) if raw_meta else None
+                elif isinstance(raw_meta, dict):
+                    meta = TaskMetadata.model_validate(raw_meta) if raw_meta else None
+                else:
+                    meta = None
+                if meta is not None and meta.traceparent:
+                    parent_ctx = restore_traceparent_context(meta.traceparent)
+            except Exception:
+                parent_ctx = None
+
         # `start_span` only creates the span — it does NOT install it as the
         # current context. Attach it so spans created inside the task body
         # (SQLAlchemy auto-instrumentation, manual spans) nest under it rather
         # than under whatever context was active at dequeue time.
-        span = self._tracer.start_span(f"task:{message.task_name}")
+        span = self._tracer.start_span(f"task:{message.task_name}", context=parent_ctx)
         token = otel_context.attach(trace.set_span_in_context(span))
         self._spans[message.task_id] = (span, token)
         return message

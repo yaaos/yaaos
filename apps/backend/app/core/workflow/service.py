@@ -215,7 +215,9 @@ async def _start_step_impl(
                 )
             outer_span = trace.get_current_span()
             kind = command.kind  # type: ignore[attr-defined]
-            with _tracer.start_as_current_span(f"workflow.command.{kind}") as cmd_span:
+            with with_remote_parent_span(
+                _tracer, f"workflow.command.{kind}", wfx.otel_trace_context
+            ) as cmd_span:
                 cmd_span.set_attribute("command.kind", kind)
                 cmd_span.set_attribute("command.category", "workspace")
                 cmd_span.set_attribute("workflow.step_id", step_id)
@@ -256,7 +258,7 @@ async def _start_step_impl(
             return
 
         # Local + HITL: run execute() inline.
-        outcome = await _safe_execute(command, inputs, cmd_ctx)
+        outcome = await _safe_execute(command, inputs, cmd_ctx, traceparent=wfx.otel_trace_context)
 
         if command.category == CommandCategory.HITL:
             if outcome.kind is not OutcomeKind.HITL_PENDING:
@@ -1447,9 +1449,16 @@ async def _safe_execute(
     command: WorkflowCommand,
     inputs: dict[str, Any],
     ctx: CommandContext,
+    traceparent: str | None = None,
 ) -> Outcome:
     """Call command.execute(inputs, ctx) inside a `workflow.command.{kind}`
     child span.
+
+    `traceparent` is the `workflow.run.<name>` span's own traceparent
+    (from `wfx.otel_trace_context`). When provided, the command span opens
+    as a direct child of `workflow.run` via `with_remote_parent_span` —
+    keeping it in the workflow's trace even when the taskiq dequeue context
+    has no active span (different trace).
 
     On exception: records the exception on the child span + marks it ERROR,
     then propagates ERROR to the caller's active span (the taskiq task span)
@@ -1466,7 +1475,7 @@ async def _safe_execute(
     """
     outer_span = trace.get_current_span()
     kind = command.kind  # type: ignore[attr-defined]
-    with _tracer.start_as_current_span(f"workflow.command.{kind}") as child_span:
+    with with_remote_parent_span(_tracer, f"workflow.command.{kind}", traceparent) as child_span:
         child_span.set_attribute("command.kind", kind)
         child_span.set_attribute("command.category", command.category.value)  # type: ignore[attr-defined]
         child_span.set_attribute("workflow.step_id", ctx.step_id)

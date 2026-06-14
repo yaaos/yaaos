@@ -61,7 +61,7 @@ class OrgContextMiddleware(TaskiqMiddleware):
 
     async def pre_execute(self, message: TaskiqMessage) -> TaskiqMessage:
         metadata = _parse_metadata(message.labels.get("metadata"))
-        if metadata is not None:
+        if metadata is not None and metadata.org_id is not None:
             ctx = org_context(metadata.org_id, ActorKind.SYSTEM)
             await ctx.__aenter__()
             self._active[message.task_id] = ctx

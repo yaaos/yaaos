@@ -12,8 +12,9 @@
 
 - **`enqueue` requires `session`** — there is no fire-and-forget path. Durability is opt-in by committing the session.
 - **`metadata` auto-fill from `org_id` contextvar** — when enqueued inside an `org_context()` block and `metadata` is omitted, `enqueue` fills `TaskMetadata(org_id=...)` automatically. HTTP request handlers don't need to pass it explicitly.
+- **`metadata.traceparent` auto-fill** — `enqueue` also stamps `current_traceparent()` into `TaskMetadata.traceparent`. `TaskSpanMiddleware.pre_execute` extracts it and uses `restore_traceparent_context` to open the `task:<name>` span as a child of the enqueuing span — placing all task spans in the producer's trace rather than orphan per-task traces. `org_id` is now optional on `TaskMetadata` so traceparent-only metadata (tasks enqueued outside any org context) is valid.
 - **`TaskMetadata` is JSON-dumped on the wire** — avoids the prior `str(dict)` / `ast.literal_eval` round-trip. Consumer parses with `model_validate_json`.
-- **`OrgContextMiddleware`** enters `org_context(metadata.org_id, ActorKind.SYSTEM)` before every task body — `current_org_id()` is reliably available inside any task.
+- **`OrgContextMiddleware`** enters `org_context(metadata.org_id, ActorKind.SYSTEM)` before every task body when `org_id` is present — `current_org_id()` is reliably available inside any task. Tasks with no `org_id` in metadata (traceparent-only) run without an org context.
 - **Task bodies must tolerate duplicate delivery.** The drain stamps `dispatched_at` only after a successful Redis push — a crash between push and stamp redispatches. Bodies look up state from DB rather than trusting args alone.
 - **`@task` registration happens at composition root, not inside `runtime`.** `app/worker.py` imports all task-defining modules before calling `runtime.run()`, so `@task` decorators are registered with the broker before the worker loop starts. `runtime.run()` itself does not import task-defining modules.
 - **Worker races five tasks via `asyncio.wait(FIRST_COMPLETED)`:** drain loop, taskiq receiver, scheduler tick loop, liveness ticker, stop signal. Stop signal wins on SIGTERM; shutdown then proceeds in ordered steps — see § Worker graceful drain below.
@@ -57,7 +58,8 @@ parameters to avoid touching global OTel state.
 
 `core/tasks/spans.py` declares `TaskSpanMiddleware`, wired into the broker in `runtime.run()` alongside `OrgContextMiddleware` and `TaskMetricsMiddleware`. For each task execution:
 
-- Opens a span named `task:<task_name>` via `pre_execute` and `context.attach`es it as the current context (keyed with the span by `task_id`), so spans created inside the body — SQLAlchemy auto-instrumentation, manual spans — nest under the task span instead of the dequeue-time context.
+- Opens a span named `task:<task_name>` via `pre_execute`: extracts `TaskMetadata.traceparent` from the message labels (if present) and passes it as `context=` to `tracer.start_span(...)` so the span is a child of the enqueuing span's trace. Falls back to a root span when traceparent is absent or malformed.
+- `context.attach`es the task span as the current context (keyed by `task_id`) so spans opened inside the body — SQLAlchemy auto-instrumentation, manual spans — nest under the task span.
 - On error (`on_error` / `post_execute` with `is_err`): calls `span.record_exception(exc)` + `span.set_status(ERROR)` so the failure is visible in traces, not just logs.
 - `context.detach`es the stored token and ends the span in `post_execute` / `on_error` — even if exception recording itself fails.
 
@@ -100,6 +102,7 @@ Shutdown hooks must tolerate in-flight work — `_WORKER_DRAIN_GRACE_SECONDS` bo
 `test/test_scheduled_runs_prune_service.py` — broker registration of the prune task body; body deletes >7-day rows and leaves fresher rows alone.
 `test/test_scheduler_backoff.py` — unit-tests the pure `_backoff_sleep` helper: exponential growth, 120 s cap, normal-cadence restore after a reset.
 `test/test_task_metrics_service.py` — `TaskMetricsMiddleware` with injected `InMemoryMetricReader` instruments: successful body increments `task.started` + `task.succeeded` + records `task.duration`; failing body increments `task.failed` instead.
-`test/test_task_span_service.py` — `TaskSpanMiddleware` with injected `InMemorySpanExporter` tracer: failing body produces a span with ERROR status + exception event; successful body produces a span with no exception events; a span opened inside the body nests under the task span (shared trace + parent = task span).
+`test/test_task_span_service.py` — `TaskSpanMiddleware` with injected `InMemorySpanExporter` tracer: failing body produces a span with ERROR status + exception event; successful body produces a span with no exception events; a span opened inside the body nests under the task span (shared trace + parent = task span); when `metadata.traceparent` is supplied the task span's `trace_id` matches the producer's trace_id (Layer B regression pin).
+`test/test_enqueue_metadata_service.py` — metadata auto-fill from contextvar, explicit override, no-context path, `TaskMetadata` traceparent round-trip (JSON + dict), `enqueue` auto-fills `traceparent` from the current OTel span.
 `test/test_worker_health_service.py` — `build_worker_health_app` with stub ping callables: 200 when all pass; 503 on DB failure; 503 on Redis failure; 503 when heartbeat is stale. Also unit-tests `WorkerHeartbeat.is_fresh()` transitions.
 `test/test_graceful_drain_service.py` — drain loop exits cleanly on stop signal; in-flight body completes before worker exits (await-not-cancel); over-grace body is abandoned, not cancelled, and the worker still exits.

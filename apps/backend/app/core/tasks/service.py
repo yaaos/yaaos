@@ -21,6 +21,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_org_id
+from app.core.observability import current_traceparent
 from app.core.shutdown_registry import (  # noqa: F401
     ShutdownHook,
     iter_worker_shutdown_hooks,
@@ -85,11 +86,26 @@ async def enqueue(
     meta_obj: TaskMetadata | None
     if metadata is None:
         org_id = current_org_id()
-        meta_obj = TaskMetadata(org_id=org_id) if org_id is not None else None
+        tp = current_traceparent()
+        if org_id is not None or tp is not None:
+            meta_obj = TaskMetadata(org_id=org_id, traceparent=tp)
+        else:
+            meta_obj = None
     elif isinstance(metadata, TaskMetadata):
-        meta_obj = metadata
+        # Preserve explicit None — caller knows what they're doing. But if the
+        # caller didn't supply a traceparent, auto-fill it from the current span.
+        if metadata.traceparent is None:
+            tp = current_traceparent()
+            meta_obj = metadata.model_copy(update={"traceparent": tp}) if tp else metadata
+        else:
+            meta_obj = metadata
     else:
-        meta_obj = TaskMetadata.model_validate(metadata)
+        parsed = TaskMetadata.model_validate(metadata)
+        if parsed.traceparent is None:
+            tp = current_traceparent()
+            meta_obj = parsed.model_copy(update={"traceparent": tp}) if tp else parsed
+        else:
+            meta_obj = parsed
     payload: dict[str, Any] = {
         "task_name": task_ref.name,
         "queue": task_ref.queue,

@@ -18,10 +18,20 @@ from pydantic import BaseModel
 
 
 class TaskMetadata(BaseModel):
-    """Per-task envelope. `org_id` ties the task to an org so the worker
-    can enter `org_context` before the body runs.
+    """Per-task envelope.
+
+    `org_id` ties the task to an org so the worker can enter `org_context`
+    before the body runs. Optional — tasks enqueued outside any org context
+    (e.g. boot-time system tasks) may omit it.
+
+    `traceparent` is the W3C traceparent of the enqueuing span. `enqueue`
+    auto-fills this from `current_traceparent()` so `TaskSpanMiddleware`
+    can open the `task:<name>` span as a child of the producer's span —
+    landing all task spans in the producer's trace rather than orphan traces.
+    Optional — absent when no OTel SDK is active or no span is in scope.
     """
 
     model_config = {"frozen": True}
 
-    org_id: UUID
+    org_id: UUID | None = None
+    traceparent: str | None = None
