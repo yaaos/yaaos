@@ -125,7 +125,7 @@ All three OTel signals (traces, metrics, logs) share two standard dimensions on 
 | `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
 | `agent.identity_refresh` | inherits caller context; root at current call sites | `supervisor.go` `runOneRefreshCycle` | |
 | `agent.claim` | none (per HTTP call, NOT per loop iteration) | `supervisor.go` `claimLoop` | `ErrNoCommand` (HTTP 204 — no command available) is the normal long-poll outcome; it closes the span with status Unset, not Error. Context cancellation during graceful shutdown (SIGTERM tearing the long-poll connection) also closes the span with status Unset, not Error |
-| `agent.event_post` | the dispatch span that produced the event (`supervisor.dispatch.<kind>` or `workspace.handle.<kind>` ancestor) | `supervisor.go` `postTerminalEvent` | `command_id`, `kind`; one span per HTTP attempt inside the retry loop; `protocol.ErrStaleClaim` (HTTP 410) is the documented normal outcome when the backend has reaped the command row — closes the span with status Unset, not Error |
+| `agent.event_post` | the dispatch span that produced the event (`supervisor.dispatch.<kind>` or `workspace.handle.<kind>` ancestor) | `supervisor.go` `postTerminalEvent` | `command_id`, `kind`, `command_event.outcome` (one of `event_recorded`, `stale_claim_dropped`); one span per HTTP attempt inside the retry loop. The backend always returns 200; the `command_event.outcome` attribute carries the outcome classification (semantic, not HTTP-coded). |
 | `agent.activity_ws.dial` | none (per dial attempt, NOT per message) | `supervisor.go` `dialAndStartWS` | |
 
 Grep recipe: `rg -n "tracing.StartSpan" apps/agent/internal/`

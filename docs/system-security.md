@@ -72,7 +72,7 @@ The bearer issued at identity-exchange is scoped to the per-agent-instance `agen
 
 [`core/workspace.try_claim`](../apps/backend/app/core/workspace/dispatch.py) is an atomic conditional UPDATE succeeding iff `current_command_id IS NULL AND status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off — only one AgentCommand can hold a workspace at a time.
 
-Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{id}/events`) validate inbound `command_id` against `workspaces.current_command_id`. Mismatch → `410 Gone`; agent abandons silently.
+Event endpoints (`POST /api/v1/commands/{id}/events`, `POST /api/v1/workspaces/{id}/events`) validate inbound `command_id` against `workspaces.current_command_id`. Mismatch → `200 {"command_event_outcome": "stale_claim_dropped"}`; agent abandons silently.
 
 ### Failure-report-precedes-disposal
 
@@ -101,7 +101,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 |---|---|
 | Inbound webhook from an attacker not GitHub | HMAC verification in [`plugins/github/service.verify_webhook_signature`](../apps/backend/app/plugins/github/service.py); intake type returns 401 on mismatch. |
 | Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
-| Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns 410; agent abandons. |
+| Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard returns `stale_claim_dropped`; agent abandons silently. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
 | Activity event payloads carrying unexpected content | Producer-side discipline: `core/coding_agent` ActivityEvents are assumed source-free by the producer; payloads are not independently audited downstream. |
