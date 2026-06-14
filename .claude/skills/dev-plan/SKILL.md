@@ -94,22 +94,52 @@ Use the template at `.claude/skills/dev-plan/templates/plan.md`. Copy it to `pla
 Rules the template encodes:
 
 - Header line "Phases are CI-clean but not feature-shippable until final phase." stays at the top.
-- Each phase carries **Goal · Size · Vertical slice · Files touched · Tests added · Doc updates · Rollback** (Rollback omittable when nothing reversible). `Size` is `mechanical | many-decision | mixed` per the two-kinds-of-big rubric — it tells dev-implement how hard to scrutinize coverage and how to recover from a mid-phase transport death.
+- Each phase carries **Goal · Acceptance · Size · Context to load · Vertical slice · Changes per file · Load-bearing target shapes · Tests added · Doc updates · Rollback** (Rollback omittable when nothing reversible). `Size` is `mechanical | many-decision | mixed` per the two-kinds-of-big rubric — it tells dev-implement how hard to scrutinize coverage and how to recover from a mid-phase transport death.
+- **`Acceptance:`** — one falsifiable sentence per phase. Demonstrably true against the running system, not "tests pass". This is the bar dev-implement-phase validates explicitly before returning `ci_status: green`.
+- **`Changes per file:`** replaces a flat `Files touched:` path list. Per file: path · what changes (the symbol/block in words) · why · cite of current code (`path:line`) or `new file`. **No code excerpts** (current or target) — the cite IS the current shape; the target shape lives in `architecture.md` as a type-level signature, restated under `Load-bearing target shapes` only if the implementer needs it inline.
+- **`Load-bearing target shapes:`** — type-level signatures the phase changes, pulled from `architecture.md § Interface changes` / `§ Data model changes`. Restate only what the phase actually touches; never copy the whole architecture entry. Omit the section if the phase touches no contracts.
 - Final phase is non-code: re-run all CI scripts, re-read `requirements.md`, walk each use case "After" against the running system, confirm doc updates landed.
 - **Blocking handoff questions** = ONLY genuine unresolved decisions that need a human answer before/during execution (distinct from architecture.md's architectural ones). Owned by this stage; must be empty before dev-implement runs. NOT a catch-all. What does NOT belong, and where it goes instead: assumptions you made → state them inline in the phase; risks / things to watch → that phase's **Rollback** or **Notes for implementation**; deferred scope → it's out-of-scope, omit it; anything already decided → it's not a question. The precondition guarantees upstream questions are resolved, so **`- None.` is the expected default** — writing an entry is the exception, not the norm. When in doubt, it's not a blocking handoff question.
-- **Notes for implementation** = capture-only forward bucket for dev-implement (reuse pointers, gotchas, non-blocking questions). Informs but does NOT block; self-label each bullet. Omit or `None.` if nothing surfaced.
+- **Notes for implementation** = capture-only forward bucket for dev-implement (reuse pointers, gotchas, non-blocking *observations*). Informs but does NOT block; self-label each bullet. Omit or `None.` if nothing surfaced. **`[question]` is forbidden here** — a question implies a deferred fork the implementer cannot resolve (it cannot reach the user). Forks decide in the phase block; if a fork can't be decided at plan time, it belongs in Blocking handoff questions (which re-blocks the precondition until resolved).
 
 ### Phases must survive fresh context
 
 `/dev-implement` executes each phase in a fresh subagent context — no memory of the conversation that produced the plan, no prior-phase exploration. Phase blocks must reflect that:
 
 - Each phase block is a **self-contained brief.** A cold reader with only the block + its **Context to load** files must be able to execute it.
-- **Restate load-bearing facts inside the block** — function signatures, table columns, payload fields. Don't rely on conversation memory. If an architectural fact is needed to execute, restate it in the block — do not link to `architecture.md`.
-- **Cite `file:line` for every function / pattern to reuse AND for every current `file:line` the phase modifies.** Names alone aren't enough for cold reads; the modified code's current location is as load-bearing as the reuse target's.
+- **Restate load-bearing facts at the type level** — function signatures, payload fields, table columns. Pull from `architecture.md § Interface changes` / `§ Data model changes`. **Restate, not embed code excerpts:** the cite is the current shape, the type-level signature is the target shape. Embedded code excerpts pre-author the diff and drift on every unrelated commit — refused.
+- **Cite `file:line` for every function / pattern to reuse AND for every current `file:line` the phase modifies.** Names alone aren't enough for cold reads.
+- **Verify every cite at plan-write time** (see § Cite verification step below).
 - `requirements.md` and `architecture.md` are **read-on-demand** by executors, not preloaded. Don't depend on them being open.
-- **Soft size budget:** phase block + Context-to-load reads should target ≤20–30k tokens. If larger, split the phase.
 - **Slice line is load-bearing.** The `Vertical slice:` line names (a) the user-observable behavior delivered OR integration risk retired, and (b) the boundaries crossed. A bare boundary list (`frontend, backend, db`) is refused.
-- **Bail rule:** refuse to write a phase a cold subagent couldn't execute from the block alone. Vague phases produce vague code.
+- **Acceptance line is load-bearing.** One falsifiable sentence validatable against the running system. "Tests pass" / "works correctly" are refused.
+- **Bail rule:** refuse to write a phase that fails the § Self-execution checklist. Vague phases produce vague code.
+
+### Cite verification step
+
+Before writing each phase block — and again before declaring the plan done — verify every cite the block carries:
+
+- Open every `file:line` referenced in `Context to load`, `Changes per file`, and `Load-bearing target shapes`.
+- Confirm the path resolves AND the line still says what the cite claims (function name, pattern, symbol).
+- A cite that no longer resolves → fix to the new location, OR drop the cite and find a replacement, OR (rarely) accept the cite is for a symbol the phase will create and label accordingly.
+- A reuse-target cite must point at code that exists today. A reuse target that has moved or been deleted is the #1 cause of subagent guessing.
+
+Architecture cites rot between when architecture is locked and when plan is written. Cite verification at plan time is the only fix.
+
+### Self-execution checklist (per phase)
+
+Run this mentally before declaring each phase block done. If any answer is "no", expand the block or split the phase.
+
+- [ ] Every `file:line` cite verified to resolve?
+- [ ] Every reuse target verified to exist?
+- [ ] `Acceptance:` is one falsifiable sentence against the running system (not "tests pass")?
+- [ ] Every interface / endpoint / table / payload this phase touches has a type-level target shape — either restated in `Load-bearing target shapes` or trivially derivable from a one-section read of `architecture.md`?
+- [ ] Every test has a setup pointer (fixture / helper / seam) so the implementer doesn't grep?
+- [ ] No `[question]` in Notes for implementation — every fork the planner spotted is decided in the phase or moved to Blocking handoff?
+- [ ] Phase size matches the two-kinds-of-big rubric — if many-decision and >~3 independent judgments held at once, split along the seam?
+- [ ] A cold subagent could execute this block without grepping for symbols, paths, or contracts?
+
+The last item is the load-bearing test. If you can imagine a fresh-context implementer needing to ask "where is X?" or "what should X return?", the block is under-specified — expand it.
 
 ## Out of scope (lives in `dev-implement`)
 

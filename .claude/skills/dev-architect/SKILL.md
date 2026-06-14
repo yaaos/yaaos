@@ -40,6 +40,7 @@ Audience is the **human reviewer at the lock gate**, not the executor. Executors
 Rules the template encodes:
 
 - **Approach · Boundaries touched · Entities & value objects · Interface changes · Sequence diagrams · Data model changes · Blocking handoff questions · Notes for planning** — all required sections.
+- **Target-shape rule.** Every `added` / `changed` entry in Interface changes (functions, HTTP endpoints, module Protocols, wire payloads) and Data model changes (tables, columns) carries a **full type-level definition in a code block** — params with types, return type, raised exceptions for functions; method/path/request schema/response schema/error codes for endpoints; full method set for Protocols; field list (name · type · required) for wire payloads; column spec (name · type · nullable · default · FK · index) for tables. Prose-only targets are refused at the lock-gate audit. `deleted` / `dropped` entries carry only the `was @ path:line` cite — no signature needed. **Type-level ≠ implementation:** the cite is the current shape; the signature is the target shape. Do NOT paste current or target *code excerpts* — that's pre-authoring the diff, which belongs in source files, not architecture.
 - Target-shaped. **No parallel "Current state" section.** Current code is captured only via the four delta slots:
   1. Notes cells of Entities / Interface changes / Data model tables — `was: <thing> @ path:line → is: <new>` on `changed` rows; `was: <thing> @ path:line` on `deleted` rows.
   2. Per-boundary **Current anchor** one-liner under each Interface changes subsection — single `path:line` at the canonical current entry-point.
@@ -118,10 +119,18 @@ The clean-context verification sweep. For dev-architect the auditor IS the lock-
   10. Every entity referenced in sequence diagrams is in the Entities table.
   11. `## Blocking handoff questions` is empty.
 
+  **Target-shape completeness** (the schema rule from above — enforced at audit):
+  12. Every `added` / `changed` function/method entry carries a full type-level signature code block (params with types, return type, raised exceptions). Prose-only entries fail.
+  13. Every `added` / `changed` HTTP endpoint carries method · path · request schema (field · type · required) · response schema · error codes. Placeholder `<sig>` fails.
+  14. Every `added` / `changed` module Protocol entry carries the full method set with signatures + one-line semantics per method.
+  15. Every `added` / `changed` wire payload / event carries a field list (name · type · required).
+  16. Every `added` / `changed` table carries a full column spec (name · type · nullable · default · FK · index where applicable). Prose ("added column foo of type text") fails.
+  17. No code excerpts. A code block is permitted iff it contains ONLY a type-level signature (function signature without a body, HTTP request/response field list, Protocol method declaration, wire payload field list, or DDL-style column spec). A code block containing a function/method *body*, statement-level logic, an SQL `INSERT`/`UPDATE`/`SELECT`, or any concrete data binding fails — that's pre-authoring the diff and belongs in source files, not architecture.
+
   **Design completeness:**
-  12. UC coverage — every use case in `requirements.md § Use cases` appears in § Use case walkthroughs and traces trigger→outcome.
-  13. Per-boundary coherence — each Interface changes subsection is an internally consistent interface set (no mixed styles, granularity drift, redundant endpoints, incoherent amalgamation). Name the specific failure shape (see § Iteration loop).
-  14. Cross-axis consistency — every entity/interface in a walkthrough exists in the tables; every `added`/`changed` interface row is exercised by ≥1 walkthrough or tagged infra (dead surface → flag); every entity appears in ≥1 walkthrough or diagram.
+  18. UC coverage — every use case in `requirements.md § Use cases` appears in § Use case walkthroughs and traces trigger→outcome.
+  19. Per-boundary coherence — each Interface changes subsection is an internally consistent interface set (no mixed styles, granularity drift, redundant endpoints, incoherent amalgamation). Name the specific failure shape (see § Iteration loop).
+  20. Cross-axis consistency — every entity/interface in a walkthrough exists in the tables; every `added`/`changed` interface row is exercised by ≥1 walkthrough or tagged infra (dead surface → flag); every entity appears in ≥1 walkthrough or diagram.
 
 - **Output contract.** Terse findings list — each: severity (blocking / should-fix / nit) · location (section · `file:line`) · what's wrong · suggested fix.
 - **Triage with the user.** Present findings; fix `architecture.md` WITH the user. No raw-dump of the agent transcript; no auto-fix.
@@ -133,7 +142,7 @@ The clean-context verification sweep. For dev-architect the auditor IS the lock-
 - **Spawn "serious" Explore subagents in parallel** — one per affected boundary, soft cap of 5 concurrent. Broader scope than `dev-requirements`'s Explore: services, module boundaries, entities/value objects, current interfaces. Each Explore returns a **current-state map with `file:line` anchors** for its boundary; the map feeds the four delta slots in `architecture.md` (Notes-column `was → is`, per-boundary Current anchor, before-half of sequence diagrams, inline Approach cites) — never a parallel current-state section. Filter results through this skill — never raw-dump.
 - **Pushback discipline** per "code is king".
 - **Incremental file writes** — sidebar-visible working draft, written only when meaningful new info accumulates.
-- **Bail clause.** If the architecture can't be made concrete (requirements too vague, code reality blocks the approach), say so — do not write a hollow doc. Specific case: refuse to write `architecture.md` if any `changed` or `deleted` row can't cite the current `file:line` it diverges from.
+- **Bail clause.** If the architecture can't be made concrete (requirements too vague, code reality blocks the approach), say so — do not write a hollow doc. Specific cases that refuse a write: (a) any `changed` or `deleted` row can't cite the current `file:line` it diverges from; (b) any `added` / `changed` interface, endpoint, Protocol, payload, or table lacks a full type-level target-shape definition (per the target-shape rule above). Either gap means the doc is pre-locked but under-specified — fix it before writing, not after.
 
 ## Output to user at end
 
