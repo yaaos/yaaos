@@ -29,7 +29,7 @@ from contextlib import contextmanager
 
 from opentelemetry import trace
 from opentelemetry.context import Context, attach, detach
-from opentelemetry.trace import SpanContext, SpanKind, TraceFlags
+from opentelemetry.trace import SpanKind, TraceFlags
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
 )
@@ -106,8 +106,3 @@ __all__ = [
     "restore_traceparent_context",
     "with_remote_parent_span",
 ]
-
-
-# Re-export `SpanContext` so callers that only want the parsed form
-# (without opening a span) have a one-stop import.
-_ = SpanContext

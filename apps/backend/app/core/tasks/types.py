@@ -14,14 +14,27 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TaskMetadata(BaseModel):
-    """Per-task envelope. `org_id` ties the task to an org so the worker
-    can enter `org_context` before the body runs.
+    """Per-task envelope.
+
+    `org_id` ties the task to an org so the worker can enter `org_context`
+    before the body runs. Optional — tasks enqueued outside any org context
+    (e.g. boot-time system tasks) may omit it.
+
+    `traceparent` is the W3C traceparent of the enqueuing span. `enqueue`
+    auto-fills this from `current_traceparent()` so `TaskSpanMiddleware`
+    can open the `task:<name>` span as a child of the producer's span —
+    landing all task spans in the producer's trace rather than orphan traces.
+    Optional — absent when no OTel SDK is active or no span is in scope.
     """
 
     model_config = {"frozen": True}
 
-    org_id: UUID
+    org_id: UUID | None = None
+    # W3C traceparent format is exactly 55 chars (`00-<32hex>-<16hex>-<02hex>`);
+    # cap the length so a malformed outbox payload can't waste memory at parse.
+    # `restore_traceparent_context` discards malformed values via the OTel propagator.
+    traceparent: str | None = Field(default=None, max_length=55)

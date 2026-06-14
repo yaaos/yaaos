@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/yaaos/agent/internal/identity"
@@ -130,9 +131,26 @@ func runSupervisor() error {
 	// from the request context. otelhttp.NewTransport adds a span per
 	// outbound HTTP call when OTel is configured; it's transparent when
 	// OTel is disabled (no-op tracer).
+	//
+	// Terminal-event POSTs are filtered out of otelhttp auto-instrumentation:
+	// postTerminalEvent wraps each attempt in its own agent.event_post span,
+	// so the otelhttp CLIENT span is redundant — and a documented 410
+	// ("stale claim") would paint it red. The agent-owned span owns the
+	// lifecycle and suppresses the 410 correctly.
 	httpClient := &http.Client{
-		Timeout:   0,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout: 0,
+		Transport: otelhttp.NewTransport(
+			http.DefaultTransport,
+			otelhttp.WithFilter(func(r *http.Request) bool {
+				// Return false to bypass otelhttp instrumentation for this request.
+				if r.Method == http.MethodPost &&
+					strings.Contains(r.URL.Path, "/api/v1/commands/") &&
+					strings.HasSuffix(r.URL.Path, "/events") {
+					return false
+				}
+				return true
+			}),
+		),
 	}
 	cli := protocol.NewClient(cfg.BaseURL, httpClient)
 

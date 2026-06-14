@@ -673,11 +673,15 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 			s.claimBackoff.Reset()
 			continue
 		}
+		// Context canceled by graceful shutdown — the transport-level error
+		// (context.Canceled / EOF / "terminated signal received") is the expected
+		// outcome of SIGTERM during a long-poll, not a real claim failure.
+		if err != nil && ctx.Err() != nil {
+			endClaim(nil)
+			return
+		}
 		endClaim(err)
 		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
 			// On 401/403: attempt a fresh identity exchange before backing
 			// off. If re-auth succeeds the bearer is updated and we can
 			// retry without the full backoff interval.
@@ -939,17 +943,25 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.CommandHeader, event protocol.AgentEvent) error {
 	eventPostBackoff := backoff.NewWithSteps(s.eventPostSteps)
 	for {
+		_, endPost := tracing.StartSpan(ctx, "agent.event_post",
+			attribute.String("command_id", header.CommandID),
+			attribute.String("kind", string(header.Kind)),
+		)
 		err := s.client.PostCommandEvent(ctx, header.CommandID, event)
 		if err == nil {
 			// Acked — done.
+			endPost(nil)
 			return nil
 		}
 		if err == protocol.ErrStaleClaim {
 			// 410 Gone — the backend no longer holds this claim.
 			// Drop silently; re-delivering would be wrong.
+			endPost(nil)
 			s.log.Info("supervisor.event_stale_claim", "command_id", header.CommandID)
 			return nil
 		}
+		// Record the error on this attempt's span before handling auth / retry.
+		endPost(err)
 		// Auth error: attempt a fresh identity exchange. If re-auth succeeds,
 		// reset the backoff and retry immediately with the updated bearer so a
 		// DB wipe between command dispatch and terminal-event delivery does not
