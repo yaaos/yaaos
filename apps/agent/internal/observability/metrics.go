@@ -25,6 +25,7 @@ type Instruments struct {
 	ConnectionBackoffSeconds metric.Float64Gauge // attributes: surface=...
 	CommandsDeduped          metric.Int64Counter // attributes: org_id, agent_id — duplicate command_id hit the cache
 	EventsPostRetries        metric.Int64Counter // attributes: kind, org_id, agent_id — each retry of a terminal-event POST
+	ClaimOutcome             metric.Int64Counter // attributes: outcome=command|no_command|cancel|error
 }
 
 var (
@@ -71,6 +72,18 @@ func StandardAttrs() metric.MeasurementOption {
 func Metrics() *Instruments {
 	metricsOnce.Do(bindMetrics)
 	return metricsRef
+}
+
+// RebindMetrics resolves all instruments against the current global
+// MeterProvider. Useful in tests that install a custom provider (e.g.
+// sdkmetric.NewMeterProvider with a ManualReader) after init: call
+// otel.SetMeterProvider, then RebindMetrics, then Metrics() will return
+// instruments wired to the test provider.
+//
+// In production, wireProviders calls bindMetrics directly; callers should
+// prefer the Init → BindExporter path over calling this directly.
+func RebindMetrics() {
+	bindMetrics()
 }
 
 // bindMetrics (re-)resolves every instrument against the current global
@@ -129,6 +142,12 @@ func bindMetrics() {
 	if inst.EventsPostRetries, err = m.Int64Counter(
 		"yaaos.agent.events.post.retries",
 		metric.WithDescription("Each retry of a terminal-event POST to the control plane, by command kind."),
+	); err != nil {
+		panic(err)
+	}
+	if inst.ClaimOutcome, err = m.Int64Counter(
+		"yaaos.agent.claim.outcome",
+		metric.WithDescription("Claim-loop outcomes bucketed by exit path."),
 	); err != nil {
 		panic(err)
 	}

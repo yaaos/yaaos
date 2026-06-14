@@ -677,9 +677,14 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		if ctx.Err() != nil {
 			return
 		}
-		_, endClaim := tracing.StartSpan(ctx, "agent.claim")
+		spanCtx, endClaim := tracing.StartSpan(ctx, "agent.claim")
 		raw, err := s.client.ClaimCommand(ctx, s.buildClaimRequest())
 		if err == protocol.ErrNoCommand {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "no_command"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "no_command")),
+				observability.StandardAttrs(),
+			)
 			endClaim(nil)
 			s.claimBackoff.Reset()
 			continue
@@ -688,11 +693,22 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		// (context.Canceled / EOF / "terminated signal received") is the expected
 		// outcome of SIGTERM during a long-poll, not a real claim failure.
 		if err != nil && ctx.Err() != nil {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "cancel"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "cancel")),
+				observability.StandardAttrs(),
+			)
 			endClaim(nil)
 			return
 		}
-		endClaim(err)
 		if err != nil {
+			// Transport or protocol error — not a graceful shutdown.
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "error"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "error")),
+				observability.StandardAttrs(),
+			)
+			endClaim(err)
 			// On 401/403: attempt a fresh identity exchange before backing
 			// off. If re-auth succeeds the bearer is updated and we can
 			// retry without the full backoff interval.
@@ -714,9 +730,23 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		}
 		cmd, decErr := command.Decode(raw)
 		if decErr != nil {
+			// Decode failure counts as an error outcome — the claim HTTP call
+			// succeeded but the payload is unusable.
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "error"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "error")),
+				observability.StandardAttrs(),
+			)
+			endClaim(decErr)
 			s.log.Warn("supervisor.decode_error", "worker", workerNum, "err", decErr.Error())
 			continue
 		}
+		oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "command"))
+		observability.Metrics().ClaimOutcome.Add(ctx, 1,
+			metric.WithAttributes(attribute.String("outcome", "command")),
+			observability.StandardAttrs(),
+		)
+		endClaim(nil)
 		s.claimBackoff.Reset()
 		observability.Metrics().CommandsClaimed.Add(ctx, 1, observability.StandardAttrs())
 
@@ -1013,8 +1043,9 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 		)
 		ack, err := s.client.PostCommandEvent(ctx, header.CommandID, event)
 		if err == nil {
-			// 200 — stamp the outcome attribute and log uniformly.
+			// 200 — stamp the outcome attributes (agent-perspective + backend-perspective) and log uniformly.
 			oteltrace.SpanFromContext(spanCtx).SetAttributes(
+				attribute.String("event_post.outcome", "acked"),
 				attribute.String("command_event.outcome", ack.Outcome),
 			)
 			endPost(nil)
@@ -1030,6 +1061,9 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 		// in-flight failure. Close the span Unset (not an error — this is a
 		// normal backend lifecycle signal, not a transport failure).
 		if errors.Is(err, protocol.ErrStaleClaim) {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(
+				attribute.String("event_post.outcome", "stale_claim"),
+			)
 			endPost(nil)
 			s.log.Info("supervisor.event_stale_claim",
 				"command_id", header.CommandID,
@@ -1037,6 +1071,11 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 			)
 			return nil
 		}
+		// Transient/auth error — stamp the agent-perspective outcome before
+		// recording the error on the span.
+		oteltrace.SpanFromContext(spanCtx).SetAttributes(
+			attribute.String("event_post.outcome", "network_error"),
+		)
 		// Record the error on this attempt's span before handling auth / retry.
 		endPost(err)
 		// Auth error: attempt a fresh identity exchange. If re-auth succeeds,

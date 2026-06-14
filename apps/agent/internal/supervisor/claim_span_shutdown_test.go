@@ -102,4 +102,13 @@ func TestSupervisor_ClaimSpan_ShutdownCancellationIsNotError(t *testing.T) {
 			t.Errorf("unexpected exception event on agent.claim span for shutdown cancellation: event=%v", ev)
 		}
 	}
+	var outcomeAttr string
+	for _, a := range sp.Attributes {
+		if string(a.Key) == "claim.outcome" {
+			outcomeAttr = a.Value.AsString()
+		}
+	}
+	if outcomeAttr != "cancel" {
+		t.Errorf("agent.claim span claim.outcome: want cancel, got %q", outcomeAttr)
+	}
 }

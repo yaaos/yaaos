@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **Owns:** `Init` (SDK bootstrap — wires live log bridge, stashes startup Config), `BindExporter` (installs OTLP exporters from a ConfigUpdate endpoint), `SetInstanceID` (stores the backend-assigned instance_id before `BindExporter` runs), `Instruments` (metric instruments), `SetStandardDimensions`/`StandardAttrs` (org_id + agent_id on metrics), `bindMetrics` (instrument resolution).
+- **Owns:** `Init` (SDK bootstrap — wires live log bridge, stashes startup Config), `BindExporter` (installs OTLP exporters from a ConfigUpdate endpoint), `SetInstanceID` (stores the backend-assigned instance_id before `BindExporter` runs), `Instruments` (metric instruments), `SetStandardDimensions`/`StandardAttrs` (org_id + agent_id on metrics), `bindMetrics` (instrument resolution), `RebindMetrics` (public rebind after swapping the global MeterProvider — for tests).
 - **Does not own:** the base slog logger (owned by `internal/logging`), span creation (owned by `internal/tracing`), or identity exchange (owned by `internal/identity` + `internal/supervisor`).
 - **Receives:** `Config{ServiceVersion}` at startup; `instance_id` after identity exchange via `SetInstanceID`; `(orgID, agentID)` pair after identity exchange via `SetStandardDimensions`.
 - **Emits:** OTel resource + SDK providers wired into the global `otel.*` registries; `Result.SlogHandler` for the logging fan-out.
@@ -68,10 +68,43 @@ Key counters emitted by the supervisor (all carry `org_id` + `agent_id`):
 | `yaaos.agent.events.post.retries` | `kind` | Each retry of a terminal-event POST (transient failure) |
 | `yaaos.agent.commands.completed` | `result` | Terminal dispatch outcome (success / failure / timeout) |
 | `yaaos.agent.connection.failures` | `surface`, `class` | Auth or network failures per connection surface |
+| `yaaos.agent.claim.outcome` | `outcome` | Claim-loop exit-path bucket (see below); supplements `yaaos.agent.commands.claimed` |
+
+### `yaaos.agent.claim.outcome` buckets
+
+`outcome` attribute values:
+
+| Value | Meaning |
+|---|---|
+| `command` | Claim HTTP call succeeded **and** `command.Decode` succeeded; a command was dispatched. Equivalent path to an increment of `yaaos.agent.commands.claimed`. |
+| `no_command` | HTTP 204 — normal long-poll outcome when the backend has no queued command. |
+| `cancel` | `err != nil && ctx.Err() != nil` — transport error coincident with a cancelled root context (SIGTERM during a long-poll). |
+| `error` | `err != nil && ctx.Err() == nil` (transport/protocol error not caused by shutdown), **or** a decode failure after a successful HTTP claim. |
+
+`yaaos.agent.commands.claimed` is preserved; it continues incrementing on the `command` path and may be referenced by existing dashboards. `yaaos.agent.claim.outcome` is the labeled superset — use it to write `outcome="error"` alerts without touching existing queries.
+
+## Span attributes added by this module
+
+### `agent.claim` span
+
+- `claim.outcome` (string) — set on every span to one of `command`, `no_command`, `cancel`, `error`. Set before `endClaim` so the attribute is always present regardless of span status.
+
+### `agent.event_post` span
+
+Two outcome attributes coexist — they describe different perspectives:
+
+- `event_post.outcome` (string, **agent perspective** — new) — set on every attempt:
+  - `acked` — backend returned 200.
+  - `stale_claim` — backend returned 410 (retired command row); not an error.
+  - `network_error` — transient or auth error; the attempt will be retried.
+- `command_event.outcome` (string, **backend perspective** — existing) — set only on 200, carries the backend's classification (e.g. `event_recorded`, `stale_claim_dropped`). Absent on non-200 spans.
+
+Use `event_post.outcome="network_error"` for SRE alerting on transient delivery failures (set a threshold, not alert-on-any). Use `command_event.outcome` for backend-semantic queries (e.g. how often is `stale_claim_dropped` returned).
 
 ## Gotchas
 
 - `bindMetrics` is called from `Init` after the real provider installs, swapping out no-op instruments. Tests that call `Metrics()` before `Init` get no-ops — fine for unit tests; service tests need the real provider only if they assert metric values.
+- `RebindMetrics()` replaces `metricsRef` without a lock — call it only after installing a new global MeterProvider and before any concurrent `Metrics()` callers start. In tests: install the provider, call `RebindMetrics()`, then start goroutines that call `Metrics()`.
 - `SetStandardDimensions` is safe to call concurrently (guarded by `stdDimsMu`); it's a process-wide singleton, called once after identity exchange.
 
 ## Testing
@@ -82,6 +115,6 @@ Key counters emitted by the supervisor (all carry `org_id` + `agent_id`):
 
 - `apps/agent/internal/observability/otel.go` — `Init`, `Config`, `Result`, `SetInstanceID`, `wireProviders` (registers `DimProcessor`).
 - `apps/agent/internal/observability/dim_processor.go` — `DimProcessor`, `NewDimProcessor`.
-- `apps/agent/internal/observability/metrics.go` — `Instruments`, `Metrics()`, `SetStandardDimensions`, `StandardAttrs`.
+- `apps/agent/internal/observability/metrics.go` — `Instruments`, `Metrics()`, `RebindMetrics()`, `SetStandardDimensions`, `StandardAttrs`.
 - `apps/agent/cmd/agent/main.go` — `var agentVersion` (ldflags target `main.agentVersion`; `YAAOS_AGENT_VERSION` runtime override).
 - `apps/agent/VERSION` — human-edited major integer; the publish pipeline derives the full semver from it.

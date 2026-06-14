@@ -113,6 +113,16 @@ func TestSupervisor_EventPostSpan_410StaleClaim(t *testing.T) {
 			t.Errorf("unexpected command_event.outcome attribute on 410 span: %q", a.Value.AsString())
 		}
 	}
+	// event_post.outcome must be stale_claim on 410.
+	var eventPostOutcome string
+	for _, a := range sp.Attributes {
+		if string(a.Key) == "event_post.outcome" {
+			eventPostOutcome = a.Value.AsString()
+		}
+	}
+	if eventPostOutcome != "stale_claim" {
+		t.Errorf("agent.event_post span event_post.outcome on 410: want stale_claim, got %q", eventPostOutcome)
+	}
 }
 
 // TestSupervisor_EventPostSpan_TransientErrorThenSuccessRecordsBoth verifies
@@ -202,13 +212,30 @@ func TestSupervisor_EventPostSpan_TransientErrorThenSuccessRecordsBoth(t *testin
 	if got := spans[postIdxs[1]].Status.Code.String(); got != "Unset" {
 		t.Errorf("second agent.event_post span (200): want Unset, got %s", got)
 	}
-	var outcomeAttr string
+	var commandEventOutcome string
+	var eventPostOutcome string
 	for _, a := range spans[postIdxs[1]].Attributes {
-		if string(a.Key) == "command_event.outcome" {
-			outcomeAttr = a.Value.AsString()
+		switch string(a.Key) {
+		case "command_event.outcome":
+			commandEventOutcome = a.Value.AsString()
+		case "event_post.outcome":
+			eventPostOutcome = a.Value.AsString()
 		}
 	}
-	if outcomeAttr != "event_recorded" {
-		t.Errorf("second span command_event.outcome: want event_recorded, got %q", outcomeAttr)
+	if commandEventOutcome != "event_recorded" {
+		t.Errorf("second span command_event.outcome: want event_recorded, got %q", commandEventOutcome)
+	}
+	if eventPostOutcome != "acked" {
+		t.Errorf("second span event_post.outcome: want acked, got %q", eventPostOutcome)
+	}
+	// First span (500): event_post.outcome must be network_error.
+	var firstEventPostOutcome string
+	for _, a := range spans[postIdxs[0]].Attributes {
+		if string(a.Key) == "event_post.outcome" {
+			firstEventPostOutcome = a.Value.AsString()
+		}
+	}
+	if firstEventPostOutcome != "network_error" {
+		t.Errorf("first span event_post.outcome (500): want network_error, got %q", firstEventPostOutcome)
 	}
 }

@@ -95,4 +95,13 @@ func TestSupervisor_ClaimSpan_NoCommandIsNotError(t *testing.T) {
 			t.Errorf("unexpected exception event on agent.claim span for 204 (ErrNoCommand): event=%v", ev)
 		}
 	}
+	var outcomeAttr string
+	for _, a := range sp.Attributes {
+		if string(a.Key) == "claim.outcome" {
+			outcomeAttr = a.Value.AsString()
+		}
+	}
+	if outcomeAttr != "no_command" {
+		t.Errorf("agent.claim span claim.outcome: want no_command, got %q", outcomeAttr)
+	}
 }
