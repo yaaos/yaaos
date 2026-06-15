@@ -245,7 +245,7 @@ Push to `main` → RWX triggers `push.yml`:
 
 1. `ci-docs`, `ci-backend`, `ci-web`, `ci-agent`, `ci-e2e` run in parallel.
 2. `deploy-production` fires only when **all five** pass **and** the push touched deploy-relevant files — it carries a `filter:` block (`apps/backend/**`, `apps/web/**`, the Python/pnpm workspace manifests, and `fly.production.toml`). An agent-only push (`apps/agent/**`) skips `deploy-production` (its image ships via `publish-agent-image`); a doc-only push skips deployment entirely. The `filter:` list in `.rwx/push.yml` is the canonical source.
-3. `flyctl deploy` runs **twice** — once for the `api` process group (bluegreen) and once for `worker` (rolling). Both build the amd64 image on Fly's remote builder; the second call reuses the cached image from the first.
+3. `flyctl deploy` runs **twice** — once for `api` (bluegreen, builds and pushes the amd64 image with `--image-label commit-<sha>`) and once for `worker` (rolling, `--image registry.fly.io/yaaos:commit-<sha>` so the worker runs identical bytes without a second build). Each `flyctl deploy` creates its own Fly release row, so `fly releases` shows two entries per push — both pointing at the same image; the version-number split is bookkeeping only.
 
 ### Per-process-group deploy strategies
 
