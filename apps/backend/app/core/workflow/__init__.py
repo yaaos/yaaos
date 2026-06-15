@@ -34,6 +34,10 @@ from app.core.workflow.service import (
     start_step,
     unregister_workflow,
 )
+from app.core.workflow.start_hooks import (
+    get_start_hooks,
+    register_start_hook,
+)
 from app.core.workflow.terminal_hooks import (
     get_terminal_hooks,
     register_terminal_hook,
@@ -87,6 +91,7 @@ __all__ = [
     "get_engine",
     "get_execution_summary",
     "get_recovery_policy",
+    "get_start_hooks",
     "get_terminal_hooks",
     "handle_agent_event",
     "list_active_execution_ids",
@@ -95,6 +100,7 @@ __all__ = [
     "list_hitl_history",
     "list_run_views_for_ticket",
     "register_recovery_policy",
+    "register_start_hook",
     "register_terminal_hook",
     "register_workflow",
     "registered_recovery_labels",

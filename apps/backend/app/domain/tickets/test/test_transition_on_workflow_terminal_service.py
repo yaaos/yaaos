@@ -33,6 +33,9 @@ from app.domain.tickets.models import TicketRow
 async def _make_running_ticket(db_session, org_id) -> tuple:  # type: ignore[no-untyped-def]
     """Insert a running ticket and stamp a workflow execution on it.
 
+    create_from_pr inserts at pending; flip to running manually so the
+    transition_on_workflow_terminal guard sees a non-terminal, pre-running ticket.
+
     Returns (ticket_id, workflow_execution_id).
     """
     workflow_execution_id = uuid4()
@@ -53,6 +56,8 @@ async def _make_running_ticket(db_session, org_id) -> tuple:  # type: ignore[no-
         workflow_execution_id=workflow_execution_id,
         session=db_session,
     )
+    # Flip to running to match the expected precondition (create_from_pr inserts pending).
+    await db_session.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(status="running"))
     await db_session.commit()
     assert ticket_id is not None
     return ticket_id, workflow_execution_id

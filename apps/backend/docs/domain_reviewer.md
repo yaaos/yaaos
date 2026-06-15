@@ -58,7 +58,19 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 - `finding_display_id` — per-PR monotonic integer; rendered as `<category-prefix>-<id>` (`sec-3`, `arch-7`).
 - `Review` — one row per PR review run.
 
-## Ticket status — atomic flip on workflow terminal
+## Ticket status — atomic flips on workflow bootstrap and terminal
+
+### Start hook (`start_hook.py`)
+
+`register_reviewer_start_hooks()` (in `start_hook.py`) registers `_on_workflow_start` into [`core/workflow`](core_workflow.md)'s start-hook registry. Called once from both `web.py` and `worker.py` at startup.
+
+On `pr_review_v1` bootstrap (when `route_workflow` first transitions to RUNNING) the hook calls [`tickets.transition_on_workflow_start`](domain_tickets.md) inside the engine's bootstrap-commit transaction:
+
+- `pending → running` (atomically with the workflow RUNNING write)
+
+Guard misses (ticket not found, ownership mismatch, ticket not in `pending`) return `False` silently — never raises.
+
+### Terminal hook (`terminal_hook.py`)
 
 `register_reviewer_terminal_hooks()` (in `terminal_hook.py`) registers `_on_workflow_terminal` into [`core/workflow`](core_workflow.md)'s terminal-hook registry. Called once from both `web.py` and `worker.py` at startup.
 
@@ -81,6 +93,7 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
 ## How it's tested
 
 - **Service tests** (`@pytest.mark.service`):
+  - `test_start_hook_service.py` — bootstrap hook flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
   - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
   - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema.

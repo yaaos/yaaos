@@ -39,6 +39,7 @@ from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 from app.core.workflow.recovery import get_recovery_policy
+from app.core.workflow.start_hooks import get_start_hooks
 from app.core.workflow.terminal_hooks import get_terminal_hooks
 from app.core.workflow.types import (
     TERMINAL_STATES,
@@ -479,6 +480,15 @@ async def _route_workflow_impl(
         if completed_step_id is None:
             wfx.state = WorkflowState.RUNNING.value
             _publish_state_changed(s, wfx)
+            org_id = _workflow_org_id(wfx)
+            for hook in get_start_hooks():
+                await hook(
+                    workflow_execution_id=wfx.id,
+                    workflow_name=wfx.workflow_name,
+                    ticket_id=wfx.ticket_id,
+                    org_id=org_id,
+                    session=s,
+                )
             await _enqueue_start_step(s, wfx, wf, wf.entry_step_id, attempt=0)
             await s.commit()
             return

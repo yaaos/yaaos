@@ -237,7 +237,7 @@ async def create_from_pr(
         plugin_id=plugin_id,
         idempotency_key=idempotency_key,
         payload=payload,
-        status="running",
+        status="pending",
         conflict_target=("org_id", "source", "source_external_id"),
         session=session,
     )
@@ -258,7 +258,7 @@ async def create_from_pr(
         await notify_ticket_status_change(
             ticket_id=ticket_id,
             org_id=org_id,
-            new_status="running",
+            new_status="pending",
             previous_status=None,
             session=session,
         )
@@ -275,7 +275,7 @@ async def notify_ticket_status_change(
 ) -> None:
     """Single broadcast seam for TICKET_STATUS_CHANGED events.
 
-    All ticket status changes (creation at running, state transitions,
+    All ticket status changes (creation at pending, state transitions,
     and workflow terminal outcomes) route through here. Looks up the title
     internally so callers stay terse. Caller commits.
     """
@@ -598,6 +598,44 @@ async def _transition(
             raise InvalidTicketTransition(f"ticket {ticket_id} is terminal ({row.status}); cannot transition")
         await _apply_transition(s, row, new_status=new_status, reason=reason, org_id=org_id)
         await s.commit()
+
+
+async def transition_on_workflow_start(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    workflow_execution_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Flip ticket pending→running when its workflow bootstraps.
+
+    Atomic with the workflow's RUNNING state write — called from the start
+    hook inside the engine's bootstrap-commit transaction.
+
+    Returns True if flipped. Returns False (silent no-op) when:
+    - the ticket is not found,
+    - the ticket is owned by a different workflow execution,
+    - the ticket is not currently in `pending` (re-bootstrap or already past).
+
+    Caller commits.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_workflow_execution_id != workflow_execution_id:
+        return False
+    if row.status != "pending":
+        return False
+    await _apply_transition(
+        session,
+        row,
+        new_status="running",
+        reason=None,
+        org_id=org_id,
+    )
+    return True
 
 
 async def transition_on_workflow_terminal(

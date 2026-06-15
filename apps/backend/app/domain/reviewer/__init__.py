@@ -37,6 +37,7 @@ from app.domain.reviewer.service import (
     list_reviews_for_pr,
     refresh_ticket_findings_summary,
 )
+from app.domain.reviewer.start_hook import register_reviewer_start_hooks
 from app.domain.reviewer.terminal_hook import register_reviewer_terminal_hooks
 from app.domain.reviewer.trigger import (
     Debounce,
@@ -102,6 +103,7 @@ __all__ = [
     "prefix_broken_creds_warning",
     "publish_findings",
     "refresh_ticket_findings_summary",
+    "register_reviewer_start_hooks",
     "register_reviewer_terminal_hooks",
     "start_incremental_review",
     "start_pr_review",

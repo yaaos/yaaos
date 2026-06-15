@@ -46,7 +46,7 @@ async def test_create_from_pr_creates_new(db_session) -> None:  # type: ignore[n
 
     ticket = await get(ticket_id, org_id=org_id)
     assert ticket.title == "My PR title"
-    assert ticket.status == "running"
+    assert ticket.status == "pending"
     assert ticket.pr_id is None
 
 
@@ -209,10 +209,10 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     )
     await db_session.commit()
     assert stale_id is not None
-    # Back-date the stale ticket to 10 minutes ago
+    # Back-date the stale ticket to 10 minutes ago and flip to running (create_from_pr inserts pending).
     stale_created_at = datetime.now(UTC) - timedelta(minutes=10)
     await db_session.execute(
-        text("UPDATE tickets SET created_at = :ts WHERE id = :id"),
+        text("UPDATE tickets SET created_at = :ts, status = 'running' WHERE id = :id"),
         {"ts": stale_created_at, "id": stale_id},
     )
     await db_session.commit()

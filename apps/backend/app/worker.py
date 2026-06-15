@@ -44,10 +44,14 @@ def main() -> int:
         register_workspace_providers,
         register_workspace_recovery_policies,
     )
-    from app.domain.reviewer import register_reviewer_terminal_hooks  # noqa: PLC0415
+    from app.domain.reviewer import (  # noqa: PLC0415
+        register_reviewer_start_hooks,
+        register_reviewer_terminal_hooks,
+    )
 
     register_workspace_providers()
     register_workspace_recovery_policies()
+    register_reviewer_start_hooks()
     register_reviewer_terminal_hooks()
     assert_workflow_context_provider()
 

@@ -9,9 +9,16 @@ import type { Ticket } from "@core/api/public/client";
 import type { GithubRepositoriesResponse } from "@core/api/public/queries";
 import { useMemo, useState } from "react";
 
-export type TicketStatus = "running" | "hitl" | "done" | "failed" | "cancelled";
+export type TicketStatus = "pending" | "running" | "hitl" | "done" | "failed" | "cancelled";
 
-export const ALL_STATUSES: TicketStatus[] = ["running", "hitl", "done", "failed", "cancelled"];
+export const ALL_STATUSES: TicketStatus[] = [
+  "pending",
+  "running",
+  "hitl",
+  "done",
+  "failed",
+  "cancelled",
+];
 
 const PAGE_SIZE = 50;
 

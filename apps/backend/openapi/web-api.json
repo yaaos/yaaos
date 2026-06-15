@@ -7068,7 +7068,7 @@
     },
     "/api/tickets/dashboard": {
       "get": {
-        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 5-state vocab post-collapse\n(running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the workflow-state projection landing on every\ntransition.",
+        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 6-state vocab\n(pending / running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the workflow-state projection landing on every\ntransition.",
         "operationId": "dashboard_api_tickets_dashboard_get",
         "parameters": [
           {

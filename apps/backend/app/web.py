@@ -77,10 +77,12 @@ from app.core.workspace import (  # noqa: E402
     register_workspace_providers,
     register_workspace_recovery_policies,
 )
+from app.domain.reviewer import register_reviewer_start_hooks  # noqa: E402
 from app.domain.reviewer import register_reviewer_terminal_hooks  # noqa: E402
 
 register_workspace_providers()
 register_workspace_recovery_policies()
+register_reviewer_start_hooks()
 register_reviewer_terminal_hooks()
 assert_workflow_context_provider()
 from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402

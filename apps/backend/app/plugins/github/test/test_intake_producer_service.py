@@ -125,9 +125,10 @@ async def test_intake_enqueues_fanout_via_ticket_policy(
     db_session, redis_or_skip, _stub_pr_review_engine
 ) -> None:
     """A PR-opened webhook must:
-    - enqueue one `notifications.fanout` outbox row with NotificationSpecs for each
-      org member (sourced from tickets.build_status_change_specs), and
-    - publish a general SSE event after commit with kind 'ticket_status_changed'.
+    - publish a general SSE event after commit with kind 'ticket_status_changed'
+      with new_status 'pending' (create_from_pr inserts at pending; running comes later
+      via the workflow start hook).
+    - NOT enqueue a fanout row (pending does not warrant user notifications).
     """
     from app.core.sse import subscribe_general  # noqa: PLC0415
 
@@ -157,12 +158,12 @@ async def test_intake_enqueues_fanout_via_ticket_policy(
     assert len(received) == 1
     evt = received[0]
     assert evt["kind"] == "ticket_status_changed"
-    assert evt["new_status"] == "running"
+    assert evt["new_status"] == "pending"
     assert "ts" in evt
 
-    # `running` status does not warrant user notifications, so no fanout row.
+    # `pending` status does not warrant user notifications, so no fanout row.
     payloads = await get_pending_outbox_payloads(db_session)
     fanout_rows = [p for p in payloads if p.get("task_name") == "notifications.fanout"]
     assert len(fanout_rows) == 0, (
-        f"expected 0 fanout rows for 'running' status (no notification warranted), got {len(fanout_rows)}"
+        f"expected 0 fanout rows for 'pending' status (no notification warranted), got {len(fanout_rows)}"
     )

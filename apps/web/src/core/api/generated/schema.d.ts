@@ -1277,8 +1277,8 @@ export interface paths {
          *        needs_attention: [TicketRow ≤5]}`.
          *
          *     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
-         *     polling loop. `t.status` is the 5-state vocab post-collapse
-         *     (running / hitl / done / failed / cancelled); precise hitl/failed
+         *     polling loop. `t.status` is the 6-state vocab
+         *     (pending / running / hitl / done / failed / cancelled); precise hitl/failed
          *     counts depend on the workflow-state projection landing on every
          *     transition.
          */

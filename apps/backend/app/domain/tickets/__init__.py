@@ -34,6 +34,7 @@ from app.domain.tickets.service import (
     list_tickets,
     notify_ticket_status_change,
     set_workflow_execution,
+    transition_on_workflow_start,
     transition_on_workflow_terminal,
     update_findings_summary,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "list_tickets",
     "notify_ticket_status_change",
     "set_workflow_execution",
+    "transition_on_workflow_start",
     "transition_on_workflow_terminal",
     "update_findings_summary",
     "update_state",

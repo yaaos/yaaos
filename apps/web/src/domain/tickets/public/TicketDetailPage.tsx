@@ -61,6 +61,7 @@ const DEFAULT_STATUS_META: StatusMeta = {
 };
 
 const STATUS_META: Record<string, StatusMeta> = {
+  pending: { label: "Queued", icon: Loader2, chip: "bg-muted text-muted-foreground border-border" },
   running: DEFAULT_STATUS_META,
   hitl: { label: "HITL", icon: Bell, chip: "bg-warning text-warning-foreground border-warning" },
   done: {
@@ -191,7 +192,12 @@ function Header({
             )}
             data-testid={`ticket-status-${status}`}
           >
-            <Icon className={cn("w-3 h-3", status === "running" && "animate-spin")} />
+            <Icon
+              className={cn(
+                "w-3 h-3",
+                (status === "running" || status === "pending") && "animate-spin",
+              )}
+            />
             {meta.label}
           </span>
           <span className="text-muted-foreground">

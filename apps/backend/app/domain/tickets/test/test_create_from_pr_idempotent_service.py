@@ -104,4 +104,4 @@ async def test_concurrent_create_from_pr_produces_one_row(
             .all()
         )
     assert len(rows) == 1, f"Expected exactly 1 TicketRow; found {len(rows)}"
-    assert rows[0].status == "running"
+    assert rows[0].status == "pending"

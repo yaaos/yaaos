@@ -1,6 +1,6 @@
 """HTTP coverage for GET /api/tickets/{ticket_id}.
 
-Asserts the extended-projection shape: status (5-state collapsed vocab),
+Asserts the extended-projection shape: status (6-state vocab),
 findings_count, max_severity, and builder. Workflow-run data is served
 by the dedicated /workflow-runs endpoint.
 """
