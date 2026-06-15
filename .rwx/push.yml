@@ -277,15 +277,24 @@ tasks:
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
       # Split deploy by process group:
       #   - api uses fly.toml's default strategy (bluegreen) for zero-downtime HTTP.
+      #     Builds + pushes the image, tagged with the commit sha so the worker
+      #     deploy below can reference it.
       #   - worker uses --strategy rolling because bluegreen's cutover trigger
       #     is http_service health-check pass, and the worker has no
       #     [http_service]. Bluegreen creates the new worker machine `stopped`
       #     and never sends `start`, shipping a stopped worker every deploy.
       #     Rolling updates the existing worker in place and avoids the bug.
-      # The second invocation reuses the cached image from the first build —
-      # source hasn't changed between the two calls.
+      #     Uses --image to reuse the bytes the api deploy just pushed —
+      #     remote-builder runs produce non-deterministic digests for the same
+      #     source, so without --image both machines would run different bytes.
+      # Cost of two `flyctl deploy` calls: each one creates a Fly release row.
+      # `fly releases` will show two rows per push (api at vN, worker at vN+1)
+      # pointing at the same image — cosmetic, not a correctness issue.
+      IMAGE_TAG="commit-${{ init.commit-sha }}"
+
       flyctl deploy --remote-only --config fly.production.toml \
         --process-groups api \
+        --image-label "$IMAGE_TAG" \
         --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.us-west-2.aws.dash0.com \
         --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
         --build-arg VITE_DASH0_DATASET=default \
@@ -295,11 +304,7 @@ tasks:
       flyctl deploy --remote-only --config fly.production.toml \
         --process-groups worker \
         --strategy rolling \
-        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.us-west-2.aws.dash0.com \
-        --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
-        --build-arg VITE_DASH0_DATASET=default \
-        --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
-        --build-arg VITE_ENVIRONMENT=production
+        --image "registry.fly.io/yaaos:$IMAGE_TAG"
 
   # ─── agent image publish ─────────────────────────────────────────────
   #
