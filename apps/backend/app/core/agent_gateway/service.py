@@ -739,19 +739,6 @@ async def record_agent_event(
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
     from app.core.agent_gateway.types import AgentEventKind  # noqa: PLC0415
 
-    # Handle `received` before the row lookup — `received` only updates the
-    # command row lease and does not require workflow correlation. It is fine
-    # that this early-returning branch does not verify the completion token: it
-    # bumps the lease only (no claim release, materialisation, or workflow
-    # resume), and a mismatched token would simply replay through the reaper.
-    if event.kind == AgentEventKind.RECEIVED:
-        await acknowledge_command_received(event.command_id, session=session)
-        log.debug(
-            "agent.event.received",
-            command_id=str(event.command_id),
-        )
-        return
-
     # Resolve workflow correlation directly from the command row — no
     # workspace-row dependency for the resumption path.
     cmd_row = (
@@ -773,6 +760,16 @@ async def record_agent_event(
         presented = hashlib.sha256((event.completion_token or "").encode()).hexdigest()
         if not hmac.compare_digest(presented, cmd_row.completion_token_hash):
             raise StaleClaimError(f"command {event.command_id} completion token mismatch")
+
+    # `received` only updates the command row lease and does not require workflow
+    # correlation — exit after the integrity gate so mismatched tokens are rejected.
+    if event.kind == AgentEventKind.RECEIVED:
+        await acknowledge_command_received(event.command_id, session=session)
+        log.debug(
+            "agent.event.received",
+            command_id=str(event.command_id),
+        )
+        return
 
     holder_workflow_id = cmd_row.workflow_execution_id
 
