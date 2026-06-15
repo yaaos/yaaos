@@ -1,22 +1,27 @@
 """Demand-pull subscriber registry — only forward activity events when a
 UI is watching.
 
-`SubscriberRegistry.track(workflow_execution_id, workspace_id, agent_id, sender)`
-is called by an SSE handler when a client connects. The registry
-increments a per-workflow counter; on the `0 → 1` transition it dispatches
-`{type: "subscribe", workspace_id: ..., workflow_execution_id: ...}` to
-the WebSocket whose ID matches `agent_id`. The agent caches the
-`workspace_id → workflow_execution_id` mapping so its outbound
-`activity_batch` frames carry the right workflow id. Symmetrically,
-`untrack(...)` decrements; on the `1 → 0` transition it dispatches an
-`unsubscribe` with the same key shape.
+`SubscriberRegistry.track(workflow_execution_id, workspace_id, agent_id)`
+is called by an SSE handler when a client connects. The registry writes to
+Redis (`workflow_subscribers:{wfx_id}` ZSET, `workflow_route:{wfx_id}` HASH,
+`agent_routes:{agent_id}` SET) and publishes an `AgentWsControlMessage` on
+the `agent_ws_control:{agent_id}` pub/sub channel. The pod whose WS sender
+is registered for `agent_id` receives the control message and forwards it
+to the agent. Symmetrically, `untrack(...)` removes the ZSET member and
+when ZCARD drops to 0 publishes `unsubscribe`.
 
-The actual WebSocket send is parameterized via `sender: Sender` (an async
-callable). That keeps `subscribers.py` free of FastAPI / Starlette
-imports and lets tests inject a list-collecting fake.
+`_senders` stays process-local: it is a live transport handle (the WebSocket
+send callable) and can only live where the WS terminates. Cross-pod routing
+uses Redis pub/sub as the backplane.
 
-In-process. Multi-instance backends route the subscribe / unsubscribe
-via Redis pub/sub, the same mechanism as the Redis backend for `core/sse`.
+`SubscriberReconciler` runs as a background loop on the WS-owning pod every
+`_RECONCILE_INTERVAL_SECONDS` seconds. It iterates each known agent's route
+set, checks ZCARD truth, and re-publishes subscribe/unsubscribe when the
+in-memory state diverges from Redis — the safety net against pub/sub's
+at-most-once delivery.
+
+`subscriber_sweeper` is a `@scheduled` worker task that GCs stale ZSET
+entries every minute via `ZREMRANGEBYSCORE`.
 
 The active `SubscriberRegistry` instance is ContextVar-bound.
 `bind_subscriber_registry` is the production DI seam — the composition root
@@ -28,14 +33,70 @@ calls it at startup; the `subscriber_registry_isolation` fixture in
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
+from pydantic import BaseModel
+
+from app.core.redis import (
+    hash_delete,
+    hash_get_all,
+    hash_set,
+    publish,
+    scan_keys,
+    set_add,
+    set_members,
+    set_remove,
+    subscribe,
+    zset_add_member,
+    zset_card,
+    zset_remove_by_score,
+    zset_remove_member,
+)
+from app.core.shutdown_registry import register_web_shutdown_hook
+from app.core.tasks import scheduled
 
 log = structlog.get_logger("core.agent_gateway.subscribers")
+
+# ── Wire payload ────────────────────────────────────────────────────────────
+
+
+class AgentWsControlMessage(BaseModel):
+    """Typed pub/sub envelope sent between pods on `agent_ws_control:{agent_id}`."""
+
+    type: Literal["subscribe", "unsubscribe"]
+    workspace_id: UUID
+    workflow_execution_id: UUID
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+_RECONCILE_INTERVAL_SECONDS = 5
+_SSE_HEARTBEAT_INTERVAL_SECONDS = 30
+_SUBSCRIBER_STALE_THRESHOLD_SECONDS = 60
+
+# ── Redis key helpers ─────────────────────────────────────────────────────────
+
+
+def _wfx_subscribers_key(wfx_id: UUID) -> str:
+    return f"workflow_subscribers:{wfx_id}"
+
+
+def _wfx_route_key(wfx_id: UUID) -> str:
+    return f"workflow_route:{wfx_id}"
+
+
+def _agent_routes_key(agent_id: UUID) -> str:
+    return f"agent_routes:{agent_id}"
+
+
+def _control_channel(agent_id: UUID) -> str:
+    return f"agent_ws_control:{agent_id}"
 
 
 # A sender takes the message dict to push to the agent over its WebSocket.
@@ -44,74 +105,188 @@ Sender = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class SubscriberRegistry:
-    """Tracks UI subscriber counts per workflow_execution_id and emits
-    subscribe / unsubscribe control messages to the agent that owns the
-    associated workspace on the 0→1 / 1→0 boundary.
+    """Tracks UI subscriber presence in Redis and emits typed subscribe /
+    unsubscribe control messages to the agent that owns the associated
+    workspace's WebSocket — across pods.
 
-    Process-local.
+    Cross-pod state lives in Redis. `_senders` is process-local because the
+    WebSocket send callable only exists on the pod where the WS terminates.
     """
 
     def __init__(self) -> None:
-        # workflow_execution_id → count of UI subscribers attached.
-        self._counts: dict[UUID, int] = {}
-        # workflow_execution_id → (workspace_id, agent_id) so we know who
-        # to send subscribe / unsubscribe to. Set on first track(); cleared
-        # when count returns to 0.
-        self._routes: dict[UUID, tuple[UUID, UUID]] = {}
-        # agent_id → sender for the agent's live WebSocket. Set when the
-        # WS endpoint registers the agent; cleared on disconnect.
+        # Stable identity for this registry instance (= this "pod").
+        # Used as the first component of ZSET members: "{pod_id}:{conn_id}".
+        self._pod_id: str = str(uuid.uuid4())
+
+        # agent_id → sender callable (live transport handle — process-local only).
         self._senders: dict[UUID, Sender] = {}
+        # agent_id → asyncio.Task running the Redis subscribe consumer loop.
+        self._subscribe_tasks: dict[UUID, asyncio.Task[None]] = {}
+        # wfx_id → ZSET member string (so untrack can remove the right member).
+        # Per-instance so each "pod" removes only its own member.
+        self._connections: dict[UUID, str] = {}
+        # agent_id → set of wfx_ids currently streaming (in-memory tracking
+        # for the reconciler to know what the agent is currently sending).
+        self._streaming: dict[UUID, set[UUID]] = {}
+
         self._lock = asyncio.Lock()
 
-    # ── Senders (WebSocket lifecycle) ──────────────────────────────────
+    # ── Senders (WebSocket lifecycle) ────────────────────────────────────────
 
     async def register_sender(self, agent_id: UUID, sender: Sender) -> None:
         """Register the sender callable for an agent's live WebSocket.
-        Called by the WS endpoint after upgrade succeeds.
 
-        Reconnect handling (PHASES item 185): if there are already active
-        routes whose `agent_id` matches, re-emit `subscribe` messages on
-        the new sender so the agent's reconstructed SubscriptionSet
-        picks up where the old connection left off. Without this,
-        progress events for already-watching UIs would drop until each
-        UI detached + re-attached.
+        Starts a background task that reads the `agent_ws_control:{agent_id}`
+        pub/sub channel and forwards each `AgentWsControlMessage` to `sender`.
+        Also runs an initial reconciliation pass: reads `agent_routes:{agent_id}`
+        and for each wfx_id with ZCARD ≥ 1 sends the subscribe message directly
+        so the agent picks up where it left off on reconnect.
         """
-        replay: list[dict[str, Any]] = []
         async with self._lock:
             self._senders[agent_id] = sender
-            for wfx_id, (workspace_id, route_agent) in self._routes.items():
-                if route_agent != agent_id:
+            self._streaming.setdefault(agent_id, set())
+
+        # Collect initial replay from Redis before starting the subscribe loop.
+        # Redis failure here is non-fatal — the reconciler will pick up state
+        # within _RECONCILE_INTERVAL_SECONDS. Log a warning and proceed.
+        replay: list[AgentWsControlMessage] = []
+        try:
+            wfx_ids = await set_members(_agent_routes_key(agent_id))
+            for wfx_id_str in wfx_ids:
+                try:
+                    wfx_id = UUID(wfx_id_str)
+                except ValueError:
                     continue
-                replay.append(
-                    {
-                        "type": "subscribe",
-                        "workspace_id": str(workspace_id),
-                        "workflow_execution_id": str(wfx_id),
-                    }
-                )
-            log.debug(
-                "subscribers.sender_registered",
+                card = await zset_card(_wfx_subscribers_key(wfx_id))
+                if card >= 1:
+                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    if "workspace_id" in route and "agent_id" in route:
+                        try:
+                            replay.append(
+                                AgentWsControlMessage(
+                                    type="subscribe",
+                                    workspace_id=UUID(route["workspace_id"]),
+                                    workflow_execution_id=wfx_id,
+                                )
+                            )
+                        except ValueError:
+                            pass
+        except Exception as exc:
+            log.warning(
+                "subscribers.sender_registered_redis_unavailable",
                 agent_id=str(agent_id),
-                resubscribed_count=len(replay),
+                err=str(exc),
             )
-        # Send outside the lock so a slow agent can't block other registry ops.
-        for message in replay:
+
+        log.debug(
+            "subscribers.sender_registered",
+            agent_id=str(agent_id),
+            resubscribed_count=len(replay),
+        )
+
+        # Send replay messages outside the lock.
+        for msg in replay:
             try:
-                await sender(message)
+                await sender(msg.model_dump(mode="json"))
+                async with self._lock:
+                    self._streaming.setdefault(agent_id, set()).add(msg.workflow_execution_id)
             except Exception as exc:
                 log.warning(
                     "subscribers.resubscribe_send_failed",
                     agent_id=str(agent_id),
-                    workspace_id=message["workspace_id"],
+                    workspace_id=str(msg.workspace_id),
                     err=str(exc),
                 )
 
-    async def unregister_sender(self, agent_id: UUID) -> None:
+        # Start the Redis pub/sub consumer task. Wait until it has subscribed
+        # to the channel before returning so that a caller can immediately call
+        # track() and know the message will be received. The event is set by
+        # _run_control_subscriber as soon as `pubsub.subscribe` completes.
+        subscribed_event: asyncio.Event = asyncio.Event()
+        task = asyncio.create_task(
+            self._run_control_subscriber(agent_id, sender, subscribed_event),
+            name=f"subscriber_control:{agent_id}",
+        )
         async with self._lock:
-            self._senders.pop(agent_id, None)
-            log.debug("subscribers.sender_unregistered", agent_id=str(agent_id))
+            self._subscribe_tasks[agent_id] = task
+        # Wait up to 5s for the subscriber to connect. Failure here is non-fatal
+        # (the reconciler picks up divergence) but we still want to surface it.
+        try:
+            await asyncio.wait_for(subscribed_event.wait(), timeout=5.0)
+        except TimeoutError:
+            log.warning(
+                "subscribers.subscriber_subscribe_timeout",
+                agent_id=str(agent_id),
+            )
 
-    # ── Subscriber lifecycle ───────────────────────────────────────────
+    async def _run_control_subscriber(
+        self,
+        agent_id: UUID,
+        sender: Sender,
+        subscribed_event: asyncio.Event | None = None,
+    ) -> None:
+        """Background task: read `agent_ws_control:{agent_id}` pub/sub and
+        dispatch each `AgentWsControlMessage` to the local sender.
+
+        Sets `subscribed_event` once the Redis SUBSCRIBE handshake completes
+        so the caller can ensure messages published after `register_sender`
+        returns are received. Exits cleanly when the task is cancelled.
+        """
+        try:
+            async for event in subscribe(_control_channel(agent_id), on_subscribed=subscribed_event):
+                try:
+                    msg = AgentWsControlMessage.model_validate(event)
+                except Exception:
+                    log.warning(
+                        "subscribers.malformed_control_message",
+                        agent_id=str(agent_id),
+                        event=event,
+                    )
+                    continue
+
+                # Update in-memory streaming state.
+                async with self._lock:
+                    streaming = self._streaming.setdefault(agent_id, set())
+                    if msg.type == "subscribe":
+                        streaming.add(msg.workflow_execution_id)
+                    else:
+                        streaming.discard(msg.workflow_execution_id)
+
+                try:
+                    await sender(msg.model_dump(mode="json"))
+                except Exception as exc:
+                    log.warning(
+                        "subscribers.control_send_failed",
+                        agent_id=str(agent_id),
+                        msg_type=msg.type,
+                        err=str(exc),
+                    )
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            log.warning(
+                "subscribers.control_loop_error",
+                agent_id=str(agent_id),
+                err=str(exc),
+            )
+
+    def unregister_sender(self, agent_id: UUID) -> None:
+        """Unregister the sender for `agent_id` and cancel the Redis subscribe task.
+
+        Synchronous so the WS handler's `finally` block can call it without
+        `await` — dict pops are GIL-protected and must be visible immediately
+        after the WebSocket disconnect, before any event-loop yielding that
+        could race with a test assertion on `has_sender`. The subscribe task
+        is cancelled fire-and-forget; it catches CancelledError and exits cleanly.
+        """
+        self._senders.pop(agent_id, None)
+        self._streaming.pop(agent_id, None)
+        task = self._subscribe_tasks.pop(agent_id, None)
+        if task is not None:
+            task.cancel()
+        log.debug("subscribers.sender_unregistered", agent_id=str(agent_id))
+
+    # ── Subscriber lifecycle ─────────────────────────────────────────────────
 
     async def track(
         self,
@@ -120,78 +295,222 @@ class SubscriberRegistry:
         workspace_id: UUID,
         agent_id: UUID,
     ) -> None:
-        """Increment the count for `workflow_execution_id`. On 0→1 send
-        `subscribe` to the workspace's owning agent."""
-        send: Sender | None = None
-        message: dict[str, Any] | None = None
+        """Record one UI subscriber for `workflow_execution_id`.
+
+        Writes to Redis:
+        - ZADD `workflow_subscribers:{wfx_id}` member=`{pod_id}:{conn_id}` score=now
+        - HSET `workflow_route:{wfx_id}` {workspace_id, agent_id}
+        - SADD `agent_routes:{agent_id}` {wfx_id}
+
+        Then PUBLISH `agent_ws_control:{agent_id}` with a subscribe envelope.
+        Each call from this pod for the same wfx_id uses a unique connection_id
+        so multiple concurrent SSE connections to the same workflow are each
+        counted independently.
+        """
+        conn_id = str(uuid.uuid4())
+        member = f"{self._pod_id}:{conn_id}"
+
         async with self._lock:
-            count = self._counts.get(workflow_execution_id, 0)
-            self._counts[workflow_execution_id] = count + 1
-            self._routes[workflow_execution_id] = (workspace_id, agent_id)
-            if count == 0:
-                send = self._senders.get(agent_id)
-                # Agent caches workspace_id → workflow_execution_id from
-                # this payload so its outbound `activity_batch` can carry
-                # the right `workflow_execution_id` keyed by the
-                # `workspace_id` it learned at subscribe time. Without
-                # this, the agent would have no way to populate the
-                # workflow id on its outbound frames.
-                message = {
-                    "type": "subscribe",
-                    "workspace_id": str(workspace_id),
-                    "workflow_execution_id": str(workflow_execution_id),
-                }
-        if send is not None and message is not None:
-            try:
-                await send(message)
-            except Exception as exc:
-                log.warning(
-                    "subscribers.subscribe_send_failed",
-                    agent_id=str(agent_id),
-                    workspace_id=str(workspace_id),
-                    err=str(exc),
-                )
+            self._connections[workflow_execution_id] = member
+
+        score = time.time()
+        await zset_add_member(_wfx_subscribers_key(workflow_execution_id), member, score)
+        await hash_set(
+            _wfx_route_key(workflow_execution_id),
+            {
+                "workspace_id": str(workspace_id),
+                "agent_id": str(agent_id),
+            },
+        )
+        await set_add(_agent_routes_key(agent_id), str(workflow_execution_id))
+
+        msg = AgentWsControlMessage(
+            type="subscribe",
+            workspace_id=workspace_id,
+            workflow_execution_id=workflow_execution_id,
+        )
+        try:
+            await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
+        except Exception as exc:
+            log.warning(
+                "subscribers.subscribe_publish_failed",
+                agent_id=str(agent_id),
+                workspace_id=str(workspace_id),
+                err=str(exc),
+            )
 
     async def untrack(self, *, workflow_execution_id: UUID) -> None:
-        """Decrement the count for `workflow_execution_id`. On 1→0 send
-        `unsubscribe` to the workspace's owning agent. No-op if already 0."""
-        send: Sender | None = None
-        message: dict[str, Any] | None = None
+        """Remove one UI subscriber for `workflow_execution_id`.
+
+        Removes this pod's member from the ZSET. If ZCARD drops to 0:
+        - reads `workflow_route:{wfx_id}` to resolve the agent_id
+        - publishes unsubscribe envelope on `agent_ws_control:{agent_id}`
+        - DEL `workflow_route:{wfx_id}`
+        - SREM `agent_routes:{agent_id} {wfx_id}`
+
+        No-op if this pod has no member registered for the wfx_id.
+        """
         async with self._lock:
-            count = self._counts.get(workflow_execution_id, 0)
-            if count <= 0:
-                return
-            self._counts[workflow_execution_id] = count - 1
-            if count - 1 == 0:
-                route = self._routes.pop(workflow_execution_id, None)
-                self._counts.pop(workflow_execution_id, None)
-                if route is not None:
-                    workspace_id, agent_id = route
-                    send = self._senders.get(agent_id)
-                    # Mirror `subscribe` payload shape so the agent can
-                    # drop the cached mapping on the same key it used to
-                    # add it.
-                    message = {
-                        "type": "unsubscribe",
-                        "workspace_id": str(workspace_id),
-                        "workflow_execution_id": str(workflow_execution_id),
-                    }
-        if send is not None and message is not None:
-            try:
-                await send(message)
-            except Exception as exc:
-                log.warning(
-                    "subscribers.unsubscribe_send_failed",
-                    err=str(exc),
-                )
+            member = self._connections.pop(workflow_execution_id, None)
 
-    # ── Diagnostics ────────────────────────────────────────────────────
+        if member is None:
+            return
 
-    def count(self, workflow_execution_id: UUID) -> int:
-        return self._counts.get(workflow_execution_id, 0)
+        await zset_remove_member(_wfx_subscribers_key(workflow_execution_id), member)
+        card = await zset_card(_wfx_subscribers_key(workflow_execution_id))
+
+        if card == 0:
+            route = await hash_get_all(_wfx_route_key(workflow_execution_id))
+            if route:
+                try:
+                    agent_id = UUID(route["agent_id"])
+                    workspace_id = UUID(route["workspace_id"])
+                except KeyError, ValueError:
+                    agent_id = None
+                    workspace_id = None
+
+                if agent_id is not None and workspace_id is not None:
+                    msg = AgentWsControlMessage(
+                        type="unsubscribe",
+                        workspace_id=workspace_id,
+                        workflow_execution_id=workflow_execution_id,
+                    )
+                    try:
+                        await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
+                    except Exception as exc:
+                        log.warning(
+                            "subscribers.unsubscribe_publish_failed",
+                            agent_id=str(agent_id),
+                            err=str(exc),
+                        )
+                    await hash_delete(_wfx_route_key(workflow_execution_id))
+                    await set_remove(_agent_routes_key(agent_id), str(workflow_execution_id))
+
+    # ── Diagnostics ─────────────────────────────────────────────────────────
 
     def has_sender(self, agent_id: UUID) -> bool:
         return agent_id in self._senders
+
+    def is_streaming(self, agent_id: UUID, workflow_execution_id: UUID) -> bool:
+        """Return True if this pod believes the agent is streaming `wfx_id`."""
+        return workflow_execution_id in self._streaming.get(agent_id, set())
+
+
+# ── Reconciler ────────────────────────────────────────────────────────────────
+
+
+class SubscriberReconciler:
+    """Safety net against pub/sub at-most-once delivery.
+
+    Runs every `_RECONCILE_INTERVAL_SECONDS` on the WS-owning pod. For each
+    agent with a registered sender, reads `agent_routes:{agent_id}` and for
+    each wfx_id checks ZCARD truth:
+    - ZCARD ≥ 1 and agent not streaming → publish subscribe
+    - ZCARD == 0 and agent is streaming → publish unsubscribe
+    """
+
+    async def run(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set():
+            await asyncio.sleep(_RECONCILE_INTERVAL_SECONDS)
+            if stop_event.is_set():
+                break
+            try:
+                await self._reconcile_once()
+            except Exception as exc:
+                log.warning("subscribers.reconcile_error", err=str(exc))
+
+    async def _reconcile_once(self) -> None:
+        registry = get_registry()
+        async with registry._lock:
+            agent_ids = list(registry._senders.keys())
+
+        for agent_id in agent_ids:
+            wfx_ids_str = await set_members(_agent_routes_key(agent_id))
+            for wfx_id_str in wfx_ids_str:
+                try:
+                    wfx_id = UUID(wfx_id_str)
+                except ValueError:
+                    continue
+
+                card = await zset_card(_wfx_subscribers_key(wfx_id))
+                is_streaming = registry.is_streaming(agent_id, wfx_id)
+
+                if card >= 1 and not is_streaming:
+                    # Agent should be streaming but isn't — re-publish subscribe.
+                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    if not route:
+                        continue
+                    try:
+                        workspace_id = UUID(route["workspace_id"])
+                    except KeyError, ValueError:
+                        continue
+                    msg = AgentWsControlMessage(
+                        type="subscribe",
+                        workspace_id=workspace_id,
+                        workflow_execution_id=wfx_id,
+                    )
+                    try:
+                        await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
+                    except Exception as exc:
+                        log.warning(
+                            "subscribers.reconcile_subscribe_failed",
+                            agent_id=str(agent_id),
+                            wfx_id=wfx_id_str,
+                            err=str(exc),
+                        )
+
+                elif card == 0 and is_streaming:
+                    # Agent is streaming but nobody is watching — publish unsubscribe.
+                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    if route:
+                        try:
+                            workspace_id = UUID(route["workspace_id"])
+                        except KeyError, ValueError:
+                            workspace_id = None
+                    else:
+                        # Route already cleaned up — use a zero UUID as placeholder.
+                        workspace_id = UUID(int=0)
+
+                    if workspace_id is not None:
+                        msg = AgentWsControlMessage(
+                            type="unsubscribe",
+                            workspace_id=workspace_id,
+                            workflow_execution_id=wfx_id,
+                        )
+                        try:
+                            await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
+                        except Exception as exc:
+                            log.warning(
+                                "subscribers.reconcile_unsubscribe_failed",
+                                agent_id=str(agent_id),
+                                wfx_id=wfx_id_str,
+                                err=str(exc),
+                            )
+
+
+# ── Subscriber sweeper (GC for stale ZSET entries) ───────────────────────────
+
+
+async def _run_subscriber_sweeper() -> None:
+    """Scan `workflow_subscribers:*` keys and remove entries older than
+    `_SUBSCRIBER_STALE_THRESHOLD_SECONDS`. Called by the scheduled task body.
+    """
+    now = time.time()
+    cutoff = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS
+    keys = await scan_keys("workflow_subscribers:*")
+    for key in keys:
+        await zset_remove_by_score(key, 0, cutoff)
+
+
+subscriber_sweeper = scheduled(
+    name="subscriber_sweeper",
+    cron="* * * * *",
+    queue="default",
+    max_retries=1,
+)(_run_subscriber_sweeper)
+
+
+# ── ContextVar binding ───────────────────────────────────────────────────────
 
 
 _registry_var: ContextVar[SubscriberRegistry | None] = ContextVar("_registry_var", default=None)
@@ -210,7 +529,8 @@ def bind_subscriber_registry(instance: SubscriberRegistry) -> None:
 def get_registry() -> SubscriberRegistry:
     """Return the active subscriber registry. Raises `RuntimeError` if
     `bind_subscriber_registry` has not been called — fail-fast so forgotten
-    startup binds surface immediately rather than silently producing wrong state."""
+    startup binds surface immediately rather than silently producing wrong state.
+    """
     instance = _registry_var.get()
     if instance is None:
         raise RuntimeError(
@@ -220,6 +540,24 @@ def get_registry() -> SubscriberRegistry:
     return instance
 
 
+# ── Module lifecycle ──────────────────────────────────────────────────────────
+
+_stop_event: asyncio.Event = asyncio.Event()
+_reconciler_task: asyncio.Task[None] | None = None
+
+
 async def shutdown() -> None:
-    """Drop the subscriber registry binding. Called by the web-process shutdown registry."""
+    """Stop the reconciler loop and drop the registry binding.
+
+    Called by the web-process shutdown registry on SIGTERM.
+    """
+    _stop_event.set()
+    if _reconciler_task is not None:
+        try:
+            await _reconciler_task
+        except Exception:
+            pass
     _registry_var.set(None)
+
+
+register_web_shutdown_hook(shutdown)

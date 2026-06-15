@@ -54,6 +54,7 @@ def main() -> int:
     # Side-effect imports: register `@scheduled` tasks with the broker.
     # Each import triggers the module-level `scheduled(...)` decorator, which
     # wires the task body into the taskiq broker registry.
+    import app.core.agent_gateway.subscribers  # noqa: PLC0415
     import app.domain.integrations.scheduler  # noqa: PLC0415
     import app.domain.mcp_proxy.service  # noqa: PLC0415
     import app.domain.orgs.invitation_sweeper  # noqa: PLC0415

@@ -4,7 +4,7 @@
 
 ## Scope
 
-- Owns: loop-bound client cache, the JSON pub/sub bus (`publish`/`subscribe`/`subscriber_count`), the `sliding_window_hit` rate-limit counter, health `ping`, shutdown registration.
+- Owns: loop-bound client cache, the JSON pub/sub bus (`publish`/`subscribe`/`subscriber_count`), named Redis primitives for HASH / SET / ZSET operations (`hash_ops.py`, `set_ops.py`, `zset_ops.py`), the `sliding_window_hit` rate-limit counter, `set_if_absent` idempotency primitive, `scan_keys` pattern sweep, health `ping`, shutdown registration.
 - Does NOT own: channel naming or event shapes (consumers like [`core/sse`](core_sse.md) add those); the broker's connection (taskiq-redis builds its own pool from `settings.redis_url`).
 
 ## Why / invariants
@@ -25,6 +25,22 @@
 
 - `sliding_window_hit(key, *, limit, window_seconds)` — rate-limit counter backed by a Redis ZSET. Returns `True` if the hit is within the limit, `False` if it would exceed it. Caller owns the policy (axis, error shape, HTTP status).
 - `set_if_absent(key, ttl_seconds)` — cross-pod idempotency / replay protection. Wraps `SET key 1 NX EX ttl_seconds`; returns `True` on insert (this caller wins), `False` when the key already existed (replay / duplicate). Used by `core/agent_gateway/sts_verifier` to reject replayed signed STS envelopes across pods.
+- `scan_keys(pattern)` — returns all keys matching `pattern` via `SCAN MATCH pattern COUNT 100` (iterated to completion). Used by the subscriber sweeper to find `workflow_subscribers:*` keys for GC.
+- **HASH primitives** (`hash_ops.py`):
+  - `hash_set(key, fields: Mapping[str, str])` — `HSET key field1 val1 ...` (multi-field).
+  - `hash_get_all(key)` — `HGETALL key`; returns `dict[str, str]`, empty on missing key.
+  - `hash_delete(key)` — `DEL key` (full key, not a specific field).
+- **SET primitives** (`set_ops.py`):
+  - `set_add(key, member)` — `SADD key member`.
+  - `set_remove(key, member)` — `SREM key member`.
+  - `set_members(key)` — `SMEMBERS key`; returns `set[str]`.
+- **ZSET primitives** (`zset_ops.py`):
+  - `zset_add_member(key, member, score)` — `ZADD key score member`.
+  - `zset_remove_member(key, member)` — `ZREM key member`.
+  - `zset_card(key)` — `ZCARD key`; returns `int`.
+  - `zset_remove_by_score(key, min_score, max_score)` — `ZREMRANGEBYSCORE key min max`.
+
+Each primitive is a single async function in its own file, mirroring `sliding_window.py`.
 
 ## Gotchas
 

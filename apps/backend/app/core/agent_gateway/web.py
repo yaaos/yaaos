@@ -48,6 +48,7 @@ from opentelemetry import trace
 from pydantic import BaseModel
 
 from app.core.agent_gateway import bearers
+from app.core.agent_gateway import subscribers as _subscribers_module
 from app.core.agent_gateway.org_arn_lookup import lookup_org_by_arn
 from app.core.agent_gateway.rate_limit import RateLimitedError, check_identity_exchange
 from app.core.agent_gateway.report_sink import get_report_sink
@@ -60,7 +61,12 @@ from app.core.agent_gateway.service import (
     record_heartbeat,
     record_workspace_event,
 )
-from app.core.agent_gateway.subscribers import get_registry as _get_subscriber_registry
+from app.core.agent_gateway.subscribers import (
+    SubscriberReconciler,
+)
+from app.core.agent_gateway.subscribers import (
+    get_registry as _get_subscriber_registry,
+)
 from app.core.agent_gateway.types import (
     AgentEvent,
     ClaimRequest,
@@ -76,6 +82,7 @@ from app.core.audit_log import Actor, ActorKind, audit
 from app.core.auth import org_context, public_route, require_org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.observability import spawn as _spawn
 from app.core.sse import GeneralEventKind, publish_general_after_commit, publish_workspace_activity
 from app.core.webserver import RouteSpec, register_routes
 
@@ -543,46 +550,68 @@ async def activity_ws(websocket: WebSocket) -> None:
         await websocket.send_text(json.dumps(message))
 
     async with org_context(ctx.org_id, ActorKind.WORKSPACE, actor_id=ctx.agent_id):
-        await registry.register_sender(agent_id, _send)
-        log.info("agent_gateway.ws.connected", agent_id=str(agent_id))
-
         try:
-            while True:
-                raw = await websocket.receive_text()
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    log.warning("agent_gateway.ws.bad_json", agent_id=str(agent_id))
-                    continue
-                kind = msg.get("type")
-                if kind == "activity_batch":
-                    workflow_execution_id = msg.get("workflow_execution_id")
-                    events = msg.get("events") or []
-                    if not workflow_execution_id or not isinstance(events, list):
-                        log.warning(
-                            "agent_gateway.ws.malformed_batch",
-                            agent_id=str(agent_id),
-                            keys=list(msg.keys()),
-                        )
+            await registry.register_sender(agent_id, _send)
+            log.info("agent_gateway.ws.connected", agent_id=str(agent_id))
+
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        log.warning("agent_gateway.ws.bad_json", agent_id=str(agent_id))
                         continue
-                    for event in events:
-                        if isinstance(event, dict):
-                            await publish_workspace_activity(
-                                org_id=require_org_context(),
-                                workflow_execution_id=UUID(workflow_execution_id),
-                                payload=event,
+                    kind = msg.get("type")
+                    if kind == "activity_batch":
+                        workflow_execution_id = msg.get("workflow_execution_id")
+                        events = msg.get("events") or []
+                        if not workflow_execution_id or not isinstance(events, list):
+                            log.warning(
+                                "agent_gateway.ws.malformed_batch",
+                                agent_id=str(agent_id),
+                                keys=list(msg.keys()),
                             )
-                else:
-                    log.debug(
-                        "agent_gateway.ws.unknown_kind",
-                        agent_id=str(agent_id),
-                        kind=kind,
-                    )
-        except WebSocketDisconnect:
-            pass
+                            continue
+                        for event in events:
+                            if isinstance(event, dict):
+                                await publish_workspace_activity(
+                                    org_id=require_org_context(),
+                                    workflow_execution_id=UUID(workflow_execution_id),
+                                    payload=event,
+                                )
+                    else:
+                        log.debug(
+                            "agent_gateway.ws.unknown_kind",
+                            agent_id=str(agent_id),
+                            kind=kind,
+                        )
+            except WebSocketDisconnect:
+                pass
         finally:
-            await registry.unregister_sender(agent_id)
+            registry.unregister_sender(agent_id)
             log.info("agent_gateway.ws.disconnected", agent_id=str(agent_id))
 
 
-register_routes(RouteSpec(module_name="agent_gateway", router=router, url_prefix="/api/v1"))
+async def _start_subscriber_reconciler() -> None:
+    """Launch the SubscriberReconciler as a fire-and-forget background task.
+
+    Called once per web-process boot via RouteSpec.on_startup. Stores the
+    task reference on the module-level `_reconciler_task` so `shutdown()`
+    can await it on SIGTERM.
+    """
+    task = _spawn(
+        "agent_gateway.subscriber_reconciler",
+        SubscriberReconciler().run(_subscribers_module._stop_event),
+    )
+    _subscribers_module._reconciler_task = task
+
+
+register_routes(
+    RouteSpec(
+        module_name="agent_gateway",
+        router=router,
+        url_prefix="/api/v1",
+        on_startup=[_start_subscriber_reconciler],
+    )
+)

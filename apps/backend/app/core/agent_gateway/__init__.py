@@ -171,6 +171,5 @@ __all__ = [
     "stale_agent_ids",
 ]
 
-from app.core.shutdown_registry import register_web_shutdown_hook
-
-register_web_shutdown_hook(shutdown)
+# shutdown() is registered with register_web_shutdown_hook in subscribers.py
+# at module import time — no second registration needed here.

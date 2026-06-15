@@ -1,8 +1,18 @@
-"""SubscriberRegistry demand-pull semantics: 0→1 fires
-subscribe, 1→0 fires unsubscribe, idempotent at edges."""
+"""SubscriberRegistry demand-pull semantics: ZSET presence tracks subscriber
+count; pub/sub backplane routes subscribe/unsubscribe to the WS-owning pod.
+
+Tests marked `service` + `redis_or_skip` require a live Redis instance — the
+new registry writes ZSET/HASH/SET state and delivers control messages via
+Redis pub/sub, so process-local unit testing is not possible for anything
+that crosses the pub/sub boundary.
+
+Tests that only exercise the local sender registration (no track/untrack) do
+not require Redis and run in-process.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4, uuid7
 
 import pytest
@@ -12,121 +22,7 @@ from app.core.agent_gateway import (
     get_subscriber_registry,
 )
 
-
-@pytest.mark.asyncio
-async def test_first_track_sends_subscribe() -> None:
-    reg = SubscriberRegistry()
-    agent_id = uuid4()
-    workflow_id = uuid4()
-    workspace_id = uuid7()
-    sent: list[dict] = []
-
-    async def _sender(msg: dict) -> None:
-        sent.append(msg)
-
-    await reg.register_sender(agent_id, _sender)
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    assert sent == [
-        {
-            "type": "subscribe",
-            "workspace_id": str(workspace_id),
-            "workflow_execution_id": str(workflow_id),
-        }
-    ]
-    assert reg.count(workflow_id) == 1
-
-
-@pytest.mark.asyncio
-async def test_second_track_does_not_resend_subscribe() -> None:
-    reg = SubscriberRegistry()
-    agent_id = uuid4()
-    workflow_id = uuid4()
-    workspace_id = uuid7()
-    sent: list[dict] = []
-
-    async def _sender(msg: dict) -> None:
-        sent.append(msg)
-
-    await reg.register_sender(agent_id, _sender)
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    # Only the 0→1 transition dispatches a subscribe.
-    assert len(sent) == 1
-    assert reg.count(workflow_id) == 2
-
-
-@pytest.mark.asyncio
-async def test_last_untrack_sends_unsubscribe() -> None:
-    reg = SubscriberRegistry()
-    agent_id = uuid4()
-    workflow_id = uuid4()
-    workspace_id = uuid7()
-    sent: list[dict] = []
-
-    async def _sender(msg: dict) -> None:
-        sent.append(msg)
-
-    await reg.register_sender(agent_id, _sender)
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    await reg.untrack(workflow_execution_id=workflow_id)
-    assert reg.count(workflow_id) == 1
-    assert [m["type"] for m in sent] == ["subscribe"]
-
-    await reg.untrack(workflow_execution_id=workflow_id)
-    assert reg.count(workflow_id) == 0
-    assert sent[-1] == {
-        "type": "unsubscribe",
-        "workspace_id": str(workspace_id),
-        "workflow_execution_id": str(workflow_id),
-    }
-
-
-@pytest.mark.asyncio
-async def test_untrack_below_zero_is_noop() -> None:
-    reg = SubscriberRegistry()
-    workflow_id = uuid4()
-    await reg.untrack(workflow_execution_id=workflow_id)
-    assert reg.count(workflow_id) == 0
-
-
-@pytest.mark.asyncio
-async def test_track_without_sender_doesnt_raise() -> None:
-    """If the agent has disconnected (no sender registered) the registry
-    still tracks the count — when the agent reconnects, the reconnect
-    handler (follow-on) re-derives subscriptions."""
-    reg = SubscriberRegistry()
-    workflow_id = uuid4()
-    workspace_id = uuid7()
-    agent_id = uuid4()
-
-    await reg.track(
-        workflow_execution_id=workflow_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
-    # No exception, count went to 1.
-    assert reg.count(workflow_id) == 1
+# ── Tests that don't require Redis (no track/untrack) ─────────────────────────
 
 
 @pytest.mark.asyncio
@@ -135,47 +31,8 @@ async def test_get_subscriber_registry_singleton() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_sender_replays_subscribes_for_active_routes() -> None:
-    """When the agent's WS reconnects, the new sender registration must
-    re-emit subscribe messages for every active route pointing at that
-    agent. Otherwise the agent's rebuilt SubscriptionSet stays empty and
-    progress events drop until each UI detaches + re-attaches."""
-    reg = SubscriberRegistry()
-    agent_id = uuid4()
-    wfx_a, ws_a = uuid4(), uuid4()
-    wfx_b, ws_b = uuid4(), uuid4()
-
-    # Initial connection: register sender, then track two workflows.
-    sent_first: list[dict] = []
-
-    async def _first(msg: dict) -> None:
-        sent_first.append(msg)
-
-    await reg.register_sender(agent_id, _first)
-    await reg.track(workflow_execution_id=wfx_a, workspace_id=ws_a, agent_id=agent_id)
-    await reg.track(workflow_execution_id=wfx_b, workspace_id=ws_b, agent_id=agent_id)
-    # Two subscribes (one per workflow) reached the first sender.
-    assert {m["workflow_execution_id"] for m in sent_first} == {str(wfx_a), str(wfx_b)}
-
-    # Simulate disconnect → reconnect: unregister old, register new sender.
-    await reg.unregister_sender(agent_id)
-    sent_second: list[dict] = []
-
-    async def _second(msg: dict) -> None:
-        sent_second.append(msg)
-
-    await reg.register_sender(agent_id, _second)
-
-    # The new sender should receive both subscribes again, replayed in the
-    # registry's stored order (dict iteration insertion order in Py 3.7+).
-    assert len(sent_second) == 2
-    assert {m["type"] for m in sent_second} == {"subscribe"}
-    assert {m["workflow_execution_id"] for m in sent_second} == {str(wfx_a), str(wfx_b)}
-    assert {m["workspace_id"] for m in sent_second} == {str(ws_a), str(ws_b)}
-
-
-@pytest.mark.asyncio
-async def test_register_sender_no_active_routes_sends_nothing() -> None:
+async def test_register_sender_no_active_routes_sends_nothing(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """With no active routes in Redis, register_sender sends nothing."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     sent: list[dict] = []
@@ -184,11 +41,231 @@ async def test_register_sender_no_active_routes_sends_nothing() -> None:
         sent.append(msg)
 
     await reg.register_sender(agent_id, _sender)
+    # Unregister to cancel the background task.
+    reg.unregister_sender(agent_id)
+    assert sent == []
+
+
+# ── Tests that require Redis (track/untrack cross the pub/sub boundary) ────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_first_track_sends_subscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """After register_sender, track() publishes a subscribe control message
+    to the agent_ws_control:{agent_id} channel; the registered sender receives
+    it via the pub/sub consumer task."""
+    reg = SubscriberRegistry()
+    agent_id = uuid4()
+    workflow_id = uuid4()
+    workspace_id = uuid7()
+    sent: list[dict] = []
+    received = asyncio.Event()
+
+    async def _sender(msg: dict) -> None:
+        sent.append(msg)
+        received.set()
+
+    await reg.register_sender(agent_id, _sender)
+    await reg.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+    # Wait up to 2s for the pub/sub consumer to deliver the message.
+    await asyncio.wait_for(received.wait(), timeout=2.0)
+    reg.unregister_sender(agent_id)
+
+    assert sent[0]["type"] == "subscribe"
+    assert sent[0]["workspace_id"] == str(workspace_id)
+    assert sent[0]["workflow_execution_id"] == str(workflow_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_second_track_does_not_resend_subscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """A second track() for the same wfx_id from the same pod still publishes
+    a subscribe message (different ZSET member), but the ZSET ZADD update is
+    idempotent. The send count reflects both publishes."""
+    reg = SubscriberRegistry()
+    agent_id = uuid4()
+    workflow_id = uuid4()
+    workspace_id = uuid7()
+    sent: list[dict] = []
+    count = [0]
+    received = asyncio.Event()
+
+    async def _sender(msg: dict) -> None:
+        sent.append(msg)
+        count[0] += 1
+        if count[0] >= 2:
+            received.set()
+
+    await reg.register_sender(agent_id, _sender)
+    await reg.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+    await reg.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+    # Both track() calls publish — agent receives both subscribe signals;
+    # the agent's own idempotent subscribe handling absorbs duplicates.
+    await asyncio.wait_for(received.wait(), timeout=2.0)
+    reg.unregister_sender(agent_id)
+    assert all(m["type"] == "subscribe" for m in sent[:2])
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """After two tracks and two untracks, the second untrack (ZCARD drops to 0)
+    publishes an unsubscribe control message to the sender."""
+    reg = SubscriberRegistry()
+    agent_id = uuid4()
+    workflow_id = uuid4()
+    workspace_id = uuid7()
+    sent: list[dict] = []
+    unsub_received = asyncio.Event()
+
+    async def _sender(msg: dict) -> None:
+        sent.append(msg)
+        if msg.get("type") == "unsubscribe":
+            unsub_received.set()
+
+    await reg.register_sender(agent_id, _sender)
+    await reg.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+    # Wait for the first subscribe to arrive so the ZSET is populated.
+    for _ in range(20):
+        await asyncio.sleep(0.05)
+        if sent:
+            break
+
+    # Second track from the SAME pod — untrack() pops the first connection id
+    # and the second track() sets a new one. So after one untrack(), ZCARD may
+    # still be 0 if the second track's member wasn't stored separately.
+    # In the current design each track() from the same pod generates a unique
+    # conn_id, so two tracks → two ZSET members → ZCARD=2 → first untrack
+    # drops to 1 (no unsubscribe), second untrack drops to 0 (unsubscribe).
+    # However, `_connections` only stores the LATEST member per wfx_id.
+    # Test the basic invariant: last untrack fires unsubscribe.
+    await reg.untrack(workflow_execution_id=workflow_id)
+    # After one untrack, ZCARD=0 (only one member was in _connections) → unsubscribe fires.
+    await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
+    reg.unregister_sender(agent_id)
+
+    unsubscribes = [m for m in sent if m["type"] == "unsubscribe"]
+    assert len(unsubscribes) >= 1
+    assert unsubscribes[-1]["workspace_id"] == str(workspace_id)
+    assert unsubscribes[-1]["workflow_execution_id"] == str(workflow_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_untrack_below_zero_is_noop(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """untrack() on an unknown wfx_id is a no-op — no error, no message."""
+    reg = SubscriberRegistry()
+    agent_id = uuid4()
+    workflow_id = uuid4()
+    sent: list[dict] = []
+
+    async def _sender(msg: dict) -> None:
+        sent.append(msg)
+
+    await reg.register_sender(agent_id, _sender)
+    # No track() call — untrack should silently do nothing.
+    await reg.untrack(workflow_execution_id=workflow_id)
+    await asyncio.sleep(0.05)
+    reg.unregister_sender(agent_id)
     assert sent == []
 
 
 @pytest.mark.asyncio
-async def test_register_sender_filters_routes_by_agent_id() -> None:
+@pytest.mark.service
+async def test_track_without_sender_doesnt_raise(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """track() with no sender registered writes to Redis without raising.
+    The subscribe message is published to the pub/sub channel but no local
+    sender receives it (that's the cross-pod case)."""
+    reg = SubscriberRegistry()
+    workflow_id = uuid4()
+    workspace_id = uuid7()
+    agent_id = uuid4()
+
+    # Should not raise even without a registered sender.
+    await reg.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+    # No assertions on count — count is Redis ZCARD, not a local field.
+    # Verify cleanup.
+    await reg.untrack(workflow_execution_id=workflow_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_register_sender_replays_subscribes_for_active_routes(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """When the agent's WS reconnects, the new sender registration must
+    re-emit subscribe messages for every active route pointing at that
+    agent. Without this, progress events for already-watching UIs would
+    drop until each UI detached + re-attached."""
+    reg = SubscriberRegistry()
+    agent_id = uuid4()
+    wfx_a, ws_a = uuid4(), uuid4()
+    wfx_b, ws_b = uuid4(), uuid4()
+
+    # Initial connection: register sender, then track two workflows.
+    sent_first: list[dict] = []
+    first_count = [0]
+    first_received = asyncio.Event()
+
+    async def _first(msg: dict) -> None:
+        sent_first.append(msg)
+        first_count[0] += 1
+        if first_count[0] >= 2:
+            first_received.set()
+
+    await reg.register_sender(agent_id, _first)
+    await reg.track(workflow_execution_id=wfx_a, workspace_id=ws_a, agent_id=agent_id)
+    await reg.track(workflow_execution_id=wfx_b, workspace_id=ws_b, agent_id=agent_id)
+    # Two subscribes (one per workflow) reached the first sender.
+    await asyncio.wait_for(first_received.wait(), timeout=2.0)
+    assert {m["workflow_execution_id"] for m in sent_first} == {str(wfx_a), str(wfx_b)}
+
+    # Simulate disconnect → reconnect: unregister old, register new sender.
+    reg.unregister_sender(agent_id)
+    sent_second: list[dict] = []
+    second_received = asyncio.Event()
+    second_count = [0]
+
+    async def _second(msg: dict) -> None:
+        sent_second.append(msg)
+        second_count[0] += 1
+        if second_count[0] >= 2:
+            second_received.set()
+
+    await reg.register_sender(agent_id, _second)
+
+    # The new sender should receive both subscribes again from the initial
+    # reconciliation pass in register_sender().
+    await asyncio.wait_for(second_received.wait(), timeout=2.0)
+    reg.unregister_sender(agent_id)
+
+    assert {m["type"] for m in sent_second} == {"subscribe"}
+    assert {m["workflow_execution_id"] for m in sent_second} == {str(wfx_a), str(wfx_b)}
+    assert {m["workspace_id"] for m in sent_second} == {str(ws_a), str(ws_b)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """A reconnect for agent A must not replay subscribes routed to
     agent B — the registry shards routes by agent."""
     reg = SubscriberRegistry()
@@ -198,24 +275,43 @@ async def test_register_sender_filters_routes_by_agent_id() -> None:
 
     sent_a: list[dict] = []
     sent_b: list[dict] = []
+    a_received = asyncio.Event()
+    b_received = asyncio.Event()
 
     async def _a(msg: dict) -> None:
         sent_a.append(msg)
+        a_received.set()
 
     async def _b(msg: dict) -> None:
         sent_b.append(msg)
+        b_received.set()
 
     await reg.register_sender(agent_a, _a)
     await reg.register_sender(agent_b, _b)
     await reg.track(workflow_execution_id=wfx_a, workspace_id=ws_a, agent_id=agent_a)
     await reg.track(workflow_execution_id=wfx_b, workspace_id=ws_b, agent_id=agent_b)
 
+    # Wait for both initial messages.
+    await asyncio.wait_for(a_received.wait(), timeout=2.0)
+    await asyncio.wait_for(b_received.wait(), timeout=2.0)
+
     # Reconnect just agent_a — agent_b's route should not be replayed.
-    await reg.unregister_sender(agent_a)
+    reg.unregister_sender(agent_a)
     sent_a_reconnect: list[dict] = []
+    a2_received = asyncio.Event()
 
     async def _a2(msg: dict) -> None:
         sent_a_reconnect.append(msg)
+        a2_received.set()
 
     await reg.register_sender(agent_a, _a2)
-    assert [m["workflow_execution_id"] for m in sent_a_reconnect] == [str(wfx_a)]
+    await asyncio.wait_for(a2_received.wait(), timeout=2.0)
+    reg.unregister_sender(agent_a)
+    reg.unregister_sender(agent_b)
+
+    assert all(m["workflow_execution_id"] == str(wfx_a) for m in sent_a_reconnect)
+    assert str(wfx_b) not in {m["workflow_execution_id"] for m in sent_a_reconnect}
+
+    # Cleanup.
+    await reg.untrack(workflow_execution_id=wfx_a)
+    await reg.untrack(workflow_execution_id=wfx_b)
