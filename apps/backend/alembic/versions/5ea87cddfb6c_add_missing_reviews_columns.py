@@ -44,13 +44,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the added reviews columns."""
-    op.drop_column("reviews", "pending_replay")
-    op.drop_column("reviews", "completed_at")
-    op.drop_column("reviews", "last_heartbeat_at")
-    op.drop_column("reviews", "error_message")
-    op.drop_column("reviews", "skip_reason")
-    op.drop_column("reviews", "current_step")
-    op.drop_column("reviews", "effort")
-    op.drop_column("reviews", "model")
-    op.drop_column("reviews", "scope_prev_sha")
+    """Drop the added reviews columns.
+
+    Uses DROP COLUMN IF EXISTS so re-running after a partial failure is safe,
+    mirroring the upgrade-path idempotency discipline.
+    """
+    for col in (
+        "pending_replay",
+        "completed_at",
+        "last_heartbeat_at",
+        "error_message",
+        "skip_reason",
+        "current_step",
+        "effort",
+        "model",
+        "scope_prev_sha",
+    ):
+        op.execute(sa.text(f"ALTER TABLE reviews DROP COLUMN IF EXISTS {col}"))

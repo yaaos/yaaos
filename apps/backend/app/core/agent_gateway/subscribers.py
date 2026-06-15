@@ -462,30 +462,40 @@ class SubscriberReconciler:
                 elif card == 0 and is_streaming:
                     # Agent is streaming but nobody is watching — publish unsubscribe.
                     route = await hash_get_all(_wfx_route_key(wfx_id))
-                    if route:
-                        try:
-                            workspace_id = UUID(route["workspace_id"])
-                        except KeyError, ValueError:
-                            workspace_id = None
-                    else:
-                        # Route already cleaned up — use a zero UUID as placeholder.
-                        workspace_id = UUID(int=0)
-
-                    if workspace_id is not None:
-                        msg = AgentWsControlMessage(
-                            type="unsubscribe",
-                            workspace_id=workspace_id,
-                            workflow_execution_id=wfx_id,
+                    if not route:
+                        # Route already gone: untrack() already published the
+                        # canonical unsubscribe with the real workspace_id. Nothing
+                        # useful to send — don't synthesize a placeholder identity.
+                        log.debug(
+                            "subscribers.reconcile_skip_no_route",
+                            agent_id=str(agent_id),
+                            wfx_id=wfx_id_str,
                         )
-                        try:
-                            await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
-                        except Exception as exc:
-                            log.warning(
-                                "subscribers.reconcile_unsubscribe_failed",
-                                agent_id=str(agent_id),
-                                wfx_id=wfx_id_str,
-                                err=str(exc),
-                            )
+                        continue
+                    try:
+                        workspace_id = UUID(route["workspace_id"])
+                    except KeyError, ValueError:
+                        log.warning(
+                            "subscribers.reconcile_bad_route",
+                            agent_id=str(agent_id),
+                            wfx_id=wfx_id_str,
+                        )
+                        continue
+
+                    msg = AgentWsControlMessage(
+                        type="unsubscribe",
+                        workspace_id=workspace_id,
+                        workflow_execution_id=wfx_id,
+                    )
+                    try:
+                        await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
+                    except Exception as exc:
+                        log.warning(
+                            "subscribers.reconcile_unsubscribe_failed",
+                            agent_id=str(agent_id),
+                            wfx_id=wfx_id_str,
+                            err=str(exc),
+                        )
 
 
 # ── Subscriber sweeper (GC for stale ZSET entries) ───────────────────────────
@@ -546,15 +556,30 @@ _stop_event: asyncio.Event = asyncio.Event()
 _reconciler_task: asyncio.Task[None] | None = None
 
 
+def set_reconciler_task(task: asyncio.Task[None]) -> None:
+    """Store the reconciler task handle so `shutdown()` can cancel + await it.
+
+    The web composition root calls this after spawning the reconciler, instead
+    of writing the module global directly.
+    """
+    global _reconciler_task
+    _reconciler_task = task
+
+
 async def shutdown() -> None:
     """Stop the reconciler loop and drop the registry binding.
 
-    Called by the web-process shutdown registry on SIGTERM.
+    Called by the web-process shutdown registry on SIGTERM. Cancels the
+    reconciler task first so its `asyncio.sleep` is interrupted immediately
+    rather than blocking shutdown for up to a full reconcile interval.
     """
     _stop_event.set()
     if _reconciler_task is not None:
+        _reconciler_task.cancel()
         try:
             await _reconciler_task
+        except asyncio.CancelledError:
+            pass
         except Exception:
             pass
     _registry_var.set(None)

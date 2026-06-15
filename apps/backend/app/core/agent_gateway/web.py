@@ -604,7 +604,7 @@ async def _start_subscriber_reconciler() -> None:
         "agent_gateway.subscriber_reconciler",
         SubscriberReconciler().run(_subscribers_module._stop_event),
     )
-    _subscribers_module._reconciler_task = task
+    _subscribers_module.set_reconciler_task(task)
 
 
 register_routes(
