@@ -574,10 +574,12 @@ async def requeue_stale_claimed(
     stale = (
         (
             await session.execute(
-                select(AgentCommandRow).where(
+                select(AgentCommandRow)
+                .where(
                     AgentCommandRow.status == "claimed",
                     AgentCommandRow.claimed_at < cutoff,
                 )
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()
@@ -1145,9 +1147,11 @@ async def compute_agent_liveness_transitions(
     rows = (
         (
             await session.execute(
-                select(WorkspaceAgentRow).where(
+                select(WorkspaceAgentRow)
+                .where(
                     WorkspaceAgentRow.last_heartbeat_at.is_not(None),
                 )
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()

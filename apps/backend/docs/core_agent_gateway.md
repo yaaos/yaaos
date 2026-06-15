@@ -43,6 +43,8 @@ Called on each `_reaper_sweep_once` tick from `core/workspace` (the loop host). 
 
 Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_liveness_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel — cache-invalidate only, no state in payload.
 
+Cron-beat dedup (via `scheduled_runs ON CONFLICT DO NOTHING`) is the primary cross-pod exclusivity for `requeue_stale_claimed` and `compute_agent_liveness_transitions`; row-level `FOR UPDATE SKIP LOCKED` on the SELECT in each function is the defense-in-depth backstop against overlapping reaper bodies when a slow sweep crosses a cron-beat boundary.
+
 ## `GET /api/orgs/{slug}/agents`
 
 Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
@@ -147,6 +149,10 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 `test/test_claim_lifecycle_service.py` covers `claim_next` lifecycle gate: unconfigured leaves DB rows untouched; configured returns a single ProvisionWorkspace command; empty queue returns `None`.
 
 `test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
+
+`test/test_requeue_stale_claimed_concurrent_service.py` covers: two concurrent `requeue_stale_claimed` calls on independent sessions against the same N stale-claimed rows produce a combined requeue count of exactly N (not 2N) and each row's `attempt` increments by exactly 1 — proving `FOR UPDATE SKIP LOCKED` prevents double-processing.
+
+`test/test_compute_liveness_transitions_concurrent_service.py` covers: two concurrent `compute_agent_liveness_transitions` calls on independent sessions against the same N stale agents produce non-overlapping `newly_offline` lists whose union equals exactly the N seeded agent IDs — proving `FOR UPDATE SKIP LOCKED` prevents the same agent from being transitioned twice.
 
 `test/test_identity_exchange.py` covers: happy-path bearer issuance (row persisted by `instance_id`, OS metadata stored, bearer returned with `instance_id` in response); bearer TTL is 1 hour; non-revoking rotation (second call issues new bearer, old stays valid); ARN mismatch → 403; region mismatch → 401; invalid signature → 401; empty payload → 401; unsupported kind → 401; audience mismatch → 401; response includes `org_id` and `instance_id`.
 
