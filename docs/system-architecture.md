@@ -22,7 +22,7 @@
 ### PR open → review posted
 
 1. GitHub sends HMAC-signed `pull_request.opened` to `POST /api/intake/github`.
-2. `domain/intake.web` looks up the `github` IntakeType and calls `handle()`.
+2. `core/intake.web` looks up the `github` IntakeType and calls `handle()`.
 3. The intake type verifies HMAC, parses payload, and (for opened/reopened/ready_for_review) inserts a race-safe ticket + PR row and starts a `pr_review_v1` workflow via `core/workflow` — single transaction.
 4. Workflow engine routes `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`. Each step is a `WorkflowCommand` under `domain/reviewer/commands/`.
 5. `ProvisionWorkspace`, `CodeReview`, and `CleanupWorkspace` are Workspace-category commands — each parks the workflow in `awaiting_agent` and dispatches an AgentCommand over the wire to the remote WorkspaceAgent; the terminal AgentEvent resumes routing. `PostFindings` persists each `Finding` then posts each one to GitHub via `vcs.post_finding` (named primitive args — no finding value object crosses the `vcs` boundary). The `CodeReview` step reads the per-repo **skill name** from `claude_code_repos.skill_name` via `plugins/claude_code.resolve_skill` — if absent, the step fails before dispatching an AgentCommand.

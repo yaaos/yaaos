@@ -39,7 +39,10 @@ from app.core import agent_gateway as _core_agent_gateway  # noqa: E402
 
 _core_agent_gateway.bind_subscriber_registry(_core_agent_gateway.SubscriberRegistry())
 
-# 4b. Identity + tenancy + auth middleware. Must be imported before
+# 4b. Intake router — pure infrastructure; no domain imports.
+from app.core import intake as _core_intake  # noqa: F401, E402
+
+# 4c. Identity + tenancy + auth middleware. Must be imported before
 # any domain module that declares `Depends(require(...))` or
 # `Depends(public_route)` so the contextvars + middleware classes exist.
 from app.core import identity  # noqa: F401, E402
@@ -80,7 +83,6 @@ register_workspace_providers()
 register_workspace_recovery_policies()
 register_reviewer_terminal_hooks()
 assert_workflow_context_provider()
-from app.domain import intake  # noqa: F401, E402
 from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402

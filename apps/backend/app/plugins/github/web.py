@@ -1,6 +1,6 @@
 """HTTP routes owned by the github plugin: install state + health + the
 install start/callback handshake. The GitHub webhook receiver lives at
-`POST /api/intake/github` (see `domain/intake.web`); GitHub events flow
+`POST /api/intake/github` (see `core/intake.web`); GitHub events flow
 through the intake registry, not this module.
 """
 

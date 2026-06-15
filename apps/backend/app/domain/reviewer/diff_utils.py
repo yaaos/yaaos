@@ -8,7 +8,7 @@ plugin lookups — input → output only.
 - `ticket_skip_reason(pr, diff)` — return a short string when the PR
   shouldn't be reviewed (fork, bot-authored, trivial diff, too large).
   None for "review it." First-match-wins.
-- `is_skip_path(path)` — proxy to `domain/intake/parsing.is_skippable_path`
+- `is_skip_path(path)` — proxy to `core/intake/parsing.is_skippable_path`
   so reviewer code doesn't reach into intake internals directly.
 """
 
@@ -24,7 +24,7 @@ def is_skip_path(path: str) -> bool:
     deps, generated files, lockfiles, etc.)."""
     # Deferred import keeps the module-import path light + avoids any
     # circular-import risk with intake → reviewer at boot.
-    from app.domain.intake import is_skippable_path  # noqa: PLC0415
+    from app.core.intake import is_skippable_path  # noqa: PLC0415
 
     return is_skippable_path(path)
 

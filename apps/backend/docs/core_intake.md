@@ -1,4 +1,4 @@
-# domain/intake
+# core/intake
 
 > Single inbound-signal endpoint — plugins register `IntakeType` handlers; `POST /api/intake/{type}` verifies, dedups, and applies a side-effect or returns a side-effect response.
 

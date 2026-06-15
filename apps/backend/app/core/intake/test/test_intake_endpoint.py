@@ -7,13 +7,13 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.domain.intake import (
+from app.core.intake import (
     IntakeRejectedError,
     IntakeSideEffect,
     register_intake_type,
 )
-from app.domain.intake import web as _intake_web  # noqa: F401 — registers routes
-from app.domain.intake.registry import _reset_registry_for_tests
+from app.core.intake import web as _intake_web  # noqa: F401 — registers routes
+from app.core.intake.registry import _reset_registry_for_tests
 
 
 class _StubIntakeType:
@@ -41,7 +41,7 @@ async def stub_intake(db_session):  # type: ignore[no-untyped-def]
     _reset_registry_for_tests()
     import importlib  # noqa: PLC0415
 
-    import app.domain.intake as intake_mod  # noqa: PLC0415
+    import app.core.intake as intake_mod  # noqa: PLC0415
 
     importlib.reload(intake_mod)
 

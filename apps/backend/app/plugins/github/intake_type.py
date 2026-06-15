@@ -1,6 +1,6 @@
 """`github` IntakeType — single entry point for every GitHub webhook event.
 
-Lives in `domain/intake`'s registry. Verifies the HMAC signature, parses
+Lives in `core/intake`'s registry. Verifies the HMAC signature, parses
 the payload, then branches on `X-Github-Event` + `payload.action`:
 
 Every branch returns `IntakeSideEffect` — handlers manage their own ticket
@@ -47,13 +47,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit_for_ticket, audit_for_webhook_event
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.workflow import get_engine
-from app.domain.intake import (
+from app.core.intake import (
     IntakeOutcome,
     IntakeRejectedError,
     IntakeSideEffect,
     parse_rereview,
 )
+from app.core.workflow import get_engine
 
 log = structlog.get_logger("intake.github")
 
@@ -416,8 +416,8 @@ class GithubIntakeType:
         org_id: UUID,
         session: AsyncSession,
     ) -> IntakeOutcome:
+        from app.core.intake import parse_yaaos_command  # noqa: PLC0415
         from app.domain import reviewer  # noqa: PLC0415
-        from app.domain.intake import parse_yaaos_command  # noqa: PLC0415
         from app.domain.tickets import get_by_external, get_by_pr  # noqa: PLC0415
 
         comment = payload.get("comment") or {}

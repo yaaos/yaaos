@@ -6,7 +6,7 @@ inside the endpoint's session, returning `IntakeSideEffect` — for events that
 adjust existing state (PR open/close/reopen, install lifecycle, comment threads).
 
 Registry is process-local. Types register themselves at import time from
-within `domain/intake` or via plugin bootstrap.
+within `core/intake` or via plugin bootstrap.
 """
 
 from __future__ import annotations

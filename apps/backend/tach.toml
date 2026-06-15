@@ -38,6 +38,10 @@ path = "app.core.identity"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
+path = "app.core.intake"
+depends_on = ["app.core.auth", "app.core.database", "app.core.webserver"]
+
+[[modules]]
 path = "app.core.llm"
 depends_on = ["app.core.config"]
 
@@ -98,10 +102,6 @@ path = "app.core.workspace"
 depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
-path = "app.domain.intake"
-depends_on = ["app.core.auth", "app.core.database", "app.core.webserver"]
-
-[[modules]]
 path = "app.domain.integrations"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.secrets", "app.core.sessions", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.orgs"]
 
@@ -119,7 +119,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.c
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -450,6 +450,23 @@ expose = [
   "user_web",
 ]
 from = ["app.core.identity"]
+
+[[interfaces]]
+expose = [
+  "IntakeError",
+  "IntakeOutcome",
+  "IntakeRejectedError",
+  "IntakeSideEffect",
+  "IntakeType",
+  "get_intake_type",
+  "is_mid_band_confirm",
+  "is_skippable_path",
+  "parse_rereview",
+  "parse_yaaos_command",
+  "register_intake_type",
+  "registered_intake_types",
+]
+from = ["app.core.intake"]
 
 [[interfaces]]
 expose = [
@@ -794,23 +811,6 @@ expose = [
   "update_workspace_status",
 ]
 from = ["app.core.workspace"]
-
-[[interfaces]]
-expose = [
-  "IntakeError",
-  "IntakeOutcome",
-  "IntakeRejectedError",
-  "IntakeSideEffect",
-  "IntakeType",
-  "get_intake_type",
-  "is_mid_band_confirm",
-  "is_skippable_path",
-  "parse_rereview",
-  "parse_yaaos_command",
-  "register_intake_type",
-  "registered_intake_types",
-]
-from = ["app.domain.intake"]
 
 [[interfaces]]
 expose = [

@@ -1,6 +1,6 @@
 """plugins/github — GitHub VCSPlugin, OAuth identity provider, and the
 `github` intake type that routes every GitHub webhook event into the
-domain/intake registry.
+core/intake registry.
 
 The OAuth identity provider (`GitHubOAuthProvider`) lives alongside the
 VCS plugin because they share credentials, settings, and the test stack.
@@ -38,7 +38,7 @@ __all__ = [
 bootstrap()
 bootstrap_oauth()
 
-from app.domain.intake import register_intake_type  # noqa: E402
+from app.core.intake import register_intake_type  # noqa: E402
 
 try:
     register_intake_type(GithubIntakeType())

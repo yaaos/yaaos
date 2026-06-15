@@ -42,7 +42,7 @@ Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL p
 Each flow is a labeled hop-list. Module docs have the detail.
 
 **Review lifecycle** (PR ready → findings posted):
-`plugins/github` webhook → [`domain/intake`](domain_intake.md) filter → ticket created → `engine.start("pr_review_v1", ticket_id=…)` → [`core/workflow`](core_workflow.md) drives `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace` → [`domain/reviewer.publish_findings`](domain_reviewer.md) validates the canonical schema and posts via [`core/vcs`](core_vcs.md). The skill owns all filtering — there is no admission pipeline.
+`plugins/github` webhook → [`core/intake`](core_intake.md) filter → ticket created → `engine.start("pr_review_v1", ticket_id=…)` → [`core/workflow`](core_workflow.md) drives `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace` → [`domain/reviewer.publish_findings`](domain_reviewer.md) validates the canonical schema and posts via [`core/vcs`](core_vcs.md). The skill owns all filtering — there is no admission pipeline.
 
 **Session / auth chain** (inbound request):
 [`core/auth`](core_auth.md) middleware classify → [`core/sessions`](core_sessions.md) `require(Action.X)` → [`core/tenancy`](core_tenancy.md) `resolve_auth_org` → handler

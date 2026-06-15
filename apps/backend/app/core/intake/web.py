@@ -1,4 +1,4 @@
-"""HTTP wiring for `domain/intake` — `POST /api/intake/{type}` is the only
+"""HTTP wiring for `core/intake` — `POST /api/intake/{type}` is the only
 entry point for external signals.
 
 For each registered `IntakeType`, the endpoint:
@@ -19,13 +19,13 @@ from fastapi.responses import JSONResponse
 
 from app.core.auth import public_route
 from app.core.database import session as db_session
-from app.core.webserver import RouteSpec, register_routes
-from app.domain.intake.registry import (
+from app.core.intake.registry import (
     IntakeRejectedError,
     IntakeSideEffect,
     IntakeType,
     get_intake_type,
 )
+from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("intake.web")
 
