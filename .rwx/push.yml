@@ -275,21 +275,31 @@ tasks:
       curl -L https://fly.io/install.sh | sh
       export FLYCTL_INSTALL="$HOME/.fly"
       export PATH="$FLYCTL_INSTALL/bin:$PATH"
+      # Split deploy by process group:
+      #   - api uses fly.toml's default strategy (bluegreen) for zero-downtime HTTP.
+      #   - worker uses --strategy rolling because bluegreen's cutover trigger
+      #     is http_service health-check pass, and the worker has no
+      #     [http_service]. Bluegreen creates the new worker machine `stopped`
+      #     and never sends `start`, shipping a stopped worker every deploy.
+      #     Rolling updates the existing worker in place and avoids the bug.
+      # The second invocation reuses the cached image from the first build —
+      # source hasn't changed between the two calls.
       flyctl deploy --remote-only --config fly.production.toml \
+        --process-groups api \
         --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.us-west-2.aws.dash0.com \
         --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
         --build-arg VITE_DASH0_DATASET=default \
         --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
         --build-arg VITE_ENVIRONMENT=production
 
-      # Destroy stopped workers from older releases — bluegreen leftovers
-      # whose destroy step didn't complete. Bluegreen owns active-machine
-      # state; this only cleans up stale spares. Idempotent.
-      MAX_VER="$(flyctl machine list -a yaaos --json | jq -r '[.[] | (.config.metadata.fly_release_version // "0") | tonumber] | max')"
-      echo "Reaping older-release worker machines (current: ${MAX_VER})"
-      flyctl machine list -a yaaos --json \
-        | jq -r --argjson max "$MAX_VER" '.[] | select(.config.metadata.fly_process_group == "worker" and .state == "stopped" and ((.config.metadata.fly_release_version // "0") | tonumber) < $max) | .id' \
-        | xargs -r -n1 -I{} flyctl machine destroy --force {} -a yaaos
+      flyctl deploy --remote-only --config fly.production.toml \
+        --process-groups worker \
+        --strategy rolling \
+        --build-arg VITE_OTEL_COLLECTOR_ENDPOINT=https://ingress.us-west-2.aws.dash0.com \
+        --build-arg VITE_DASH0_AUTH_TOKEN=${{ vaults.yaaos.secrets.VITE_DASH0_AUTH_TOKEN }} \
+        --build-arg VITE_DASH0_DATASET=default \
+        --build-arg VITE_SERVICE_VERSION=${{ init.commit-sha }} \
+        --build-arg VITE_ENVIRONMENT=production
 
   # ─── agent image publish ─────────────────────────────────────────────
   #

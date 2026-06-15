@@ -245,18 +245,14 @@ Push to `main` → RWX triggers `push.yml`:
 
 1. `ci-docs`, `ci-backend`, `ci-web`, `ci-agent`, `ci-e2e` run in parallel.
 2. `deploy-production` fires only when **all five** pass **and** the push touched deploy-relevant files — it carries a `filter:` block (`apps/backend/**`, `apps/web/**`, the Python/pnpm workspace manifests, and `fly.production.toml`). An agent-only push (`apps/agent/**`) skips `deploy-production` (its image ships via `publish-agent-image`); a doc-only push skips deployment entirely. The `filter:` list in `.rwx/push.yml` is the canonical source.
-3. `flyctl deploy --remote-only --config fly.production.toml` builds the amd64 image on Fly's remote builder and deploys.
+3. `flyctl deploy` runs **twice** — once for the `api` process group (bluegreen) and once for `worker` (rolling). Both build the amd64 image on Fly's remote builder; the second call reuses the cached image from the first.
 
-### Bluegreen cutover
+### Per-process-group deploy strategies
 
-Strategy is `bluegreen` (declared in `fly.production.toml`). Fly:
+- **`api`** — bluegreen. Fly boots new api machines, gates cutover on `/api/health` passing, shifts HTTP traffic, then drains the old api machines over the `kill_timeout` (180s — covers worker drain 60s + uvicorn graceful shutdown 30s + OTel flush ~90s). Zero-downtime for HTTP.
+- **`worker`** — rolling. Fly updates the existing worker machine in place rather than creating a new one. Brief outage during restart (worker drains in-flight task bodies up to 60s, then exits and is replaced). Necessary because bluegreen's "promote green to live" trigger is http_service health-check pass, and the worker has no `[http_service]` — so bluegreen creates the new worker in `stopped` state and never starts it, shipping a stopped worker every deploy.
 
-1. Boots new machines for every process group.
-2. Gates cutover on passing health checks across all groups — `/api/health` for `web`, `/health` on port 8081 for `worker`.
-3. Shifts traffic to the new machines.
-4. Drains the old machines over the `kill_timeout` (180s — covers worker drain 60s + uvicorn graceful shutdown 30s + OTel flush ~90s).
-
-Both groups must pass their health check before cutover proceeds. A failing health check blocks the deploy — it does not roll back automatically.
+The api health check (`/api/health`) blocks bluegreen cutover; a failing check blocks the deploy without auto-rollback. The worker's `/health` on port 8081 is observational only (top-level `[[checks]]` in `fly.production.toml`) — it doesn't gate the rolling deploy but does trigger Fly to restart a wedged worker that returns 503.
 
 ### First-time bootstrap (after first deploy)
 

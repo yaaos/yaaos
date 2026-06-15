@@ -21,12 +21,18 @@ primary_region = "ord"
 # providers (~90s serial). Fly's hard-kill cap is 300s.
 kill_timeout = "180s"
 
-# Bluegreen deploy: Fly gates cutover on a passing health check across every
-# process group before shifting traffic. Web uses [[http_service.checks]] →
-# /api/health; worker uses a top-level [[checks]] → :8081/health (Fly's
-# recommended shape for non-public process groups; see the worker comment
-# below). Rolling was used before the worker health endpoint + worker drain
-# + health-503 gate were in place.
+# Default strategy is bluegreen — used for the api process group, which has
+# an [http_service] block and a health check Fly can gate cutover on. The
+# worker process group is deployed separately by the rwx deploy task with
+# `flyctl deploy --process-groups worker --strategy rolling`. Reason:
+# bluegreen's "promote green to live" trigger is the http_service health
+# check, and the worker has no [http_service]. Bluegreen creates the new
+# worker machine in `stopped` state and never sends it a `start` after
+# cutover, so a bluegreen worker deploy ships a stopped worker every time
+# (observed in v25/v26; see community thread
+# https://community.fly.io/t/when-a-bluegreen-deploy-fails-i-end-up-with-extra-machines/20914).
+# Rolling deploys the existing worker machine in place, which avoids the
+# bug entirely.
 [deploy]
   strategy = "bluegreen"
 
@@ -82,9 +88,9 @@ kill_timeout = "180s"
 # Top-level [[checks]] (NOT [[services]]) is the Fly-recommended shape for
 # background workers per fly.io/docs/blueprints/seamless-deployments — non-
 # public services use top-level checks "for observability, not traffic
-# control." It also avoids a multi-process-group bluegreen bug where
-# workers declared via [[services]] are created but never transitioned to
-# `started`, leaving the deploy "complete" with the worker stopped.
+# control." The check exists for operational visibility (Fly will restart a
+# wedged worker whose /health returns 503) but does not gate deployment;
+# worker deploys use --strategy rolling, see the [deploy] comment above.
 #
 # The worker count is operator-set via `flyctl scale count worker=1`;
 # autoscaling knobs (auto_stop_machines / min_machines_running) belong on
