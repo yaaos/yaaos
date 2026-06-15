@@ -228,6 +228,36 @@ Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has r
 
 Task bodies must be idempotent — a drain crash between dispatch and `dispatched_at` stamp can redispatch. Bodies look up state from DB (don't carry "do this once" semantics in the args).
 
+## Multi-pod safe patterns
+
+Canonical shapes for work that can run concurrently across multiple backend pods. Use these patterns — not ad-hoc alternatives — when adding new claims, periodic slots, or at-least-once bodies.
+
+### Single-flight workspace claim
+
+- **Pattern:** atomic conditional `UPDATE … WHERE current_command_id IS NULL AND status='active'`; caller checks `rowcount`. If `rowcount=0` the workspace is busy or inactive — back off, do not dispatch.
+- **Why:** a `SELECT` then `UPDATE` is a TOCTOU race across pods; the single-statement UPDATE is the sole correct gate.
+- **Reference:** `core/workspace.try_claim` at `apps/backend/app/core/workspace/dispatch.py:57`.
+- **Invariant:** every `try_claim` call is paired with `release_claim(workspace_id, command_id=…)` after the terminal event is observed (failure-report-precedes-disposal).
+
+### Migration runner advisory lock
+
+- **Pattern:** `migrate()` holds a Postgres session-scoped advisory lock (`pg_advisory_lock`) on a fixed bigint key for the duration of `alembic upgrade head`.
+- **Why:** web + worker start concurrently; without the lock the two processes race on the same `alembic_version` row and can double-apply a migration.
+- **Reference:** `core/database.migrate()` at `apps/backend/app/core/database/service.py:177`.
+
+### Recurring-task per-slot dedup (`@scheduled`)
+
+- **Pattern:** every worker runs `scheduler_loop`; per matching cron slot the tick attempts `INSERT INTO scheduled_runs (schedule_id, fire_time) VALUES (…) ON CONFLICT DO NOTHING`. Only the pod whose insert wins (`rowcount=1`) calls `enqueue(…)`.
+- **Why:** no leader election; cluster safety is the `INSERT … ON CONFLICT` atomicity guarantee. Mirrors the `github_webhook_events` dedup precedent.
+- **Reference:** `core/tasks._try_claim` at `apps/backend/app/core/tasks/scheduler.py:159`.
+- **See also:** [core_tasks.md § Multi-pod safe patterns](core_tasks.md#multi-pod-safe-patterns).
+
+### At-least-once `@task` body contract
+
+- **Contract:** the drain stamps `dispatched_at` only after a successful Redis push; a crash between push and stamp causes redispatch. Every `@task` body **must** be idempotent — it may execute more than once for a single logical event.
+- **Idempotency rule:** read the durable row at body entry; no-op when state already indicates done or in-progress. Do not carry "do this once" semantics in the task args alone.
+- **New body discipline:** a body that is not naturally idempotent (e.g. triggers an external side effect without a dedup key) requires a replay-safety test that delivers the task twice and asserts the effect occurs exactly once.
+
 ## Secrets
 
 Every sensitive value crosses module boundaries as Pydantic `SecretStr`: encryption keys, OAuth client secrets + access/refresh tokens, TOTP master key, session tokens, invitation tokens, SMTP password, third-party API keys (Braintrust, Anthropic via BYOK), GitHub App private keys. `SecretStr` renders as `'**********'` in `repr`, `str`, `model_dump`, and `model_dump_json` so logs / tracebacks / audit payloads never carry plaintext.
