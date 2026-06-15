@@ -13,6 +13,8 @@ import httpx
 import jwt as pyjwt
 import structlog
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
@@ -488,31 +490,39 @@ async def upsert_installation(
     install_external_id: str,
     account_login: str,
     org_id: UUID,
-) -> None:
+) -> bool:
     """Write/refresh a `github_app_installations` row for an active install.
-    Called from the webhook handler on `installation.created` / `installation.unsuspend`."""
+    Returns True when this call inserted the row (first bind), False on conflict
+    (idempotent update of existing row). Atomically idempotent — a single
+    INSERT … ON CONFLICT DO UPDATE serialises concurrent callers so exactly one
+    returns True. Called from the webhook handler on
+    `installation.created` / `installation.unsuspend` and from the install
+    callback in `web.py`.
+    """
     async with db_session() as s:
-        existing = (
-            await s.execute(
-                select(GitHubAppInstallationRow).where(
-                    GitHubAppInstallationRow.install_external_id == install_external_id
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            s.add(
-                GitHubAppInstallationRow(
-                    org_id=org_id,
-                    install_external_id=install_external_id,
-                    account_login=account_login,
-                    status="active",
-                )
-            )
-        else:
-            existing.org_id = org_id
-            existing.account_login = account_login
-            existing.status = "active"
+        insert_stmt = pg_insert(GitHubAppInstallationRow).values(
+            org_id=org_id,
+            install_external_id=install_external_id,
+            account_login=account_login,
+            status="active",
+        )
+        exc = insert_stmt.excluded
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=["install_external_id"],
+            set_={
+                "org_id": exc.org_id,
+                "account_login": exc.account_login,
+                "status": exc.status,
+            },
+        ).returning(
+            GitHubAppInstallationRow.id,
+            sa_text("xmax = 0 AS was_insert"),
+        )
+        # xmax=0 means this was a fresh insert (not an ON CONFLICT DO UPDATE).
+        _row = (await s.execute(upsert_stmt)).one()
+        was_insert: bool = bool(_row[1])
         await s.commit()
+    return was_insert
 
 
 async def fetch_install_account_login(installation_id: int) -> str:

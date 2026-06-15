@@ -28,7 +28,8 @@ import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import Field, TypeAdapter
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway.report_sink import (
@@ -931,42 +932,37 @@ async def ensure_agent_row(
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
-    row = (
-        await session.execute(
-            select(WorkspaceAgentRow).where(
-                WorkspaceAgentRow.org_id == org_id,
-                WorkspaceAgentRow.instance_id == instance_id,
-            )
-        )
-    ).scalar_one_or_none()
     now = datetime.now(UTC)
-    if row is None:
-        row = WorkspaceAgentRow(
-            org_id=org_id,
-            instance_id=instance_id,
-            iam_arn=iam_arn,
-            version=version,
-            os=os,
-            cpu_count=cpu_count,
-            memory_bytes=memory_bytes,
-            last_heartbeat_at=now,
-            state="reachable",
-        )
-        session.add(row)
-        await session.flush()
-    else:
-        row.iam_arn = iam_arn
-        row.version = version
-        # Update static metadata on re-exchange (agent restart may report fresh values).
-        if os is not None:
-            row.os = os
-        if cpu_count is not None:
-            row.cpu_count = cpu_count
-        if memory_bytes is not None:
-            row.memory_bytes = memory_bytes
-        row.last_heartbeat_at = now
-        row.state = "reachable"
-    return row.id
+    # Single atomic upsert — idempotent under concurrent identity exchanges for
+    # the same (org_id, instance_id).  Optional hardware metadata uses
+    # coalesce(excluded, current) so a re-exchange that omits os/cpu/memory
+    # preserves the stored values rather than wiping them.
+    insert_stmt = pg_insert(WorkspaceAgentRow).values(
+        org_id=org_id,
+        instance_id=instance_id,
+        iam_arn=iam_arn,
+        version=version,
+        os=os,
+        cpu_count=cpu_count,
+        memory_bytes=memory_bytes,
+        last_heartbeat_at=now,
+        state="reachable",
+    )
+    exc = insert_stmt.excluded
+    upsert_stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["org_id", "instance_id"],
+        set_={
+            "iam_arn": exc.iam_arn,
+            "version": exc.version,
+            "os": func.coalesce(exc.os, WorkspaceAgentRow.os),
+            "cpu_count": func.coalesce(exc.cpu_count, WorkspaceAgentRow.cpu_count),
+            "memory_bytes": func.coalesce(exc.memory_bytes, WorkspaceAgentRow.memory_bytes),
+            "last_heartbeat_at": exc.last_heartbeat_at,
+            "state": exc.state,
+        },
+    ).returning(WorkspaceAgentRow.id)
+    agent_id: UUID = (await session.execute(upsert_stmt)).scalar_one()
+    return agent_id
 
 
 async def mark_agent_shutdown(

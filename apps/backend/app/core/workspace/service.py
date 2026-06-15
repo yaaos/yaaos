@@ -187,29 +187,32 @@ def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
 
 
 async def close_workspace(workspace_id: UUID) -> None:
-    """Mark the workspace expired so the reaper picks it up. Idempotent."""
+    """Mark the workspace expired so the reaper picks it up.
+
+    Atomically idempotent under concurrent admin requests and racy reaper
+    transitions — the WHERE predicate pins from_state='active' inside the
+    UPDATE, so at most one audit row is written per real ACTIVE → EXPIRED
+    transition.
+    """
     async with get_session() as s:
-        row = (
-            await s.execute(
-                select(WorkspaceRow).where(
-                    WorkspaceRow.id == workspace_id,
-                    WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                )
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return
-        from_state = row.status
-        await s.execute(
+        result = await s.execute(
             update(WorkspaceRow)
-            .where(WorkspaceRow.id == workspace_id)
+            .where(
+                WorkspaceRow.id == workspace_id,
+                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
+            )
             .values(status=WorkspaceStatus.EXPIRED.value)
+            .returning(WorkspaceRow.org_id)
         )
+        org_id = result.scalar_one_or_none()
+        if org_id is None:
+            # Row was already non-ACTIVE; idempotent no-op.
+            return
         await _audit_transition(
             s,
             workspace_id=workspace_id,
-            org_id=row.org_id,
-            from_state=from_state,
+            org_id=org_id,
+            from_state=WorkspaceStatus.ACTIVE.value,
             to_state=WorkspaceStatus.EXPIRED.value,
             reason="closed",
         )
@@ -509,15 +512,19 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
         return
 
     async with get_session() as s:
-        await s.execute(
+        # Increment atomically at the SQL layer so the cap holds under
+        # overlapping reaper sweeps; RETURNING captures the new value.
+        result = await s.execute(
             update(WorkspaceRow)
             .where(WorkspaceRow.id == row.id)
             .values(
                 status=WorkspaceStatus.DESTROYING.value,
-                destroy_attempts=row.destroy_attempts + 1,
+                destroy_attempts=WorkspaceRow.destroy_attempts + 1,
                 last_destroy_attempt_at=_utcnow(),
             )
+            .returning(WorkspaceRow.destroy_attempts)
         )
+        new_attempts: int = result.scalar_one()
         await _audit_transition(
             s,
             workspace_id=row.id,
@@ -533,7 +540,7 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
     except Exception as e:
         log.warning("workspace.destroy_failed", workspace_id=str(row.id), error=str(e))
         async with get_session() as s:
-            attempts = row.destroy_attempts + 1
+            attempts = new_attempts
             new_status = (
                 WorkspaceStatus.DESTROY_FAILED.value if attempts >= 3 else WorkspaceStatus.EXPIRED.value
             )

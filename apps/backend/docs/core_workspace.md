@@ -10,7 +10,8 @@
 
 ## Why / invariants
 
-- **`close_workspace` does not call `provider.destroy()` synchronously** — keeps close fast; all destroy retries flow through the reaper. Only the reaper destroys.
+- **`close_workspace` does not call `provider.destroy()` synchronously** — keeps close fast; all destroy retries flow through the reaper. Only the reaper destroys. `close_workspace` is atomically idempotent under concurrent admin requests and reaper transitions — a single conditional `UPDATE … WHERE status='active' RETURNING org_id` ensures at most one audit row per real ACTIVE → EXPIRED transition.
+- **`_attempt_destroy` increments `destroy_attempts` at the SQL layer** (`destroy_attempts = destroy_attempts + 1` SQL expression) so the cap of 3 holds under overlapping reaper sweeps; the new value is captured via `RETURNING` so the catch-block failure decision never reads a stale Python snapshot.
 - **`on_stream_line` callback** — when provided, the provider reads stdout line-by-line (live JSON parsing); when absent, buffers to completion. Timeout/cancel paths are unchanged either way.
 - **Each new workspace capability is a deliberate named method** (`run_coding_agent_cli`, `read_text`). A generic `exec(argv)` would silently broaden.
 - **Workflow-execution correlation is via `agent_commands.workflow_execution_id`**, not the workspace row. `try_claim` writes only `current_command_id` and (if not yet set) `owning_agent_id`; `release_claim` clears `current_command_id`. No per-workspace `current_holder_workflow_id` column exists.

@@ -60,7 +60,7 @@ For `pull_request.synchronize` only: `GET /repos/{owner}/{repo}/compare/{before}
 
 - `GET /installation` — two-state (`app_configured: false` / `installed`). Never returns a raw github.com install URL; callers must go through `/install/start`.
 - `POST /install/start` — owner-only (`GITHUB_APP_LINK`). Returns signed `redirect_url` to `github.com/apps/<slug>/installations/new`.
-- `GET /install_callback` — verifies state signature + 15-min TTL, fetches `account.login`, upserts install row, 303 to `/`. Webhook delivery later upserts the same row; both converge on `install_external_id`.
+- `GET /install_callback` — verifies state signature + 15-min TTL, fetches `account.login`, upserts install row, 303 to `/`. Webhook delivery later upserts the same row; both converge on `install_external_id`. `upsert_installation` is atomically idempotent and returns whether this call inserted the row; the install-callback fires `github_app_installation_linked` audit + `set_vcs` exactly once per first bind.
 
 ### Other routes
 
