@@ -14,7 +14,8 @@ command kinds are silently no-ops at the implementation level.
 
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 from uuid import UUID
 
 
@@ -33,7 +34,7 @@ class AgentRunSink(Protocol):
         event_kind: str,
         outputs: dict,  # type: ignore[type-arg]
         session: object,  # AsyncSession
-    ) -> None:
+    ) -> Mapping[str, Any] | None:
         """Handle a terminal AgentEvent.
 
         `command_kind` is `agent_commands.command_kind` (e.g. `"InvokeClaudeCode"`).
@@ -41,6 +42,10 @@ class AgentRunSink(Protocol):
         `outputs` is `AgentEvent.outputs` — for `InvokeClaudeCode` carries
         `exit_code` (int) and `stdout` (str).
         `session` is an `AsyncSession`; caller commits.
+
+        Returns a dict whose keys are merged into `outputs` before the
+        `HANDLE_AGENT_EVENT` task is enqueued — sink keys override same-key
+        native values. Return `None` to leave `outputs` unchanged.
         """
         ...
 

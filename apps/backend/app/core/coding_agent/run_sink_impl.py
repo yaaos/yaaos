@@ -14,6 +14,8 @@ transaction.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -43,7 +45,7 @@ class CodingAgentRunSinkImpl:
         event_kind: str,
         outputs: dict,  # type: ignore[type-arg]
         session: AsyncSession,
-    ) -> None:
+    ) -> Mapping[str, Any] | None:
         """Finalize the run row + persist the activity blob for this terminal event.
 
         No-ops silently for all other command kinds — provision/cleanup/
@@ -51,9 +53,11 @@ class CodingAgentRunSinkImpl:
 
         `outputs` carries `exit_code` (int | None) and `stdout` (str | None)
         from `AgentEvent.outputs` (set by `apps/agent/internal/command/results.go`).
+
+        Returns `None` — does not contribute extra keys to the workflow outputs.
         """
         if command_kind != _INVOKE_CLAUDE_CODE_KIND:
-            return
+            return None
 
         run_ref = await get_run_ref_for_command(command_id, session=session)
         if run_ref is None:
@@ -112,3 +116,4 @@ class CodingAgentRunSinkImpl:
             tokens_out=usage.tokens_out,
             activity_events=len(activity.events),
         )
+        return None

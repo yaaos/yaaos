@@ -813,15 +813,18 @@ async def record_agent_event(
     # domain/coding_agent is not loaded), so it degrades gracefully.
     from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
 
+    outputs: dict = dict(event.outputs)  # type: ignore[type-arg]
     _run_sink = get_run_sink()
     if _run_sink is not None:
-        await _run_sink.handle_terminal_event(
+        sink_extras = await _run_sink.handle_terminal_event(
             command_id=event.command_id,
             command_kind=cmd_row.command_kind,
             event_kind=event.kind.value,
-            outputs=dict(event.outputs),
+            outputs=outputs,
             session=session,
         )
+        if sink_extras is not None:
+            outputs = {**outputs, **sink_extras}
 
     # Lean workspace row materialisation for ProvisionWorkspace.
     #
@@ -856,7 +859,7 @@ async def record_agent_event(
             "agent_command_id": str(event.command_id),
             "outcome_label": event.outcome_label
             or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
-            "outputs": dict(event.outputs),
+            "outputs": outputs,
             "traceparent": event.traceparent,
         },
         session=session,
