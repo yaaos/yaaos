@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid7
 
 import structlog
 from pydantic import BaseModel, ConfigDict
@@ -175,7 +175,7 @@ async def dispatch_provision_workspace(
     terminal-event ingestion path can resolve `command_id → workflow` directly,
     without a workspace-row lookup. Defaults to NULL for non-workflow callers.
     """
-    command_id = uuid4()
+    command_id = uuid7()
     cmd = ProvisionWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
@@ -219,7 +219,7 @@ async def dispatch_invoke_claude_code(
     """
     from app.core.agent_gateway import InvokeClaudeCodeCommand, InvokeClaudeCodeLimits  # noqa: PLC0415
 
-    command_id = uuid4()
+    command_id = uuid7()
     limits_raw = invocation.get("limits") or {}
     limits = InvokeClaudeCodeLimits(wallclock_seconds=limits_raw.get("wallclock_seconds", 1200))
     cmd = InvokeClaudeCodeCommand(
@@ -257,7 +257,7 @@ async def dispatch_cleanup_workspace(
     find it in the workspace_ids sweep.
     Returns the new `command_id`.
     """
-    command_id = uuid4()
+    command_id = uuid7()
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,

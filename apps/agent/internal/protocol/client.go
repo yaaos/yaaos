@@ -15,21 +15,21 @@ import (
 // timed out without work — the agent re-arms the poll.
 var ErrNoCommand = errors.New("protocol: no command available (204)")
 
+// ErrStaleClaim is returned by Client.PostCommandEvent when the backend
+// responds with HTTP 410 Gone — the command row no longer exists (the
+// claim was retired). The agent drops the event without retry; the
+// backend's failsafe owns in-flight recovery.
+var ErrStaleClaim = errors.New("protocol: stale claim (410)")
+
 // CommandEventAck is the response body returned by POST /api/v1/commands/{id}/events.
-// The backend always returns 200; CommandEventOutcome classifies the result.
+// The backend returns 200 on success; 410 signals a stale claim (ErrStaleClaim).
 type CommandEventAck struct {
 	Outcome string `json:"command_event_outcome"`
 }
 
-// CommandEventOutcome values for CommandEventAck.Outcome.
-const (
-	// CommandEventOutcomeRecorded means the event was persisted and any
-	// workflow side-effects fired.
-	CommandEventOutcomeRecorded = "event_recorded"
-	// CommandEventOutcomeStaleClaimDropped means the backend no longer holds
-	// this command's claim; the agent treats this as a successful no-op.
-	CommandEventOutcomeStaleClaimDropped = "stale_claim_dropped"
-)
+// CommandEventOutcomeRecorded is the outcome value when the event was
+// persisted and any workflow side-effects fired.
+const CommandEventOutcomeRecorded = "event_recorded"
 
 // Client is the HTTP client wrapper for the 5 backend endpoints. Safe
 // for concurrent use — http.Client itself is concurrency-safe.
@@ -114,8 +114,8 @@ func (c *Client) ClaimCommand(ctx context.Context, req ClaimRequest) ([]byte, er
 }
 
 // PostCommandEvent reports progress or terminal outcome for an AgentCommand.
-// The backend always returns 200; the returned CommandEventAck.Outcome
-// classifies the result (event_recorded or stale_claim_dropped).
+// Returns (ack, nil) on 200; returns (nil, ErrStaleClaim) on 410 (command row
+// retired — the claim is stale); returns (nil, err) on any other failure.
 func (c *Client) PostCommandEvent(ctx context.Context, commandID string, event AgentEvent) (*CommandEventAck, error) {
 	path := fmt.Sprintf("/api/v1/commands/%s/events", commandID)
 	if event.ReportedAt.IsZero() {
@@ -164,6 +164,11 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any, w
 		return json.NewDecoder(resp.Body).Decode(out)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("%s %s: unauthorized", method, path)
+	case http.StatusGone:
+		// 410 Gone — the backend retired the command row (stale claim).
+		// Return the typed sentinel so callers can distinguish this from
+		// transient errors without string-matching.
+		return fmt.Errorf("%w", ErrStaleClaim)
 	default:
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, string(raw))

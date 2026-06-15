@@ -11,7 +11,7 @@ Two scenarios:
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from opentelemetry.trace import StatusCode
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.service
 
 def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceCommand:
     return ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id or uuid4(),
         traceparent="00-aabbccdd-1122-01",
         repo=RepoRef(

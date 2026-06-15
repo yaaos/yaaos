@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 
@@ -18,7 +18,7 @@ from app.testing.seed import seed_agent
 async def _seed_active_workspace(db_session) -> WorkspaceRow:
     agent = await seed_agent(org_id=uuid4(), session=db_session)
     row = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=uuid4(),
         provider_id="remote_agent",
         spec={"sha": "deadbeef"},
@@ -39,7 +39,7 @@ async def _seed_active_workspace(db_session) -> WorkspaceRow:
 @pytest.mark.asyncio
 async def test_try_claim_succeeds_on_unclaimed_active_workspace(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     wfx_id = uuid4()
     ok = await try_claim(ws.id, command_id=cmd_id, workflow_execution_id=wfx_id, session=db_session)
     assert ok is True
@@ -57,7 +57,7 @@ async def test_try_claim_persists_owning_agent_id(db_session) -> None:
     await db_session.flush()
 
     ws = await _seed_active_workspace(db_session)
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     wfx_id = uuid4()
     ok = await try_claim(
         ws.id,
@@ -115,7 +115,7 @@ async def test_try_claim_refuses_non_active_workspace(db_session) -> None:
 @pytest.mark.asyncio
 async def test_release_claim_clears_then_next_succeeds(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     assert await try_claim(ws.id, command_id=cmd_id, workflow_execution_id=uuid4(), session=db_session)
 
     # Release returns True and clears current_command_id.
@@ -134,7 +134,7 @@ async def test_release_claim_clears_then_next_succeeds(db_session) -> None:
 @pytest.mark.asyncio
 async def test_release_claim_with_wrong_command_id_is_noop(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
-    owner_cmd = uuid4()
+    owner_cmd = uuid7()
     assert await try_claim(ws.id, command_id=owner_cmd, workflow_execution_id=uuid4(), session=db_session)
 
     # Release with a different command id leaves the claim intact.

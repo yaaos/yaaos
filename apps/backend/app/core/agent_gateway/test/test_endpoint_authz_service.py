@@ -9,7 +9,7 @@ workspace's owning `agent_id` (within-org IDOR guard).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import httpx
 import pytest
@@ -170,7 +170,7 @@ async def test_workspace_event_rejects_foreign_owner(db_session) -> None:
     agent B (same org) → 403."""
     agent_a, agent_b, token = await _two_agents_one_org(db_session)
     org_id = (await bearers.verify(token)).org_id  # type: ignore[union-attr]
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws_id = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
@@ -202,7 +202,7 @@ async def test_workspace_event_allows_owner(db_session) -> None:
     """The owner posting its own workspace's event → 200."""
     agent_a, _agent_b, token = await _two_agents_one_org(db_session)
     org_id = (await bearers.verify(token)).org_id  # type: ignore[union-attr]
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws_id = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
@@ -233,7 +233,7 @@ async def test_command_event_rejects_foreign_owner(db_session) -> None:
     workspace owned by agent B → 403."""
     agent_a, agent_b, token = await _two_agents_one_org(db_session)
     org_id = (await bearers.verify(token)).org_id  # type: ignore[union-attr]
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
@@ -264,11 +264,13 @@ async def test_command_event_rejects_foreign_owner(db_session) -> None:
 async def test_command_event_config_update_not_regressed(db_session) -> None:
     """An agent-scoped command (e.g. ConfigUpdate) resolves to no workspace,
     so there is no ownership edge to enforce — the per-agent authz check must
-    NOT 403 it. It falls through to the stale-claim guard (stale_claim_dropped),
-    returned as 200 with a typed outcome body. Proves no authz regression."""
+    NOT 403 it. It falls through to the stale-claim guard, which returns 410
+    (matching the workspace-event handler). Proves no authz regression (403
+    would mean authz incorrectly rejected the request)."""
     agent_a, _agent_b, token = await _two_agents_one_org(db_session)
-    # No workspace holds this command_id — mirrors a ConfigUpdate terminal event.
-    cmd_id = uuid4()
+    # No workspace holds this command_id — mirrors a ConfigUpdate terminal event
+    # with a stale or unknown command_id.
+    cmd_id = uuid7()
     del agent_a
     async with _client() as c:
         resp = await c.post(
@@ -281,9 +283,9 @@ async def test_command_event_config_update_not_regressed(db_session) -> None:
                 "traceparent": "00-aabb-1122-01",
             },
         )
-    # 200 stale_claim_dropped, NOT 403 — authz let the agent-scoped command through.
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"command_event_outcome": "stale_claim_dropped"}
+    # 410 stale_claim, NOT 403 — authz let the agent-scoped command through.
+    assert resp.status_code == 410, resp.text
+    assert resp.json()["error"] == "stale_claim"
 
 
 @pytest.mark.asyncio
@@ -291,7 +293,7 @@ async def test_command_event_config_update_not_regressed(db_session) -> None:
 async def test_workspace_event_rejects_missing_bearer(db_session) -> None:
     """workspace events endpoint with no bearer → 401."""
     ws_id = uuid4()
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     async with _client() as c:
         resp = await c.post(
             f"/api/v1/workspaces/{ws_id}/events",
@@ -309,7 +311,7 @@ async def test_workspace_event_rejects_missing_bearer(db_session) -> None:
 @pytest.mark.service
 async def test_command_event_rejects_missing_bearer(db_session) -> None:
     """command events endpoint with no bearer → 401."""
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     async with _client() as c:
         resp = await c.post(
             f"/api/v1/commands/{cmd_id}/events",

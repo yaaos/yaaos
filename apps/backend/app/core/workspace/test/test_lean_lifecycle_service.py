@@ -15,7 +15,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from sqlalchemy import select
@@ -95,7 +95,7 @@ class _DispatchingWs:
 
     async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
         del inputs
-        command_id = uuid4()
+        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=self._workspace_id,
@@ -129,7 +129,7 @@ class _FailingWs:
 
     async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
         del inputs
-        command_id = uuid4()
+        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=self._workspace_id,
@@ -185,8 +185,8 @@ async def test_lean_row_created_on_first_workspace_event(db_session) -> None:
     agent_id = UUID(str(agent_result["id"]))
     await db_session.flush()
 
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
 
     # Enqueue a ProvisionWorkspace command so there's a real agent_commands row.
     cmd = CleanupWorkspaceCommand(
@@ -225,8 +225,8 @@ async def test_lean_row_not_created_for_unknown_kind(db_session) -> None:
     from app.core.agent_gateway import StaleClaimError  # noqa: PLC0415
 
     org_id = uuid4()
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
 
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
@@ -259,8 +259,8 @@ async def test_lean_row_org_id_from_command_row(db_session) -> None:
     agent_id = UUID(str(agent_result["id"]))
     await db_session.flush()
 
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
@@ -318,8 +318,8 @@ async def test_provision_success_completion_token_verified(db_session) -> None:
     agent_result = await seed_agent(org_id=org_id, session=db_session)
     agent_id = UUID(str(agent_result["id"]))
 
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
     cmd = _make_provision_command(workspace_id=workspace_id, command_id=command_id)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -400,8 +400,8 @@ async def test_provision_success_materialises_lean_row(db_session) -> None:
     agent_result = await seed_agent(org_id=org_id, session=db_session)
     agent_id = UUID(str(agent_result["id"]))
 
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
     ttl_seconds = 900
     cmd = _make_provision_command(workspace_id=workspace_id, command_id=command_id, ttl_seconds=ttl_seconds)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
@@ -450,8 +450,8 @@ async def test_provision_success_idempotent(db_session) -> None:
     agent_result = await seed_agent(org_id=org_id, session=db_session)
     agent_id = UUID(str(agent_result["id"]))
 
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
     cmd = _make_provision_command(workspace_id=workspace_id, command_id=command_id)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -489,8 +489,8 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     from app.core.workspace.dispatch import try_claim  # noqa: PLC0415
 
     org_id = uuid4()
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
 
     # Seed a workspace row that holds the current command claim.
     from datetime import timedelta  # noqa: PLC0415
@@ -539,7 +539,7 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     assert ws.current_command_id is None, "release_claim must clear current_command_id before routing"
 
     # A subsequent try_claim should now succeed (claim is released).
-    new_cmd_id = uuid4()
+    new_cmd_id = uuid7()
     claimed = await try_claim(
         workspace_id=workspace_id,
         command_id=new_cmd_id,
@@ -560,7 +560,7 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
     _FinalizerLocal.call_count = 0
 
     org_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
     local_cmd = _NoopLocal()
     finalizer_cmd = _FinalizerLocal()
@@ -638,7 +638,7 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
     _FinalizerLocal.call_count = 0
 
     org_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     # Use a Workspace command that succeeds.
     ws_cmd = _DispatchingWs(org_id=org_id, workspace_id=workspace_id)
     finalizer_cmd = _FinalizerLocal()
@@ -716,7 +716,7 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
     """On terminal failure, `workflow_executions.failure_reason` is set and a
     `workflow.failed` audit row is written with the correct payload."""
     org_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
 
     workflow = Workflow(
@@ -794,7 +794,7 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
     """When the agent event has no `__failure_reason__` key, `failure_reason`
     falls back to the outcome label."""
     org_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
 
     workflow = Workflow(
@@ -859,7 +859,7 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
     _FinalizerLocal.call_count = 0
 
     org_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
     finalizer_cmd = _FinalizerLocal()
 

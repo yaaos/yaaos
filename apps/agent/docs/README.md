@@ -53,7 +53,7 @@ Build target: `linux/arm64` only (built natively on the arm64 RWX CI runner). ya
 
 ## Deployment (ECS Fargate)
 
-Designed for customer scale ~1–10 tasks. Each task is one supervisor pod handling `Concurrency` workspaces in parallel (default 4).
+Designed for customer scale ~1–10 tasks. Each task is one supervisor pod handling `Concurrency` claim workers in parallel (default 1); each claim worker spawns a goroutine per claimed command so workspaces run concurrently up to `max_workspaces`.
 
 ### IAM role
 
@@ -122,7 +122,7 @@ Register the role ARN in yaaos: `PATCH /api/orgs` with `{workspace_provider: "re
 }
 ```
 
-Scale `cpu`/`memory` with `Concurrency`. 1 vCPU / 2 GB handles ~4 concurrent reviews comfortably.
+Scale `cpu`/`memory` with `max_workspaces` (delivered via ConfigUpdate). 1 vCPU / 2 GB handles ~4 concurrent reviews comfortably.
 
 ### CloudWatch log group
 

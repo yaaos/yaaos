@@ -9,7 +9,7 @@ that replace direct `WorkspaceRow` imports in consumers such as
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 
@@ -27,7 +27,7 @@ async def _seed_workspace(db_session, *, status: str = "active", **kwargs) -> Wo
 
     agent = await seed_agent(org_id=uuid4(), session=db_session)
     row = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=uuid4(),
         provider_id="remote_agent",
         spec={"sha": "abc123"},
@@ -55,7 +55,7 @@ async def test_get_workspace_claim_state_returns_none_when_no_match(db_session) 
 @pytest.mark.asyncio
 async def test_get_workspace_claim_state_returns_projection_for_claimed_workspace(db_session) -> None:
     """Projection contains workspace_id, status, and owning_agent_id."""
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws = await _seed_workspace(
         db_session,
         status="active",
@@ -78,7 +78,7 @@ async def test_get_workspace_claim_state_returns_owning_agent_id(db_session) -> 
     The projection carries owning_agent_id (None when not set) so the caller
     can compare against the bearer's agent_id for the per-agent authz guard.
     """
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws = await _seed_workspace(
         db_session,
         status="active",
@@ -104,7 +104,7 @@ async def test_get_workspace_command_state_returns_none_for_unknown_id(db_sessio
 
 @pytest.mark.asyncio
 async def test_get_workspace_command_state_returns_projection(db_session) -> None:
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws = await _seed_workspace(
         db_session,
         status="active",

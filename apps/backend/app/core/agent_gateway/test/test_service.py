@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 
@@ -67,7 +67,7 @@ class _MinimalWorkspaceProvider:
 
 def _make_provision_command() -> ProvisionWorkspaceCommand:
     return ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=uuid4(),
         traceparent="00-aabbccdd-1122-01",
         repo=RepoRef(
@@ -87,7 +87,7 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
     from app.testing.seed import seed_agent  # noqa: PLC0415
 
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     wfx_id = uuid4()
     org_id = uuid4()
     agent = await seed_agent(org_id=org_id, session=db_session)
@@ -456,7 +456,7 @@ async def test_stale_command_id_raises(db_session) -> None:
     """An event whose command_id doesn't match any workspace's current
     claim raises StaleClaimError so the endpoint can map to 410."""
     event = AgentEvent(
-        command_id=uuid4(),  # nothing holds this
+        command_id=uuid7(),  # nothing holds this
         kind=AgentEventKind.COMPLETED_SUCCESS,
         reported_at=datetime.now(UTC),
         traceparent="00-aabbccdd-1122-01",
@@ -494,7 +494,7 @@ async def test_workspace_event_with_stale_command_raises(db_session) -> None:
     ws = await _seed_workspace(db_session)
     event = WorkspaceEvent(
         workspace_id=UUID(ws["id"]),
-        command_id=uuid4(),  # mismatched
+        command_id=uuid7(),  # mismatched
         kind=WorkspaceEventKind.READY,
         reported_at=datetime.now(UTC),
     )

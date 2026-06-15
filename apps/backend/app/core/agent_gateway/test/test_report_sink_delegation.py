@@ -8,7 +8,7 @@ swapped in via `register_report_sink` / `clear_report_sink` from
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 
@@ -146,7 +146,7 @@ async def test_record_workspace_event_delegates_to_sink(db_session) -> None:
     """record_workspace_event calls apply_workspace_event on the sink; no
     direct workspace DB access happens in this code path."""
     ws_id = uuid4()
-    cmd_id = uuid4()
+    cmd_id = uuid7()
 
     stub = _StubSink(ws_commands={ws_id: cmd_id})
     register_report_sink(stub)
@@ -172,7 +172,7 @@ async def test_record_workspace_event_raises_stale_when_sink_rejects(db_session)
     """When the sink returns accepted=False, record_workspace_event raises
     StaleClaimError (the caller maps this to 410 Gone)."""
     ws_id = uuid4()
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     other_cmd = uuid4()
 
     # ws_commands maps ws_id → other_cmd so our event's cmd_id mismatches.

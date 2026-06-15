@@ -9,7 +9,7 @@ the backend stamps `command_event.outcome` on the FastAPI request span.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import httpx
 import pytest
@@ -79,12 +79,12 @@ async def _setup_agent_with_bearer(db_session):
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_command_event_stale_claim_returns_200_with_outcome(db_session) -> None:
-    """A stale command_id (no matching agent_commands row) returns 200 with
-    `command_event_outcome = stale_claim_dropped` — not 410."""
+async def test_command_event_stale_claim_returns_410(db_session) -> None:
+    """A stale command_id (no matching agent_commands row) returns 410 with
+    `{"error": "stale_claim"}` — matching the workspace-event handler shape."""
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
     del agent_id, org_id
-    cmd_id = uuid4()
+    cmd_id = uuid7()
 
     async with _client() as c:
         resp = await c.post(
@@ -97,8 +97,8 @@ async def test_command_event_stale_claim_returns_200_with_outcome(db_session) ->
                 "traceparent": "00-aabb-1122-01",
             },
         )
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"command_event_outcome": "stale_claim_dropped"}
+    assert resp.status_code == 410, resp.text
+    assert resp.json()["error"] == "stale_claim"
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
     """A valid event for an existing command returns 200 with
     `command_event_outcome = event_recorded`."""
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     wfx_id = uuid4()
 
     ws_id = await seed_workspace(
@@ -159,16 +159,47 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
-    """The FastAPI request span carries `command_event.outcome` after the
-    endpoint runs. Drives through the ASGI transport (same as the other two
-    tests) so the assertion exercises `org_context`, FastAPI DI, and the
-    backend's `set_attribute` call site at `web.py`.
+    """The FastAPI request span carries `command_event.outcome="event_recorded"`
+    after a successful event post. Drives through the ASGI transport so the
+    assertion exercises `org_context`, FastAPI DI, and the backend's
+    `set_attribute` call site at `web.py`.
     """
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
 
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
-    del agent_id, org_id
-    cmd_id = uuid4()
+    cmd_id = uuid7()
+    wfx_id = uuid4()
+
+    ws_id = await seed_workspace(
+        org_id=org_id,
+        provider_id="remote_agent",
+        sha="deadbeef",
+        current_command_id=cmd_id,
+        agent_id=agent_id,
+        caller_session=db_session,
+    )
+    provision = ProvisionWorkspaceCommand(
+        command_id=cmd_id,
+        workspace_id=UUID(ws_id),
+        traceparent="00-aabbccdd-1122-01",
+        repo=RepoRef(
+            plugin_id="github",
+            external_id="123",
+            clone_url="https://github.com/me/repo.git",
+            head_sha="deadbeef",
+        ),
+        history=1,
+        auth=AuthBlock(kind="github_installation", token="redacted"),
+        ttl_seconds=600,
+        max_idle_seconds=600,
+    )
+    await enqueue_command(
+        org_id=org_id,
+        command=provision,
+        session=db_session,
+        workflow_execution_id=wfx_id,
+    )
+    await db_session.commit()
 
     with span_capture() as exporter:
         # Per-app instrumentation against the provider span_capture() installed.
@@ -191,7 +222,7 @@ async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
         finally:
             FastAPIInstrumentor.uninstrument_app(app)
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     spans = exporter.get_finished_spans()
     outcome_attrs = [
         dict(s.attributes or {}).get("command_event.outcome")
@@ -199,4 +230,4 @@ async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
         if dict(s.attributes or {}).get("command_event.outcome") is not None
     ]
     assert outcome_attrs, f"no span carries command_event.outcome; spans: {[s.name for s in spans]}"
-    assert "stale_claim_dropped" in outcome_attrs, f"expected stale_claim_dropped in {outcome_attrs}"
+    assert "event_recorded" in outcome_attrs, f"expected event_recorded in {outcome_attrs}"

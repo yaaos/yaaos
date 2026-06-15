@@ -3,7 +3,7 @@ subscribe, 1→0 fires unsubscribe, idempotent at edges."""
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 
@@ -18,7 +18,7 @@ async def test_first_track_sends_subscribe() -> None:
     reg = SubscriberRegistry()
     agent_id = uuid4()
     workflow_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     sent: list[dict] = []
 
     async def _sender(msg: dict) -> None:
@@ -45,7 +45,7 @@ async def test_second_track_does_not_resend_subscribe() -> None:
     reg = SubscriberRegistry()
     agent_id = uuid4()
     workflow_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     sent: list[dict] = []
 
     async def _sender(msg: dict) -> None:
@@ -72,7 +72,7 @@ async def test_last_untrack_sends_unsubscribe() -> None:
     reg = SubscriberRegistry()
     agent_id = uuid4()
     workflow_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     sent: list[dict] = []
 
     async def _sender(msg: dict) -> None:
@@ -117,7 +117,7 @@ async def test_track_without_sender_doesnt_raise() -> None:
     handler (follow-on) re-derives subscriptions."""
     reg = SubscriberRegistry()
     workflow_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
     agent_id = uuid4()
 
     await reg.track(

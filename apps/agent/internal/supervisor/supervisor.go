@@ -12,6 +12,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -125,7 +126,7 @@ func recordBackoff(ctx context.Context, sched *backoff.Schedule, surface string,
 type Config struct {
 	BaseURL           string        // backend root, e.g. "https://yaaos.example.com"
 	Version           string        // agent binary version (semver)
-	Concurrency       int           // claim-loop workers; defaults to 4
+	Concurrency       int           // claim-loop workers; defaults to 1
 	HeartbeatInterval time.Duration // defaults to 30s
 	ClaimWaitSeconds  int           // long-poll horizon per claim; defaults to 30
 
@@ -235,7 +236,7 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		panic("supervisor.New: provider must not be nil")
 	}
 	if cfg.Concurrency <= 0 {
-		cfg.Concurrency = 4
+		cfg.Concurrency = 1
 	}
 	if cfg.HeartbeatInterval <= 0 {
 		cfg.HeartbeatInterval = 30 * time.Second
@@ -666,9 +667,14 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		if ctx.Err() != nil {
 			return
 		}
-		_, endClaim := tracing.StartSpan(ctx, "agent.claim")
+		spanCtx, endClaim := tracing.StartSpan(ctx, "agent.claim")
 		raw, err := s.client.ClaimCommand(ctx, s.buildClaimRequest())
 		if err == protocol.ErrNoCommand {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "no_command"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "no_command")),
+				observability.StandardAttrs(),
+			)
 			endClaim(nil)
 			s.claimBackoff.Reset()
 			continue
@@ -677,11 +683,22 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		// (context.Canceled / EOF / "terminated signal received") is the expected
 		// outcome of SIGTERM during a long-poll, not a real claim failure.
 		if err != nil && ctx.Err() != nil {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "cancel"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "cancel")),
+				observability.StandardAttrs(),
+			)
 			endClaim(nil)
 			return
 		}
-		endClaim(err)
 		if err != nil {
+			// Transport or protocol error — not a graceful shutdown.
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "error"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "error")),
+				observability.StandardAttrs(),
+			)
+			endClaim(err)
 			// On 401/403: attempt a fresh identity exchange before backing
 			// off. If re-auth succeeds the bearer is updated and we can
 			// retry without the full backoff interval.
@@ -703,20 +720,85 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		}
 		cmd, decErr := command.Decode(raw)
 		if decErr != nil {
+			// Decode failure counts as an error outcome — the claim HTTP call
+			// succeeded but the payload is unusable.
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "error"))
+			observability.Metrics().ClaimOutcome.Add(ctx, 1,
+				metric.WithAttributes(attribute.String("outcome", "error")),
+				observability.StandardAttrs(),
+			)
+			endClaim(decErr)
 			s.log.Warn("supervisor.decode_error", "worker", workerNum, "err", decErr.Error())
 			continue
 		}
+		oteltrace.SpanFromContext(spanCtx).SetAttributes(attribute.String("claim.outcome", "command"))
+		observability.Metrics().ClaimOutcome.Add(ctx, 1,
+			metric.WithAttributes(attribute.String("outcome", "command")),
+			observability.StandardAttrs(),
+		)
+		endClaim(nil)
 		s.claimBackoff.Reset()
 		observability.Metrics().CommandsClaimed.Add(ctx, 1, observability.StandardAttrs())
 
-		// Emit a `received` event to cancel the 30-second lease requeue
-		// on the backend. Best-effort: a failure here is logged but does not
-		// prevent dispatch — at worst the command gets re-queued to pending
-		// and re-delivered (at-least-once).
-		s.postReceivedEvent(ctx, cmd.Header())
-
-		s.routeCommand(ctx, cmd)
+		// Mark the dispatch pending before spawning so buildClaimRequest sees
+		// non-zero pending work and uses a 1-second short-poll, preventing a
+		// 30-second stall before the goroutine's Pool.Dispatch registers the
+		// workspace.
+		s.pool.MarkDispatchPending()
+		// Spawn a dispatch goroutine for this command and re-arm the claim
+		// loop immediately. The dispatch goroutine owns postReceivedEvent +
+		// routeCommand + postTerminalEvent. It is NOT added to Run()'s
+		// WaitGroup — on shutdown the root ctx is cancelled, claim workers
+		// exit, pool.CloseAll SIGTERMs in-flight subprocesses (unblocking
+		// Pool.Dispatch), and dispatch goroutines' terminal-event posts fail
+		// fast on the cancelled ctx. The backend failsafe synthesizes
+		// in-flight failures for abandoned commands.
+		go s.dispatch(ctx, cmd)
 	}
+}
+
+// dispatch runs the full post-claim lifecycle for a single claimed command:
+// emit `received`, route to the pool or agent executor, post the terminal
+// event. Runs in a dedicated goroutine so the claim worker can re-arm
+// immediately after spawning it.
+//
+// Panics are recovered and converted to completed_failure terminal events so
+// a single misbehaving command cannot kill the claim loop.
+func (s *Supervisor) dispatch(ctx context.Context, cmd command.Command) {
+	// Settle the pending-dispatch count when dispatch completes (normal or panic).
+	// This must happen after routeCommand so buildClaimRequest stays in
+	// short-poll mode until the workspace is visible in the pool state (for
+	// WorkspaceCommands) or config is applied (for ConfigUpdate). Two defers
+	// are used: the inner one (registered second, runs first) handles panic
+	// recovery; the outer one (registered first, runs last) settles the count
+	// after panic recovery so the panic-post path runs under short-poll.
+	defer s.pool.MarkDispatchSettled()
+	defer func() {
+		if r := recover(); r != nil {
+			reason := fmt.Sprintf("panic in dispatch: %v", r)
+			s.log.Error("supervisor.dispatch_panic", "command_id", cmd.Header().CommandID, "panic", r)
+			ev := failureEvent(cmd.Header(), reason)
+			if postErr := s.postTerminalEvent(ctx, cmd.Header(), ev); postErr != nil {
+				s.log.Warn("supervisor.dispatch_panic_post_failed",
+					"command_id", cmd.Header().CommandID, "err", postErr.Error())
+			}
+		}
+	}()
+
+	// Emit a `received` event to cancel the 30-second lease requeue on the
+	// backend. Best-effort: a failure here is logged but does not prevent
+	// dispatch — at worst the command gets re-queued to pending and
+	// re-delivered (at-least-once).
+	s.postReceivedEvent(ctx, cmd.Header())
+
+	// routeCommand runs Pool.Dispatch (for WorkspaceCommands), which registers
+	// the workspace in the pool and sets its currentCommandID. The pool's
+	// pending-dispatch count stays non-zero until dispatch returns, so
+	// buildClaimRequest uses a 1-second short-poll while the workspace
+	// transitions from "not in pool" to "idle in pool". For AgentCommands
+	// (ConfigUpdate), routeCommand calls ApplyConfig, after which lifecycle
+	// transitions to "configured".
+	s.routeCommand(ctx, cmd)
 }
 
 // postReceivedEvent posts a `received` non-terminal event to the backend.
@@ -952,8 +1034,9 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 		)
 		ack, err := s.client.PostCommandEvent(ctx, header.CommandID, event)
 		if err == nil {
-			// 200 — stamp the outcome attribute and log uniformly.
+			// 200 — stamp the outcome attributes (agent-perspective + backend-perspective) and log uniformly.
 			oteltrace.SpanFromContext(spanCtx).SetAttributes(
+				attribute.String("event_post.outcome", "acked"),
 				attribute.String("command_event.outcome", ack.Outcome),
 			)
 			endPost(nil)
@@ -964,6 +1047,26 @@ func (s *Supervisor) postTerminalEvent(ctx context.Context, header protocol.Comm
 			)
 			return nil
 		}
+		// 410 Gone — the backend retired the command row (stale claim). Drop
+		// the event without retry: the backend failsafe synthesizes the
+		// in-flight failure. Close the span Unset (not an error — this is a
+		// normal backend lifecycle signal, not a transport failure).
+		if errors.Is(err, protocol.ErrStaleClaim) {
+			oteltrace.SpanFromContext(spanCtx).SetAttributes(
+				attribute.String("event_post.outcome", "stale_claim"),
+			)
+			endPost(nil)
+			s.log.Info("supervisor.event_stale_claim",
+				"command_id", header.CommandID,
+				"kind", string(header.Kind),
+			)
+			return nil
+		}
+		// Transient/auth error — stamp the agent-perspective outcome before
+		// recording the error on the span.
+		oteltrace.SpanFromContext(spanCtx).SetAttributes(
+			attribute.String("event_post.outcome", "network_error"),
+		)
 		// Record the error on this attempt's span before handling auth / retry.
 		endPost(err)
 		// Auth error: attempt a fresh identity exchange. If re-auth succeeds,
@@ -1009,6 +1112,19 @@ func (s *Supervisor) routeWorkspaceCmd(ctx context.Context, c command.WorkspaceC
 //     the agent can accept); 0 when unconfigured.
 //   - workspace_ids = idle Active workspaces (Active workspaces with no current
 //     command in-flight) awaiting a pending command; empty when unconfigured.
+//
+// Wait-seconds selection: two cases use a 1-second short poll:
+//  1. Active workspaces exist but none are idle (workspace_ids is empty) —
+//     the claim loop re-armed before a workspace finished its current command.
+//     A full 30-second poll would delay re-arm after the workspace becomes idle.
+//  2. Pending dispatches (pool.PendingDispatch() > 0) — a goroutine has been
+//     spawned but Pool.Dispatch hasn't run yet so the workspace is not visible
+//     in the registry. Without the short poll, the claim loop would issue a
+//     30-second long-poll with empty workspace_ids, missing the next command
+//     queued right after the dispatched command completes.
+//
+// The full wait is used when there is real demand capacity (idle workspaces or
+// room for new workspaces) and no goroutines are racing to register.
 func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 	cfg := s.config.Load()
 	if cfg == nil {
@@ -1028,8 +1144,30 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 	// workspace_ids = Active workspaces that have no in-flight command
 	// (i.e. idle and ready for the next command).
 	idleIDs := s.pool.IdleIDs()
+
+	// When active workspaces exist but none are idle, the claim loop re-armed
+	// while those workspaces were busy. A 30-second long-poll starting from that
+	// state cannot pick up commands pinned to those workspaces (workspace_ids is
+	// empty). Use a short poll so the claim loop re-arms quickly once a workspace
+	// finishes and appears in workspace_ids. Dispatch goroutines run
+	// asynchronously, so the workspace can transition to idle at any moment.
+	// A 1-second short poll bounds the delay before the next re-arm with
+	// updated workspace_ids.
+	//
+	// Also short-poll when the pool reports pending dispatches — goroutines
+	// spawned but not yet registered in the registry (or applied config for
+	// ConfigUpdate). Without this guard, the claim loop would issue a 30-second
+	// long-poll with an empty workspace_ids before the goroutine's Pool.Dispatch
+	// has run, then miss the InvokeClaudeCode command queued right after
+	// ProvisionWorkspace completes — causing a 30-second stall per command in
+	// sequential multi-step workflows.
+	waitSeconds := s.cfg.ClaimWaitSeconds
+	if (len(idleIDs) == 0 && activeCount > 0) || s.pool.PendingDispatch() > 0 {
+		waitSeconds = 1
+	}
+
 	return protocol.ClaimRequest{
-		WaitSeconds:   s.cfg.ClaimWaitSeconds,
+		WaitSeconds:   waitSeconds,
 		Lifecycle:     "configured",
 		NewWorkspaces: newWorkspaces,
 		WorkspaceIDs:  idleIDs,

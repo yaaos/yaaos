@@ -5,7 +5,7 @@
     { "path": "apps/backend/app/core/agent_gateway/web.py:472", "trigger": "POST /api/v1/commands/{command_id}/events — agent posts AgentEvent (received, progress, terminal)" },
     { "path": "apps/backend/app/core/agent_gateway/web.py:366", "trigger": "DELETE /api/v1/agent/identity — graceful shutdown going-away signal" },
     { "path": "apps/backend/app/core/workspace/service.py:315", "trigger": "_reaper_sweep_once — per-minute scheduled task" },
-    { "path": "apps/agent/internal/supervisor/supervisor.go:645", "trigger": "claimLoop goroutine (x Concurrency, default 4) per supervisor process" }
+    { "path": "apps/agent/internal/supervisor/supervisor.go:645", "trigger": "claimLoop goroutine (x Concurrency, default 1) per supervisor process; each claimed command spawns a dispatch goroutine immediately" }
   ],
   "call_chains": [
     { "from": "apps/agent/internal/supervisor/supervisor.go:650", "to": "apps/backend/app/core/agent_gateway/service.py:230", "edge": "calls" },

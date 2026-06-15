@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 from sqlalchemy import select
 
@@ -50,7 +50,7 @@ async def test_cleanup_flips_row_to_expired(db_session) -> None:  # type: ignore
     from app.testing.seed import seed_agent  # noqa: PLC0415
 
     org_id = uuid4()
-    ws_id = uuid4()
+    ws_id = uuid7()
     agent = await seed_agent(org_id=org_id, session=db_session)
     db_session.add(
         WorkspaceRow(

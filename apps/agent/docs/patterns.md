@@ -41,7 +41,8 @@ If adding a new enum value causes `exhaustive` to fail, add the matching `case` 
 - **Command error** → return `(nil, err)` from `Execute`; the supervisor maps it to `completed_failure` with `failure_reason`. Log at INFO at the handling boundary — it's an expected outcome.
 - **Transport error** → log WARN at the retry site, sleep on the backoff schedule, retry indefinitely. Never crash in steady state.
 - **Boot-time / config error** → return from `supervisor.Run`; `main` logs ERROR and exits. The orchestrator restarts.
-- **Panic** → recovered at the claim-worker goroutine boundary, converted to `completed_failure`. Never surfaced as an unhandled panic.
+- **Panic** → recovered at the `dispatch` goroutine boundary (`defer recover()` in `supervisor.dispatch`), converted to `completed_failure`. Never surfaced as an unhandled panic.
+- **`protocol.ErrStaleClaim` (HTTP 410)** → `postTerminalEvent` receives this from `PostCommandEvent` when the backend retired the command row. Drops the event without retry; closes the span Unset; logs `supervisor.event_stale_claim` at INFO. The backend failsafe synthesizes the in-flight failure — no action required from the agent. Distinct from transient errors (retry, span Error).
 - **Identity-integrity violation** — the one steady-state fatal: if bearer renewal returns a different `AgentID` or `OrgID`, the supervisor logs ERROR and calls `os.Exit(1)`. See [architecture.md § Error handling](architecture.md#error-handling--fatal-on-mismatch-carve-out).
 - **Leaf packages** (`secret`, `ipc`, `backoff`, `command`) return errors; they never log. The caller logs at the handling boundary.
 

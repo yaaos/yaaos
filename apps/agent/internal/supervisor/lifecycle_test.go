@@ -180,5 +180,93 @@ func TestClaimRequest_LifecycleFields(t *testing.T) {
 	}
 }
 
+// TestClaimRequest_ShortPollWhenBusyWorkspacesExist verifies that
+// buildClaimRequest uses a short wait_seconds (1s) whenever active workspaces
+// exist but none are idle — even when new_workspaces capacity is available.
+// This bounds the delay between a workspace finishing a command and the claim
+// loop re-arming with the updated workspace_ids — critical for sequential
+// multi-command flows where the dispatch goroutine model re-arms the claim loop
+// before Pool.Dispatch has cleared the workspace's in-flight command ID.
+func TestClaimRequest_ShortPollWhenBusyWorkspacesExist(t *testing.T) {
+	cases := []struct {
+		name  string
+		maxWS int // max_workspaces from ConfigUpdate
+	}{
+		{"at_cap_max1", 1},    // 1 busy workspace, no room for new
+		{"below_cap_max4", 4}, // 1 busy workspace, room for 3 more (backend sends max_workspaces=4)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := buildUnconfiguredSupervisor(t)
+			defer s.pool.CloseAll(context.Background())
+
+			applyConfig(s, tc.maxWS)
+
+			// No workspaces yet → full wait (no busy workspaces to wait for).
+			req := s.buildClaimRequest()
+			if req.WaitSeconds != s.cfg.ClaimWaitSeconds {
+				t.Errorf("want full wait_seconds=%d with no workspaces, got %d", s.cfg.ClaimWaitSeconds, req.WaitSeconds)
+			}
+
+			// Insert one Active workspace and mark it busy.
+			const wsID = "ws-busy-test"
+			s.pool.createActive(wsID, nil) // nil runner; only registry state matters
+			s.pool.setCommandID(wsID, "cmd-123")
+
+			// Busy workspace present, none idle → short poll regardless of new_workspaces.
+			req2 := s.buildClaimRequest()
+			if req2.WaitSeconds != 1 {
+				t.Errorf("[%s] want wait_seconds=1 when busy workspace exists, got %d", tc.name, req2.WaitSeconds)
+			}
+			if len(req2.WorkspaceIDs) != 0 {
+				t.Errorf("[%s] want empty workspace_ids when busy, got %v", tc.name, req2.WorkspaceIDs)
+			}
+
+			// Workspace becomes idle → full wait (now listed in workspace_ids).
+			s.pool.clearCommandID(wsID)
+			req3 := s.buildClaimRequest()
+			if req3.WaitSeconds != s.cfg.ClaimWaitSeconds {
+				t.Errorf("[%s] want full wait_seconds=%d when workspace idle, got %d", tc.name, s.cfg.ClaimWaitSeconds, req3.WaitSeconds)
+			}
+			if len(req3.WorkspaceIDs) != 1 || req3.WorkspaceIDs[0] != wsID {
+				t.Errorf("[%s] want workspace_ids=[%s], got %v", tc.name, wsID, req3.WorkspaceIDs)
+			}
+		})
+	}
+}
+
+// TestClaimRequest_ShortPollWhenPendingDispatch verifies that buildClaimRequest
+// uses a 1-second short poll whenever the pool reports a pending dispatch, even
+// when the pool has no active workspaces. This prevents a 30-second stall caused
+// by the claim loop re-arming with empty workspace_ids before a dispatch
+// goroutine's Pool.Dispatch has registered the workspace.
+func TestClaimRequest_ShortPollWhenPendingDispatch(t *testing.T) {
+	s := buildUnconfiguredSupervisor(t)
+	defer s.pool.CloseAll(context.Background())
+	applyConfig(s, 4)
+
+	// No workspaces, no pending dispatch → full wait.
+	req := s.buildClaimRequest()
+	if req.WaitSeconds != s.cfg.ClaimWaitSeconds {
+		t.Errorf("want full wait_seconds=%d with no pending dispatch, got %d", s.cfg.ClaimWaitSeconds, req.WaitSeconds)
+	}
+
+	// Simulate a dispatch goroutine in-flight (marked before go s.dispatch).
+	s.pool.MarkDispatchPending()
+
+	// Pending dispatch → short poll even with no pool workspaces.
+	req2 := s.buildClaimRequest()
+	if req2.WaitSeconds != 1 {
+		t.Errorf("want wait_seconds=1 with pending dispatch, got %d", req2.WaitSeconds)
+	}
+
+	// Settled (goroutine completed) → full wait returns.
+	s.pool.MarkDispatchSettled()
+	req3 := s.buildClaimRequest()
+	if req3.WaitSeconds != s.cfg.ClaimWaitSeconds {
+		t.Errorf("want full wait_seconds=%d after dispatch settles, got %d", s.cfg.ClaimWaitSeconds, req3.WaitSeconds)
+	}
+}
+
 // ── Identity test helper (ensures noopProvider implements identity.Provider) ──
 var _ identity.Provider = noopProvider{}

@@ -21,19 +21,19 @@ import (
 
 // fakeEventServer is an httptest.Server that handles
 // POST /api/v1/commands/{id}/events. It can be configured to fail a fixed
-// number of times before returning 200, and can return a stale-claim outcome
-// immediately (200 with command_event_outcome=stale_claim_dropped).
+// number of times before returning 200, and can return a stale-claim 410
+// immediately (mimicking the phase-1 backend contract).
 type fakeEventServer struct {
-	mu                      sync.Mutex
-	failCount               int   // return 500 this many times before succeeding
-	returnStaleClaimOutcome bool  // always return 200 stale_claim_dropped
-	callCount               int32 // atomic counter for total POSTs received
-	server                  *httptest.Server
+	mu               sync.Mutex
+	failCount        int   // return 500 this many times before succeeding
+	returnStaleClaim bool  // always return 410 Gone (stale claim)
+	callCount        int32 // atomic counter for total POSTs received
+	server           *httptest.Server
 }
 
-func newFakeEventServer(t *testing.T, failCount int, returnStaleClaimOutcome bool) *fakeEventServer {
+func newFakeEventServer(t *testing.T, failCount int, returnStaleClaim bool) *fakeEventServer {
 	t.Helper()
-	fs := &fakeEventServer{failCount: failCount, returnStaleClaimOutcome: returnStaleClaimOutcome}
+	fs := &fakeEventServer{failCount: failCount, returnStaleClaim: returnStaleClaim}
 	fs.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/commands/") {
 			http.NotFound(w, r)
@@ -45,20 +45,21 @@ func newFakeEventServer(t *testing.T, failCount int, returnStaleClaimOutcome boo
 		if remaining > 0 {
 			fs.failCount--
 		}
-		stale := fs.returnStaleClaimOutcome
+		stale := fs.returnStaleClaim
 		fs.mu.Unlock()
 
 		if remaining > 0 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if stale {
+			// 410 Gone — backend phase-1 contract for stale claims.
+			w.WriteHeader(http.StatusGone)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if stale {
-			_, _ = w.Write([]byte(`{"command_event_outcome":"stale_claim_dropped"}`))
-		} else {
-			_, _ = w.Write([]byte(`{"command_event_outcome":"event_recorded"}`))
-		}
+		_, _ = w.Write([]byte(`{"command_event_outcome":"event_recorded"}`))
 	}))
 	t.Cleanup(fs.server.Close)
 	return fs
@@ -175,10 +176,10 @@ func TestEventPostRetry_SucceedsAfterTransientFailures(t *testing.T) {
 	}
 }
 
-// TestEventPostRetry_StaleClaimStopsImmediately verifies that a 200
-// stale_claim_dropped response stops the retry loop without further attempts.
+// TestEventPostRetry_StaleClaimStopsImmediately verifies that a 410
+// stale-claim response stops the retry loop without further attempts.
 func TestEventPostRetry_StaleClaimStopsImmediately(t *testing.T) {
-	srv := newFakeEventServer(t, 0, true) // always stale_claim_dropped
+	srv := newFakeEventServer(t, 0, true) // always 410 stale claim
 	s := buildSupervisorForRetryTest(t, srv, nil)
 	defer s.pool.CloseAll(context.Background())
 
@@ -189,9 +190,9 @@ func TestEventPostRetry_StaleClaimStopsImmediately(t *testing.T) {
 	s.routeCommand(ctx, cmd)
 
 	calls := atomic.LoadInt32(&srv.callCount)
-	// Exactly one attempt — stale_claim_dropped is a success, loop stops.
+	// Exactly one attempt — a 410 stale claim is dropped without retry.
 	if calls != 1 {
-		t.Errorf("want exactly 1 POST attempt on stale_claim_dropped, got %d", calls)
+		t.Errorf("want exactly 1 POST attempt on 410 stale claim, got %d", calls)
 	}
 }
 

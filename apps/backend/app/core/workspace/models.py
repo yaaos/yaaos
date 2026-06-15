@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -58,4 +58,7 @@ class WorkspaceRow(Base):
         Index("ix_workspaces_status_expires", "status", "expires_at"),
         Index("ix_workspaces_org_created", "org_id", "created_at"),
         Index("ix_workspaces_owning_agent_id", "owning_agent_id"),
+        # The workspace_id PK is minted app-side with uuid7() (the agent's
+        # lifecycle handle). Enforce v7 at the row boundary as defense-in-depth.
+        CheckConstraint("uuid_extract_version(id) = 7", name="ck_workspaces_id_uuidv7"),
     )

@@ -106,4 +106,13 @@ func TestSupervisor_ClaimSpan_RecordsErrorOnHTTPFailure(t *testing.T) {
 	if !sawException {
 		t.Errorf("expected RecordError exception event on agent.claim span, events: %v", sp.Events)
 	}
+	var outcomeAttr string
+	for _, a := range sp.Attributes {
+		if string(a.Key) == "claim.outcome" {
+			outcomeAttr = a.Value.AsString()
+		}
+	}
+	if outcomeAttr != "error" {
+		t.Errorf("agent.claim span claim.outcome: want error, got %q", outcomeAttr)
+	}
 }

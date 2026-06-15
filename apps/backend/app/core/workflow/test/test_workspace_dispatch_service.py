@@ -19,7 +19,7 @@ Drives a two-step workflow (Workspace → Local terminal) via `scoped_workflow`:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 
@@ -66,7 +66,7 @@ class _DispatchingWs:
 
     async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
         del inputs
-        command_id = uuid4()
+        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=uuid4(),  # any workspace id — gateway no longer needs the row

@@ -72,10 +72,10 @@ The bearer issued at identity-exchange is scoped to the per-agent-instance `agen
 
 [`core/workspace.try_claim`](../apps/backend/app/core/workspace/dispatch.py) is an atomic conditional UPDATE succeeding iff `current_command_id IS NULL AND status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off — only one AgentCommand can hold a workspace at a time.
 
-Event endpoints validate inbound `command_id` against `workspaces.current_command_id`. Two response shapes today:
+Event endpoints validate the `agent_commands` row for the inbound `command_id`. A missing or retired row returns `410 {"error": "stale_claim"}` on both event paths:
 
-- `POST /api/v1/commands/{id}/events` — mismatch → `200 {"command_event_outcome": "stale_claim_dropped"}`. The agent reads the outcome and abandons silently.
-- `POST /api/v1/workspaces/{id}/events` — mismatch → `410 {"error": "stale_claim"}`. Older shape; not yet migrated to the outcome-ack contract.
+- `POST /api/v1/commands/{id}/events` — missing/retired row → `410`. Agent receives `protocol.ErrStaleClaim`, drops without retry.
+- `POST /api/v1/workspaces/{id}/events` — same `410` shape.
 
 ### Failure-report-precedes-disposal
 
@@ -104,7 +104,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 |---|---|
 | Inbound webhook from an attacker not GitHub | HMAC verification in [`plugins/github/service.verify_webhook_signature`](../apps/backend/app/plugins/github/service.py); intake type returns 401 on mismatch. |
 | Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
-| Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard. Command-event endpoint returns `200 {"command_event_outcome": "stale_claim_dropped"}`; workspace-event endpoint returns `410 {"error": "stale_claim"}`. Either way the agent abandons silently. |
+| Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard. Both event endpoints return `410 {"error": "stale_claim"}` on a missing/retired command row. Agent receives `protocol.ErrStaleClaim` and abandons without retry. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
 | Activity event payloads carrying unexpected content | Producer-side discipline: `core/coding_agent` ActivityEvents are assumed source-free by the producer; payloads are not independently audited downstream. |

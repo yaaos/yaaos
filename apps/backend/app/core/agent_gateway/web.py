@@ -53,6 +53,7 @@ from app.core.agent_gateway.rate_limit import RateLimitedError, check_identity_e
 from app.core.agent_gateway.report_sink import get_report_sink
 from app.core.agent_gateway.service import (
     claim_next,
+    enqueue_config_update_for_agent,
     ensure_agent_row,
     mark_agent_shutdown,
     record_agent_event,
@@ -333,6 +334,7 @@ async def exchange_identity(
             cpu_count=meta.cpu_count,
             memory_bytes=meta.memory_bytes,
         )
+        await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=s)
         plaintext, record = await bearers.issue(
             agent_id=agent_id,
             org_id=org_id,
@@ -488,12 +490,12 @@ async def post_command_event(
                 _require_workspace_owner(agent, owning_agent_id)
                 await record_agent_event(event, agent_id=agent.agent_id, session=s)
                 await s.commit()
-            outcome = "event_recorded"
-        except StaleClaimError:
-            outcome = "stale_claim_dropped"
-    trace.get_current_span().set_attribute("command_event.outcome", outcome)
-    log.info("agent.command_event.posted", command_id=str(command_id), command_event_outcome=outcome)
-    return JSONResponse(status_code=200, content={"command_event_outcome": outcome})
+        except StaleClaimError as exc:
+            log.debug("agent.command_event.stale", command_id=str(command_id), error=str(exc))
+            return JSONResponse(status_code=410, content={"error": "stale_claim", "detail": str(exc)})
+    trace.get_current_span().set_attribute("command_event.outcome", "event_recorded")
+    log.info("agent.command_event.posted", command_id=str(command_id), command_event_outcome="event_recorded")
+    return JSONResponse(status_code=200, content={"command_event_outcome": "event_recorded"})
 
 
 # ── Activity WebSocket ──────────────────────────────────────────────────

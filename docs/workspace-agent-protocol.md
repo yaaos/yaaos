@@ -81,9 +81,9 @@ The `X-Yaaos-Audience` header inside the signed `payload` must be present and ma
 ## Ordering + idempotency
 
 - Commands are FIFO within the durable `agent_commands` queue, ordered by UUIDv7 PK.
-- Each command carries a `command_id` (UUID). The stale-claim guard on the backend matches the posted event's `command_id` against the workspace's current claim. Two response shapes today:
-  - `POST /api/v1/commands/{id}/events` — mismatch returns `200 {"command_event_outcome": "stale_claim_dropped"}`.
-  - `POST /api/v1/workspaces/{id}/events` — mismatch returns `410 {"error": "stale_claim"}` (older shape; not yet migrated to the outcome-ack contract).
+- Each command carries a `command_id` (UUID). The stale-claim guard on the backend matches the posted event's `command_id` against the `agent_commands` row. A missing or retired row returns `410 {"error": "stale_claim"}`:
+  - `POST /api/v1/commands/{id}/events` — `410 {"error": "stale_claim"}` on missing/retired row.
+  - `POST /api/v1/workspaces/{id}/events` — same 410 shape.
 
 ## At-least-once delivery + dedup
 
@@ -91,9 +91,9 @@ The `X-Yaaos-Audience` header inside the signed `payload` must be present and ma
 
 **Dedup cache:** the agent keeps a bounded in-memory LRU (1024 entries, `command_id → terminal AgentEvent`). On a re-delivered `command_id`, the cached terminal event is replayed through the retry loop — no dispatch to the workspace subprocess.
 
-**Terminal-event retry:** after each dispatch the agent retries `POST /api/v1/commands/{id}/events` with backoff (1s/2s/5s/10s/30s ramp, last step pins). The backend always returns 200 with a `CommandEventAck`. Two stop conditions:
-- `event_recorded` — event accepted; done.
-- `stale_claim_dropped` — the backend no longer holds the claim; the event is dropped silently (also a success; loop stops immediately).
+**Terminal-event retry:** after each dispatch the agent retries `POST /api/v1/commands/{id}/events` with backoff (1s/2s/5s/10s/30s ramp, last step pins). Two stop conditions:
+- `200 {"command_event_outcome": "event_recorded"}` — event accepted; done.
+- `410 {"error": "stale_claim"}` — the command row is retired; event dropped, span closes Unset, no retry. Backend failsafe synthesizes the in-flight failure.
 
 **Progress events** are best-effort single-shot; only terminal events use the retry loop.
 

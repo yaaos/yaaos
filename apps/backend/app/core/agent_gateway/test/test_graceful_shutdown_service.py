@@ -11,7 +11,7 @@ Service tests for:
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import httpx
 import pytest
@@ -164,9 +164,9 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
     """
     org, agent = await _seed_org_and_agent(db_session)
 
-    command_id = uuid4()
+    command_id = uuid7()
     workflow_exec_id = uuid4()
-    workspace_id = uuid4()
+    workspace_id = uuid7()
 
     # Enqueue the agent_commands row so failsafe_agent_loss can resolve
     # workflow_execution_id from agent_commands (not from the shed

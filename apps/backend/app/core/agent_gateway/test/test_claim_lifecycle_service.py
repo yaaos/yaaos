@@ -1,15 +1,16 @@
 """Service tests for lifecycle-gated claim_next.
 
 Verifies:
-- Unconfigured claim returns ConfigUpdateCommand with default max_workspaces.
+- Unconfigured claim returns a row-backed ConfigUpdateCommand when one is pending.
+- Unconfigured claim returns None when no ConfigUpdate row is pending.
 - Configured claim returns a ProvisionWorkspace command when new_workspaces > 0.
 - Configured claim with workspace_ids returns the pending command for a named workspace.
-- Unconfigured claim leaves DB rows untouched.
+- Unconfigured claim leaves non-ConfigUpdate rows untouched.
 """
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from sqlalchemy import select
@@ -19,6 +20,7 @@ from app.core.agent_gateway.service import (
     DEFAULT_MAX_WORKSPACES,
     claim_next,
     enqueue_command,
+    enqueue_config_update_for_agent,
 )
 from app.core.agent_gateway.types import (
     AgentCommandKind,
@@ -39,7 +41,7 @@ async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
 
 def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
     return WriteFilesCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id,
         traceparent="00-aabb-1122-01",
         files=(WriteFilesEntry(path="hello.txt", content="hello"),),
@@ -48,7 +50,7 @@ def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
 
 def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceCommand:
     return ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id or uuid4(),
         traceparent="00-aabb-1122-01",
         repo=RepoRef(
@@ -70,11 +72,12 @@ def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceC
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_unconfigured_claim_returns_config_update(db_session) -> None:
-    """An unconfigured claim always returns ConfigUpdateCommand."""
+    """Unconfigured claim with a pending ConfigUpdate row returns that command."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
     ws_cmd = _make_write_cmd(uuid4())
     await enqueue_command(org_id=org_id, command=ws_cmd, session=db_session)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
 
     command = await claim_next(
@@ -90,7 +93,7 @@ async def test_unconfigured_claim_returns_config_update(db_session) -> None:
     assert command.kind == AgentCommandKind.CONFIG_UPDATE
     assert command.config.max_workspaces == DEFAULT_MAX_WORKSPACES
 
-    # The workspace command must remain pending.
+    # The workspace command must remain pending — only ConfigUpdate is claimable.
     row = (
         await db_session.execute(select(AgentCommandRow).where(AgentCommandRow.id == ws_cmd.command_id))
     ).scalar_one_or_none()
@@ -100,8 +103,8 @@ async def test_unconfigured_claim_returns_config_update(db_session) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_unconfigured_claim_returns_config_update_when_queue_empty(db_session) -> None:
-    """Unconfigured claim returns ConfigUpdateCommand even with no pending rows."""
+async def test_unconfigured_claim_returns_none_when_no_config_update_pending(db_session) -> None:
+    """Unconfigured claim returns None when no ConfigUpdate row is pending for this agent."""
     agent_id = await _make_agent(db_session)
     command = await claim_next(
         agent_id,
@@ -111,9 +114,7 @@ async def test_unconfigured_claim_returns_config_update_when_queue_empty(db_sess
         wait_seconds=0,
         session=db_session,
     )
-    assert command is not None
-    assert isinstance(command, ConfigUpdateCommand)
-    assert command.config.max_workspaces > 0
+    assert command is None
 
 
 # ── Configured claim ───────────────────────────────────────────────────────

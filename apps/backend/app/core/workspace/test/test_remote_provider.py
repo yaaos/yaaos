@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 
@@ -147,7 +147,7 @@ async def test_dispatch_provision_workspace_enqueues_pending_row(db_session) -> 
 
     org_id = uuid4()
     seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
-    workspace_id = uuid4()
+    workspace_id = uuid7()
 
     result = await dispatch_provision_workspace(
         org_id,
@@ -173,6 +173,9 @@ async def test_dispatch_provision_workspace_enqueues_pending_row(db_session) -> 
     )
     assert command is not None
     assert command.command_id == result.command_id
+    # command_id is the agent_commands PK and FIFO sort key — must be UUIDv7
+    # (time-ordered) so claim order matches enqueue order.
+    assert result.command_id.version == 7
 
 
 # ── Provider health_check ─────────────────────────────────────────────

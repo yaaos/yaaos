@@ -18,7 +18,7 @@ can rotate its checkout's auth header before the retry.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid7
 
 import structlog
 from opentelemetry import trace
@@ -111,7 +111,7 @@ class ProvisionWorkspace(_LifecycleCommand):
         # Mint the workspace_id up front — the row is created lean on the agent's
         # first workspace event, not here. The UUID is the agent's lifecycle handle
         # and the WorkspaceEvent key.
-        ws_id = uuid4()
+        ws_id = uuid7()
 
         repo = RepoRef(
             plugin_id=ticket_ctx.plugin_id,
@@ -208,7 +208,7 @@ class CleanupWorkspace(_LifecycleCommand):
         org_id = ws_row.org_id
         owning_agent_id = ws_row.owning_agent_id
 
-        command_id = uuid4()
+        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,
@@ -279,7 +279,7 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
         else:
             raise RuntimeError("RefreshWorkspaceAuth.dispatch missing workspace_id input")
 
-        command_id = uuid4()
+        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
             workspace_id=ws_id,

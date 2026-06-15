@@ -7,7 +7,7 @@ reconciliation directly on the sink — no agent_gateway import.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 
@@ -26,7 +26,7 @@ async def _make_workspace_row(
 
     agent = await seed_agent(org_id=uuid4(), session=db_session)
     return WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=uuid4(),
         provider_id="remote_agent",
         spec={"sha": "deadbeef"},
@@ -46,7 +46,7 @@ async def _make_workspace_row(
 async def test_kind_ready_maps_to_active(db_session) -> None:
     """kind='ready' must flip workspace status to 'active'."""
     sink = WorkspaceAgentReportSinkImpl()
-    cmd_id = uuid4()
+    cmd_id = uuid7()
     ws = await _make_workspace_row(db_session, status="creating", command_id=cmd_id)
     db_session.add(ws)
     await db_session.flush()
@@ -191,8 +191,8 @@ async def test_resolve_claim_returns_holder(db_session) -> None:
     """resolve_claim reads workflow_execution_id from agent_commands, not from
     the shed workspaces.current_holder_workflow_id column."""
     sink = WorkspaceAgentReportSinkImpl()
-    cmd_id = uuid4()
-    workspace_id = uuid4()
+    cmd_id = uuid7()
+    workspace_id = uuid7()
     wfx_id = uuid4()
     org_id = uuid4()
 

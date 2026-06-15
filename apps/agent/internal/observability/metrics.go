@@ -2,6 +2,7 @@ package observability
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,11 +26,16 @@ type Instruments struct {
 	ConnectionBackoffSeconds metric.Float64Gauge // attributes: surface=...
 	CommandsDeduped          metric.Int64Counter // attributes: org_id, agent_id — duplicate command_id hit the cache
 	EventsPostRetries        metric.Int64Counter // attributes: kind, org_id, agent_id — each retry of a terminal-event POST
+	ClaimOutcome             metric.Int64Counter // attributes: outcome=command|no_command|cancel|error
 }
 
 var (
 	metricsOnce sync.Once
-	metricsRef  *Instruments
+	// metricsRef holds the live instrument set. An atomic.Pointer because
+	// bindMetrics re-resolves it whenever the global MeterProvider is swapped
+	// (production: BindExporter → wireProviders; tests: a ManualReader install),
+	// concurrently with claim/heartbeat-loop goroutines reading it via Metrics().
+	metricsRef atomic.Pointer[Instruments]
 )
 
 // stdDimsMu guards stdOrgID and stdAgentID.
@@ -70,7 +76,20 @@ func StandardAttrs() metric.MeasurementOption {
 // freely without nil-checking.
 func Metrics() *Instruments {
 	metricsOnce.Do(bindMetrics)
-	return metricsRef
+	return metricsRef.Load()
+}
+
+// RebindMetrics re-resolves all instruments against the current global
+// MeterProvider. It is the low-level hook behind a MeterProvider swap; the
+// atomic store in bindMetrics makes it safe to call while other goroutines
+// read instruments via Metrics().
+//
+// Production never calls this directly (wireProviders calls bindMetrics on the
+// Init → BindExporter path). Tests should go through
+// observabilitytest.InstallTestMeterProvider rather than calling this plus
+// otel.SetMeterProvider by hand.
+func RebindMetrics() {
+	bindMetrics()
 }
 
 // bindMetrics (re-)resolves every instrument against the current global
@@ -132,6 +151,12 @@ func bindMetrics() {
 	); err != nil {
 		panic(err)
 	}
+	if inst.ClaimOutcome, err = m.Int64Counter(
+		"yaaos.agent.claim.outcome",
+		metric.WithDescription("Claim-loop outcomes bucketed by exit path."),
+	); err != nil {
+		panic(err)
+	}
 
-	metricsRef = inst
+	metricsRef.Store(inst)
 }

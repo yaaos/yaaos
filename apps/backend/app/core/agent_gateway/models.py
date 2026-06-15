@@ -25,6 +25,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -178,4 +179,9 @@ class AgentCommandRow(Base):
         Index("ix_agent_commands_agent_status_id", "agent_id", "status", "id"),
         # Fast lookup for unassigned ProvisionWorkspace commands (org-scoped claim).
         Index("ix_agent_commands_status_kind_id", "status", "command_kind", "id"),
+        # The PK is the FIFO claim sort key; producers must mint it with uuid7()
+        # so claim order matches enqueue order. Enforce v7 at the row boundary —
+        # this catches an app-side uuid4 that the semgrep taint rule cannot see
+        # across the producer-DTO → enqueue_command hop.
+        CheckConstraint("uuid_extract_version(id) = 7", name="ck_agent_commands_id_uuidv7"),
     )

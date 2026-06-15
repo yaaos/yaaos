@@ -1,7 +1,7 @@
-"""Service tests for AgentConfig OTLP field types and _build_config_update.
+"""Service tests for AgentConfig OTLP field types and `_build_config_update_dto`.
 
 Covers:
-- `_build_config_update` populates otlp_endpoint, otlp_dataset, and otlp_token
+- `_build_config_update_dto` populates otlp_endpoint, otlp_dataset, and otlp_token
   from settings; the wire JSON carries the token in plaintext (via the
   field_serializer) while model_dump / str / repr redact it.
 - `AgentConfig.otlp_token` shows [REDACTED] in str(), repr(), and model_dump().
@@ -15,15 +15,8 @@ from pydantic import SecretStr
 
 @pytest.mark.service
 def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_build_config_update carries endpoint + dataset as-is and exposes the
-    bearer token ONLY when serialized to JSON (the wire-encode boundary).
-
-    Tested by:
-    1. Setting YAAOS_DASH0_* env vars + YAAOS_AGENT_DASH0_BEARER_TOKEN.
-    2. Calling _build_config_update() with a fresh Settings instance.
-    3. Asserting model_dump(mode='json') on the nested config carries the raw token.
-    4. Asserting model_dump() (Python mode) keeps it redacted.
-    """
+    """`_build_config_update_dto` carries endpoint + dataset as-is and exposes
+    the bearer token ONLY when serialized to JSON (the wire-encode boundary)."""
     import app.core.agent_gateway.service as svc  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
 
@@ -34,7 +27,7 @@ def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.MonkeyPat
     # Clear the @cache on get_settings() so it picks up the patched env vars.
     get_settings.cache_clear()
     try:
-        cmd = svc._build_config_update()
+        cmd = svc._build_config_update_dto()
         config = cmd.config
 
         # Python mode: token must be redacted.
@@ -56,9 +49,8 @@ def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.service
 def test_build_config_update_populates_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_build_config_update carries Settings.environment as AgentConfig.environment,
-    and it appears in the JSON-mode model_dump.
-    """
+    """`_build_config_update_dto` carries Settings.environment as
+    AgentConfig.environment, and it appears in the JSON-mode model_dump."""
     import app.core.agent_gateway.service as svc  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
 
@@ -66,7 +58,7 @@ def test_build_config_update_populates_environment(monkeypatch: pytest.MonkeyPat
 
     get_settings.cache_clear()
     try:
-        cmd = svc._build_config_update()
+        cmd = svc._build_config_update_dto()
         json_dump = cmd.config.model_dump(mode="json")
         assert json_dump["environment"] == "staging"
         assert cmd.config.environment == "staging"

@@ -104,6 +104,7 @@ linters:
             - github.com/yaaos/agent/internal/identity
             - github.com/yaaos/agent/internal/ipc
             - github.com/yaaos/agent/internal/observability
+            - github.com/yaaos/agent/internal/observability/observabilitytest
             - github.com/yaaos/agent/internal/protocol
             - github.com/yaaos/agent/internal/tracing
             - github.com/yaaos/agent/internal/workspace
@@ -143,6 +144,7 @@ linters:
           list-mode: strict
           files:
             - "**/internal/observability/**"
+            - "!**/internal/observability/observabilitytest/**"
           allow:
             - $gostd
             - go.opentelemetry.io/contrib/bridges/otelslog
@@ -243,6 +245,27 @@ linters:
           deny:
             - pkg: github.com/yaaos/agent/internal/supervisor/supervisortest
               desc: "supervisortest is a test-only seam; import only from _test.go files"
+
+        observabilitytest:
+          list-mode: strict
+          files:
+            - "**/internal/observability/observabilitytest/**"
+          allow:
+            - $gostd
+            - go.opentelemetry.io/otel
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/sdk/metric
+            - go.opentelemetry.io/otel/sdk/metric/metricdata
+            - github.com/yaaos/agent/internal/observability
+
+        quarantine_observabilitytest:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/observability/observabilitytest/**"
+          deny:
+            - pkg: github.com/yaaos/agent/internal/observability/observabilitytest
+              desc: "observabilitytest is a test-only seam; import only from _test.go files"
 
   exclusions:
     rules:

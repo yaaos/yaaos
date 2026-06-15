@@ -17,7 +17,7 @@ in COMPLETENESS_AUDIT.md (cleanup failsafes).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 from sqlalchemy import select
@@ -119,7 +119,7 @@ async def _make_row(
         agent = await seed_agent(org_id=uuid4(), session=db_session)
         owning_agent_id = agent["id"]
     return WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=uuid4(),
         provider_id=provider_id,
         spec={"sha": "deadbeef"},
@@ -312,7 +312,7 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
     live = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=2)
 
     stale_ws = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "a"},
@@ -321,7 +321,7 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
         owning_agent_id=stale["id"],
     )
     live_ws = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "b"},
@@ -411,7 +411,7 @@ async def test_force_close_all_leaves_non_active_rows_untouched(db_session) -> N
     org_id = uuid4()
     agent = await seed_agent(org_id=org_id, session=db_session)
     active_ws = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "a"},
@@ -420,7 +420,7 @@ async def test_force_close_all_leaves_non_active_rows_untouched(db_session) -> N
         owning_agent_id=agent["id"],
     )
     expired_ws = WorkspaceRow(
-        id=uuid4(),
+        id=uuid7(),
         org_id=org_id,
         provider_id="remote_agent",
         spec={"sha": "b"},
@@ -448,8 +448,8 @@ async def test_failsafe_agent_loss_uses_command_row_correlation(db_session) -> N
     the shed workspaces.current_holder_workflow_id column."""
     org_id = uuid4()
     stale = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=600)
-    workspace_id = uuid4()
-    command_id = uuid4()
+    workspace_id = uuid7()
+    command_id = uuid7()
 
     # Enqueue a real agent_commands row so the correlation path is exercised.
     cmd = CleanupWorkspaceCommand(

@@ -14,7 +14,7 @@ Verifies:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from sqlalchemy import select, update
@@ -24,6 +24,7 @@ from app.core.agent_gateway.service import (
     DEFAULT_MAX_WORKSPACES,
     claim_next,
     enqueue_command,
+    enqueue_config_update_for_agent,
     requeue_stale_claimed,
 )
 from app.core.agent_gateway.types import (
@@ -42,7 +43,7 @@ from app.testing.seed import seed_agent
 
 def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceCommand:
     return ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id or uuid4(),
         traceparent="00-aabbccdd-1122-01",
         repo=RepoRef(
@@ -60,7 +61,7 @@ def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceC
 
 def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
     return WriteFilesCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id,
         traceparent="00-aabbccdd-1122-01",
         files=(WriteFilesEntry(path="hello.txt", content="hello"),),
@@ -69,7 +70,7 @@ def _make_write_cmd(workspace_id: UUID) -> WriteFilesCommand:
 
 def _make_cleanup_cmd(workspace_id: UUID) -> CleanupWorkspaceCommand:
     return CleanupWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id,
         traceparent="00-aabbccdd-1122-01",
     )
@@ -128,10 +129,15 @@ async def test_claim_mints_completion_token_and_stores_only_hash(db_session) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_unconfigured_claim_carries_no_completion_token(db_session) -> None:
-    """The `unconfigured` lifecycle returns a ConfigUpdate built in-memory with
-    no DB row — it carries no completion token."""
-    agent_id = await _make_agent(db_session)
+async def test_unconfigured_claim_carries_completion_token(db_session) -> None:
+    """The `unconfigured` lifecycle claims a row-backed ConfigUpdate. The row
+    goes through the normal token-mint path so the returned DTO carries a
+    non-null `completion_token` that the agent can echo on the terminal event."""
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
     claimed = await claim_next(
         agent_id,
         lifecycle="unconfigured",
@@ -142,8 +148,7 @@ async def test_unconfigured_claim_carries_no_completion_token(db_session) -> Non
     )
     assert claimed is not None
     assert claimed.kind == AgentCommandKind.CONFIG_UPDATE
-    # ConfigUpdateCommand has no completion_token field at all (separate base).
-    assert getattr(claimed, "completion_token", None) is None
+    assert claimed.completion_token is not None, "row-backed ConfigUpdate must carry a completion token"
 
 
 # ── Enqueue + durable persistence ──────────────────────────────────────────
@@ -197,12 +202,14 @@ async def test_enqueue_then_simulated_restart_command_still_claimable(db_session
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_unconfigured_claim_returns_only_config_update(db_session) -> None:
-    """An unconfigured agent receives exactly one ConfigUpdate; no queue draw."""
+    """An unconfigured agent claims only a ConfigUpdate row; non-ConfigUpdate
+    commands in the queue remain pending."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
-    ws_id = uuid4()
+    ws_id = uuid7()
     cmd = _make_provision_cmd(ws_id)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
 
     command = await claim_next(
@@ -567,7 +574,7 @@ def test_command_base_workflow_execution_id_round_trip() -> None:
 
     wfx_id = uuid4()
     cmd = ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=uuid4(),
         traceparent="00-aabbccdd-1122-01",
         workflow_execution_id=wfx_id,

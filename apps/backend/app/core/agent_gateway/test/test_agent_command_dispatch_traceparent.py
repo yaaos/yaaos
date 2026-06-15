@@ -9,7 +9,7 @@ outer caller.
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 from opentelemetry import trace
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.service
 
 def _make_provision_cmd(workspace_id=None) -> ProvisionWorkspaceCommand:
     return ProvisionWorkspaceCommand(
-        command_id=uuid4(),
+        command_id=uuid7(),
         workspace_id=workspace_id or uuid4(),
         traceparent="",
         repo=RepoRef(
