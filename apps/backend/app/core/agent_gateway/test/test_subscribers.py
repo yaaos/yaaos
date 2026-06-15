@@ -315,3 +315,59 @@ async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None
     # Cleanup.
     await reg.untrack(workflow_execution_id=wfx_a)
     await reg.untrack(workflow_execution_id=wfx_b)
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """register_sender must subscribe to the pub/sub channel BEFORE snapshotting
+    Redis state, so a concurrent track() from a second pod whose publish lands
+    between register_sender returning and the snapshot is still delivered.
+
+    Behavioral proof: two registry instances sharing real Redis.
+
+    1. pod_a calls register_sender — which now awaits the SUBSCRIBE handshake
+       before reading agent_routes.
+    2. Immediately after register_sender returns on pod_a, pod_b calls track().
+       The publish happens AFTER the subscribe is active.
+    3. The sender on pod_a must receive the subscribe message within the timeout —
+       under the old (snapshot-first) ordering this would be a race; under the
+       new ordering it is guaranteed because the subscribe handshake completed
+       before track() published.
+    """
+    agent_id = uuid4()
+    workflow_id = uuid4()
+    workspace_id = uuid4()
+
+    pod_a = SubscriberRegistry()
+    pod_b = SubscriberRegistry()
+
+    sent: list[dict] = []
+    received = asyncio.Event()
+
+    async def _sender(msg: dict) -> None:
+        sent.append(msg)
+        received.set()
+
+    # register_sender now establishes the Redis SUBSCRIBE before returning.
+    await pod_a.register_sender(agent_id, _sender)
+
+    # After register_sender has returned the subscribe handshake is complete.
+    # Any publish from here on is guaranteed to be received.
+    await pod_b.track(
+        workflow_execution_id=workflow_id,
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+    )
+
+    # Must arrive deterministically — not a timing race.
+    await asyncio.wait_for(received.wait(), timeout=2.0)
+
+    pod_a.unregister_sender(agent_id)
+
+    assert len(sent) >= 1
+    assert sent[0]["type"] == "subscribe"
+    assert sent[0]["workflow_execution_id"] == str(workflow_id)
+
+    # Cleanup.
+    await pod_b.untrack(workflow_execution_id=workflow_id)

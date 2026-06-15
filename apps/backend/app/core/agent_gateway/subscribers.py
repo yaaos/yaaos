@@ -136,19 +136,45 @@ class SubscriberRegistry:
     async def register_sender(self, agent_id: UUID, sender: Sender) -> None:
         """Register the sender callable for an agent's live WebSocket.
 
-        Starts a background task that reads the `agent_ws_control:{agent_id}`
-        pub/sub channel and forwards each `AgentWsControlMessage` to `sender`.
-        Also runs an initial reconciliation pass: reads `agent_routes:{agent_id}`
+        Starts the Redis pub/sub consumer task FIRST and waits for it to
+        actually subscribe to `agent_ws_control:{agent_id}` before snapshotting
+        state for replay. This ordering ensures any concurrent `track()` from
+        another pod that publishes between sender-registration and snapshot is
+        delivered via pub/sub rather than lost.
+
+        Then runs an initial reconciliation pass: reads `agent_routes:{agent_id}`
         and for each wfx_id with ZCARD ≥ 1 sends the subscribe message directly
-        so the agent picks up where it left off on reconnect.
+        so the agent picks up where it left off on reconnect. Duplicate subscribes
+        that arrive via both replay and pub/sub are harmless — the agent handles
+        subscribe idempotently.
         """
         async with self._lock:
             self._senders[agent_id] = sender
             self._streaming.setdefault(agent_id, set())
 
-        # Collect initial replay from Redis before starting the subscribe loop.
-        # Redis failure here is non-fatal — the reconciler will pick up state
-        # within _RECONCILE_INTERVAL_SECONDS. Log a warning and proceed.
+        # 1. Start the Redis pub/sub consumer task BEFORE snapshotting state.
+        # Wait until it has actually SUBSCRIBED to the channel so any concurrent
+        # publish lands in the subscriber queue rather than the void.
+        subscribed_event: asyncio.Event = asyncio.Event()
+        task = asyncio.create_task(
+            self._run_control_subscriber(agent_id, sender, subscribed_event),
+            name=f"subscriber_control:{agent_id}",
+        )
+        async with self._lock:
+            self._subscribe_tasks[agent_id] = task
+        try:
+            await asyncio.wait_for(subscribed_event.wait(), timeout=5.0)
+        except TimeoutError:
+            log.warning(
+                "subscribers.subscriber_subscribe_timeout",
+                agent_id=str(agent_id),
+            )
+
+        # 2. Now snapshot Redis state for replay. Any track() that happened
+        # between the subscribe handshake and this snapshot will be delivered
+        # via _run_control_subscriber's pub/sub consumer. Redis failure here is
+        # non-fatal — the reconciler will pick up state within
+        # _RECONCILE_INTERVAL_SECONDS.
         replay: list[AgentWsControlMessage] = []
         try:
             wfx_ids = await set_members(_agent_routes_key(agent_id))
@@ -184,7 +210,7 @@ class SubscriberRegistry:
             resubscribed_count=len(replay),
         )
 
-        # Send replay messages outside the lock.
+        # 3. Send replay messages outside the lock.
         for msg in replay:
             try:
                 await sender(msg.model_dump(mode="json"))
@@ -197,27 +223,6 @@ class SubscriberRegistry:
                     workspace_id=str(msg.workspace_id),
                     err=str(exc),
                 )
-
-        # Start the Redis pub/sub consumer task. Wait until it has subscribed
-        # to the channel before returning so that a caller can immediately call
-        # track() and know the message will be received. The event is set by
-        # _run_control_subscriber as soon as `pubsub.subscribe` completes.
-        subscribed_event: asyncio.Event = asyncio.Event()
-        task = asyncio.create_task(
-            self._run_control_subscriber(agent_id, sender, subscribed_event),
-            name=f"subscriber_control:{agent_id}",
-        )
-        async with self._lock:
-            self._subscribe_tasks[agent_id] = task
-        # Wait up to 5s for the subscriber to connect. Failure here is non-fatal
-        # (the reconciler picks up divergence) but we still want to surface it.
-        try:
-            await asyncio.wait_for(subscribed_event.wait(), timeout=5.0)
-        except TimeoutError:
-            log.warning(
-                "subscribers.subscriber_subscribe_timeout",
-                agent_id=str(agent_id),
-            )
 
     async def _run_control_subscriber(
         self,
