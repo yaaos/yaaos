@@ -10,63 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-
 	"github.com/yaaos/agent/internal/backoff"
 	"github.com/yaaos/agent/internal/command"
-	"github.com/yaaos/agent/internal/observability"
+	"github.com/yaaos/agent/internal/observability/observabilitytest"
 	"github.com/yaaos/agent/internal/protocol"
 	"github.com/yaaos/agent/internal/tracing"
 )
-
-// setupMetricProvider installs an sdkmetric.ManualReader-backed MeterProvider
-// as the global OTel meter provider and rebinds the observability instruments
-// against it. Returns the reader so the caller can collect metrics.
-// The previous global provider is restored via t.Cleanup.
-func setupMetricProvider(t *testing.T) *sdkmetric.ManualReader {
-	t.Helper()
-	prev := otel.GetMeterProvider()
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(mp)
-	observability.RebindMetrics()
-	t.Cleanup(func() {
-		_ = mp.Shutdown(context.Background())
-		otel.SetMeterProvider(prev)
-		observability.RebindMetrics()
-	})
-	return reader
-}
-
-// collectClaimOutcomeSums reads the reader, finds the yaaos.agent.claim.outcome
-// counter, and returns a map of outcome-label → sum value.
-func collectClaimOutcomeSums(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
-	t.Helper()
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("collect metrics: %v", err)
-	}
-	result := make(map[string]int64)
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != "yaaos.agent.claim.outcome" {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok {
-				t.Fatalf("yaaos.agent.claim.outcome is not a Sum[int64]: %T", m.Data)
-			}
-			for _, dp := range sum.DataPoints {
-				outcome, _ := dp.Attributes.Value(attribute.Key("outcome"))
-				result[outcome.AsString()] += dp.Value
-			}
-		}
-	}
-	return result
-}
 
 // TestClaimOutcomeCommandStampedOnSuccess verifies that when the claim endpoint
 // returns a decodable command, the finished agent.claim span carries
@@ -147,16 +96,6 @@ func TestClaimOutcomeCommandStampedOnSuccess(t *testing.T) {
 	}
 	cancel()
 	<-done
-	// Drain all in-flight dispatch goroutines before the test exits so that
-	// subsequent tests' RebindMetrics() calls don't race with Metrics() reads
-	// inside the dispatch goroutine.
-	drainDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(drainDeadline) {
-		if s.inFlightDispatch.Load() == 0 {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
 
 	spans := exp.GetSpans()
 	// Find the agent.claim span whose claim.outcome == "command".
@@ -204,7 +143,7 @@ func (r *stubSuccessRunner) Close(_ context.Context) error { return nil }
 // paths and asserts the yaaos.agent.claim.outcome counter increments once per
 // outcome bucket.
 func TestClaimOutcomeCounterIncrementsByBucket(t *testing.T) {
-	reader := setupMetricProvider(t)
+	capture := observabilitytest.InstallTestMeterProvider(t)
 
 	t.Run("no_command", func(t *testing.T) {
 		exp := tracing.Init(true)
@@ -422,17 +361,6 @@ func TestClaimOutcomeCounterIncrementsByBucket(t *testing.T) {
 		}
 		cancel()
 		<-done
-		// Drain all in-flight dispatch goroutines before the sub-test exits.
-		// dispatch goroutines are fire-and-forget from claimLoop but must complete
-		// before the parent test's metric-provider cleanup (RebindMetrics) runs,
-		// otherwise Metrics() reads metricsRef concurrently with the write.
-		drainDeadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(drainDeadline) {
-			if s.inFlightDispatch.Load() == 0 {
-				break
-			}
-			time.Sleep(2 * time.Millisecond)
-		}
 	})
 
 	// After driving all four buckets, assert the counter has one increment per
@@ -441,7 +369,7 @@ func TestClaimOutcomeCounterIncrementsByBucket(t *testing.T) {
 	// the blocking server doesn't serve 204 — it returns after unblock. The
 	// cancel bucket is driven by blocking + ctx-cancel). Each sub-test drives
 	// exactly one span per bucket path.
-	sums := collectClaimOutcomeSums(t, reader)
+	sums := capture.CounterSums(t, "yaaos.agent.claim.outcome", "outcome")
 	for _, outcome := range []string{"no_command", "error", "cancel", "command"} {
 		if sums[outcome] < 1 {
 			t.Errorf("yaaos.agent.claim.outcome{outcome=%s}: want >= 1, got %d (all sums: %v)",

@@ -219,16 +219,6 @@ type Supervisor struct {
 	// Lost on restart (at-least-once; crash-loss accepted).
 	dedup *dedupCache
 
-	// inFlightDispatch counts dispatch goroutines that have been spawned but
-	// have not yet registered their workspace in the pool (for ProvisionWorkspace)
-	// or have not yet applied config (for ConfigUpdateCommand). While this count
-	// is non-zero, buildClaimRequest uses a 1-second short-poll so the claim
-	// loop re-checks quickly once the goroutine's Pool.Dispatch has run and the
-	// workspace (or config) appears in the state that buildClaimRequest reads.
-	// Using a full 30-second poll during this window causes a 30-second delay
-	// before the claim loop can advertise the new workspace in workspace_ids.
-	inFlightDispatch atomic.Int32
-
 	// reauthMu serializes concurrent re-authentication attempts. When N claim
 	// workers all receive 401 simultaneously, only the goroutine that acquires
 	// the lock calls exchangeIdentity; the rest see the updated bearer on
@@ -750,10 +740,11 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		s.claimBackoff.Reset()
 		observability.Metrics().CommandsClaimed.Add(ctx, 1, observability.StandardAttrs())
 
-		// Increment before spawning so buildClaimRequest sees a non-zero
-		// count and uses a 1-second short-poll, preventing a 30-second
-		// stall before the goroutine's Pool.Dispatch registers the workspace.
-		s.inFlightDispatch.Add(1)
+		// Mark the dispatch pending before spawning so buildClaimRequest sees
+		// non-zero pending work and uses a 1-second short-poll, preventing a
+		// 30-second stall before the goroutine's Pool.Dispatch registers the
+		// workspace.
+		s.pool.MarkDispatchPending()
 		// Spawn a dispatch goroutine for this command and re-arm the claim
 		// loop immediately. The dispatch goroutine owns postReceivedEvent +
 		// routeCommand + postTerminalEvent. It is NOT added to Run()'s
@@ -774,14 +765,14 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 // Panics are recovered and converted to completed_failure terminal events so
 // a single misbehaving command cannot kill the claim loop.
 func (s *Supervisor) dispatch(ctx context.Context, cmd command.Command) {
-	// Decrement the in-flight counter when dispatch completes (normal or panic).
+	// Settle the pending-dispatch count when dispatch completes (normal or panic).
 	// This must happen after routeCommand so buildClaimRequest stays in
 	// short-poll mode until the workspace is visible in the pool state (for
 	// WorkspaceCommands) or config is applied (for ConfigUpdate). Two defers
 	// are used: the inner one (registered second, runs first) handles panic
-	// recovery; the outer one (registered first, runs last) decrements the
-	// counter after panic recovery so the panic-post path runs under short-poll.
-	defer s.inFlightDispatch.Add(-1)
+	// recovery; the outer one (registered first, runs last) settles the count
+	// after panic recovery so the panic-post path runs under short-poll.
+	defer s.pool.MarkDispatchSettled()
 	defer func() {
 		if r := recover(); r != nil {
 			reason := fmt.Sprintf("panic in dispatch: %v", r)
@@ -801,8 +792,8 @@ func (s *Supervisor) dispatch(ctx context.Context, cmd command.Command) {
 	s.postReceivedEvent(ctx, cmd.Header())
 
 	// routeCommand runs Pool.Dispatch (for WorkspaceCommands), which registers
-	// the workspace in the pool and sets its currentCommandID. The
-	// inFlightDispatch counter stays non-zero until dispatch returns, so
+	// the workspace in the pool and sets its currentCommandID. The pool's
+	// pending-dispatch count stays non-zero until dispatch returns, so
 	// buildClaimRequest uses a 1-second short-poll while the workspace
 	// transitions from "not in pool" to "idle in pool". For AgentCommands
 	// (ConfigUpdate), routeCommand calls ApplyConfig, after which lifecycle
@@ -1126,9 +1117,9 @@ func (s *Supervisor) routeWorkspaceCmd(ctx context.Context, c command.WorkspaceC
 //  1. Active workspaces exist but none are idle (workspace_ids is empty) —
 //     the claim loop re-armed before a workspace finished its current command.
 //     A full 30-second poll would delay re-arm after the workspace becomes idle.
-//  2. In-flight dispatch goroutines (inFlightDispatch > 0) — the goroutine has
-//     been spawned but Pool.Dispatch hasn't run yet so the workspace is not
-//     visible in the pool. Without the short poll, the claim loop would issue a
+//  2. Pending dispatches (pool.PendingDispatch() > 0) — a goroutine has been
+//     spawned but Pool.Dispatch hasn't run yet so the workspace is not visible
+//     in the registry. Without the short poll, the claim loop would issue a
 //     30-second long-poll with empty workspace_ids, missing the next command
 //     queued right after the dispatched command completes.
 //
@@ -1163,15 +1154,15 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 	// A 1-second short poll bounds the delay before the next re-arm with
 	// updated workspace_ids.
 	//
-	// Also short-poll when dispatch goroutines are in-flight but have not yet
-	// registered their workspace in the pool (or applied config for ConfigUpdate).
-	// Without this guard, the claim loop would issue a 30-second long-poll with
-	// an empty workspace_ids before the goroutine's Pool.Dispatch has run, then
-	// miss the InvokeClaudeCode command queued right after ProvisionWorkspace
-	// completes — causing a 30-second stall per command in sequential multi-step
-	// workflows.
+	// Also short-poll when the pool reports pending dispatches — goroutines
+	// spawned but not yet registered in the registry (or applied config for
+	// ConfigUpdate). Without this guard, the claim loop would issue a 30-second
+	// long-poll with an empty workspace_ids before the goroutine's Pool.Dispatch
+	// has run, then miss the InvokeClaudeCode command queued right after
+	// ProvisionWorkspace completes — causing a 30-second stall per command in
+	// sequential multi-step workflows.
 	waitSeconds := s.cfg.ClaimWaitSeconds
-	if (len(idleIDs) == 0 && activeCount > 0) || s.inFlightDispatch.Load() > 0 {
+	if (len(idleIDs) == 0 && activeCount > 0) || s.pool.PendingDispatch() > 0 {
 		waitSeconds = 1
 	}
 

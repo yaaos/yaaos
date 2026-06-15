@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yaaos/agent/internal/command"
@@ -122,6 +123,17 @@ type Pool struct {
 
 	mu       sync.Mutex
 	registry map[string]*workspaceRecord
+
+	// pendingDispatch counts commands claimed and handed to a dispatch
+	// goroutine that has not yet registered its workspace in the registry
+	// (ProvisionWorkspace) or applied config (ConfigUpdate). It is the
+	// pre-registration half of the pool's capacity picture — the registry
+	// (ActiveIDs/IdleIDs) is the registered half. buildClaimRequest reads both
+	// to decide its poll horizon, so a just-spawned dispatch goroutine does not
+	// leave the claim loop computing capacity from stale registry state.
+	// A separate atomic (not the registry mutex) because it tracks work that is
+	// deliberately not yet in the registry.
+	pendingDispatch atomic.Int32
 }
 
 // NewPool constructs an empty pool. `spawn` is invoked on the first command
@@ -363,6 +375,21 @@ func (p *Pool) IdleIDs() []string {
 	}
 	return out
 }
+
+// MarkDispatchPending records that a claimed command has been handed to a
+// dispatch goroutine that has not yet registered its workspace (or applied
+// config). Pair every call with MarkDispatchSettled when the goroutine returns.
+func (p *Pool) MarkDispatchPending() { p.pendingDispatch.Add(1) }
+
+// MarkDispatchSettled records that a dispatch goroutine has returned (its
+// workspace is now registered, or it failed). Counterpart to MarkDispatchPending.
+func (p *Pool) MarkDispatchSettled() { p.pendingDispatch.Add(-1) }
+
+// PendingDispatch reports how many dispatch goroutines are in flight but have
+// not yet registered their workspace. Non-zero means buildClaimRequest's view
+// of registry capacity may be about to change — it short-polls instead of
+// committing to a long-poll with stale capacity.
+func (p *Pool) PendingDispatch() int32 { return p.pendingDispatch.Load() }
 
 // ── Dispatch ────────────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ package observability
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -30,7 +31,11 @@ type Instruments struct {
 
 var (
 	metricsOnce sync.Once
-	metricsRef  *Instruments
+	// metricsRef holds the live instrument set. An atomic.Pointer because
+	// bindMetrics re-resolves it whenever the global MeterProvider is swapped
+	// (production: BindExporter → wireProviders; tests: a ManualReader install),
+	// concurrently with claim/heartbeat-loop goroutines reading it via Metrics().
+	metricsRef atomic.Pointer[Instruments]
 )
 
 // stdDimsMu guards stdOrgID and stdAgentID.
@@ -71,17 +76,18 @@ func StandardAttrs() metric.MeasurementOption {
 // freely without nil-checking.
 func Metrics() *Instruments {
 	metricsOnce.Do(bindMetrics)
-	return metricsRef
+	return metricsRef.Load()
 }
 
-// RebindMetrics resolves all instruments against the current global
-// MeterProvider. Useful in tests that install a custom provider (e.g.
-// sdkmetric.NewMeterProvider with a ManualReader) after init: call
-// otel.SetMeterProvider, then RebindMetrics, then Metrics() will return
-// instruments wired to the test provider.
+// RebindMetrics re-resolves all instruments against the current global
+// MeterProvider. It is the low-level hook behind a MeterProvider swap; the
+// atomic store in bindMetrics makes it safe to call while other goroutines
+// read instruments via Metrics().
 //
-// In production, wireProviders calls bindMetrics directly; callers should
-// prefer the Init → BindExporter path over calling this directly.
+// Production never calls this directly (wireProviders calls bindMetrics on the
+// Init → BindExporter path). Tests should go through
+// observabilitytest.InstallTestMeterProvider rather than calling this plus
+// otel.SetMeterProvider by hand.
 func RebindMetrics() {
 	bindMetrics()
 }
@@ -152,5 +158,5 @@ func bindMetrics() {
 		panic(err)
 	}
 
-	metricsRef = inst
+	metricsRef.Store(inst)
 }

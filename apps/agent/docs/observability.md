@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **Owns:** `Init` (SDK bootstrap — wires live log bridge, stashes startup Config), `BindExporter` (installs OTLP exporters from a ConfigUpdate endpoint), `SetInstanceID` (stores the backend-assigned instance_id before `BindExporter` runs), `Instruments` (metric instruments), `SetStandardDimensions`/`StandardAttrs` (org_id + agent_id on metrics), `bindMetrics` (instrument resolution), `RebindMetrics` (public rebind after swapping the global MeterProvider — for tests).
+- **Owns:** `Init` (SDK bootstrap — wires live log bridge, stashes startup Config), `BindExporter` (installs OTLP exporters from a ConfigUpdate endpoint), `SetInstanceID` (stores the backend-assigned instance_id before `BindExporter` runs), `Instruments` (metric instruments), `SetStandardDimensions`/`StandardAttrs` (org_id + agent_id on metrics), `bindMetrics` (instrument resolution), `RebindMetrics` (low-level atomic re-bind hook after a MeterProvider swap; tests go through `observabilitytest.InstallTestMeterProvider`).
 - **Does not own:** the base slog logger (owned by `internal/logging`), span creation (owned by `internal/tracing`), or identity exchange (owned by `internal/identity` + `internal/supervisor`).
 - **Receives:** `Config{ServiceVersion}` at startup; `instance_id` after identity exchange via `SetInstanceID`; `(orgID, agentID)` pair after identity exchange via `SetStandardDimensions`.
 - **Emits:** OTel resource + SDK providers wired into the global `otel.*` registries; `Result.SlogHandler` for the logging fan-out.
@@ -104,7 +104,7 @@ Use `event_post.outcome="network_error"` for SRE alerting on transient delivery 
 ## Gotchas
 
 - `bindMetrics` is called from `Init` after the real provider installs, swapping out no-op instruments. Tests that call `Metrics()` before `Init` get no-ops — fine for unit tests; service tests need the real provider only if they assert metric values.
-- `RebindMetrics()` replaces `metricsRef` without a lock — call it only after installing a new global MeterProvider and before any concurrent `Metrics()` callers start. In tests: install the provider, call `RebindMetrics()`, then start goroutines that call `Metrics()`.
+- `metricsRef` is an `atomic.Pointer[Instruments]`: `bindMetrics` atomically stores a fresh set and `Metrics()` atomically loads, so a re-bind (production `BindExporter` at config time, or a test provider swap) is race-free against concurrent claim/heartbeat-loop readers. `RebindMetrics()` is the exported low-level hook for that re-bind; tests go through `observabilitytest.InstallTestMeterProvider` rather than calling it plus `otel.SetMeterProvider` by hand.
 - `SetStandardDimensions` is safe to call concurrently (guarded by `stdDimsMu`); it's a process-wide singleton, called once after identity exchange.
 
 ## Testing
@@ -116,5 +116,6 @@ Use `event_post.outcome="network_error"` for SRE alerting on transient delivery 
 - `apps/agent/internal/observability/otel.go` — `Init`, `Config`, `Result`, `SetInstanceID`, `wireProviders` (registers `DimProcessor`).
 - `apps/agent/internal/observability/dim_processor.go` — `DimProcessor`, `NewDimProcessor`.
 - `apps/agent/internal/observability/metrics.go` — `Instruments`, `Metrics()`, `RebindMetrics()`, `SetStandardDimensions`, `StandardAttrs`.
+- `apps/agent/internal/observability/observabilitytest/provider.go` — test-only seam: `InstallTestMeterProvider`, `MetricCapture.CounterSums`. Quarantined (depguard forbids non-test files importing it).
 - `apps/agent/cmd/agent/main.go` — `var agentVersion` (ldflags target `main.agentVersion`; `YAAOS_AGENT_VERSION` runtime override).
 - `apps/agent/VERSION` — human-edited major integer; the publish pipeline derives the full semver from it.

@@ -235,36 +235,36 @@ func TestClaimRequest_ShortPollWhenBusyWorkspacesExist(t *testing.T) {
 	}
 }
 
-// TestClaimRequest_ShortPollWhenInFlightDispatch verifies that buildClaimRequest
-// uses a 1-second short poll whenever inFlightDispatch > 0, even when the pool
-// has no active workspaces. This prevents a 30-second stall caused by the claim
-// loop re-arming with empty workspace_ids before a dispatch goroutine's
-// Pool.Dispatch has registered the workspace.
-func TestClaimRequest_ShortPollWhenInFlightDispatch(t *testing.T) {
+// TestClaimRequest_ShortPollWhenPendingDispatch verifies that buildClaimRequest
+// uses a 1-second short poll whenever the pool reports a pending dispatch, even
+// when the pool has no active workspaces. This prevents a 30-second stall caused
+// by the claim loop re-arming with empty workspace_ids before a dispatch
+// goroutine's Pool.Dispatch has registered the workspace.
+func TestClaimRequest_ShortPollWhenPendingDispatch(t *testing.T) {
 	s := buildUnconfiguredSupervisor(t)
 	defer s.pool.CloseAll(context.Background())
 	applyConfig(s, 4)
 
-	// No workspaces, no in-flight dispatch → full wait.
+	// No workspaces, no pending dispatch → full wait.
 	req := s.buildClaimRequest()
 	if req.WaitSeconds != s.cfg.ClaimWaitSeconds {
-		t.Errorf("want full wait_seconds=%d with no goroutines in-flight, got %d", s.cfg.ClaimWaitSeconds, req.WaitSeconds)
+		t.Errorf("want full wait_seconds=%d with no pending dispatch, got %d", s.cfg.ClaimWaitSeconds, req.WaitSeconds)
 	}
 
-	// Simulate a dispatch goroutine in-flight (incremented before go s.dispatch).
-	s.inFlightDispatch.Add(1)
+	// Simulate a dispatch goroutine in-flight (marked before go s.dispatch).
+	s.pool.MarkDispatchPending()
 
-	// In-flight goroutine → short poll even with no pool workspaces.
+	// Pending dispatch → short poll even with no pool workspaces.
 	req2 := s.buildClaimRequest()
 	if req2.WaitSeconds != 1 {
-		t.Errorf("want wait_seconds=1 with in-flight dispatch goroutine, got %d", req2.WaitSeconds)
+		t.Errorf("want wait_seconds=1 with pending dispatch, got %d", req2.WaitSeconds)
 	}
 
-	// Decrement (goroutine completed) → full wait returns.
-	s.inFlightDispatch.Add(-1)
+	// Settled (goroutine completed) → full wait returns.
+	s.pool.MarkDispatchSettled()
 	req3 := s.buildClaimRequest()
 	if req3.WaitSeconds != s.cfg.ClaimWaitSeconds {
-		t.Errorf("want full wait_seconds=%d after goroutine completes, got %d", s.cfg.ClaimWaitSeconds, req3.WaitSeconds)
+		t.Errorf("want full wait_seconds=%d after dispatch settles, got %d", s.cfg.ClaimWaitSeconds, req3.WaitSeconds)
 	}
 }
 
