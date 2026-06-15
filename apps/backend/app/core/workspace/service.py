@@ -271,44 +271,6 @@ async def _seed_workspace_for_tests(
     return str(ws_id)
 
 
-async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> int:
-    """Flip every active workspace for the org to expired. Returns count.
-
-    Used by Org Settings Disconnect / mode-switch. `reason` propagates to
-    the audit row (`disconnect`, `mode_switch`, `arn_change`) so the
-    security feed can render meaningful one-liners.
-    """
-    async with get_session() as s:
-        rows = (
-            (
-                await s.execute(
-                    select(WorkspaceRow).where(
-                        WorkspaceRow.org_id == org_id,
-                        WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for row in rows:
-            await s.execute(
-                update(WorkspaceRow)
-                .where(WorkspaceRow.id == row.id)
-                .values(status=WorkspaceStatus.EXPIRED.value)
-            )
-            await _audit_transition(
-                s,
-                workspace_id=row.id,
-                org_id=org_id,
-                from_state=row.status,
-                to_state=WorkspaceStatus.EXPIRED.value,
-                reason=reason,
-            )
-        await s.commit()
-        return len(rows)
-
-
 # Failsafe 6 threshold: an agent with no heartbeat for this many seconds is
 # considered lost. Matches the 90s reachability cutoff used elsewhere.
 AGENT_LOSS_HEARTBEAT_THRESHOLD_SECONDS = 90
@@ -632,30 +594,6 @@ async def run_workspace_reaper() -> None:
         span.set_status(StatusCode.ERROR, str(exc))
         log.exception("workspace.reaper_sweep_failed")
         raise
-
-
-async def startup_recovery() -> None:
-    """Flip any non-terminal workspace from a prior process to 'expired'.
-
-    Lean-created rows enter ACTIVE on the agent's first workspace event —
-    no row ever enters CREATING in the current lifecycle, so CREATING is
-    absent from the recovery list. ACTIVE and DESTROYING are the states
-    a crashed process may leave behind.
-    """
-    async with get_session() as s:
-        await s.execute(
-            update(WorkspaceRow)
-            .where(
-                WorkspaceRow.status.in_(
-                    [
-                        WorkspaceStatus.ACTIVE.value,
-                        WorkspaceStatus.DESTROYING.value,
-                    ]
-                )
-            )
-            .values(status=WorkspaceStatus.EXPIRED.value)
-        )
-        await s.commit()
 
 
 async def health_check_all() -> dict[str, HealthStatus]:

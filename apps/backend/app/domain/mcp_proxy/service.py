@@ -119,6 +119,13 @@ async def revoke_token(
     return int(result.rowcount or 0)
 
 
+# `record_broken_creds` is called here (producer-side) by the MCP proxy
+# dispatcher on every broken-creds / not-connected response. `consume_broken_creds`
+# exists but has no production caller in the reviewer — the reviewer does not
+# yet drain the tracker or pass its output to `prefix_broken_creds_warning`
+# at review-end. Observations accumulate in the dict and are cleared only by
+# the in-process tests that call `consume_broken_creds` directly.
+#
 # Per-review tracker for broken_creds / not_connected observations. The
 # reviewer drains this at review-end to prefix the PR comment with a yellow
 # warning block listing affected providers. Process-local — reviews finish

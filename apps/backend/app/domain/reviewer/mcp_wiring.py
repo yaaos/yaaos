@@ -75,6 +75,9 @@ async def build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any] 
     }
 
 
+# `prefix_broken_creds_warning` has no production caller. It is exported and
+# exercised by tests, but the reviewer's `PostFindings` step does not call it —
+# broken-creds observations from the MCP proxy never reach the PR comment body.
 def prefix_broken_creds_warning(body: str | None, providers: list[str]) -> str | None:
     """Prefix the PR review summary with a yellow GitHub callout listing any
     MCP providers that returned `broken_creds`/`not_connected` during this

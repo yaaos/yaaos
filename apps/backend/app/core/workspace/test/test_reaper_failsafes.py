@@ -25,7 +25,6 @@ from sqlalchemy import select
 from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.workspace import (
     WorkspaceRegistry,
-    force_close_all,
     register_workspace_provider,
 )
 from app.core.workspace.models import WorkspaceRow
@@ -35,7 +34,6 @@ from app.core.workspace.service import (
     _utcnow,
     close_workspace,
     failsafe_agent_loss,
-    startup_recovery,
 )
 from app.core.workspace.types import WorkspaceStatus
 from app.testing.seed import seed_agent
@@ -341,39 +339,6 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
     assert refreshed[live_ws.id].status == WorkspaceStatus.ACTIVE.value
 
 
-# ── startup_recovery (orphan-row recovery from prior process crash) ─────
-
-
-async def test_startup_recovery_flips_orphan_rows_to_expired(db_session) -> None:  # type: ignore[no-untyped-def]
-    """A prior process crashed mid-workflow leaving rows in non-terminal
-    states (ACTIVE / DESTROYING). `startup_recovery()` runs at FastAPI
-    lifespan start and flips them to EXPIRED so the reaper picks them up.
-
-    Terminal rows (DESTROYED, DESTROY_FAILED) must NOT be re-flipped.
-    """
-    rows = [
-        await _make_row(db_session, status=WorkspaceStatus.ACTIVE, provider_id="good"),
-        await _make_row(db_session, status=WorkspaceStatus.DESTROYING, provider_id="good"),
-        # Already-terminal rows must NOT be re-flipped.
-        await _make_row(db_session, status=WorkspaceStatus.DESTROYED, provider_id="good"),
-        await _make_row(db_session, status=WorkspaceStatus.DESTROY_FAILED, provider_id="good"),
-    ]
-    for row in rows:
-        db_session.add(row)
-    await db_session.commit()
-
-    await startup_recovery()
-
-    refreshed = (await db_session.execute(select(WorkspaceRow).order_by(WorkspaceRow.id))).scalars().all()
-    by_id = {r.id: r for r in refreshed}
-    # ACTIVE and DESTROYING flipped.
-    assert by_id[rows[0].id].status == WorkspaceStatus.EXPIRED.value
-    assert by_id[rows[1].id].status == WorkspaceStatus.EXPIRED.value
-    # Terminal rows untouched.
-    assert by_id[rows[2].id].status == WorkspaceStatus.DESTROYED.value
-    assert by_id[rows[3].id].status == WorkspaceStatus.DESTROY_FAILED.value
-
-
 # ── WorkspaceRegistry.items() ───────────────────────────────────────────
 
 
@@ -400,43 +365,6 @@ def test_workspace_registry_items_is_immutable_snapshot() -> None:
     modified = list(snapshot)
     modified[0] = ("good", None)  # type: ignore[assignment]
     assert reg.items()[0][1] is not None  # original provider still there
-
-
-# ── force_close_all (ACTIVE-only, no CREATING) ─────────────────────────────
-
-
-async def test_force_close_all_leaves_non_active_rows_untouched(db_session) -> None:
-    """force_close_all targets ACTIVE rows only. Non-active rows (e.g. EXPIRED,
-    DESTROYED) must be left untouched."""
-    org_id = uuid4()
-    agent = await seed_agent(org_id=org_id, session=db_session)
-    active_ws = WorkspaceRow(
-        id=uuid7(),
-        org_id=org_id,
-        provider_id="remote_agent",
-        spec={"sha": "a"},
-        status=WorkspaceStatus.ACTIVE.value,
-        expires_at=_utcnow() + timedelta(hours=1),
-        owning_agent_id=agent["id"],
-    )
-    expired_ws = WorkspaceRow(
-        id=uuid7(),
-        org_id=org_id,
-        provider_id="remote_agent",
-        spec={"sha": "b"},
-        status=WorkspaceStatus.EXPIRED.value,
-        expires_at=_utcnow() + timedelta(hours=1),
-        owning_agent_id=agent["id"],
-    )
-    db_session.add_all([active_ws, expired_ws])
-    await db_session.commit()
-
-    count = await force_close_all(org_id=org_id, reason="disconnect")
-
-    assert count == 1, "only the ACTIVE row should be expired"
-    refreshed = {r.id: r for r in (await db_session.execute(select(WorkspaceRow))).scalars().all()}
-    assert refreshed[active_ws.id].status == WorkspaceStatus.EXPIRED.value
-    assert refreshed[expired_ws.id].status == WorkspaceStatus.EXPIRED.value
 
 
 # ── failsafe_agent_loss: workflow correlation via agent_commands ────────────

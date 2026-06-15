@@ -763,7 +763,6 @@ expose = [
   "close_workspace",
   "current_workspace_registry",
   "dispatch_invoke_claude_code",
-  "force_close_all",
   "get_provider",
   "get_workflow_context_provider",
   "get_workspace_claim_state",
@@ -779,7 +778,6 @@ expose = [
   "register_workspace_providers",
   "register_workspace_recovery_policies",
   "release_claim",
-  "startup_recovery",
   "try_claim",
   "update_workspace_status",
 ]
