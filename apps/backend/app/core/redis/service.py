@@ -77,6 +77,19 @@ async def delete_keys_with_prefix(prefix: str) -> int:
     return deleted
 
 
+async def scan_keys(pattern: str) -> list[str]:
+    """Return all keys matching `pattern` (a Redis SCAN glob pattern).
+
+    Uses SCAN iteration — never blocks the event loop on large keyspaces.
+    Returns an empty list when no keys match. Decodes bytes to str.
+    """
+    redis = _get_client()
+    keys: list[str] = []
+    async for key in redis.scan_iter(match=pattern, count=100):
+        keys.append(key.decode() if isinstance(key, bytes) else key)
+    return keys
+
+
 async def shutdown() -> None:
     """Close every cached client. Called by the process shutdown registries
     during web/worker teardown and from test teardown. Idempotent —

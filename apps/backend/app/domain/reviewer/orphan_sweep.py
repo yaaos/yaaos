@@ -14,19 +14,20 @@ execution (e.g. stalled at `ProvisionWorkspace`) is explicitly NOT an orphan —
 the agent may still come online and complete the review. The grace window
 (`yaaos_ticket_orphan_grace_seconds`) keeps freshly-inserted rows safe while
 their workflow dispatch is in-flight.
+
+Runs as a `@scheduled` worker task (cron `* * * * *`) — exactly one worker
+pod enqueues each minute slot via the `ON CONFLICT DO NOTHING` claim.
 """
 
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.tasks import scheduled
 from app.core.workflow import list_active_execution_ids
 from app.domain import tickets
 
@@ -72,16 +73,11 @@ async def _sweep_once() -> int:
     return failed
 
 
-async def run_sweep_loop() -> None:
-    """Forever-loop: every `yaaos_ticket_orphan_sweep_interval_seconds`, sweep."""
-    interval = get_settings().yaaos_ticket_orphan_sweep_interval_seconds
-    while True:
-        try:
-            await _sweep_once()
-        except Exception as exc:
-            # inside-span failure: spawned inside spawn:reviewer.orphan_sweep span
-            span = trace.get_current_span()
-            span.record_exception(exc)
-            span.set_status(StatusCode.ERROR, str(exc))
-            log.exception("orphan_sweep.failed")
-        await asyncio.sleep(interval)
+# Per-minute sweep — cluster-safe via `core/tasks` per-tick claim.
+# Exactly one worker pod enqueues per slot. Body is idempotent.
+ticket_orphan_sweep = scheduled(
+    name="ticket_orphan_sweep",
+    cron="* * * * *",
+    queue="default",
+    max_retries=1,
+)(_sweep_once)

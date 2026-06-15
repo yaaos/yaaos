@@ -60,7 +60,7 @@ For `pull_request.synchronize` only: `GET /repos/{owner}/{repo}/compare/{before}
 
 - `GET /installation` — two-state (`app_configured: false` / `installed`). Never returns a raw github.com install URL; callers must go through `/install/start`.
 - `POST /install/start` — owner-only (`GITHUB_APP_LINK`). Returns signed `redirect_url` to `github.com/apps/<slug>/installations/new`.
-- `GET /install_callback` — verifies state signature + 15-min TTL, fetches `account.login`, upserts install row, 303 to `/`. Webhook delivery later upserts the same row; both converge on `install_external_id`.
+- `GET /install_callback` — verifies state signature + 15-min TTL, fetches `account.login`, upserts install row, 303 to `/`. Webhook delivery later upserts the same row; both converge on `install_external_id`. `upsert_installation` is atomically idempotent and returns whether this call inserted the row; the install-callback fires `github_app_installation_linked` audit + `set_vcs` exactly once per first bind.
 
 ### Other routes
 
@@ -89,6 +89,6 @@ Unit tests in `app/plugins/github/test/`:
 - `test_payload_parser.py` — every event-mapping branch.
 - `test_post_review.py` — `post_finding` (inline vs null-anchor routing) and `post_comment` routing, and `_format_finding_body`.
 - `test_install_binding.py` — install start, install callback, webhook signature scoping.
-- `test_intake_producer_service.py` (`@pytest.mark.service`) — `_prepare_pr_review` enqueues notifications outbox row and publishes SSE event.
+- `test_intake_producer_service.py` (`@pytest.mark.service`) — `GithubIntakeType.handle` calls `create_from_pr` + `attach_pr_to_ticket`; ticket row created, `ticket.created` + `ticket.pr_bound` audit rows written, SSE + notifications outbox row enqueued.
 
 Full webhook, login, install handshake, repositories proxy, and force-push detection exercised by `apps/e2e/` specs against `apps/fake-github`.

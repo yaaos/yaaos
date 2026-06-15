@@ -147,6 +147,6 @@ describe("useTicketsFilters", () => {
   });
 
   it("ALL_STATUSES matches the exported constant", () => {
-    expect(ALL_STATUSES).toEqual(["running", "hitl", "done", "failed", "cancelled"]);
+    expect(ALL_STATUSES).toEqual(["pending", "running", "hitl", "done", "failed", "cancelled"]);
   });
 });

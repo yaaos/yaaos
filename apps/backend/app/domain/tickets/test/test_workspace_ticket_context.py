@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets.service import get_workspace_ticket_context
 
 
@@ -21,15 +21,14 @@ async def test_returns_none_for_missing_ticket() -> None:
 async def test_returns_ticket_fields_for_real_ticket(db_session) -> None:  # type: ignore[no-untyped-def]
     org_id = uuid4()
     ticket_id, _ = await create_ticket(
-        type="github_pr",
-        payload={"head_sha": "abc123", "is_draft": False},
-        idempotency_key=f"ctx-{uuid4()}",
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id="42",
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=f"ctx-{uuid4()}",
+        payload={"head_sha": "abc123", "is_draft": False},
         session=db_session,
     )
     await db_session.commit()

@@ -49,9 +49,9 @@ export type Ticket = {
   source_external_id: string;
   title: string;
   description: string | null;
-  // collapsed status — 5-state UI vocab (the legacy 4-state values
-  // were rewritten one-shot in backend migration 023).
-  status: "running" | "hitl" | "done" | "failed" | "cancelled";
+  // collapsed status — 6-state UI vocab: pending (queued, awaiting workflow start),
+  // running, hitl, done, failed, cancelled.
+  status: "pending" | "running" | "hitl" | "done" | "failed" | "cancelled";
   plugin_id: string;
   repo_external_id: string;
   pr_id: string | null;

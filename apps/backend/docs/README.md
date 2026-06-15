@@ -33,6 +33,7 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 | [core_identity](core_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 | [core_sessions](core_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints. |
 | [core_coding_agent](core_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
+| [core_intake](core_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 
 ### Domain — business logic, vendor-neutral
 
@@ -41,7 +42,6 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
 | [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
 | [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
-| [domain_intake](domain_intake.md) | Inbound VCS event router; filters drafts/forks/bots. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
 
 ### Plugins — vendor-specific implementations

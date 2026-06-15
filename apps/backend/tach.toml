@@ -38,6 +38,10 @@ path = "app.core.identity"
 depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
+path = "app.core.intake"
+depends_on = ["app.core.auth", "app.core.database", "app.core.webserver"]
+
+[[modules]]
 path = "app.core.llm"
 depends_on = ["app.core.config"]
 
@@ -98,12 +102,8 @@ path = "app.core.workspace"
 depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
-path = "app.domain.intake"
-depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.domain.tickets"]
-
-[[modules]]
 path = "app.domain.integrations"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.observability", "app.core.secrets", "app.core.sessions", "app.core.tenancy", "app.core.webserver", "app.domain.orgs"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.oauth", "app.core.secrets", "app.core.sessions", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.orgs"]
 
 [[modules]]
 path = "app.domain.lessons"
@@ -111,15 +111,15 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.domain.mcp_proxy"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.secrets", "app.core.webserver", "app.domain.integrations"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.secrets", "app.core.tasks", "app.core.webserver", "app.domain.integrations"]
 
 [[modules]]
 path = "app.domain.orgs"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.observability", "app.core.saml", "app.core.sessions", "app.core.tenancy", "app.core.vcs", "app.core.webserver"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.saml", "app.core.sessions", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver"]
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.intake", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.c
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -453,6 +453,23 @@ from = ["app.core.identity"]
 
 [[interfaces]]
 expose = [
+  "IntakeError",
+  "IntakeOutcome",
+  "IntakeRejectedError",
+  "IntakeSideEffect",
+  "IntakeType",
+  "get_intake_type",
+  "is_mid_band_confirm",
+  "is_skippable_path",
+  "parse_rereview",
+  "parse_yaaos_command",
+  "register_intake_type",
+  "registered_intake_types",
+]
+from = ["app.core.intake"]
+
+[[interfaces]]
+expose = [
   "FilePrompt",
   "LLMError",
   "LLMTestCache",
@@ -513,12 +530,25 @@ expose = [
   "RedisPubsub",
   "bind_pubsub",
   "delete_keys_with_prefix",
+  "hash_delete",
+  "hash_get_all",
+  "hash_set",
   "ping",
   "publish",
+  "scan_keys",
+  "set_add",
+  "set_if_absent",
+  "set_members",
+  "set_remove",
   "shutdown",
   "sliding_window_hit",
   "subscribe",
   "subscriber_count",
+  "zset_add_member",
+  "zset_card",
+  "zset_members",
+  "zset_remove_by_score",
+  "zset_remove_member",
 ]
 from = ["app.core.redis"]
 
@@ -712,6 +742,7 @@ expose = [
   "get_engine",
   "get_execution_summary",
   "get_recovery_policy",
+  "get_start_hooks",
   "get_terminal_hooks",
   "handle_agent_event",
   "list_active_execution_ids",
@@ -720,6 +751,7 @@ expose = [
   "list_hitl_history",
   "list_run_views_for_ticket",
   "register_recovery_policy",
+  "register_start_hook",
   "register_terminal_hook",
   "register_workflow",
   "registered_recovery_labels",
@@ -763,7 +795,6 @@ expose = [
   "close_workspace",
   "current_workspace_registry",
   "dispatch_invoke_claude_code",
-  "force_close_all",
   "get_provider",
   "get_workflow_context_provider",
   "get_workspace_claim_state",
@@ -779,29 +810,10 @@ expose = [
   "register_workspace_providers",
   "register_workspace_recovery_policies",
   "release_claim",
-  "startup_recovery",
   "try_claim",
   "update_workspace_status",
 ]
 from = ["app.core.workspace"]
-
-[[interfaces]]
-expose = [
-  "IntakeError",
-  "IntakeOutcome",
-  "IntakePrepared",
-  "IntakeRejectedError",
-  "IntakeSideEffect",
-  "IntakeType",
-  "get_intake_type",
-  "is_mid_band_confirm",
-  "is_skippable_path",
-  "parse_rereview",
-  "parse_yaaos_command",
-  "register_intake_type",
-  "registered_intake_types",
-]
-from = ["app.domain.intake"]
 
 [[interfaces]]
 expose = [
@@ -959,6 +971,7 @@ expose = [
   "prefix_broken_creds_warning",
   "publish_findings",
   "refresh_ticket_findings_summary",
+  "register_reviewer_start_hooks",
   "register_reviewer_terminal_hooks",
   "start_incremental_review",
   "start_pr_review",
@@ -980,8 +993,7 @@ expose = [
   "attach_workflow_execution",
   "build_status_change_specs",
   "complete",
-  "create",
-  "create_for_pr",
+  "create_from_pr",
   "fail",
   "get",
   "get_by_external",
@@ -992,12 +1004,13 @@ expose = [
   "list_by_ids",
   "list_running_older_than",
   "list_tickets",
+  "notify_ticket_status_change",
   "set_workflow_execution",
+  "transition_on_workflow_start",
   "transition_on_workflow_terminal",
   "update_findings_summary",
   "update_state",
   "upsert",
-  "upsert_ticket_for_pr",
 ]
 from = ["app.domain.tickets"]
 

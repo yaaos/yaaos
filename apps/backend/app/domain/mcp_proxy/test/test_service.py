@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -13,7 +12,7 @@ from app.core.identity import repository as identity_repo
 from app.core.vcs import VCSPullRequest
 from app.domain.mcp_proxy import lookup_token, mint_token, revoke_token
 from app.domain.mcp_proxy.models import McpReviewTokenRow
-from app.domain.mcp_proxy.service import run_sweep_loop, sweep_expired
+from app.domain.mcp_proxy.service import _sweep_once, sweep_expired
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer import (
     PRReviewAggregate,
@@ -22,7 +21,7 @@ from app.domain.reviewer import (
     ReviewTrigger,
     SqlAlchemyAggregateRepository,
 )
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 
@@ -30,16 +29,16 @@ async def _seed_review(db_session) -> tuple:  # type: ignore[return]
     user = await identity_repo.insert_user(db_session, display_name="U")
     org = await orgs_repo.insert_org(db_session, slug=f"mcp-test-{uuid4().hex[:6]}")
     ext_id = "pr-1"
+    idempotency_key = f"{ext_id}-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=f"{ext_id}-{uuid4().hex[:6]}",
         org_id=org.org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=idempotency_key,
+        payload={},
         session=db_session,
     )
     pr = await upsert_pr(
@@ -177,18 +176,13 @@ async def test_sweep_drops_expired_keeps_fresh(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_proxy_sweep_loop_deletes_expired(db_session) -> None:
-    """run_sweep_loop deletes expired token rows after one iteration.
-
-    `YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS=1` is set globally in conftest.py so
-    the first sweep fires within ~1s. One task tick + cancel is enough to assert
-    the durable state.
-    """
+async def test_mcp_proxy_sweep_deletes_expired(db_session) -> None:
+    """_sweep_once deletes expired token rows."""
     import hashlib  # noqa: PLC0415
 
     _, org, _, review = await _seed_review(db_session)
     expired_raw = await mint_token(review.id, org_id=org.org_id, session=db_session)
-    # Backdate via the same test session so it's visible to the loop's own session.
+    # Backdate via the same test session so it's visible to the sweep's own session.
     expired_hash = hashlib.sha256(expired_raw.encode()).hexdigest()
     row = (
         await db_session.execute(
@@ -198,14 +192,7 @@ async def test_mcp_proxy_sweep_loop_deletes_expired(db_session) -> None:
     row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     await db_session.commit()
 
-    # Run the loop; interval is 1s in tests. Let one tick complete then cancel.
-    task = asyncio.create_task(run_sweep_loop())
-    await asyncio.sleep(0.2)  # yield so the first iteration fires
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    await _sweep_once()
 
     # Expired row must be gone — verify via the test session.
     db_session.expire_all()

@@ -12,9 +12,13 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 
 - **Two signals fire atomically with every transition commit:** `core/sse.publish_general_after_commit` (SPA) and `core/tasks.enqueue` (durable outbox). Rolled-back transactions emit neither.
 - **Notification policy lives here, not in `core/notifications`.** `build_status_change_specs` decides which statuses generate notifications, which type to assign, and what title to show. It returns `list[NotificationSpec]`; the caller enqueues `core/notifications.fanout`. `plugins/github` uses the same helper — no plugin owns notification policy.
-- **`(org_id, source, source_external_id)` UNIQUE** collapses concurrent webhook deliveries. `upsert_ticket_for_pr` uses `INSERT … ON CONFLICT DO NOTHING`; the race loser gets `(None, False)` and exits.
+- **`(org_id, source, source_external_id)` UNIQUE** collapses concurrent webhook deliveries. `_insert_ticket_atomic` uses `INSERT … ON CONFLICT DO NOTHING … RETURNING`; on conflict the race loser re-SELECTs the winner's id so callers always get a non-None UUID and `created=False`.
+- **`create_from_pr` is the single intake constructor.** Wraps `_insert_ticket_atomic` with fixed `type="github_pr"`, `source="github_pr"`, `status="pending"`. On `created=True` writes `ticket.created` audit + `notify_ticket_status_change(None→pending)`; on `created=False` returns the existing id immediately so callers can exit.
+- **`notify_ticket_status_change` is the sole broadcast seam.** Fires `publish_general_after_commit` + `enqueue(fanout)` from one place so no caller can accidentally omit either signal.
+- **`attach_pr_to_ticket` owns the `ticket.pr_bound` audit row.** The `WHERE pr_id IS NULL` guard makes it idempotent: concurrent calls produce at most one audit row.
 - **Terminal states have no outbound transitions** for the unconditional helpers. `complete`/`fail`/`abandon` go through `_transition`, which raises `InvalidTicketTransition`. The guarded `transition_on_workflow_terminal` returns `False` instead of raising — safe inside a caller's transaction.
-- **`_apply_transition` is the shared side-effect kernel.** Both `_transition` (Shape-b) and `transition_on_workflow_terminal` (Shape-a) delegate to it. It fires audit + SSE + notification outbox atomically within the caller's session without committing.
+- **`_apply_transition` is the shared side-effect kernel.** `_transition` (Shape-b), `transition_on_workflow_terminal` (Shape-a), and `transition_on_workflow_start` (Shape-a) all delegate to it. It delegates SSE + notification outbox to `notify_ticket_status_change` so the broadcast seam is used consistently.
+- **`transition_on_workflow_start` flips `pending → running` atomically with the workflow bootstrap commit.** Called from the reviewer start hook (`domain/reviewer/start_hook.py`) inside the engine's bootstrap-commit transaction. Shape-a (caller's session, never commits). Guards: ticket not found, wrong org, different `current_workflow_execution_id`, or already past `pending` → returns `False` silently. Returns `True` when flipped.
 - **Workspace ≠ ticket.** The reviewer opens one workspace per coordinator call; it is anonymous from the ticket's perspective — no FK, no column.
 - **`findings_count` + `max_severity` are denormalized, not live-aggregated.** Reviewer writes them via `update_findings_summary` after each review run and on ack/push-back. `list_tickets` reads them directly from the row — no cross-module import from tickets → reviewer.
 - **All ticket reads are org-scoped.** Use `get(ticket_id, org_id=...)` — the unscoped `get_by_id` helper has been removed.
@@ -25,15 +29,14 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 
 | From → To | Trigger |
 |---|---|
-| (none) → `pending` | `create` (generic intake) |
-| (none) → `running` | `create_for_pr` / `upsert_ticket_for_pr` |
-| `pending` → `running` | workflow-step dispatch |
+| (none) → `pending` | `create_from_pr` (GitHub PR intake) |
+| `pending` → `running` | `transition_on_workflow_start(...)` — workflow start hook, atomic with bootstrap RUNNING write |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
 | `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
 | `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — workflow terminal hook (primary path off `running`) |
 
-`complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` is Shape-a (caller's session, never commits) and is used by workflow terminal hooks.
+`complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` and `transition_on_workflow_start` are Shape-a (caller's session, never commits) and are used by workflow hooks.
 
 ## Data owned
 
@@ -43,9 +46,12 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 
 ## How it's tested
 
-- `test/test_service.py` — `upsert_ticket_for_pr` (create + race-loser), `attach_pr_to_ticket`, `set_workflow_execution`, `list_tickets` reads row-backed rollup + DB sort.
-- `test/test_status_change_producer_service.py` — `notifications.fanout` outbox row, SSE after commit, no SSE on rollback.
+- `test/test_service.py` — `create_from_pr` (create + idempotent race-loser re-SELECT), `attach_pr_to_ticket`, `set_workflow_execution`, `list_tickets` reads row-backed rollup + DB sort.
+- `test/test_create_from_pr_idempotent_service.py` (`@pytest.mark.service`) — concurrent `create_from_pr` calls produce exactly one TicketRow; race loser returns winner's id.
+- `test/test_attach_pr_to_ticket_idempotent_service.py` (`@pytest.mark.service`) — concurrent `attach_pr_to_ticket` calls produce at most one `ticket.pr_bound` audit row.
+- `test/test_status_change_producer_service.py` — `notifications.fanout` outbox row; exactly two SSE events for create+start (None→pending, pending→done) with no duplicates; no SSE on rollback.
 - `test/test_transition_on_workflow_terminal_service.py` (`@pytest.mark.service`) — all guard branches for `transition_on_workflow_terminal`: owner + running → flips + audit row + returns True; non-owner → no-op + False; already terminal → idempotent + False; missing ticket / wrong org → False + no raise; no commit inside fn.
+- `test/test_transition_on_workflow_start_service.py` (`@pytest.mark.service`) — all guard branches for `transition_on_workflow_start`: pending + matching wfx_id → flips to running + audit row + True; wrong wfx_id → False; already running → False; missing ticket → False; no commit inside fn.
 - `test/test_workspace_ticket_context.py` — `get_workspace_ticket_context` read path.
 - `test/test_pr_upsert_session.py` — session-ownership (insert + update, FK safety, missing ticket_id guard).
 - `test/test_pull_request_service.py` (`@pytest.mark.service`) — `list_by_ids`: full match, empty input, unknown ids, partial match.

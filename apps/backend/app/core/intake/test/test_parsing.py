@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.domain.intake import is_skippable_path, parse_rereview
+from app.core.intake import is_skippable_path, parse_rereview
 
 
 @pytest.mark.parametrize(

@@ -22,7 +22,10 @@ from app.core.agent_gateway import ensure_agent_row
 
 __all__ = [
     "delete_org",
+    "delete_pull_request",
+    "delete_ticket",
     "delete_user_artifacts",
+    "delete_workspace_agent",
     "read_email_inbox",
     "seed_agent",
     "seed_workspace",
@@ -71,6 +74,44 @@ async def seed_agent(
             row.last_heartbeat_at = datetime.now(UTC) - timedelta(seconds=heartbeat_age_seconds)
             await session.flush()
     return {"id": agent_id, "instance_id": _instance_id, "org_id": org_id}
+
+
+async def delete_pull_request(pr_id: UUID, *, session: AsyncSession) -> None:
+    """Delete a seeded pull-request row (test cleanup).
+
+    Any reviews referencing this PR must be deleted first.
+    """
+    from sqlalchemy import delete  # noqa: PLC0415
+
+    from app.domain.tickets.pull_request import PullRequestRow  # noqa: PLC0415
+
+    await session.execute(delete(PullRequestRow).where(PullRequestRow.id == pr_id))
+
+
+async def delete_ticket(ticket_id: UUID, *, session: AsyncSession) -> None:
+    """Delete a seeded ticket row (test cleanup).
+
+    Any pull-requests referencing this ticket (`pull_requests.ticket_id` is
+    NOT NULL) must be deleted first.
+    """
+    from sqlalchemy import delete  # noqa: PLC0415
+
+    from app.domain.tickets.models import TicketRow  # noqa: PLC0415
+
+    await session.execute(delete(TicketRow).where(TicketRow.id == ticket_id))
+
+
+async def delete_workspace_agent(agent_id: UUID, *, session: AsyncSession) -> None:
+    """Delete a seeded workspace-agent row (test cleanup).
+
+    Any workspace owning this agent must be deleted first — the
+    `workspaces.owning_agent_id` FK is `ON DELETE RESTRICT`.
+    """
+    from sqlalchemy import delete  # noqa: PLC0415
+
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    await session.execute(delete(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent_id))
 
 
 async def seed_workspace(

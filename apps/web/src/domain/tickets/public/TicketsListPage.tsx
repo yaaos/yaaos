@@ -1,7 +1,7 @@
 /**
  * Tickets list page.
  *
- * One row per ticket. Five-state status vocab in the badge (running / hitl /
+ * One row per ticket. Six-state status vocab in the badge (pending / running / hitl /
  * done / failed / cancelled). Filter bar: status multi-select chips, repo
  * single-select, free-text search over title, "My tickets" toggle. Load-more
  * pagination (no infinite scroll). Row click → Ticket detail.
@@ -53,6 +53,11 @@ import { type TicketStatus, useTicketsFilters } from "../use-tickets-filters";
 // contrast ratio.
 const STATUS_DISPLAY: Record<TicketStatus, { label: string; icon: typeof Loader2; chip: string }> =
   {
+    pending: {
+      label: "Queued",
+      icon: Loader2,
+      chip: "bg-muted text-muted-foreground border-border",
+    },
     running: { label: "Running", icon: Loader2, chip: "bg-info text-info-foreground border-info" },
     hitl: {
       label: "HITL",
@@ -76,7 +81,14 @@ const STATUS_DISPLAY: Record<TicketStatus, { label: string; icon: typeof Loader2
     },
   };
 
-const ALL_STATUSES_DISPLAY: TicketStatus[] = ["running", "hitl", "done", "failed", "cancelled"];
+const ALL_STATUSES_DISPLAY: TicketStatus[] = [
+  "pending",
+  "running",
+  "hitl",
+  "done",
+  "failed",
+  "cancelled",
+];
 
 export function TicketsListPage() {
   return (
@@ -275,7 +287,12 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
             meta.chip,
           )}
         >
-          <Icon className={cn("w-3 h-3", status === "running" && "animate-spin")} />
+          <Icon
+            className={cn(
+              "w-3 h-3",
+              (status === "running" || status === "pending") && "animate-spin",
+            )}
+          />
           {meta.label}
         </span>
       </div>

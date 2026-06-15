@@ -122,15 +122,9 @@ class Settings(BaseSettings):
 
     # Session lifetime + cleanup cadence.
     yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
-    yaaos_auth_cleanup_interval_seconds: int = 60 * 60  # 1 hour
-    yaaos_integrations_health_check_interval_seconds: int = 60 * 60  # 1 hour
-    yaaos_mcp_token_sweep_interval_seconds: int = 60 * 60  # 1 hour
 
-    # Orphan-ticket sweep. A `running` ticket without any reviews row is the
-    # tail of a webhook that didn't reach the reviewer (missing BYOK key,
-    # crash mid-dispatch, etc.). The sweep flips such rows to `failed` so
-    # the Dashboard "in flight" band drains correctly.
-    yaaos_ticket_orphan_sweep_interval_seconds: int = 60
+    # Orphan-ticket sweep grace window. A `running` ticket older than this
+    # threshold with no active workflow execution is flipped to `failed`.
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
 
     # The platform yaaos GitHub App — used for per-org installs only

@@ -187,29 +187,32 @@ def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
 
 
 async def close_workspace(workspace_id: UUID) -> None:
-    """Mark the workspace expired so the reaper picks it up. Idempotent."""
+    """Mark the workspace expired so the reaper picks it up.
+
+    Atomically idempotent under concurrent admin requests and racy reaper
+    transitions — the WHERE predicate pins from_state='active' inside the
+    UPDATE, so at most one audit row is written per real ACTIVE → EXPIRED
+    transition.
+    """
     async with get_session() as s:
-        row = (
-            await s.execute(
-                select(WorkspaceRow).where(
-                    WorkspaceRow.id == workspace_id,
-                    WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                )
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return
-        from_state = row.status
-        await s.execute(
+        result = await s.execute(
             update(WorkspaceRow)
-            .where(WorkspaceRow.id == workspace_id)
+            .where(
+                WorkspaceRow.id == workspace_id,
+                WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
+            )
             .values(status=WorkspaceStatus.EXPIRED.value)
+            .returning(WorkspaceRow.org_id)
         )
+        org_id = result.scalar_one_or_none()
+        if org_id is None:
+            # Row was already non-ACTIVE; idempotent no-op.
+            return
         await _audit_transition(
             s,
             workspace_id=workspace_id,
-            org_id=row.org_id,
-            from_state=from_state,
+            org_id=org_id,
+            from_state=WorkspaceStatus.ACTIVE.value,
             to_state=WorkspaceStatus.EXPIRED.value,
             reason="closed",
         )
@@ -269,44 +272,6 @@ async def _seed_workspace_for_tests(
         ws_id = row.id
         await s.commit()
     return str(ws_id)
-
-
-async def force_close_all(*, org_id: UUID, reason: str = "force_close_all") -> int:
-    """Flip every active workspace for the org to expired. Returns count.
-
-    Used by Org Settings Disconnect / mode-switch. `reason` propagates to
-    the audit row (`disconnect`, `mode_switch`, `arn_change`) so the
-    security feed can render meaningful one-liners.
-    """
-    async with get_session() as s:
-        rows = (
-            (
-                await s.execute(
-                    select(WorkspaceRow).where(
-                        WorkspaceRow.org_id == org_id,
-                        WorkspaceRow.status == WorkspaceStatus.ACTIVE.value,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for row in rows:
-            await s.execute(
-                update(WorkspaceRow)
-                .where(WorkspaceRow.id == row.id)
-                .values(status=WorkspaceStatus.EXPIRED.value)
-            )
-            await _audit_transition(
-                s,
-                workspace_id=row.id,
-                org_id=org_id,
-                from_state=row.status,
-                to_state=WorkspaceStatus.EXPIRED.value,
-                reason=reason,
-            )
-        await s.commit()
-        return len(rows)
 
 
 # Failsafe 6 threshold: an agent with no heartbeat for this many seconds is
@@ -547,15 +512,33 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
         return
 
     async with get_session() as s:
-        await s.execute(
+        # Narrow by status='expired' so only one concurrent reaper cycle can
+        # win this transition. A None result means another caller already moved
+        # the row to DESTROYING; skip audit + destroy to avoid double-destroy.
+        # RETURNING captures the incremented value for the failure-cap check.
+        result = await s.execute(
             update(WorkspaceRow)
-            .where(WorkspaceRow.id == row.id)
+            .where(
+                WorkspaceRow.id == row.id,
+                WorkspaceRow.status == WorkspaceStatus.EXPIRED.value,
+            )
             .values(
                 status=WorkspaceStatus.DESTROYING.value,
-                destroy_attempts=row.destroy_attempts + 1,
+                destroy_attempts=WorkspaceRow.destroy_attempts + 1,
                 last_destroy_attempt_at=_utcnow(),
             )
+            .returning(WorkspaceRow.destroy_attempts)
         )
+        new_attempts_maybe: int | None = result.scalar_one_or_none()
+        if new_attempts_maybe is None:
+            # Another reaper cycle won the EXPIRED→DESTROYING transition for this row.
+            # Skip: no audit row, no provider.destroy() — that caller owns this cycle.
+            log.debug(
+                "workspace.destroy_skip_already_transitioned",
+                workspace_id=str(row.id),
+            )
+            return
+        new_attempts: int = new_attempts_maybe
         await _audit_transition(
             s,
             workspace_id=row.id,
@@ -571,7 +554,7 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
     except Exception as e:
         log.warning("workspace.destroy_failed", workspace_id=str(row.id), error=str(e))
         async with get_session() as s:
-            attempts = row.destroy_attempts + 1
+            attempts = new_attempts
             new_status = (
                 WorkspaceStatus.DESTROY_FAILED.value if attempts >= 3 else WorkspaceStatus.EXPIRED.value
             )
@@ -632,30 +615,6 @@ async def run_workspace_reaper() -> None:
         span.set_status(StatusCode.ERROR, str(exc))
         log.exception("workspace.reaper_sweep_failed")
         raise
-
-
-async def startup_recovery() -> None:
-    """Flip any non-terminal workspace from a prior process to 'expired'.
-
-    Lean-created rows enter ACTIVE on the agent's first workspace event —
-    no row ever enters CREATING in the current lifecycle, so CREATING is
-    absent from the recovery list. ACTIVE and DESTROYING are the states
-    a crashed process may leave behind.
-    """
-    async with get_session() as s:
-        await s.execute(
-            update(WorkspaceRow)
-            .where(
-                WorkspaceRow.status.in_(
-                    [
-                        WorkspaceStatus.ACTIVE.value,
-                        WorkspaceStatus.DESTROYING.value,
-                    ]
-                )
-            )
-            .values(status=WorkspaceStatus.EXPIRED.value)
-        )
-        await s.commit()
 
 
 async def health_check_all() -> dict[str, HealthStatus]:

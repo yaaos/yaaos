@@ -1,6 +1,6 @@
 """Service-level tests for ticket lifecycle ops.
 
-Covers: upsert_ticket_for_pr (idempotency + race-safe insert),
+Covers: create_from_pr (idempotency + race-safe insert),
 attach_pr_to_ticket (pr_id IS NULL guard), set_workflow_execution,
 list_running_older_than, and list_tickets findings rollup columns.
 """
@@ -13,22 +13,22 @@ import pytest
 
 from app.domain.tickets import (
     attach_pr_to_ticket,
+    create_from_pr,
     list_running_older_than,
     list_tickets,
     set_workflow_execution,
     update_findings_summary,
-    upsert_ticket_for_pr,
 )
 from app.domain.tickets.service import TicketFilter, get
 
 
 @pytest.mark.service
-async def test_upsert_ticket_for_pr_creates_new(db_session) -> None:  # type: ignore[no-untyped-def]
+async def test_create_from_pr_creates_new(db_session) -> None:  # type: ignore[no-untyped-def]
     org_id = uuid4()
     source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
     idempotency_key = f"delivery-{uuid4().hex}"
 
-    ticket_id, created = await upsert_ticket_for_pr(
+    ticket_id, created = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="My PR title",
@@ -46,17 +46,17 @@ async def test_upsert_ticket_for_pr_creates_new(db_session) -> None:  # type: ig
 
     ticket = await get(ticket_id, org_id=org_id)
     assert ticket.title == "My PR title"
-    assert ticket.status == "running"
+    assert ticket.status == "pending"
     assert ticket.pr_id is None
 
 
 @pytest.mark.service
-async def test_upsert_ticket_for_pr_idempotent(db_session) -> None:  # type: ignore[no-untyped-def]
+async def test_create_from_pr_idempotent(db_session) -> None:  # type: ignore[no-untyped-def]
     org_id = uuid4()
     source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
     idempotency_key = f"delivery-{uuid4().hex}"
 
-    _ticket_id, created = await upsert_ticket_for_pr(
+    _ticket_id, created = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="PR title",
@@ -70,8 +70,8 @@ async def test_upsert_ticket_for_pr_idempotent(db_session) -> None:  # type: ign
     await db_session.commit()
     assert created is True
 
-    # Second call with same (org, source, source_external_id) returns None
-    ticket_id2, created2 = await upsert_ticket_for_pr(
+    # Second call with same (org, source, source_external_id) re-SELECTs existing row
+    ticket_id2, created2 = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="Different title",
@@ -84,9 +84,10 @@ async def test_upsert_ticket_for_pr_idempotent(db_session) -> None:  # type: ign
     )
     await db_session.commit()
 
-    # Loser of the race: created=False, id=None
+    # Second call sees conflict → returns existing id, created=False
     assert created2 is False
-    assert ticket_id2 is None
+    assert ticket_id2 is not None
+    assert ticket_id2 == _ticket_id
 
 
 @pytest.mark.service
@@ -96,7 +97,7 @@ async def test_attach_pr_to_ticket_when_pr_id_is_null(db_session) -> None:  # ty
     idempotency_key = f"delivery-{uuid4().hex}"
     pr_id = uuid4()
 
-    ticket_id, _ = await upsert_ticket_for_pr(
+    ticket_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="PR",
@@ -110,7 +111,7 @@ async def test_attach_pr_to_ticket_when_pr_id_is_null(db_session) -> None:  # ty
     await db_session.commit()
     assert ticket_id is not None
 
-    await attach_pr_to_ticket(ticket_id, pr_id=pr_id, session=db_session)
+    await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=pr_id, session=db_session)
     await db_session.commit()
 
     ticket = await get(ticket_id, org_id=org_id)
@@ -126,7 +127,7 @@ async def test_attach_pr_to_ticket_no_op_when_already_set(db_session) -> None:  
     first_pr_id = uuid4()
     second_pr_id = uuid4()
 
-    ticket_id, _ = await upsert_ticket_for_pr(
+    ticket_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="PR",
@@ -140,11 +141,11 @@ async def test_attach_pr_to_ticket_no_op_when_already_set(db_session) -> None:  
     await db_session.commit()
     assert ticket_id is not None
 
-    await attach_pr_to_ticket(ticket_id, pr_id=first_pr_id, session=db_session)
+    await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=first_pr_id, session=db_session)
     await db_session.commit()
 
     # Second call should be a no-op (WHERE pr_id IS NULL guard)
-    await attach_pr_to_ticket(ticket_id, pr_id=second_pr_id, session=db_session)
+    await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=second_pr_id, session=db_session)
     await db_session.commit()
 
     ticket = await get(ticket_id, org_id=org_id)
@@ -158,7 +159,7 @@ async def test_set_workflow_execution(db_session) -> None:  # type: ignore[no-un
     idempotency_key = f"delivery-{uuid4().hex}"
     workflow_execution_id = uuid4()
 
-    ticket_id, _ = await upsert_ticket_for_pr(
+    ticket_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=source_external_id,
         title="PR",
@@ -195,7 +196,7 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     org_id = uuid4()
 
     # Stale running ticket (created 10 minutes ago)
-    stale_id, _ = await upsert_ticket_for_pr(
+    stale_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=f"r/{uuid4().hex}",
         title="stale",
@@ -208,10 +209,10 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     )
     await db_session.commit()
     assert stale_id is not None
-    # Back-date the stale ticket to 10 minutes ago
+    # Back-date the stale ticket to 10 minutes ago and flip to running (create_from_pr inserts pending).
     stale_created_at = datetime.now(UTC) - timedelta(minutes=10)
     await db_session.execute(
-        text("UPDATE tickets SET created_at = :ts WHERE id = :id"),
+        text("UPDATE tickets SET created_at = :ts, status = 'running' WHERE id = :id"),
         {"ts": stale_created_at, "id": stale_id},
     )
     await db_session.commit()
@@ -219,7 +220,7 @@ async def test_list_running_older_than_filters_correctly(db_session) -> None:  #
     # Fresh running ticket with its created_at left as the DB default (NOW()).
     # The cutoff is set AFTER the stale ticket's back-dated timestamp so only
     # the stale ticket falls before it.
-    fresh_id, _ = await upsert_ticket_for_pr(
+    fresh_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=f"r/{uuid4().hex}",
         title="fresh",
@@ -259,7 +260,7 @@ async def test_list_tickets_reads_findings_columns(db_session) -> None:  # type:
     and update_findings_summary writes the rollup correctly."""
     org_id = uuid4()
 
-    ticket_id, _ = await upsert_ticket_for_pr(
+    ticket_id, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
         title="rollup PR",
@@ -297,7 +298,7 @@ async def test_list_tickets_reads_findings_columns(db_session) -> None:  # type:
 
     # findings_count sort is done at DB level — verify the ordering holds.
     # Create a second ticket with zero findings.
-    ticket_id2, _ = await upsert_ticket_for_pr(
+    ticket_id2, _ = await create_from_pr(
         org_id=org_id,
         source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
         title="zero findings PR",

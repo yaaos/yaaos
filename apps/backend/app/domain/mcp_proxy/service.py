@@ -5,7 +5,7 @@
 persisted with `expires_at = created_at + 2h`. `lookup_token(raw)` reverses
 the dance — returns the row if not expired, None otherwise. `revoke_token`
 deletes by review_id (reviewer calls it at review-end). `sweep_expired`
-drops anything past TTL (called once a day by the scheduler).
+drops anything past TTL (called hourly by the `@scheduled` worker task).
 
 Raw tokens never persist. Lookups are constant-time-safe because the hash
 is the primary key.
@@ -17,21 +17,18 @@ Session management + atomicity.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.tasks import scheduled
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 
 log = structlog.get_logger("domain.mcp_proxy")
@@ -119,6 +116,13 @@ async def revoke_token(
     return int(result.rowcount or 0)
 
 
+# `record_broken_creds` is called here (producer-side) by the MCP proxy
+# dispatcher on every broken-creds / not-connected response. `consume_broken_creds`
+# exists but has no production caller in the reviewer — the reviewer does not
+# yet drain the tracker or pass its output to `prefix_broken_creds_warning`
+# at review-end. Observations accumulate in the dict and are cleared only by
+# the in-process tests that call `consume_broken_creds` directly.
+#
 # Per-review tracker for broken_creds / not_connected observations. The
 # reviewer drains this at review-end to prefix the PR comment with a yellow
 # warning block listing affected providers. Process-local — reviews finish
@@ -143,23 +147,20 @@ async def sweep_expired(*, session: AsyncSession) -> int:
     return int(result.rowcount or 0)
 
 
-async def run_sweep_loop() -> None:
-    """Forever-loop: sweep expired `mcp_review_tokens` every
-    `yaaos_mcp_token_sweep_interval_seconds` (default 3600 = hourly).
-    `sweep_expired` is a backstop GC — expiry is already enforced at
-    `lookup_token`, so a slow sweep only delays deletion of dead rows."""
-    interval = get_settings().yaaos_mcp_token_sweep_interval_seconds
-    while True:
-        try:
-            async with db_session() as s:
-                n_swept = await sweep_expired(session=s)
-                await s.commit()
-            if n_swept:
-                log.debug("mcp_proxy.tokens.swept", removed=n_swept)
-        except Exception as exc:
-            # inside-span failure: spawned inside spawn:mcp_proxy.sweep span
-            span = trace.get_current_span()
-            span.record_exception(exc)
-            span.set_status(StatusCode.ERROR, str(exc))
-            log.exception("mcp_proxy.sweep_loop.failed")
-        await asyncio.sleep(interval)
+async def _sweep_once() -> None:
+    """One pass: drop expired `mcp_review_tokens` rows."""
+    async with db_session() as s:
+        n_swept = await sweep_expired(session=s)
+        await s.commit()
+    if n_swept:
+        log.debug("mcp_proxy.tokens.swept", removed=n_swept)
+
+
+# Hourly sweep — cluster-safe via `core/tasks` per-tick claim.
+# Exactly one worker pod enqueues per slot. Body is idempotent.
+mcp_review_token_sweep = scheduled(
+    name="mcp_review_token_sweep",
+    cron="0 * * * *",
+    queue="default",
+    max_retries=1,
+)(_sweep_once)

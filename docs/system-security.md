@@ -103,7 +103,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 | Threat | Defense |
 |---|---|
 | Inbound webhook from an attacker not GitHub | HMAC verification in [`plugins/github/service.verify_webhook_signature`](../apps/backend/app/plugins/github/service.py); intake type returns 401 on mismatch. |
-| Duplicate webhook delivery | `X-Github-Delivery` is the `idempotency_key` on `domain/tickets.create()`; second submission returns the same ticket without starting a new workflow. |
+| Duplicate webhook delivery | `X-Github-Delivery` is the idempotency key on `domain/tickets.create_from_pr()`; second submission returns the existing ticket id with `created=False` without starting a new workflow. |
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard. Both event endpoints return `410 {"error": "stale_claim"}` on a missing/retired command row. Agent receives `protocol.ErrStaleClaim` and abandons without retry. |
 | Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |

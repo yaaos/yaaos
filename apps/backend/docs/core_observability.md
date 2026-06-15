@@ -45,7 +45,7 @@
 - `restore_traceparent_context(traceparent)` — parses back to OTel `Context`.
 - `with_remote_parent_span(tracer, name, traceparent)` — emits a span under the remote trace; falls back to fresh trace on None/malformed.
 
-`domain/intake/web.post_intake` records `current_traceparent()` when a webhook arrives and passes it into `core/workflow`; downstream tasks restore it. This is what gives one `trace_id` across webhook → terminal outcome.
+`core/intake/web.post_intake` records `current_traceparent()` when a webhook arrives and passes it into `core/workflow`; downstream tasks restore it. This is what gives one `trace_id` across webhook → terminal outcome.
 
 **Standard dims on every span + log** — `YaaosDimensionsSpanProcessor` is registered on the `TracerProvider` during `_configure_otel`. Its `on_start` reads the auth contextvars (`org_id_var`, `user_id_var`, `actor_kind_var`, `workflow_execution_id_var`, `command_id_var` from `core/auth/context`) and stamps the non-None values as `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`, `yaaos.workflow_id`, `yaaos.command_id` on every new span. OTel attributes do not inherit to child spans — `on_start` is the only mechanism that makes dims universal without per-span code. The `_YaaosLogDimsFilter` (stdlib `logging.Filter` added to the root logger by `configure()`) does the same for log records: it sets matching `LogRecord` attributes (`yaaos_org_id`, `yaaos_user_id`, etc.) from contextvars, which the OTel `LoggingHandler._get_attributes` then maps to queryable log attributes in Dash0. Both filters only stamp when the var is set — background spans carry org+actor but no `user_id`; non-workflow spans carry no `workflow_id`/`command_id`.
 

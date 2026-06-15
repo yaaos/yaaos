@@ -33,7 +33,7 @@ from app.domain.reviewer.commands import (
     ALL_WORKSPACE_COMMANDS,
 )
 from app.domain.reviewer.workflows import pr_review_v1
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.seed import seed_agent as _seed_agent_for_tests
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
@@ -166,7 +166,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     """
     from app.core.vcs import VCSPullRequest as _VCSPullRequest  # noqa: PLC0415
     from app.domain.reviewer.models import FindingRow  # noqa: PLC0415
-    from app.domain.tickets import create as create_ticket2  # noqa: PLC0415
+    from app.domain.tickets import create_from_pr as create_ticket2  # noqa: PLC0415
     from app.domain.tickets import upsert as upsert_pr  # noqa: PLC0415
 
     class _StubProviderWithFiles:
@@ -197,7 +197,13 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     # 2. Real ticket + PR rows so findings FK has somewhere to land.
     ext_id = f"e2e-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket2(
-        type="pr_review",
+        org_id=org_id,
+        source_external_id=ext_id,
+        title="t",
+        description=None,
+        repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
         payload={
             "is_draft": False,
             "is_fork": False,
@@ -206,13 +212,6 @@ async def test_pr_review_v1_with_findings_persists_to_db(
             "head_sha": "deadbeef",
             "base_sha": "babecafe",
         },
-        idempotency_key=ext_id,
-        org_id=org_id,
-        title="t",
-        source="github_pr",
-        source_external_id=ext_id,
-        plugin_id="github",
-        repo_external_id="me/repo",
         session=db_session,
     )
     pr = await upsert_pr(
@@ -362,7 +361,13 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     with no pending agent command."""
     org_id = uuid4()
     ticket_id, _ = await create_ticket(
-        type="github_pr",
+        org_id=org_id,
+        source_external_id="42",
+        title="real-ticket",
+        description=None,
+        repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=f"e2e-remote-{uuid4()}",
         payload={
             "is_draft": False,
             "is_fork": False,
@@ -372,13 +377,6 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
             "head_sha": "deadbeefcafef00d",
             "base_sha": "babecafe",
         },
-        idempotency_key=f"e2e-remote-{uuid4()}",
-        org_id=org_id,
-        title="real-ticket",
-        source="github_pr",
-        source_external_id="42",
-        plugin_id="github",
-        repo_external_id="me/repo",
         session=db_session,
     )
     register_workflow_context_provider(

@@ -1,6 +1,6 @@
 """HTTP routes owned by the github plugin: install state + health + the
 install start/callback handshake. The GitHub webhook receiver lives at
-`POST /api/intake/github` (see `domain/intake.web`); GitHub events flow
+`POST /api/intake/github` (see `core/intake.web`); GitHub events flow
 through the intake registry, not this module.
 """
 
@@ -273,19 +273,9 @@ async def github_install_callback(request: Request) -> RedirectResponse:
         log.exception("github.install_callback.fetch_account_failed")
         account_login = ""
 
-    # Detect first-bind: only emit the audit + set_vcs side-effects when this
-    # install row is genuinely new (not just an idempotent re-callback).
-    async with db_session() as s:
-        existing = (
-            await s.execute(
-                select(GitHubAppInstallationRow).where(
-                    GitHubAppInstallationRow.install_external_id == str(install_id_int)
-                )
-            )
-        ).scalar_one_or_none()
-    first_bind = existing is None
-
-    await upsert_installation(
+    # upsert_installation atomically inserts-or-updates and returns True only
+    # when this call created the row — exactly one concurrent caller sees True.
+    first_bind = await upsert_installation(
         install_external_id=str(install_id_int),
         account_login=account_login,
         org_id=org_id,

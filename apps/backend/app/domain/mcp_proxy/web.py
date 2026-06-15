@@ -40,11 +40,10 @@ from pydantic import BaseModel
 from app.core.audit_log import Actor, audit
 from app.core.auth import public_route
 from app.core.database import session as db_session
-from app.core.observability import spawn
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.integrations import get, get_provider, get_secret, mark_last_used
-from app.domain.mcp_proxy.service import lookup_token, record_broken_creds, run_sweep_loop
+from app.domain.mcp_proxy.service import lookup_token, record_broken_creds
 
 log = structlog.get_logger("mcp_proxy.web")
 
@@ -239,8 +238,4 @@ async def dispatch(
     return JSONResponse(result_payload)
 
 
-async def _start_sweep() -> None:
-    spawn("mcp_proxy.sweep", run_sweep_loop())
-
-
-register_routes(RouteSpec(module_name="mcp", router=router, url_prefix="/api/mcp", on_startup=[_start_sweep]))
+register_routes(RouteSpec(module_name="mcp", router=router, url_prefix="/api/mcp"))

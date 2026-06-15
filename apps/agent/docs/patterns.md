@@ -107,3 +107,19 @@ The full rule set lives in `apps/agent/.golangci.yml`. When adding a new interna
 | Child subprocess | orchestration + signal/pipe mechanics | fake `RunFunc` + `TestHelperProcess` | `workspace/` |
 | Timing loops | interval / expiry / backoff | `testing/synctest` bubble | `backoff/`, `activity/`, `supervisor/` |
 | Wire contract | Go↔Python schema parity | reflection drift test | `protocol/openapi_drift_test.go` |
+
+## Multi-pod safe patterns
+
+Canonical shapes for work that can run concurrently across multiple agent pods. Use these patterns when adding new retry surfaces or identity-guarded loops.
+
+### Per-surface independent backoff schedules
+
+- **Pattern:** each retry surface (`claimBackoff`, `heartbeatBackoff`, `wsBackoff`) holds its own `*backoff.Schedule` instance created independently at `Supervisor` construction time. No shared schedule or global counter.
+- **Why:** a single shared schedule would lock-step all surfaces into the same retry cadence after any blip; independent schedules let an isolated claim failure back off without slowing heartbeats and vice versa.
+- **Reference:** `apps/agent/internal/supervisor/supervisor.go:271-273` (the three `newOpsBackoff` constructor calls in `New`).
+
+### Identity-integrity fatal exit
+
+- **Pattern:** after first identity exchange, `Supervisor` pins `agentID` and `orgID`. Every subsequent bearer renewal calls `acceptIdentityChange()` before accepting a differing identity. In production builds `acceptIdentityChange()` is always `false`; a mismatch returns `refreshResult{fatal: true}` and `bearerRefreshLoop` calls `os.Exit(1)`.
+- **Why:** an agent that silently continues under a different identity would corrupt org-scoped audit and workflow records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
+- **Reference:** `apps/agent/internal/supervisor/supervisor.go:582` (the `acceptIdentityChange()` guard in `runOneRefreshCycle`); `:623` (the `os.Exit(1)` call in `bearerRefreshLoop`).

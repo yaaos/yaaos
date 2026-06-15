@@ -1,7 +1,7 @@
 """Service-level coverage for GET /api/tickets ().
 
 Asserts the `{items, next_cursor}` response shape, the new filter / sort /
-search params, and the fields (`status` in 5-state vocab, `findings_count`).
+search params, and the fields (`status` in 6-state vocab, `findings_count`).
 """
 
 from __future__ import annotations

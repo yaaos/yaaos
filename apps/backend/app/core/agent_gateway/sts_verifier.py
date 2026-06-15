@@ -42,11 +42,10 @@ The verifier:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import ssl
-import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -54,6 +53,7 @@ import httpx
 import structlog
 
 from app.core.config import get_settings
+from app.core.redis import set_if_absent
 
 log = structlog.get_logger("core.agent_gateway.sts_verifier")
 
@@ -93,7 +93,6 @@ _GLOBAL_STS_REGION = "us-east-1"
 # Replay-protection window. sigv4's own validity is 5 min; we layer 10 min
 # of nonce-tracking on top to refuse exact reuse even before sigv4 expires.
 _NONCE_TTL_SECONDS = 10 * 60
-_NONCE_MAX_ENTRIES = 10_000
 
 
 class FailureCategory(StrEnum):
@@ -195,60 +194,20 @@ def extract_instance_id(raw_arn: str) -> str:
     return raw_arn.lower()
 
 
-# ── Replay-protection LRU ──────────────────────────────────────────────
+# ── Replay protection ─────────────────────────────────────────────────
 
 
-class _NonceLRU:
-    """In-process bounded TTL cache for replay protection.
+async def _check_and_add_nonce(authorization_header: str, x_amz_date_header: str, ttl_seconds: int) -> bool:
+    """Return True if the envelope is fresh (caller proceeds), False on replay.
 
-    Keyed on a stable hash of the signed request envelope (Authorization
-    header + X-Amz-Date). Single-process for POC — fly.io target is
-    a single backend machine. Multi-replica deployments would lift this
-    to Redis.
+    Builds a canonical envelope string, sha256-hashes it (hash-before-store
+    matches the bearer-token-discipline pattern), and atomically sets the key
+    in Redis with a TTL. Returns True on first-seen (key inserted), False when
+    the key already exists (replay detected).
     """
-
-    def __init__(self, ttl_seconds: int = _NONCE_TTL_SECONDS, max_entries: int = _NONCE_MAX_ENTRIES) -> None:
-        self._ttl = ttl_seconds
-        self._max = max_entries
-        self._store: OrderedDict[str, float] = OrderedDict()
-
-    def _evict(self, now: float) -> None:
-        # Drop expired front items.
-        while self._store:
-            _key, ts = next(iter(self._store.items()))
-            if ts + self._ttl <= now:
-                self._store.popitem(last=False)
-            else:
-                break
-        # Bound size.
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)
-
-    def check_and_add(self, key: str) -> bool:
-        """Return True if the key is fresh (caller proceeds), False if it
-        was already in the cache within the TTL window (replay)."""
-        now = time.monotonic()
-        self._evict(now)
-        if key in self._store:
-            return False
-        self._store[key] = now
-        return True
-
-    def reset(self) -> None:
-        self._store.clear()
-
-
-_nonce_lru = _NonceLRU()
-
-
-def reset_nonce_cache_for_tests() -> None:
-    """Test hook: clear the replay-protection cache between tests."""
-    _nonce_lru.reset()
-
-
-def _nonce_key(headers: dict[str, str]) -> str:
-    """Stable cache key from the request's signed envelope."""
-    return f"{headers.get('authorization', '')}|{headers.get('x-amz-date', '')}"
+    envelope = f"{authorization_header}|{x_amz_date_header}"
+    digest = hashlib.sha256(envelope.encode()).hexdigest()
+    return await set_if_absent(f"sts_nonce:{digest}", ttl_seconds)
 
 
 # ── Parsing + replay ──────────────────────────────────────────────────
@@ -408,7 +367,11 @@ async def verify_identity(signed_request: str) -> VerifiedIdentity:
     if _verify_override is not None:
         return await _verify_override(signed_request)
     signed = parse_signed_request(signed_request)
-    if not _nonce_lru.check_and_add(_nonce_key(signed.headers)):
+    if not await _check_and_add_nonce(
+        signed.headers.get("authorization", ""),
+        signed.headers.get("x-amz-date", ""),
+        _NONCE_TTL_SECONDS,
+    ):
         raise InvalidSignedRequestError(
             "signed request envelope already seen within replay window",
             FailureCategory.REPLAY_DETECTED,

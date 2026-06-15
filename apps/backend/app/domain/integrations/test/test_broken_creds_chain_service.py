@@ -40,7 +40,7 @@ from app.domain.reviewer import (
     SqlAlchemyAggregateRepository,
 )
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 from app.testing.seed import read_email_inbox
 
@@ -150,15 +150,14 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     # 4. Seed a review + mint its bearer.
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=ext_id,
         org_id=org.org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
+        payload={},
         session=db_session,
     )
     pr = await upsert_pr(

@@ -29,7 +29,6 @@ os.environ.setdefault("YAAOS_CODING_AGENT_STUB", "1")
 os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")
 os.environ.setdefault("YAAOS_HEARTBEAT_INTERVAL_SECONDS", "1")
-os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 # Required. Full external origin; the derived public_hostname (its netloc) is
 # the agent identity-exchange audience the tests sign.
 os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
@@ -46,6 +45,7 @@ from app.testing.isolation import (  # noqa: F401
     recovery_policies_isolation,
     scheduler_registry_isolation,
     sse_shutdown_event_isolation,
+    start_hooks_isolation,
     subscriber_registry_isolation,
     terminal_hooks_isolation,
     workflow_context_provider_isolation,

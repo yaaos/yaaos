@@ -67,16 +67,19 @@ def test_ws_accepts_bearer_and_registers_sender() -> None:
     app = _app()
     agent_id = uuid4()
     bearer, _ = _install_bearer_stub(agent_id)
+    sender_open = False
     with TestClient(app) as client:
         with client.websocket_connect(
             "/api/v1/agent/activity",
             headers={"Authorization": f"Bearer {bearer}"},
         ):
             # While the WS is open, the registry has a sender for this agent.
-            assert get_subscriber_registry().has_sender(agent_id)
-        # After exit, the sender is unregistered.
-        # (TestClient is synchronous so the disconnect handler ran by now.)
-        assert not get_subscriber_registry().has_sender(agent_id)
+            sender_open = get_subscriber_registry().has_sender(agent_id)
+    # TestClient.__exit__ shuts down the portal and waits for all in-flight
+    # handlers to complete — the server's finally block (unregister_sender)
+    # has run by this point.
+    assert sender_open, "sender should be registered while WS is open"
+    assert not get_subscriber_registry().has_sender(agent_id), "sender should be unregistered after WS closes"
 
 
 @pytest.mark.asyncio

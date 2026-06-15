@@ -18,7 +18,6 @@ from app.core.workspace.service import (
     bind_workspace_registry,
     close_workspace,
     current_workspace_registry,
-    force_close_all,
     get_provider,
     get_workspace_claim_state,
     get_workspace_command_state,
@@ -29,7 +28,6 @@ from app.core.workspace.service import (
     is_workspace_provider_registered,
     list_workspace_providers,
     register_workspace_provider,
-    startup_recovery,
     update_workspace_status,
 )
 from app.core.workspace.types import (
@@ -95,7 +93,6 @@ __all__ = [
     "close_workspace",
     "current_workspace_registry",
     "dispatch_invoke_claude_code",
-    "force_close_all",
     "get_provider",
     "get_workflow_context_provider",
     "get_workspace_claim_state",
@@ -111,7 +108,6 @@ __all__ = [
     "register_workspace_providers",
     "register_workspace_recovery_policies",
     "release_claim",
-    "startup_recovery",
     "try_claim",
     "update_workspace_status",
 ]

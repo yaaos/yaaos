@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -48,7 +49,19 @@ class ReviewRow(Base):
     trigger_reason: Mapped[str] = mapped_column(String, nullable=False, server_default="pr_ready")
     destination: Mapped[str] = mapped_column(String, nullable=False, server_default="vcs")
     scope_kind: Mapped[str] = mapped_column(String, nullable=False, server_default="full")
+    scope_prev_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     commit_sha_at_start: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    current_step: Mapped[str | None] = mapped_column(String, nullable=True)
+    skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Stamped True when a push arrives while a review is already in-flight on the same PR.
+    # Write-only: nothing reads it for control flow. Replay-on-completion is separate,
+    # unbuilt machinery — do not consult this column to drive behavior.
+    pending_replay: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # FK → coding_agent_runs(id); nullable — reviews from non-review workflows
     # (and rows created before this column existed) have no run.
     run_id: Mapped[uuid.UUID | None] = mapped_column(

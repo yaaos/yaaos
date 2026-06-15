@@ -43,17 +43,26 @@ async def _publish_bytes(channel: str, payload: bytes) -> int:
     return int(n)
 
 
-async def _subscribe_bytes(channel: str) -> AsyncIterator[bytes]:
+async def _subscribe_bytes(
+    channel: str,
+    on_subscribed: asyncio.Event | None = None,
+) -> AsyncIterator[bytes]:
     """Async iterator over message bodies on `channel`. Registers a Redis
     subscription on first iteration; unregisters when the iterator exits
     (consumer cancellation, exhaustion, or context exit).
 
     Filters out Redis's own subscribe/unsubscribe confirmation messages —
     callers only see real `message` payloads. Yields raw bytes.
+
+    `on_subscribed`, when provided, is set after `pubsub.subscribe(channel)`
+    completes so callers can wait until the subscription is established before
+    publishing — preventing lost messages on the fast-path.
     """
     client = _get_client()
     pubsub = client.pubsub()
     await pubsub.subscribe(channel)
+    if on_subscribed is not None:
+        on_subscribed.set()
     try:
         async for msg in pubsub.listen():
             if msg.get("type") != b"message" and msg.get("type") != "message":
@@ -88,13 +97,23 @@ class RedisPubsub:
         payload = json.dumps(event).encode()
         return await _publish_bytes(channel, payload)
 
-    async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
+    async def subscribe(
+        self,
+        channel: str,
+        on_subscribed: asyncio.Event | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Async iterator over events on `channel`. Local subscriber count
-        is incremented on entry, decremented on iterator close."""
+        is incremented on entry, decremented on iterator close.
+
+        `on_subscribed`, when provided, is set after the Redis SUBSCRIBE
+        handshake completes — before the first message is delivered. Useful
+        when the caller needs to guarantee no messages are lost between
+        subscription setup and a subsequent publish.
+        """
         async with self._lock:
             self._local_counts[channel] = self._local_counts.get(channel, 0) + 1
         try:
-            async for payload in _subscribe_bytes(channel):
+            async for payload in _subscribe_bytes(channel, on_subscribed=on_subscribed):
                 try:
                     yield json.loads(payload.decode())
                 except json.JSONDecodeError:
@@ -150,9 +169,16 @@ async def publish(channel: str, event: dict[str, Any]) -> int:
     return await get_pubsub().publish(channel, event)
 
 
-def subscribe(channel: str) -> AsyncIterator[dict[str, Any]]:
-    """Async iterator over JSON events on `channel`."""
-    return get_pubsub().subscribe(channel)
+def subscribe(
+    channel: str,
+    on_subscribed: asyncio.Event | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Async iterator over JSON events on `channel`.
+
+    `on_subscribed`, when provided, is set after the Redis SUBSCRIBE handshake
+    completes — before any message is delivered.
+    """
+    return get_pubsub().subscribe(channel, on_subscribed=on_subscribed)
 
 
 def subscriber_count(channel: str) -> int:

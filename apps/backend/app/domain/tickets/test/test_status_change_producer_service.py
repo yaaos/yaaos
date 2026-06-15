@@ -54,9 +54,9 @@ async def _make_org_with_members(db_session, num_members: int = 2):  # type: ign
 
 async def _make_ticket(db_session, org_id):  # type: ignore[no-untyped-def]
     """Insert a `running` ticket for `org_id`. Returns ticket_id."""
-    from app.domain.tickets import upsert_ticket_for_pr  # noqa: PLC0415
+    from app.domain.tickets import create_from_pr  # noqa: PLC0415
 
-    ticket_id, created = await upsert_ticket_for_pr(
+    ticket_id, created = await create_from_pr(
         org_id=org_id,
         source_external_id=f"repo/r#{uuid4().hex[:6]}",
         title="Test PR",
@@ -112,22 +112,28 @@ async def test_status_change_enqueues_fanout_specs(db_session) -> None:  # type:
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_status_change_publishes_general_after_commit(db_session, redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """complete() publishes a general SSE event with kind 'ticket_status_changed'
-    after the transaction commits."""
+    """create_from_pr emits exactly one status event (None→pending); complete()
+    emits exactly one more (pending→done). No duplicates at creation."""
     from app.core.sse import subscribe_general  # noqa: PLC0415
 
     org_id, _ = await _make_org_with_members(db_session, num_members=1)
-    ticket_id = await _make_ticket(db_session, org_id)
 
     received: list[dict] = []
 
-    async def _consume() -> None:
+    async def _consume(n: int) -> None:
         async for event in subscribe_general(org_id):
             received.append(event)
-            return
+            if len(received) >= n:
+                return
 
-    consumer = asyncio.create_task(_consume())
+    # Subscribe before ticket creation so we capture the pending event.
+    consumer = asyncio.create_task(_consume(2))
     await asyncio.sleep(0.1)  # let Redis subscription register
+
+    ticket_id = await _make_ticket(db_session, org_id)
+
+    # Let the spawn() task from create_from_pr fire the pending SSE event.
+    await asyncio.sleep(0.1)
 
     from app.domain.tickets import complete  # noqa: PLC0415
 
@@ -135,12 +141,19 @@ async def test_status_change_publishes_general_after_commit(db_session, redis_or
 
     await asyncio.wait_for(consumer, timeout=3.0)
 
-    assert len(received) == 1
-    evt = received[0]
-    assert evt["kind"] == "ticket_status_changed"
-    assert evt["ticket_id"] == str(ticket_id)
-    assert evt["new_status"] == "done"
-    assert "ts" in evt
+    assert len(received) == 2, f"Expected 2 events, got {len(received)}: {received}"
+
+    # First event: creation emits pending (prev=None).
+    assert received[0]["kind"] == "ticket_status_changed"
+    assert received[0]["ticket_id"] == str(ticket_id)
+    assert received[0]["new_status"] == "pending"
+    assert "ts" in received[0]
+
+    # Second event: complete() emits done.
+    assert received[1]["kind"] == "ticket_status_changed"
+    assert received[1]["ticket_id"] == str(ticket_id)
+    assert received[1]["new_status"] == "done"
+    assert "ts" in received[1]
 
 
 @pytest.mark.service
