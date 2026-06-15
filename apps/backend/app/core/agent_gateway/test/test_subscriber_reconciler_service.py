@@ -19,8 +19,6 @@ from app.core.agent_gateway.subscribers import SubscriberReconciler
 from app.core.redis import (
     hash_delete,
     hash_set,
-    set_add,
-    set_remove,
     zset_add_member,
     zset_remove_member,
 )
@@ -46,7 +44,7 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
 
     await zset_add_member(wfx_key, member, score)
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
-    await set_add(routes_key, str(wfx_id))
+    await zset_add_member(routes_key, str(wfx_id), time.time())
 
     reg = SubscriberRegistry()
     bind_subscriber_registry(reg)
@@ -76,7 +74,7 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
     # Cleanup Redis state.
     await zset_remove_member(wfx_key, member)
     await hash_delete(route_key)
-    await set_remove(routes_key, str(wfx_id))
+    await zset_remove_member(routes_key, str(wfx_id))
 
 
 @pytest.mark.asyncio
@@ -88,10 +86,10 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
     wfx_id = uuid4()
     workspace_id = uuid7()
 
-    # Pre-populate agent_routes SET only — no ZSET members (ZCARD=0).
+    # Pre-populate agent_routes ZSET only — no workflow_subscribers ZSET members (ZCARD=0).
     routes_key = f"agent_routes:{agent_id}"
     route_key = f"workflow_route:{wfx_id}"
-    await set_add(routes_key, str(wfx_id))
+    await zset_add_member(routes_key, str(wfx_id), time.time())
     # Route HASH must be present for reconciler to resolve workspace_id.
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
 
@@ -125,5 +123,5 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
     assert unsubs[-1]["workflow_execution_id"] == str(wfx_id)
 
     # Cleanup.
-    await set_remove(routes_key, str(wfx_id))
+    await zset_remove_member(routes_key, str(wfx_id))
     await hash_delete(route_key)

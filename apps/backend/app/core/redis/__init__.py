@@ -25,7 +25,13 @@ from app.core.redis.service import shutdown as _client_shutdown
 from app.core.redis.set_if_absent import set_if_absent
 from app.core.redis.set_ops import set_add, set_members, set_remove
 from app.core.redis.sliding_window import sliding_window_hit
-from app.core.redis.zset_ops import zset_add_member, zset_card, zset_remove_by_score, zset_remove_member
+from app.core.redis.zset_ops import (
+    zset_add_member,
+    zset_card,
+    zset_members,
+    zset_remove_by_score,
+    zset_remove_member,
+)
 from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook
 
 
@@ -56,6 +62,7 @@ __all__ = [
     "subscriber_count",
     "zset_add_member",
     "zset_card",
+    "zset_members",
     "zset_remove_by_score",
     "zset_remove_member",
 ]

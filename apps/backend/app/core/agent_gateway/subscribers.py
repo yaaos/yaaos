@@ -4,7 +4,7 @@ UI is watching.
 `SubscriberRegistry.track(workflow_execution_id, workspace_id, agent_id)`
 is called by an SSE handler when a client connects. The registry writes to
 Redis (`workflow_subscribers:{wfx_id}` ZSET, `workflow_route:{wfx_id}` HASH,
-`agent_routes:{agent_id}` SET) and publishes an `AgentWsControlMessage` on
+`agent_routes:{agent_id}` ZSET) and publishes an `AgentWsControlMessage` on
 the `agent_ws_control:{agent_id}` pub/sub channel. The pod whose WS sender
 is registered for `agent_id` receives the control message and forwards it
 to the agent. Symmetrically, `untrack(...)` removes the ZSET member and
@@ -49,12 +49,10 @@ from app.core.redis import (
     hash_set,
     publish,
     scan_keys,
-    set_add,
-    set_members,
-    set_remove,
     subscribe,
     zset_add_member,
     zset_card,
+    zset_members,
     zset_remove_by_score,
     zset_remove_member,
 )
@@ -179,7 +177,7 @@ class SubscriberRegistry:
         # _RECONCILE_INTERVAL_SECONDS.
         replay: list[AgentWsControlMessage] = []
         try:
-            wfx_ids = await set_members(_agent_routes_key(agent_id))
+            wfx_ids = await zset_members(_agent_routes_key(agent_id))
             for wfx_id_str in wfx_ids:
                 try:
                     wfx_id = UUID(wfx_id_str)
@@ -312,7 +310,7 @@ class SubscriberRegistry:
         Writes to Redis:
         - ZADD `workflow_subscribers:{wfx_id}` member=`{pod_id}:{conn_id}` score=now
         - HSET `workflow_route:{wfx_id}` {workspace_id, agent_id}
-        - SADD `agent_routes:{agent_id}` {wfx_id}
+        - ZADD `agent_routes:{agent_id}` member={wfx_id} score=now
 
         Then PUBLISH `agent_ws_control:{agent_id}` with a subscribe envelope.
         """
@@ -331,7 +329,7 @@ class SubscriberRegistry:
                 "agent_id": str(agent_id),
             },
         )
-        await set_add(_agent_routes_key(agent_id), str(workflow_execution_id))
+        await zset_add_member(_agent_routes_key(agent_id), str(workflow_execution_id), score)
 
         msg = AgentWsControlMessage(
             type="subscribe",
@@ -364,7 +362,7 @@ class SubscriberRegistry:
         - reads `workflow_route:{wfx_id}` to resolve the agent_id
         - publishes unsubscribe envelope on `agent_ws_control:{agent_id}`
         - DEL `workflow_route:{wfx_id}`
-        - SREM `agent_routes:{agent_id} {wfx_id}`
+        - ZREM `agent_routes:{agent_id} {wfx_id}`
 
         No-op if this pod has no member registered for this (wfx_id, conn_id).
         """
@@ -405,7 +403,37 @@ class SubscriberRegistry:
                             err=str(exc),
                         )
                     await hash_delete(_wfx_route_key(workflow_execution_id))
-                    await set_remove(_agent_routes_key(agent_id), str(workflow_execution_id))
+                    await zset_remove_member(_agent_routes_key(agent_id), str(workflow_execution_id))
+
+    async def heartbeat(
+        self,
+        *,
+        workflow_execution_id: UUID,
+        conn_id: str,
+        agent_id: UUID,
+    ) -> None:
+        """Re-stamp this connection's ZSET scores so the sweeper doesn't falsely
+        evict a healthy long-lived subscriber.
+
+        Called periodically (every `_SSE_HEARTBEAT_INTERVAL_SECONDS`) by the
+        SSE generator that owns the subscription. Touches the same two ZSETs
+        that `track()` wrote: `workflow_subscribers:{wfx_id}` and
+        `agent_routes:{agent_id}`. No-op (logged) if Redis is unavailable —
+        the reconciler will pick up state divergence within
+        `_RECONCILE_INTERVAL_SECONDS`.
+        """
+        member = f"{self._pod_id}:{conn_id}"
+        score = time.time()
+        try:
+            await zset_add_member(_wfx_subscribers_key(workflow_execution_id), member, score)
+            await zset_add_member(_agent_routes_key(agent_id), str(workflow_execution_id), score)
+        except Exception as exc:
+            log.warning(
+                "subscribers.heartbeat_failed",
+                workflow_execution_id=str(workflow_execution_id),
+                agent_id=str(agent_id),
+                err=str(exc),
+            )
 
     # ── Diagnostics ─────────────────────────────────────────────────────────
 
@@ -446,7 +474,7 @@ class SubscriberReconciler:
             agent_ids = list(registry._senders.keys())
 
         for agent_id in agent_ids:
-            wfx_ids_str = await set_members(_agent_routes_key(agent_id))
+            wfx_ids_str = await zset_members(_agent_routes_key(agent_id))
             for wfx_id_str in wfx_ids_str:
                 try:
                     wfx_id = UUID(wfx_id_str)
@@ -523,14 +551,30 @@ class SubscriberReconciler:
 
 
 async def _run_subscriber_sweeper() -> None:
-    """Scan `workflow_subscribers:*` keys and remove entries older than
-    `_SUBSCRIBER_STALE_THRESHOLD_SECONDS`. Called by the scheduled task body.
+    """Garbage-collect stale ZSET entries.
+
+    Scans both `workflow_subscribers:*` (per-wfx subscriber memberships) and
+    `agent_routes:*` (per-agent route memberships). For each key removes
+    entries older than `_SUBSCRIBER_STALE_THRESHOLD_SECONDS`. Healthy live
+    connections re-stamp their scores via `SubscriberRegistry.heartbeat()`
+    on a `_SSE_HEARTBEAT_INTERVAL_SECONDS` cadence; only members for
+    connections that died without untracking get reaped.
     """
     now = time.time()
     cutoff = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS
-    keys = await scan_keys("workflow_subscribers:*")
-    for key in keys:
-        await zset_remove_by_score(key, 0, cutoff)
+    for pattern in ("workflow_subscribers:*", "agent_routes:*"):
+        for key in await scan_keys(pattern):
+            try:
+                await zset_remove_by_score(key, 0, cutoff)
+            except Exception as exc:
+                # Skip keys of the wrong type (e.g. plain SETs left by a prior
+                # deployment before the SET→ZSET migration). Log and continue so
+                # one bad key doesn't abort the full sweep.
+                log.warning(
+                    "subscribers.sweeper_key_skip",
+                    key=key,
+                    err=str(exc),
+                )
 
 
 subscriber_sweeper = scheduled(

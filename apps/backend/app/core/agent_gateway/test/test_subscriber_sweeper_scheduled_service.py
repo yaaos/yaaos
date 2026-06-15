@@ -69,3 +69,33 @@ async def test_sweeper_removes_stale_entries_and_keeps_fresh(redis_or_skip) -> N
 
     # Cleanup.
     await zset_remove_member(key, fresh)
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_sweeper_removes_stale_agent_routes_and_keeps_fresh(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """Sweeper also covers agent_routes:* ZSETs.
+
+    Seeds two members into an agent_routes ZSET: one stale (beyond threshold)
+    and one fresh (current timestamp). After running _run_subscriber_sweeper,
+    only the fresh member should remain.
+    """
+    agent_id = uuid4()
+    wfx_stale = str(uuid4())
+    wfx_fresh = str(uuid4())
+    key = f"agent_routes:{agent_id}"
+    now = time.time()
+    stale_ts = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS - 10
+
+    await zset_add_member(key, wfx_stale, stale_ts)
+    await zset_add_member(key, wfx_fresh, now)
+
+    assert await zset_card(key) == 2
+
+    await _run_subscriber_sweeper()
+
+    card_after = await zset_card(key)
+    assert card_after == 1, f"expected 1 fresh member to remain in agent_routes; got {card_after}"
+
+    # Cleanup.
+    await zset_remove_member(key, wfx_fresh)

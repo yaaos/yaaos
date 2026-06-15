@@ -546,6 +546,7 @@ expose = [
   "subscriber_count",
   "zset_add_member",
   "zset_card",
+  "zset_members",
   "zset_remove_by_score",
   "zset_remove_member",
 ]
