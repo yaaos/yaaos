@@ -21,6 +21,11 @@
 
 **Self-registers `shutdown()`** with both web and worker shutdown registries at import time — it closes every cached client and clears the ContextVar binding. No explicit caller required. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
+## Named primitives
+
+- `sliding_window_hit(key, *, limit, window_seconds)` — rate-limit counter backed by a Redis ZSET. Returns `True` if the hit is within the limit, `False` if it would exceed it. Caller owns the policy (axis, error shape, HTTP status).
+- `set_if_absent(key, ttl_seconds)` — cross-pod idempotency / replay protection. Wraps `SET key 1 NX EX ttl_seconds`; returns `True` on insert (this caller wins), `False` when the key already existed (replay / duplicate). Used by `core/agent_gateway/sts_verifier` to reject replayed signed STS envelopes across pods.
+
 ## Gotchas
 
 - **`subscriber_count(channel)` is process-local** — not cluster-wide (`PUBSUB NUMSUB`); don't use it for load decisions.

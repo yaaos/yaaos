@@ -34,7 +34,6 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    reset_nonce_cache_for_tests,
     set_verify_identity_override,
 )
 from app.core.agent_gateway.types import (
@@ -105,10 +104,8 @@ def _make_provision_cmd(org_id: UUID, workspace_id: UUID | None = None) -> Provi
 
 @pytest.fixture(autouse=True)
 def _reset_sts_verifier():
-    reset_nonce_cache_for_tests()
     yield
     set_verify_identity_override(None)
-    reset_nonce_cache_for_tests()
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────

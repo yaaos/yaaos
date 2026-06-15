@@ -515,6 +515,7 @@ expose = [
   "delete_keys_with_prefix",
   "ping",
   "publish",
+  "set_if_absent",
   "shutdown",
   "sliding_window_hit",
   "subscribe",

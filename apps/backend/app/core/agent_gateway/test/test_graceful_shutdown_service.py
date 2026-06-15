@@ -22,7 +22,6 @@ from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    reset_nonce_cache_for_tests,
     set_verify_identity_override,
 )
 from app.core.audit_log import list_for_entity
@@ -100,10 +99,8 @@ async def _seed_org_and_agent(db_session, *, iam_arn: str = "arn:aws:iam::111122
 
 @pytest.fixture(autouse=True)
 def _reset_sts_verifier():
-    reset_nonce_cache_for_tests()
     yield
     set_verify_identity_override(None)
-    reset_nonce_cache_for_tests()
 
 
 # ── DELETE /api/v1/agent/identity ─────────────────────────────────────────

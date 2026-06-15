@@ -61,6 +61,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 - **Non-revoking rotation.** A second call issues a new bearer without revoking the old one. The agent atomically swaps the bearer after receiving the rotation response.
 - **`issued_iam_arn` on bearer row.** Every `bearer_tokens` row records the canonical IAM ARN verified at issuance.
 - **Host allowlist override** — the `Settings.yaaos_sts_host_override` field (`YAAOS_STS_HOST_OVERRIDE`) allows an additional STS host (e.g. `mock-aws:4566`) only in non-production. `Settings` validates this at config load — a `model_validator` refuses to construct (crashes boot) when `APP_MODE=production` and the override is set — so by the time `sts_verifier` reads it, a non-empty value guarantees non-prod. See [core_config.md](core_config.md).
+- **STS replay protection in Redis.** `sts_verifier` stores `sha256(Authorization | X-Amz-Date)` as a Redis key (`sts_nonce:{digest}`) with a 10-minute TTL via `core/redis.set_if_absent`. The first call with a given envelope inserts the key; any subsequent call (from any pod) finds it and raises `REPLAY_DETECTED`. Hash-before-store matches the bearer-token-discipline pattern — Redis never sees the raw Authorization header.
 
 ## Dispatch spans
 

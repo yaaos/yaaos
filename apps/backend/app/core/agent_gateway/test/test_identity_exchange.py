@@ -27,7 +27,6 @@ from app.core.agent_gateway.sts_verifier import (
     FailureCategory,
     InvalidSignedRequestError,
     VerifiedIdentity,
-    reset_nonce_cache_for_tests,
     set_verify_identity_override,
 )
 from app.core.tenancy import update_org_fields
@@ -77,10 +76,8 @@ def _client(ip: str | None = None) -> httpx.AsyncClient:
 
 @pytest.fixture(autouse=True)
 def _reset_verifier():
-    reset_nonce_cache_for_tests()
     yield
     set_verify_identity_override(None)
-    reset_nonce_cache_for_tests()
 
 
 _AUDIENCE = "app.yaaos.dev"

@@ -21,6 +21,7 @@ from app.core.redis.pubsub import (
 from app.core.redis.pubsub import shutdown as _bus_shutdown
 from app.core.redis.service import delete_keys_with_prefix, ping
 from app.core.redis.service import shutdown as _client_shutdown
+from app.core.redis.set_if_absent import set_if_absent
 from app.core.redis.sliding_window import sliding_window_hit
 from app.core.shutdown_registry import register_web_shutdown_hook, register_worker_shutdown_hook
 
@@ -38,6 +39,7 @@ __all__ = [
     "delete_keys_with_prefix",
     "ping",
     "publish",
+    "set_if_absent",
     "shutdown",
     "sliding_window_hit",
     "subscribe",
