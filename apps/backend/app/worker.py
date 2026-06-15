@@ -51,6 +51,13 @@ def main() -> int:
     register_reviewer_terminal_hooks()
     assert_workflow_context_provider()
 
+    # Side-effect imports: register `@scheduled` tasks with the broker.
+    # Each import triggers the module-level `scheduled(...)` decorator, which
+    # wires the task body into the taskiq broker registry.
+    import app.domain.integrations.scheduler  # noqa: PLC0415
+    import app.domain.mcp_proxy.service  # noqa: PLC0415
+    import app.domain.orgs.invitation_sweeper  # noqa: PLC0415
+    import app.domain.reviewer.orphan_sweep  # noqa: PLC0415
     import app.plugins.claude_code  # noqa: PLC0415
     import app.plugins.github  # noqa: F401, PLC0415
     from app.core.config import get_settings  # noqa: PLC0415

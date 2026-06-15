@@ -37,12 +37,10 @@ from app.core.auth import Action, Role, org_id_var, public_route, user_id_var
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.oauth import OAuthError, build_authorize_url
-from app.core.observability import spawn
 from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.integrations import service as integ
 from app.domain.integrations.models import McpCredentialRow
-from app.domain.integrations.scheduler import run_scheduler_loop
 from app.domain.integrations.types import (
     IntegrationNotConnectedError,
     ProviderNotRegisteredError,
@@ -311,10 +309,6 @@ async def broken_summary(
     return _JSONResponse(content={"orgs": orgs_out})
 
 
-async def _start_scheduler() -> None:
-    spawn("integrations.scheduler", run_scheduler_loop())
-
-
 register_routes(
     RouteSpec(
         module_name="integrations_summary",
@@ -328,6 +322,5 @@ register_routes(
         module_name="integrations",
         router=router,
         url_prefix="/api/mcp-proxy",
-        on_startup=[_start_scheduler],
     )
 )

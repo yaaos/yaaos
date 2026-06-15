@@ -28,7 +28,7 @@ Invitations are the sole access gate for new members — no self-signup. SAML SS
 1. `invite(...)` — signs `{org_id, email}` via `itsdangerous.URLSafeTimedSerializer` (salt `yaaos-invitation`, 7-day TTL), inserts row with `sha256(raw_token)`, sends SMTP email, audits `invitation/invited`. Returns `(Invitation, raw_token)` — raw token only ever surfaced in the email.
 2. `accept_invitation(raw_token, user_id, actor)` — verifies signature + TTL, looks up by token hash, refuses on `accepted_at` (`InvitationUsedError`) or expiry (`InvitationExpiredError`) or mismatch (`InvitationInvalidError`). On success: inserts membership, stamps `accepted_at`, audits `membership/joined`. Re-acceptance with existing membership is a no-op (still marks token used).
 3. Handle defaults to email local-part (lower-cased, ≤64 chars).
-4. **Expired-invitation sweep** — `invitation_sweeper.run_invitation_sweep_loop()` spawned via `web.py`'s `RouteSpec.on_startup`. Runs on the same `YAAOS_AUTH_CLEANUP_INTERVAL_SECONDS` cadence. `domain/orgs` owns this sweep; `core/identity` does not touch invitations.
+4. **Expired-invitation sweep** — runs as a `@scheduled` worker task (`invitation_sweep`, cron `0 * * * *`; hourly). Exactly one worker pod enqueues each slot. `domain/orgs` owns this sweep; `core/identity` does not touch invitations.
 
 `/api/memberships/accept` is `RouteSecurity.PUBLIC` — the signed token is the authorization, not a membership.
 

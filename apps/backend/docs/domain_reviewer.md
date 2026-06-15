@@ -70,7 +70,7 @@ On every `pr_review_v1` terminal transition the hook calls [`tickets.transition_
 
 Guard misses (ticket not found, ownership mismatch, already terminal) return silently — the hook never raises, so a guard miss never rolls back the workflow terminal write.
 
-The orphan sweep (`orphan_sweep.py`) is a safety net only — it handles never-dispatched tickets that slipped through before a workflow started. It does NOT handle normal workflow termination; the terminal hook covers that path atomically.
+The orphan sweep (`orphan_sweep.py`) is a safety net only — it handles never-dispatched tickets that slipped through before a workflow started. It does NOT handle normal workflow termination; the terminal hook covers that path atomically. Runs as a `@scheduled` worker task (`ticket_orphan_sweep`, cron `* * * * *`) — exactly one worker pod enqueues each minute slot.
 
 ## Findings rollup
 

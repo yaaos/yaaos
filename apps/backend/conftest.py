@@ -29,7 +29,6 @@ os.environ.setdefault("YAAOS_CODING_AGENT_STUB", "1")
 os.environ.setdefault("YAAOS_REVIEW_DEBOUNCE_SECONDS", "0")
 os.environ.setdefault("YAAOS_REAPER_INTERVAL_SECONDS", "1")
 os.environ.setdefault("YAAOS_HEARTBEAT_INTERVAL_SECONDS", "1")
-os.environ.setdefault("YAAOS_MCP_TOKEN_SWEEP_INTERVAL_SECONDS", "1")
 # Required. Full external origin; the derived public_hostname (its netloc) is
 # the agent identity-exchange audience the tests sign.
 os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")

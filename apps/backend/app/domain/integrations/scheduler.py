@@ -1,14 +1,16 @@
-"""Hourly health-check loop for `mcp_credentials`.
+"""Hourly health-check for `mcp_credentials` — `@scheduled` worker task.
 
 Walks every enabled credential, calls the provider's `validate(access_token)`,
 flips `last_refresh_status` to `"ok"` or `"failed"`, and enqueues an email
 notification to the org's Owners on transition-to-failed (deduplicated to
 once per 24h via `last_failure_notified_at`).
+
+Runs as a `@scheduled` worker task (cron `0 * * * *`) — exactly one worker
+pod enqueues each hourly slot via the `ON CONFLICT DO NOTHING` claim.
 """
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -23,6 +25,7 @@ from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.identity import repository as identity_repo
 from app.core.secrets import SecretsDecryptError, decrypt
+from app.core.tasks import scheduled
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.types import get_provider
 from app.domain.orgs import repository as orgs_repo
@@ -170,19 +173,11 @@ async def run_health_check_once() -> dict[str, int]:
     return counts
 
 
-async def run_scheduler_loop() -> None:
-    """Forever-loop: health-check every `yaaos_integrations_health_check_interval_seconds`.
-    Tests get this with the interval set to 1 second; production uses 3600."""
-    interval = get_settings().yaaos_integrations_health_check_interval_seconds
-    while True:
-        try:
-            counts = await run_health_check_once()
-            if any(counts.values()):
-                log.debug("integrations.health_check.ran", **counts)
-        except Exception as exc:
-            # inside-span failure: spawned inside spawn:integrations.scheduler span
-            _span = trace.get_current_span()
-            _span.record_exception(exc)
-            _span.set_status(StatusCode.ERROR, str(exc))
-            log.exception("integrations.scheduler.failed")
-        await asyncio.sleep(interval)
+# Hourly health-check — cluster-safe via `core/tasks` per-tick claim.
+# Exactly one worker pod enqueues per slot. Body is idempotent.
+integrations_health_check = scheduled(
+    name="integrations_health_check",
+    cron="0 * * * *",
+    queue="default",
+    max_retries=1,
+)(run_health_check_once)
