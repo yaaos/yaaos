@@ -16,7 +16,7 @@ from app.domain.reviewer.commands import (
     CheckShouldReview,
     _decide_skip,
 )
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 
 # ── Pure-function checks on _decide_skip ────────────────────────────────
 
@@ -63,15 +63,14 @@ def test_skip_labels_are_lowercase_case_insensitive_match() -> None:
 async def _create_ticket(*, payload: dict[str, Any], db_session) -> UUID:  # type: ignore[no-untyped-def]
     org_id = uuid4()
     ticket_id, _ = await create_ticket(
-        type="github_pr",
-        payload=payload,
-        idempotency_key=f"key-{uuid4()}",
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id="123",
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=f"key-{uuid4()}",
+        payload=payload,
         session=db_session,
     )
     await db_session.commit()

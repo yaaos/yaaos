@@ -27,7 +27,7 @@ from app.domain.reviewer import (
 )
 from app.domain.reviewer.mcp_wiring import build_mcp_payload as _build_mcp_payload
 from app.domain.reviewer.models import ReviewRow
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 
@@ -78,15 +78,14 @@ async def _seed_review_row(db_session, *, org_id):
     FKs resolve. Returns the review row."""
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=ext_id,
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
+        payload={},
         session=db_session,
     )
     pr = await upsert_pr(

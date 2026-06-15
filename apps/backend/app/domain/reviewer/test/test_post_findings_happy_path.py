@@ -19,7 +19,7 @@ from app.core.workspace import (
 )
 from app.domain.reviewer.commands import PostFindings
 from app.domain.reviewer.models import FindingRow
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 
@@ -45,15 +45,14 @@ async def test_post_findings_persists_canonical_finding_rows(
     # 1. Ticket + PR rows so the findings FK has somewhere to land.
     ext_id = f"42-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={"head_sha": "deadbeef"},
-        idempotency_key=ext_id,
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
+        payload={"head_sha": "deadbeef"},
         session=db_session,
     )
     pr = await upsert_pr(

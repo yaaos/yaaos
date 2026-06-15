@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.vcs import VCSPullRequest
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert
 from app.domain.tickets.pull_request import PullRequestRow
 
@@ -55,15 +55,14 @@ async def test_upsert_insert_uses_caller_session_and_satisfies_fk(db_session) ->
 
     # Create a ticket on the caller's session (flushed within the session, not committed).
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key="acme/repo#42",
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id="acme/repo#42",
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="acme/repo",
+        plugin_id="github",
+        idempotency_key="acme/repo#42",
+        payload={},
         session=db_session,
     )
 
@@ -86,15 +85,14 @@ async def test_upsert_update_path_writes_changed_fields_and_audit(db_session) ->
     fields preserved. Caller session still owns the commit."""
     org_id = uuid4()
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key="acme/repo#99",
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id="acme/repo#99",
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="acme/repo",
+        plugin_id="github",
+        idempotency_key="acme/repo#99",
+        payload={},
         session=db_session,
     )
     initial = await upsert(

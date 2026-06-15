@@ -89,6 +89,6 @@ Unit tests in `app/plugins/github/test/`:
 - `test_payload_parser.py` — every event-mapping branch.
 - `test_post_review.py` — `post_finding` (inline vs null-anchor routing) and `post_comment` routing, and `_format_finding_body`.
 - `test_install_binding.py` — install start, install callback, webhook signature scoping.
-- `test_intake_producer_service.py` (`@pytest.mark.service`) — `_prepare_pr_review` enqueues notifications outbox row and publishes SSE event.
+- `test_intake_producer_service.py` (`@pytest.mark.service`) — `GithubIntakeType.handle` calls `create_from_pr` + `attach_pr_to_ticket`; ticket row created, `ticket.created` + `ticket.pr_bound` audit rows written, SSE + notifications outbox row enqueued.
 
 Full webhook, login, install handshake, repositories proxy, and force-push detection exercised by `apps/e2e/` specs against `apps/fake-github`.

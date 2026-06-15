@@ -18,10 +18,10 @@ from sqlalchemy import update
 
 from app.core.audit_log import list_for_entity
 from app.domain.tickets import (
+    create_from_pr,
     get,
     set_workflow_execution,
     transition_on_workflow_terminal,
-    upsert_ticket_for_pr,
 )
 from app.domain.tickets.models import TicketRow
 
@@ -36,7 +36,7 @@ async def _make_running_ticket(db_session, org_id) -> tuple:  # type: ignore[no-
     Returns (ticket_id, workflow_execution_id).
     """
     workflow_execution_id = uuid4()
-    ticket_id, created = await upsert_ticket_for_pr(
+    ticket_id, created = await create_from_pr(
         org_id=org_id,
         source_external_id=f"repo/r#{uuid4().hex[:6]}",
         title="Test PR",

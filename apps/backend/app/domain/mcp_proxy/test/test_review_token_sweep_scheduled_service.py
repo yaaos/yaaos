@@ -27,7 +27,7 @@ from app.domain.reviewer import (
     ReviewTrigger,
     SqlAlchemyAggregateRepository,
 )
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 pytestmark = pytest.mark.service
@@ -40,15 +40,14 @@ async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     org = await orgs_repo.insert_org(db_session, slug=f"mcp-tok-svc-{uuid4().hex[:8]}")
     ext_id = f"pr-svc-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=f"{ext_id}-{uuid4().hex[:6]}",
         org_id=org.org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=f"{ext_id}-{uuid4().hex[:6]}",
+        payload={},
         session=db_session,
     )
     pr = await upsert_pr(

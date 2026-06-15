@@ -1,17 +1,17 @@
 # domain/intake
 
-> Single inbound-signal endpoint — plugins register `IntakeType` handlers; `POST /api/intake/{type}` verifies, dedups, and either creates a ticket + starts a workflow or applies a side-effect.
+> Single inbound-signal endpoint — plugins register `IntakeType` handlers; `POST /api/intake/{type}` verifies, dedups, and applies a side-effect or returns a side-effect response.
 
 ## Scope
 
-Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing. Coordinates writes to `tickets` (including the PR mirror in `pull_requests`), `reviewer`, `core/audit_log` via plugin-supplied handlers.
+Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing. All handlers return `IntakeSideEffect`; ticket creation and workflow dispatch happen inside each plugin's `handle()` via the domain services.
 
 Does NOT own: any tables. All writes flow through other modules' services.
 
 ## Why / invariants
 
 - **HMAC verification** happens inside each `IntakeType.handle()` before any state mutation. `IntakeRejectedError(kind="bad_signature")` → 401. Never trust the body before the signature clears.
-- **Two idempotency layers:** delivery-level (github type dedupes on `source_event_id`) and ticket-level (`IntakePrepared.idempotency_key` unique on `tickets`; plus `(org_id, source, source_external_id)` for concurrent deliveries).
+- **All handlers return `IntakeSideEffect`.** There is no `IntakePrepared` branch — ticket creation + workflow dispatch happen inside each plugin's `handle()`. The endpoint handler is a thin wrapper that calls `handle()` and returns the side-effect.
 - **Filtering audit trail:** every dropped event writes `webhook_event.filtered` with `{reason, event_kind, source_event_id}` — the log shows why nothing happened.
 - `is_skippable_path` is the single source of truth for the trivial-diff skip list; `domain/reviewer` re-imports it.
 
@@ -32,5 +32,5 @@ None.
 ## How it's tested
 
 - `test/test_parsing.py` — `parse_rereview`, `parse_yaaos_command`, `is_skippable_path` exhaustively.
-- `test/test_intake_endpoint.py` — happy path (ticket + workflow + outbox row), unknown type (404), bad signature (401), duplicate idempotency key.
+- `test/test_intake_endpoint.py` — happy path returns side-effect, default detail when not specified, unknown type (404).
 - Per-plugin handler logic in `app/plugins/github/test/`.

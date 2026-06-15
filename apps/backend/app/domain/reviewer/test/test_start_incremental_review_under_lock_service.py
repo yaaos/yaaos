@@ -30,7 +30,7 @@ from app.core.workflow import WorkflowEngine, bind_engine
 from app.domain.reviewer.incremental_trigger import start_incremental_review
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import attach_pr_to_ticket
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 from app.testing.seed import delete_pull_request, delete_ticket
 from app.testing.stub_vcs import register_stub_vcs
@@ -122,18 +122,19 @@ async def _seed_pr_and_ticket(org_id: UUID, seeded: _Seeded) -> UUID:
     )
     async with sessionmaker() as s:
         ticket_id, _ = await create_ticket(
-            type="github_pr",
-            payload={"is_draft": False, "is_fork": False},
-            idempotency_key=ext_id,
             org_id=org_id,
+            source_external_id=ext_id,
             title="concurrent push test",
-            plugin_id=_PLUGIN_ID,
+            description=None,
             repo_external_id=_REPO_EXTERNAL_ID,
+            plugin_id=_PLUGIN_ID,
+            idempotency_key=ext_id,
+            payload={"is_draft": False, "is_fork": False},
             session=s,
         )
         pr = await upsert_pr(vcs_pr, ticket_id=ticket_id, org_id=org_id, session=s)
         pr_id = pr.id
-        await attach_pr_to_ticket(ticket_id, pr_id=pr_id, session=s)
+        await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=pr_id, session=s)
         await s.commit()
 
     seeded.pr_id = pr_id

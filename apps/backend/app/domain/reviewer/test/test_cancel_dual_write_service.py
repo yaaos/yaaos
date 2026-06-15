@@ -25,7 +25,7 @@ from app.core.workflow import (
     get_execution_summary,
 )
 from app.domain.orgs import repository as orgs_repo
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.workflow_harness import scoped_engine
 
 
@@ -63,15 +63,14 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
 
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=ext_id,
         org_id=existing.org_id,
-        title="cancel-test",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="cancel-test",
+        description=None,
         repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
+        payload={},
         session=db_session,
     )
     return ticket_id, existing, sess

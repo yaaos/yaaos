@@ -35,7 +35,7 @@ from app.core.workflow import (
     Workflow,
 )
 from app.domain.reviewer import register_reviewer_terminal_hooks
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import get as get_ticket
 from app.domain.tickets import set_workflow_execution
 from app.testing.workflow_harness import scoped_engine
@@ -98,8 +98,14 @@ async def _drain(db_session: object, *, max_iterations: int = 50) -> int:
 async def _seed_running_ticket(db_session: object, *, org_id: UUID) -> UUID:
     """Create a minimal ticket in `running` status; return its id."""
     ext_id = f"hook-test-{uuid4().hex[:8]}"
-    ticket_id, _ = await create_ticket(  # type: ignore[call-arg]
-        type="pr_review",
+    ticket_id, _ = await create_ticket(
+        org_id=org_id,
+        source_external_id=ext_id,
+        title=f"hook-test {ext_id}",
+        description=None,
+        repo_external_id="me/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
         payload={
             "is_draft": False,
             "is_fork": False,
@@ -108,13 +114,6 @@ async def _seed_running_ticket(db_session: object, *, org_id: UUID) -> UUID:
             "head_sha": "abc",
             "base_sha": "def",
         },
-        idempotency_key=ext_id,
-        org_id=org_id,
-        title=f"hook-test {ext_id}",
-        source="github_pr",
-        source_external_id=ext_id,
-        plugin_id="github",
-        repo_external_id="me/repo",
         session=db_session,  # type: ignore[arg-type]
     )
     return ticket_id

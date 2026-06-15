@@ -5,10 +5,9 @@ The registry maps a type name to an `IntakeType` handler; plugins register
 their own intake types at bootstrap (e.g. `plugins/github` registers `github`
 which routes every GitHub webhook event).
 
-A handler returns either `IntakePrepared` (the endpoint creates a ticket and
-starts a workflow) or `IntakeSideEffect` (the handler already applied its
-mutations against the endpoint's session — used for events like PR close,
-install lifecycle, or comments on existing tickets).
+Every handler returns `IntakeSideEffect` — handlers manage their own ticket
+creation inside the endpoint's session so ticket inserts, PR back-references,
+audit rows, and workflow.start outbox enqueues commit atomically.
 """
 
 from app.domain.intake import web  # noqa: F401 — registers POST /api/intake/{type}
@@ -20,7 +19,6 @@ from app.domain.intake.parsing import (
 )
 from app.domain.intake.registry import (
     IntakeOutcome,
-    IntakePrepared,
     IntakeRejectedError,
     IntakeSideEffect,
     IntakeType,
@@ -33,7 +31,6 @@ from app.domain.intake.service import IntakeError
 __all__ = [
     "IntakeError",
     "IntakeOutcome",
-    "IntakePrepared",
     "IntakeRejectedError",
     "IntakeSideEffect",
     "IntakeType",

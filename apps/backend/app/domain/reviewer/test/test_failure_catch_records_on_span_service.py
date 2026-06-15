@@ -168,22 +168,21 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.core.workspace import WorkspaceTicketContext, register_workflow_context_provider  # noqa: PLC0415
     from app.domain.reviewer.commands import PostFindings  # noqa: PLC0415
-    from app.domain.tickets import create as create_ticket  # noqa: PLC0415
+    from app.domain.tickets import create_from_pr as create_ticket  # noqa: PLC0415
     from app.domain.tickets import upsert as upsert_pr  # noqa: PLC0415
 
     org_id = uuid4()
     ext_id = f"42-{uuid4().hex[:6]}"
 
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={"head_sha": "deadbeef"},
-        idempotency_key=ext_id,
         org_id=org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=ext_id,
+        payload={"head_sha": "deadbeef"},
         session=db_session,
     )
     pr = await upsert_pr(

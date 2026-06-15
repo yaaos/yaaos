@@ -1,101 +1,43 @@
-"""POST /api/intake/{type} — happy path, idempotent duplicate, rejection codes."""
+"""POST /api/intake/{type} — happy path (side_effect), idempotent duplicate, rejection codes."""
 
 from __future__ import annotations
-
-from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from app.core.tasks import drain_once
-from app.core.workflow import (
-    CommandCategory,
-    CommandContext,
-    Outcome,
-    Step,
-    TerminalAction,
-    Workflow,
-    WorkflowState,
-    get_execution_summary,
-)
 from app.domain.intake import (
-    IntakePrepared,
     IntakeRejectedError,
+    IntakeSideEffect,
     register_intake_type,
 )
 from app.domain.intake import web as _intake_web  # noqa: F401 — registers routes
 from app.domain.intake.registry import _reset_registry_for_tests
-from app.domain.tickets import get as get_ticket
-from app.testing.workflow_harness import scoped_engine
 
 
 class _StubIntakeType:
     """Intake type used in tests — no GitHub. Header `X-Yaaos-Stub-Auth: ok` is
-    required (a missing/wrong header maps to `bad_signature` → 401)."""
+    required (a missing/wrong header maps to `bad_signature` → 401).
+
+    Returns `IntakeSideEffect` matching the production convention — every
+    handler owns its own ticket creation inside the session."""
 
     name = "stub_pr"
 
-    def __init__(self, org_id: UUID) -> None:
-        self._org_id = org_id
-
-    async def handle(self, *, headers, body, session) -> IntakePrepared:
+    async def handle(self, *, headers, body, session) -> IntakeSideEffect:
         if headers.get("x-yaaos-stub-auth") != "ok":
             raise IntakeRejectedError("bad_signature")
-        idempotency_key = headers.get("x-yaaos-stub-idempotency", "default-key")
-        return IntakePrepared(
-            org_id=self._org_id,
-            workflow_name="stub_pr_v1",
-            idempotency_key=idempotency_key,
-            title="stub-pr",
-            description="",
-            source_external_id="stub:1",
-            repo_external_id="me/repo",
-            payload={"hello": "world"},
-        )
-
-
-class _NoopLocal:
-    kind = "Noop"
-    category = CommandCategory.LOCAL
-    restart_safe = True
-
-    async def execute(self, inputs, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        return Outcome.success()
+        detail = headers.get("x-yaaos-stub-detail", "stub_done")
+        return IntakeSideEffect(detail=detail)
 
 
 @pytest_asyncio.fixture
 async def stub_intake(db_session):  # type: ignore[no-untyped-def]
-    """Spin up an isolated engine + the stub intake type. The workflow has
-    one Local step that completes immediately, so the workflow path is
-    exercised end-to-end without needing a Workspace dispatcher."""
+    """Register the stub intake type for the duration of the test."""
     _reset_registry_for_tests()
-
-    with scoped_engine() as eng:
-        eng.register_command(_NoopLocal())
-        eng.register_workflow(
-            Workflow(
-                name="stub_pr_v1",
-                version=1,
-                steps=(
-                    Step(
-                        id="only",
-                        command_kind="Noop",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="only",
-            )
-        )
-
-        org_id = uuid4()
-        register_intake_type(_StubIntakeType(org_id))
-
-        yield {"org_id": org_id}
-
-    # Restore real intake registry (re-import re-registers github_pr).
+    register_intake_type(_StubIntakeType())
+    yield {}
     _reset_registry_for_tests()
     import importlib  # noqa: PLC0415
 
@@ -134,70 +76,26 @@ async def test_bad_signature_returns_401(db_session, stub_intake) -> None:
 
 
 @pytest.mark.asyncio
-async def test_happy_path_creates_ticket_and_workflow(db_session, stub_intake) -> None:
+async def test_happy_path_returns_side_effect(db_session, stub_intake) -> None:
     async with _client() as c:
         r = await c.post(
             "/api/intake/stub_pr",
             content=b"{}",
-            headers={"X-Yaaos-Stub-Auth": "ok", "X-Yaaos-Stub-Idempotency": "key-1"},
+            headers={"X-Yaaos-Stub-Auth": "ok", "X-Yaaos-Stub-Detail": "pr_review_started"},
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["status"] == "created"
-    ticket_id = UUID(body["ticket_id"])
-    workflow_execution_id = UUID(body["workflow_execution_id"])
-
-    # Ticket created with correct type + idempotency_key + workflow link.
-    ticket = await get_ticket(ticket_id, org_id=stub_intake["org_id"])
-    assert ticket is not None
-    assert ticket.type == "stub_pr"
-    assert ticket.idempotency_key == "key-1"
-    assert ticket.payload == {"hello": "world"}
-    assert ticket.current_workflow_execution_id == workflow_execution_id
-    assert ticket.org_id == stub_intake["org_id"]
-
-    # Workflow execution created.
-    wfx = await get_execution_summary(workflow_execution_id, session=db_session)
-    assert wfx is not None
-    assert wfx.workflow_name == "stub_pr_v1"
-    assert str(wfx.ticket_id) == str(ticket_id)
-
-    # Draining the enqueued route_workflow task drives the single-step
-    # workflow to DONE — proves the task was enqueued correctly at intake.
-    from app.core.tasks import get_broker  # noqa: PLC0415
-
-    async def _dispatcher(kind: str, payload: dict) -> None:
-        assert kind == "taskiq_enqueue"
-        decorated = get_broker().find_task(payload["task_name"])
-        assert decorated is not None
-        await decorated.original_func(**payload["args"])
-
-    for _ in range(10):
-        n = await drain_once(db_session, dispatcher=_dispatcher)
-        await db_session.commit()
-        if n == 0:
-            break
-
-    wfx = await get_execution_summary(workflow_execution_id, session=db_session)
-    assert wfx is not None
-    assert wfx.state == WorkflowState.DONE.value
+    assert body["status"] == "side_effect"
+    assert body["detail"] == "pr_review_started"
 
 
 @pytest.mark.asyncio
-async def test_duplicate_idempotency_key_returns_existing_ticket(db_session, stub_intake) -> None:
-    headers = {"X-Yaaos-Stub-Auth": "ok", "X-Yaaos-Stub-Idempotency": "dup-key"}
+async def test_default_detail_returned_when_not_specified(db_session, stub_intake) -> None:
     async with _client() as c:
-        first = await c.post("/api/intake/stub_pr", content=b"{}", headers=headers)
-        second = await c.post("/api/intake/stub_pr", content=b"{}", headers=headers)
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["status"] == "created"
-    assert second.json()["status"] == "duplicate"
-    assert first.json()["ticket_id"] == second.json()["ticket_id"]
-
-    # Only one workflow execution exists for the (single) ticket.
-    from app.core.workflow import list_executions_for_ticket  # noqa: PLC0415
-
-    executions = await list_executions_for_ticket(UUID(first.json()["ticket_id"]), session=db_session)
-    assert len(executions) == 1
+        r = await c.post(
+            "/api/intake/stub_pr",
+            content=b"{}",
+            headers={"X-Yaaos-Stub-Auth": "ok"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["detail"] == "stub_done"

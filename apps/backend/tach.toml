@@ -99,7 +99,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.intake"
-depends_on = ["app.core.auth", "app.core.database", "app.core.observability", "app.core.webserver", "app.core.workflow", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.webserver"]
 
 [[modules]]
 path = "app.domain.integrations"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.c
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.intake", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -799,7 +799,6 @@ from = ["app.core.workspace"]
 expose = [
   "IntakeError",
   "IntakeOutcome",
-  "IntakePrepared",
   "IntakeRejectedError",
   "IntakeSideEffect",
   "IntakeType",
@@ -990,8 +989,7 @@ expose = [
   "attach_workflow_execution",
   "build_status_change_specs",
   "complete",
-  "create",
-  "create_for_pr",
+  "create_from_pr",
   "fail",
   "get",
   "get_by_external",
@@ -1002,12 +1000,12 @@ expose = [
   "list_by_ids",
   "list_running_older_than",
   "list_tickets",
+  "notify_ticket_status_change",
   "set_workflow_execution",
   "transition_on_workflow_terminal",
   "update_findings_summary",
   "update_state",
   "upsert",
-  "upsert_ticket_for_pr",
 ]
 from = ["app.domain.tickets"]
 

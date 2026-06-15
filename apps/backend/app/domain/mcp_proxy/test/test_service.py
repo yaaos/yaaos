@@ -21,7 +21,7 @@ from app.domain.reviewer import (
     ReviewTrigger,
     SqlAlchemyAggregateRepository,
 )
-from app.domain.tickets import create as create_ticket
+from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 
@@ -29,16 +29,16 @@ async def _seed_review(db_session) -> tuple:  # type: ignore[return]
     user = await identity_repo.insert_user(db_session, display_name="U")
     org = await orgs_repo.insert_org(db_session, slug=f"mcp-test-{uuid4().hex[:6]}")
     ext_id = "pr-1"
+    idempotency_key = f"{ext_id}-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
-        type="pr_review",
-        payload={},
-        idempotency_key=f"{ext_id}-{uuid4().hex[:6]}",
         org_id=org.org_id,
-        title="t",
-        source="github_pr",
         source_external_id=ext_id,
-        plugin_id="github",
+        title="t",
+        description=None,
         repo_external_id="owner/repo",
+        plugin_id="github",
+        idempotency_key=idempotency_key,
+        payload={},
         session=db_session,
     )
     pr = await upsert_pr(

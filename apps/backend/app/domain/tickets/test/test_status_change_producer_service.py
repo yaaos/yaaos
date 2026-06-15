@@ -54,9 +54,9 @@ async def _make_org_with_members(db_session, num_members: int = 2):  # type: ign
 
 async def _make_ticket(db_session, org_id):  # type: ignore[no-untyped-def]
     """Insert a `running` ticket for `org_id`. Returns ticket_id."""
-    from app.domain.tickets import upsert_ticket_for_pr  # noqa: PLC0415
+    from app.domain.tickets import create_from_pr  # noqa: PLC0415
 
-    ticket_id, created = await upsert_ticket_for_pr(
+    ticket_id, created = await create_from_pr(
         org_id=org_id,
         source_external_id=f"repo/r#{uuid4().hex[:6]}",
         title="Test PR",
@@ -118,6 +118,10 @@ async def test_status_change_publishes_general_after_commit(db_session, redis_or
 
     org_id, _ = await _make_org_with_members(db_session, num_members=1)
     ticket_id = await _make_ticket(db_session, org_id)
+
+    # Drain any spawn() tasks queued by create_from_pr (running event) before
+    # registering the subscriber so the subscriber sees only the done event.
+    await asyncio.sleep(0.2)
 
     received: list[dict] = []
 

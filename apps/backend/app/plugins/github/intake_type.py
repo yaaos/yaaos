@@ -82,11 +82,6 @@ class _ReactionReceivedPayload(BaseModel):
     target_comment_external_id: str
 
 
-class _TicketCreatedPayload(BaseModel):
-    pr_id: UUID
-    repo_external_id: str
-
-
 class GithubIntakeType:
     """Per-event branching lives in `handle()` so the IntakeType protocol
     stays a one-method contract. Class-level `name` matches the URL path
@@ -262,9 +257,9 @@ class GithubIntakeType:
         (no ticket created in that case)."""
         from app.domain.tickets import (  # noqa: PLC0415
             attach_pr_to_ticket,
+            create_from_pr,
             set_workflow_execution,
             upsert,
-            upsert_ticket_for_pr,
         )
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
@@ -300,7 +295,7 @@ class GithubIntakeType:
         }
         idempotency_key = delivery or f"github_pr:{vcs_pr.external_id}"
 
-        ticket_id, created = await upsert_ticket_for_pr(
+        ticket_id, created = await create_from_pr(
             org_id=org_id,
             source_external_id=vcs_pr.external_id,
             title=vcs_pr.title,
@@ -320,49 +315,8 @@ class GithubIntakeType:
         # resolves before commit.
         upserted_pr = await upsert(vcs_pr, ticket_id=ticket_id, org_id=org_id, session=session)
 
-        await attach_pr_to_ticket(ticket_id, pr_id=upserted_pr.id, session=session)
-
-        await audit_for_ticket(
-            ticket_id,
-            "ticket.created",
-            _TicketCreatedPayload(pr_id=upserted_pr.id, repo_external_id=repo_full),
-            actor=Actor.system(),
-            org_id=org_id,
-            session=session,
-        )
-
-        # Broadcast the ticket-creation status change via the durable outbox +
-        # after-commit Redis publish so the SPA's general SSE channel is notified.
-        from app.core.notifications import fanout  # noqa: PLC0415
-        from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
-        from app.core.tasks import enqueue  # noqa: PLC0415
-        from app.core.tenancy import list_active_member_ids  # noqa: PLC0415
-        from app.domain.tickets import build_status_change_specs  # noqa: PLC0415
-
-        members = await list_active_member_ids(session, org_id)
-        publish_general_after_commit(
-            session,
-            org_id=org_id,
-            kind=GeneralEventKind.TICKET_STATUS_CHANGED,
-            payload={
-                "ticket_id": str(ticket_id),
-                "new_status": "running",
-                "previous_status": None,
-            },
-        )
-        specs = build_status_change_specs(
-            ticket_id=ticket_id,
-            org_id=org_id,
-            ticket_title=vcs_pr.title,
-            member_user_ids=members,
-            new_status="running",
-        )
-        if specs:
-            await enqueue(
-                fanout,
-                args={"specs": [s.to_dict() for s in specs]},
-                session=session,
-            )
+        # attach_pr_to_ticket owns the ticket.pr_bound audit row.
+        await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=upserted_pr.id, session=session)
 
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.

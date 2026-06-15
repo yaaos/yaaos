@@ -23,9 +23,9 @@ from app.domain.tickets.pull_request import PullRequest, PullRequestNotFoundErro
 from app.domain.tickets.pull_request import get as get_pull_request
 from app.domain.tickets.pull_request import list_by_ids as list_prs_by_ids
 
-# Six-state ticket vocabulary. `pending` is the initial state set by `create()`;
-# `running` is set when the first workflow step dispatches; `hitl` and `failed`
-# are populated by the workflow-state projection; `done`/`cancelled` are terminal.
+# Six-state ticket vocabulary. `running` is set when the first workflow step dispatches;
+# `hitl` and `failed` are populated by the workflow-state projection;
+# `done`/`cancelled` are terminal.
 TicketStatus = Literal["pending", "running", "hitl", "done", "failed", "cancelled"]
 
 
@@ -107,6 +107,25 @@ class InvalidTicketTransition(ValueError):
 
 
 class _TicketCreatedPayload(BaseModel):
+    """Unified audit payload for the ticket.created kind.
+
+    Written by create_from_pr (and any future create_from_<source>) at the
+    moment of first insert. Source-specific facts (pr_id) are written via the
+    separate ticket.pr_bound kind when attach_pr_to_ticket runs.
+    """
+
+    type: str
+    source: str
+    source_external_id: str
+    idempotency_key: str
+
+
+class _TicketPrBoundPayload(BaseModel):
+    """Audit payload for the ticket.pr_bound kind.
+
+    Written by attach_pr_to_ticket when it successfully back-fills pr_id.
+    """
+
     pr_id: UUID
     repo_external_id: str
 
@@ -117,87 +136,173 @@ class _TicketStatusChangedPayload(BaseModel):
     reason: str | None = None
 
 
-async def create(
+async def _insert_ticket_atomic(
     *,
-    type: str,
-    payload: dict,
-    idempotency_key: str,
     org_id: UUID,
-    title: str | None = None,
-    description: str | None = None,
-    source: str = "intake",
-    source_external_id: str | None = None,
-    plugin_id: str = "github",
-    repo_external_id: str = "",
+    type: str,
+    source: str,
+    source_external_id: str,
+    title: str,
+    description: str | None,
+    repo_external_id: str,
+    plugin_id: str,
+    idempotency_key: str,
+    payload: dict,
+    status: str,
+    conflict_target: tuple[str, ...],
     session: AsyncSession,
 ) -> tuple[UUID, bool]:
-    """Create a ticket from an intake event, or return the existing one if
-    `idempotency_key` already produced a ticket. Required `session`; the
-    caller commits. Returns `(ticket_id, created)` — `created=False` on
-    idempotent return.
+    """Race-safe ticket INSERT.
 
-    The ticket starts in status `pending`; the workflow engine moves it to
-    `running` when the first step dispatches and to `done|failed|cancelled`
-    on terminal outcome.
+    Uses INSERT … ON CONFLICT DO NOTHING on `conflict_target`. On conflict
+    (race loser), re-SELECTs by `conflict_target + org_id` to recover the
+    winner's id — never returns None. Returns `(ticket_id, created)`.
+    Caller commits; never commits here.
     """
-    if not idempotency_key:
-        raise ValueError("idempotency_key required")
-    if not type:
-        raise ValueError("type required")
-
-    existing = (
-        await session.execute(
-            select(TicketRow).where(
-                TicketRow.org_id == org_id,
-                TicketRow.idempotency_key == idempotency_key,
-            )
+    stmt = (
+        pg_insert(TicketRow)
+        .values(
+            org_id=org_id,
+            source=source,
+            source_external_id=source_external_id,
+            title=title,
+            description=description,
+            status=status,
+            plugin_id=plugin_id,
+            repo_external_id=repo_external_id,
+            pr_id=None,
+            type=type,
+            idempotency_key=idempotency_key,
+            payload=payload,
+            current_workflow_execution_id=None,
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing.id, False
+        .on_conflict_do_nothing(index_elements=list(conflict_target))
+        .returning(TicketRow.id)
+    )
+    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
+    if inserted_id is not None:
+        return inserted_id, True
 
-    row = TicketRow(
+    # Race loser: re-SELECT to recover the winner's id.
+    conditions = [TicketRow.org_id == org_id]
+    col_map = {
+        "source": TicketRow.source,
+        "source_external_id": TicketRow.source_external_id,
+        "idempotency_key": TicketRow.idempotency_key,
+    }
+    local_vals = {
+        "source": source,
+        "source_external_id": source_external_id,
+        "idempotency_key": idempotency_key,
+    }
+    for col_name in conflict_target:
+        if col_name == "org_id":
+            continue
+        col = col_map.get(col_name)
+        val = local_vals.get(col_name)
+        if col is not None and val is not None:
+            conditions.append(col == val)
+    existing_id = (await session.execute(select(TicketRow.id).where(*conditions))).scalar_one()
+    return existing_id, False
+
+
+async def create_from_pr(
+    *,
+    org_id: UUID,
+    source_external_id: str,
+    title: str,
+    description: str | None,
+    repo_external_id: str,
+    plugin_id: str,
+    idempotency_key: str,
+    payload: dict,
+    session: AsyncSession,
+) -> tuple[UUID, bool]:
+    """Race-safe ticket INSERT for a GitHub PR-opened-style event.
+
+    Establishes the `create_from_<source>` convention for intake-source
+    ticket constructors. On `created=True` writes the `ticket.created` audit
+    row and fires `notify_ticket_status_change`. On conflict (race loser)
+    returns `(winner_id, False)` — the caller should exit without doing
+    further work. Caller commits; never commits here.
+    """
+    ticket_id, created = await _insert_ticket_atomic(
         org_id=org_id,
-        source=source,
-        source_external_id=source_external_id or idempotency_key,
-        title=title or "",
+        type="github_pr",
+        source="github_pr",
+        source_external_id=source_external_id,
+        title=title,
         description=description,
-        status="pending",
-        plugin_id=plugin_id,
         repo_external_id=repo_external_id,
-        pr_id=None,
-        type=type,
+        plugin_id=plugin_id,
         idempotency_key=idempotency_key,
         payload=payload,
-        current_workflow_execution_id=None,
-    )
-    session.add(row)
-    await session.flush()
-    await audit_for_ticket(
-        row.id,
-        "ticket.created",
-        _TicketCreatedFromIntakePayload(type=type, idempotency_key=idempotency_key),
-        actor=Actor.system(),
-        org_id=org_id,
+        status="running",
+        conflict_target=("org_id", "source", "source_external_id"),
         session=session,
     )
+    if created:
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.created",
+            _TicketCreatedPayload(
+                type="github_pr",
+                source="github_pr",
+                source_external_id=source_external_id,
+                idempotency_key=idempotency_key,
+            ),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=session,
+        )
+        await notify_ticket_status_change(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            new_status="running",
+            previous_status=None,
+            session=session,
+        )
+    return ticket_id, created
+
+
+async def notify_ticket_status_change(
+    *,
+    ticket_id: UUID,
+    org_id: UUID,
+    new_status: str,
+    previous_status: str | None,
+    session: AsyncSession,
+) -> None:
+    """Single broadcast seam for TICKET_STATUS_CHANGED events.
+
+    All ticket status changes (creation at running, state transitions,
+    and workflow terminal outcomes) route through here. Looks up the title
+    internally so callers stay terse. Caller commits.
+    """
+    row = (
+        await session.execute(
+            select(TicketRow.title).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id)
+        )
+    ).first()
+    ticket_title = row[0] if row is not None else ""
+
     members = await list_active_member_ids(session, org_id)
     publish_general_after_commit(
         session,
         org_id=org_id,
         kind=GeneralEventKind.TICKET_STATUS_CHANGED,
         payload={
-            "ticket_id": str(row.id),
-            "new_status": "pending",
-            "previous_status": None,
+            "ticket_id": str(ticket_id),
+            "new_status": new_status,
+            "previous_status": previous_status,
         },
     )
     specs = build_status_change_specs(
-        ticket_id=row.id,
+        ticket_id=ticket_id,
         org_id=org_id,
-        ticket_title=row.title,
+        ticket_title=ticket_title,
         member_user_ids=members,
-        new_status="pending",
+        new_status=new_status,
     )
     if specs:
         await enqueue(
@@ -205,7 +310,6 @@ async def create(
             args={"specs": [s.to_dict() for s in specs]},
             session=session,
         )
-    return row.id, True
 
 
 async def attach_workflow_execution(
@@ -222,80 +326,40 @@ async def attach_workflow_execution(
     )
 
 
-class _TicketCreatedFromIntakePayload(BaseModel):
-    type: str
-    idempotency_key: str
-
-
-async def create_for_pr(
-    repo_external_id: str,
-    source_external_id: str,
-    title: str,
-    description: str | None,
-    pr_id: UUID,
+async def attach_pr_to_ticket(
+    ticket_id: UUID,
     *,
     org_id: UUID,
-    plugin_id: str = "github",
-) -> Ticket:
-    """Idempotent: if a ticket exists for pr_id, return it."""
-    async with db_session() as s:
-        existing = (
-            await s.execute(select(TicketRow).where(TicketRow.pr_id == pr_id, TicketRow.org_id == org_id))
-        ).scalar_one_or_none()
-        if existing is not None:
-            existing.title = title
-            existing.description = description
-            await s.commit()
-            await s.refresh(existing)
-            return Ticket.from_row(existing)
-        row = TicketRow(
-            org_id=org_id,
-            source="github_pr",
-            source_external_id=source_external_id,
-            title=title,
-            description=description,
-            status="running",
-            plugin_id=plugin_id,
-            repo_external_id=repo_external_id,
-            pr_id=pr_id,
+    pr_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Back-fill `pr_id` on a ticket and write the `ticket.pr_bound` audit row.
+
+    The `WHERE pr_id IS NULL AND org_id = :org_id` guard makes the op
+    idempotent: if a concurrent caller already set `pr_id`, this is a
+    safe no-op with no audit row written. Caller commits.
+    """
+    result = await session.execute(
+        update(TicketRow)
+        .where(
+            TicketRow.id == ticket_id,
+            TicketRow.org_id == org_id,
+            TicketRow.pr_id.is_(None),
         )
-        s.add(row)
-        await s.flush()
-        row_id = row.id
+        .values(pr_id=pr_id)
+        .returning(TicketRow.repo_external_id)
+    )
+    row = result.first()
+    if row is not None:
+        repo_external_id = row[0]
         await audit_for_ticket(
-            row_id,
-            "ticket.created",
-            _TicketCreatedPayload(pr_id=pr_id, repo_external_id=repo_external_id),
+            ticket_id,
+            "ticket.pr_bound",
+            _TicketPrBoundPayload(pr_id=pr_id, repo_external_id=repo_external_id or ""),
             actor=Actor.system(),
             org_id=org_id,
-            session=s,
+            session=session,
         )
-        members = await list_active_member_ids(s, org_id)
-        publish_general_after_commit(
-            s,
-            org_id=org_id,
-            kind=GeneralEventKind.TICKET_STATUS_CHANGED,
-            payload={
-                "ticket_id": str(row_id),
-                "new_status": "running",
-                "previous_status": None,
-            },
-        )
-        specs = build_status_change_specs(
-            ticket_id=row_id,
-            org_id=org_id,
-            ticket_title=title,
-            member_user_ids=members,
-            new_status="running",
-        )
-        if specs:
-            await enqueue(
-                fanout,
-                args={"specs": [s.to_dict() for s in specs]},
-                session=s,
-            )
-        await s.commit()
-    return await get(row_id, org_id=org_id)
 
 
 async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
@@ -455,67 +519,6 @@ async def list_tickets(
     return out
 
 
-async def upsert_ticket_for_pr(
-    *,
-    org_id: UUID,
-    source_external_id: str,
-    title: str,
-    description: str | None,
-    repo_external_id: str,
-    plugin_id: str,
-    idempotency_key: str,
-    payload: dict,
-    session: AsyncSession,
-) -> tuple[UUID | None, bool]:
-    """Race-safe ticket INSERT for a GitHub PR-opened-style event.
-
-    Uses INSERT … ON CONFLICT DO NOTHING on `(org_id, source, source_external_id)`.
-    Returns `(ticket_id, created)`.  On conflict (race loser), returns
-    `(None, False)` — the caller should exit without doing further work.
-    Caller commits; never commits here.
-    """
-    stmt = (
-        pg_insert(TicketRow)
-        .values(
-            org_id=org_id,
-            source="github_pr",
-            source_external_id=source_external_id,
-            title=title,
-            description=description,
-            status="running",
-            plugin_id=plugin_id,
-            repo_external_id=repo_external_id,
-            pr_id=None,
-            type="github_pr",
-            idempotency_key=idempotency_key,
-            payload=payload,
-            current_workflow_execution_id=None,
-        )
-        .on_conflict_do_nothing(index_elements=["org_id", "source", "source_external_id"])
-        .returning(TicketRow.id)
-    )
-    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
-    if inserted_id is None:
-        return None, False
-    return inserted_id, True
-
-
-async def attach_pr_to_ticket(
-    ticket_id: UUID,
-    *,
-    pr_id: UUID,
-    session: AsyncSession,
-) -> None:
-    """Back-fill `pr_id` on a ticket that was inserted without it.
-
-    The `WHERE pr_id IS NULL` guard makes the op idempotent: if a concurrent
-    caller already set `pr_id`, this is a safe no-op.  Caller commits.
-    """
-    await session.execute(
-        update(TicketRow).where(TicketRow.id == ticket_id, TicketRow.pr_id.is_(None)).values(pr_id=pr_id)
-    )
-
-
 async def set_workflow_execution(
     ticket_id: UUID,
     *,
@@ -569,30 +572,13 @@ async def _apply_transition(
         org_id=org_id,
         session=s,
     )
-    members = await list_active_member_ids(s, org_id)
-    publish_general_after_commit(
-        s,
-        org_id=org_id,
-        kind=GeneralEventKind.TICKET_STATUS_CHANGED,
-        payload={
-            "ticket_id": str(row.id),
-            "new_status": new_status,
-            "previous_status": prev,
-        },
-    )
-    specs = build_status_change_specs(
+    await notify_ticket_status_change(
         ticket_id=row.id,
         org_id=org_id,
-        ticket_title=row.title,
-        member_user_ids=members,
         new_status=new_status,
+        previous_status=prev,
+        session=s,
     )
-    if specs:
-        await enqueue(
-            fanout,
-            args={"specs": [s.to_dict() for s in specs]},
-            session=s,
-        )
 
 
 async def _transition(
