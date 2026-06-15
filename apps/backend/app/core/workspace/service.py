@@ -512,11 +512,16 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
         return
 
     async with get_session() as s:
-        # Increment atomically at the SQL layer so the cap holds under
-        # overlapping reaper sweeps; RETURNING captures the new value.
+        # Narrow by status='expired' so only one concurrent reaper cycle can
+        # win this transition. A None result means another caller already moved
+        # the row to DESTROYING; skip audit + destroy to avoid double-destroy.
+        # RETURNING captures the incremented value for the failure-cap check.
         result = await s.execute(
             update(WorkspaceRow)
-            .where(WorkspaceRow.id == row.id)
+            .where(
+                WorkspaceRow.id == row.id,
+                WorkspaceRow.status == WorkspaceStatus.EXPIRED.value,
+            )
             .values(
                 status=WorkspaceStatus.DESTROYING.value,
                 destroy_attempts=WorkspaceRow.destroy_attempts + 1,
@@ -524,7 +529,16 @@ async def _attempt_destroy(row: WorkspaceRow) -> None:
             )
             .returning(WorkspaceRow.destroy_attempts)
         )
-        new_attempts: int = result.scalar_one()
+        new_attempts_maybe: int | None = result.scalar_one_or_none()
+        if new_attempts_maybe is None:
+            # Another reaper cycle won the EXPIRED→DESTROYING transition for this row.
+            # Skip: no audit row, no provider.destroy() — that caller owns this cycle.
+            log.debug(
+                "workspace.destroy_skip_already_transitioned",
+                workspace_id=str(row.id),
+            )
+            return
+        new_attempts: int = new_attempts_maybe
         await _audit_transition(
             s,
             workspace_id=row.id,
