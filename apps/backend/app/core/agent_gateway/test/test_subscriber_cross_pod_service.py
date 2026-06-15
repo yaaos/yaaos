@@ -46,7 +46,7 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
     await reg_pod_a.register_sender(agent_id, _fake_sender)
 
     # Pod B: an SSE handler tracks a new UI subscriber for the same agent.
-    await reg_pod_b.track(
+    conn = await reg_pod_b.track(
         workflow_execution_id=workflow_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
@@ -71,7 +71,7 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
     reg_pod_a.unregister_sender(agent_id)
     await reg_pod_a.register_sender(agent_id, _fake_sender_2)
 
-    await reg_pod_b.untrack(workflow_execution_id=workflow_id)
+    await reg_pod_b.untrack(workflow_execution_id=workflow_id, conn_id=conn)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
 
     unsubs = [m for m in sent if m.get("type") == "unsubscribe"]
@@ -105,7 +105,7 @@ async def test_cross_pod_track_no_leakage_between_agents(redis_or_skip) -> None:
 
     await reg.register_sender(agent_a, _sender_a)
 
-    await reg.track(
+    conn_b = await reg.track(
         workflow_execution_id=wfx_b,
         workspace_id=ws_b,
         agent_id=agent_b,
@@ -118,4 +118,4 @@ async def test_cross_pod_track_no_leakage_between_agents(redis_or_skip) -> None:
     assert sent_a == [], f"agent_a's sender received unexpected messages: {sent_a}"
 
     # Cleanup.
-    await reg.untrack(workflow_execution_id=wfx_b)
+    await reg.untrack(workflow_execution_id=wfx_b, conn_id=conn_b)

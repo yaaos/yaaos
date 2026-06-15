@@ -122,9 +122,11 @@ class SubscriberRegistry:
         self._senders: dict[UUID, Sender] = {}
         # agent_id → asyncio.Task running the Redis subscribe consumer loop.
         self._subscribe_tasks: dict[UUID, asyncio.Task[None]] = {}
-        # wfx_id → ZSET member string (so untrack can remove the right member).
-        # Per-instance so each "pod" removes only its own member.
-        self._connections: dict[UUID, str] = {}
+        # wfx_id → set of ZSET members tracked by THIS pod (per-connection).
+        # Same pod may hold multiple concurrent SSE subscribers to the same wfx_id;
+        # each call to track() gets a unique conn_id so multiple subscriptions are
+        # counted independently (matches the agent-side cardinality contract).
+        self._connections: dict[UUID, set[str]] = {}
         # agent_id → set of wfx_ids currently streaming (in-memory tracking
         # for the reconciler to know what the agent is currently sending).
         self._streaming: dict[UUID, set[UUID]] = {}
@@ -299,8 +301,13 @@ class SubscriberRegistry:
         workflow_execution_id: UUID,
         workspace_id: UUID,
         agent_id: UUID,
-    ) -> None:
+    ) -> str:
         """Record one UI subscriber for `workflow_execution_id`.
+
+        Returns the `conn_id` minted for this subscription. The caller MUST
+        pass the same `conn_id` to `untrack()` when the subscription ends so
+        the corresponding ZSET member is removed and reference counts stay
+        accurate when multiple subscribers share a wfx_id on the same pod.
 
         Writes to Redis:
         - ZADD `workflow_subscribers:{wfx_id}` member=`{pod_id}:{conn_id}` score=now
@@ -308,15 +315,12 @@ class SubscriberRegistry:
         - SADD `agent_routes:{agent_id}` {wfx_id}
 
         Then PUBLISH `agent_ws_control:{agent_id}` with a subscribe envelope.
-        Each call from this pod for the same wfx_id uses a unique connection_id
-        so multiple concurrent SSE connections to the same workflow are each
-        counted independently.
         """
         conn_id = str(uuid.uuid4())
         member = f"{self._pod_id}:{conn_id}"
 
         async with self._lock:
-            self._connections[workflow_execution_id] = member
+            self._connections.setdefault(workflow_execution_id, set()).add(member)
 
         score = time.time()
         await zset_add_member(_wfx_subscribers_key(workflow_execution_id), member, score)
@@ -344,24 +348,36 @@ class SubscriberRegistry:
                 err=str(exc),
             )
 
-    async def untrack(self, *, workflow_execution_id: UUID) -> None:
-        """Remove one UI subscriber for `workflow_execution_id`.
+        return conn_id
 
-        Removes this pod's member from the ZSET. If ZCARD drops to 0:
+    async def untrack(
+        self,
+        *,
+        workflow_execution_id: UUID,
+        conn_id: str,
+    ) -> None:
+        """Remove ONE UI subscriber for `workflow_execution_id`, identified by
+        the `conn_id` minted at track() time.
+
+        Removes the specific member for (pod_id, conn_id) from the ZSET. If
+        ZCARD drops to 0:
         - reads `workflow_route:{wfx_id}` to resolve the agent_id
         - publishes unsubscribe envelope on `agent_ws_control:{agent_id}`
         - DEL `workflow_route:{wfx_id}`
         - SREM `agent_routes:{agent_id} {wfx_id}`
 
-        No-op if this pod has no member registered for the wfx_id.
+        No-op if this pod has no member registered for this (wfx_id, conn_id).
         """
+        target_member = f"{self._pod_id}:{conn_id}"
         async with self._lock:
-            member = self._connections.pop(workflow_execution_id, None)
+            members = self._connections.get(workflow_execution_id)
+            if members is None or target_member not in members:
+                return
+            members.discard(target_member)
+            if not members:
+                del self._connections[workflow_execution_id]
 
-        if member is None:
-            return
-
-        await zset_remove_member(_wfx_subscribers_key(workflow_execution_id), member)
+        await zset_remove_member(_wfx_subscribers_key(workflow_execution_id), target_member)
         card = await zset_card(_wfx_subscribers_key(workflow_execution_id))
 
         if card == 0:
