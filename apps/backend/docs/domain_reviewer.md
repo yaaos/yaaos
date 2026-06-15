@@ -42,13 +42,13 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 - **Skill owns all filtering.** No admission pipeline, no per-severity threshold, no per-PR nit cap, no fingerprint dedup. The skill decides what to surface; yaaos validates the schema and posts the result.
 - **Schema gate is authoritative + runtime.** Out-of-range severity/confidence fails the run cleanly — no findings persisted, no findings posted, workflow ends in `failed` with `failure_reason="schema_invalid"`.
-- **Advisory lock first.** `lock.acquire_pr_lock` issues `pg_advisory_xact_lock(hashtext('pr:<uuid>')::bigint)` inside the transaction before any reviewer write. Two concurrent webhooks for the same PR serialize; lock releases on commit/rollback. Read-only paths do NOT take the lock.
+- **Advisory lock first.** `lock.acquire_pr_lock` issues `pg_advisory_xact_lock(hashtext('pr:<uuid>')::bigint)` inside the transaction before any reviewer write. Two concurrent webhooks for the same PR serialize; lock releases on commit/rollback. Read-only paths do NOT take the lock. The lock serializes both per-PR sequence-number monotonicity AND the at-most-one-in-flight-review invariant: `_create_incremental_review` re-checks the in-flight predicate inside the lock, so the loser of a two-push race stamps `pending_replay=True` on the winner's row and returns `skipped:in_flight` rather than launching a second review.
 - **`(pr_id, finding_display_id)` is unique.** Enforced at the table level; the assignment in `publish_findings` reads `max+1` and assigns inside the caller's transaction.
 - **`dispatch_events` and `dispatch_audits` run BEFORE `session.commit()`.** Domain events stash for post-commit SPA fan-out; audit rows are written in the same transaction as the state change. Rolled-back transactions silently discard both stashes — no phantom SPA events, no orphan audits.
 
 ## Data owned
 
-- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`. `run_id` (nullable FK → `coding_agent_runs.id`) links the review to the run that produced it; NULL when no run row exists (e.g. zero-findings fast-path or pre-run-tracking rows).
+- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`, `scope_prev_sha`. Run config: `model`, `effort`. Lifecycle state: `current_step`, `last_heartbeat_at`, `completed_at`, `skip_reason`, `error_message`. `pending_replay` is write-only — stamped True when a push arrives while a review is in-flight on the same PR; no production reader (replay-on-completion is separate work). `run_id` (nullable FK → `coding_agent_runs.id`) links the review to the run that produced it; NULL when no run row exists (e.g. zero-findings fast-path or pre-run-tracking rows).
 - `findings` — canonical schema: `severity, confidence, category, rationale, rule_violated, rule_source, suggested_fix, file (nullable), line (nullable), review_id (FK → reviews.id), finding_display_id`. Unique `(pr_id, finding_display_id)`.
 
 ## Vocabulary
@@ -86,4 +86,5 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
   - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema.
   - `test_pr_review_v1_e2e_service.py` — full pipeline (stub VCS + coding-agent + workspace).
   - `test_findings_summary_service.py` — rollup written on review end.
+  - `test_start_incremental_review_under_lock_service.py` — two concurrent pushes to the same PR race; exactly one ReviewRow + one `engine.start`, loser returns `skipped:in_flight`, surviving row carries `pending_replay=True`.
   - `test_secrets_scan_service.py`, `test_cancel_dual_write_service.py`, `test_reviewer_activity_publish_service.py`.

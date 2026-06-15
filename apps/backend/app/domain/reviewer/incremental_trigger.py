@@ -131,12 +131,14 @@ async def start_incremental_review(
         return f"debounced:{int(decision.seconds_remaining)}"
 
     assert isinstance(decision, Run)
-    review_id = await _create_incremental_review(
+    review_id, is_new = await _create_incremental_review(
         pr_id=pr_id,
         org_id=org_id,
         prev_sha=decision.scope.base_sha,
         head_sha=decision.scope.head_sha,
     )
+    if not is_new:
+        return "skipped:in_flight"
     ticket = await tickets.get_by_pr(pr_id, org_id=org_id)
     if ticket is None:
         log.warning("incremental.no_ticket", pr_id=str(pr_id))
@@ -176,12 +178,41 @@ async def _debounce_then_retry(
     )
 
 
-async def _create_incremental_review(*, pr_id: UUID, org_id: UUID, prev_sha: str, head_sha: str) -> UUID:
-    """Insert the per-PR-history `ReviewRow` and return its id."""
+async def _create_incremental_review(
+    *, pr_id: UUID, org_id: UUID, prev_sha: str, head_sha: str
+) -> tuple[UUID, bool]:
+    """Insert the per-PR-history `ReviewRow` and return `(review_id, is_new)`.
+
+    Runs inside the per-PR advisory lock. Re-checks the in-flight predicate
+    inside the lock — the authoritative guard against two concurrent pushes
+    both passing the outside-lock fast-path check and racing to insert.
+
+    Returns `(existing_id, False)` when a queued/running review is found
+    inside the lock (stamps `pending_replay=True` on that row). Returns
+    `(new_id, True)` when no in-flight review exists and the new row is
+    inserted. The advisory lock serializes both sequence-number monotonicity
+    and the at-most-one-in-flight-review-per-PR invariant.
+    """
     from sqlalchemy import func as sa_func  # noqa: PLC0415
 
     async with db_session() as s:
         await acquire_pr_lock(s, pr_id)
+
+        # Authoritative in-flight check inside the lock — the outside-lock
+        # read is the fast path; this is the safety net for the race case.
+        existing = (
+            await s.execute(
+                select(ReviewRow.id)
+                .where(ReviewRow.pr_id == pr_id, ReviewRow.status.in_(["queued", "running"]))
+                .limit(1)
+            )
+        ).first()
+        if existing is not None:
+            existing_id: UUID = existing[0]
+            await s.execute(update(ReviewRow).where(ReviewRow.id == existing_id).values(pending_replay=True))
+            await s.commit()
+            return existing_id, False
+
         max_seq = (
             await s.execute(
                 select(sa_func.coalesce(sa_func.max(ReviewRow.sequence_number), 0)).where(
@@ -206,7 +237,7 @@ async def _create_incremental_review(*, pr_id: UUID, org_id: UUID, prev_sha: str
         await s.flush()
         new_id = row.id
         await s.commit()
-    return new_id
+    return new_id, True
 
 
 async def set_review_step(review_id: UUID, step: str) -> None:
