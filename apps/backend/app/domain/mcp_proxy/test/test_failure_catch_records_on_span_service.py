@@ -1,13 +1,9 @@
 """Service test: `_sweep_once` propagates exceptions so the `@scheduled` task
 retry mechanism sees them.
 
-Previously this module had a forever-loop (`run_sweep_loop`) with inline
-try/except + span recording. That loop is gone — sweep runs as a `@scheduled`
-worker task. The task retry + error-recording is the taskiq responsibility;
-`_sweep_once` deliberately lets exceptions propagate rather than swallowing them.
-
-This test verifies the propagation contract (body raises on failure) rather
-than the old loop's catch-and-continue contract.
+The sweep runs as a `@scheduled` worker task; retry and error-recording are the
+taskiq responsibility. `_sweep_once` deliberately lets exceptions propagate
+rather than swallowing them, so this test asserts the body raises on failure.
 """
 
 from __future__ import annotations
