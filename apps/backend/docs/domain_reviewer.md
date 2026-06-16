@@ -26,7 +26,7 @@ For the top-level review arc see [`docs/system-architecture.md`](../../../docs/s
 
 ## `publish_findings` — the canonical entry point
 
-`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], run_id: UUID | None = None, session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). `run_id` is optional — `PostFindings.execute` no longer passes it (the link from a review to its activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`).
+`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). The link from a review to its coding-agent activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
 
 1. Open a `Review` row for this run.
 2. For each `ReportedFinding`: validate `severity`/`confidence` raw strings against the `Severity`/`Confidence` `Literal` aliases — out-of-range raises (caught by `PostFindings` as the runtime gate above).
@@ -50,7 +50,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Data owned
 
-- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`, `scope_prev_sha`. Run config: `model`, `effort`. Lifecycle state: `current_step`, `last_heartbeat_at`, `completed_at`, `skip_reason`, `error_message`. `pending_replay` is write-only — stamped True when a push arrives while a review is in-flight on the same PR; no production reader (replay-on-completion is separate work). `run_id` (nullable FK → `coding_agent_runs.id`) — write-only; zero production readers. The link from a review to its run activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
+- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`, `scope_prev_sha`. Run config: `model`, `effort`. Lifecycle state: `current_step`, `last_heartbeat_at`, `completed_at`, `skip_reason`, `error_message`. `pending_replay` is write-only — stamped True when a push arrives while a review is in-flight on the same PR; no production reader (replay-on-completion is separate work). The link from a review to its coding-agent activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
 - `findings` — canonical schema: `severity, confidence, category, rationale, rule_violated, rule_source, suggested_fix, file (nullable), line (nullable), review_id (FK → reviews.id), finding_display_id`. Unique `(pr_id, finding_display_id)`.
 
 ## Vocabulary
@@ -102,6 +102,7 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
   - `test_start_hook_service.py` — bootstrap hook flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
   - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
+  - `test_publish_findings_without_run_id_service.py` — `publish_findings` with the new signature (no `run_id` param) inserts a Review row; confirms `reviews.run_id` column is absent from the schema.
   - `test_parse_review_output_owns_service.py` — unit tests for `domain/reviewer.parse_review_output`: valid stdout → `list[ReportedFinding]`, null-anchor accepted, no-result-event raises, empty stdout raises, invalid JSON raises, wrong schema raises, last result event wins.
   - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema (via `inputs["output"]` key).
   - `test_post_findings_reads_output_service.py` — `PostFindings` reads `inputs["output"]` (not `stdout`); empty/missing key → zero findings; valid stdout → finding persists without `run_id`.

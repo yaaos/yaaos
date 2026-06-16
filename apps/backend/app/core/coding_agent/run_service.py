@@ -124,8 +124,8 @@ async def finalize_run(
         .values(
             status=status,
             exit_code=exit_code,
-            tokens_in=usage.tokens_in,
-            tokens_out=usage.tokens_out,
+            tokens_in=usage.tokens_in if usage.tokens_in is not None else 0,
+            tokens_out=usage.tokens_out if usage.tokens_out is not None else 0,
             duration_ms=effective_duration_ms,
             completed_at=now,
         )
@@ -159,11 +159,7 @@ async def get_run_id_for_command(
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return the run id for an `agent_command_id`, or None if absent.
-
-    Used by `PostFindings.execute` to populate `reviews.run_id` when
-    linking the review to its run.
-    """
+    """Return the run id for an `agent_command_id`, or None if absent."""
     row = (
         await session.execute(
             select(CodingAgentRunRow.id).where(CodingAgentRunRow.agent_command_id == agent_command_id)
@@ -213,11 +209,7 @@ async def get_run_id_for_workflow_step(
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return the run id for a given `(workflow_execution_id, step_id)`, or None.
-
-    Used by `PostFindings.execute` to look up the run created by the
-    preceding `CodeReview` step so `reviews.run_id` can be populated.
-    """
+    """Return the run id for a given `(workflow_execution_id, step_id)`, or None."""
     row = (
         await session.execute(
             select(CodingAgentRunRow.id).where(

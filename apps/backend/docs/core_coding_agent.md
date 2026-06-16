@@ -81,7 +81,7 @@ Each IO dispatch function in `service.py` wraps its plugin call in a `coding_age
 | `model` | Model identifier from the exec spec (nullable). |
 | `effort` | Effort level from the exec spec (nullable). |
 | `status` | `running` → `success` or `failure`. |
-| `tokens_in` / `tokens_out` | Populated from `Usage` parsed off the terminal stream event; NULL when the CLI omitted them. |
+| `tokens_in` / `tokens_out` | `NOT NULL DEFAULT 0`. Written by `finalize_run` from `Usage` parsed off the terminal stream event; 0 when the CLI omitted them. |
 | `duration_ms` | Wall-clock duration (ms) computed from `started_at → completed_at`. |
 | `exit_code` | Process exit code from the agent event outputs (nullable). |
 | `started_at` | Set at `create_run`. |
@@ -127,7 +127,7 @@ The row's SQLAlchemy mapped class (`CodingAgentActivityRow`) lives on the shared
 - `app/core/coding_agent/test/test_health_check_span_service.py` — service test: a plugin `health_check` that raises produces a `coding_agent.{plugin_id}.health_check` span with `StatusCode.ERROR` and an `exception` event, while `health_check_all` still returns an unhealthy `HealthStatus` (no re-raise).
 - `app/core/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
 - `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service test: `dispatch_invocation` returns a UUIDv7, inserts a `coding_agent_runs` row (status=running, correct plugin_id and step_id), and is resolvable via `get_run_id_for_command`. Each call mints a distinct command_id.
-- `app/core/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + `duration_ms` via explicit kwarg land on the row; `plugin_id` persists), activity blob persists to `coding_agent_activity` (events are opaque dicts), `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
+- `app/core/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens default to 0 before finalize; explicit token kwarg lands on the row; `plugin_id` persists), activity blob persists to `coding_agent_activity` (events are opaque dicts), `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `parse_usage` (extracts tokens, tolerates missing usage block, empty stream; no `duration_ms` on `Usage`) and `render_activity` (monotonic seq across the full stream, null-render filtering, empty-stream → empty log; events are opaque dicts).
 - `app/plugins/claude_code/test/test_build_invocation_method.py` — unit tests for `ClaudeCodePlugin.build_invocation`: returns `InvokeCodingAgent`, argv non-empty (starts with `claude`), model/effort propagated, wallclock propagated, `env` carries API key when supplied, unknown skill raises `CodingAgentError`, missing context key raises `CodingAgentError`.
 - `app/plugins/claude_code/test/test_parse_result_method.py` — unit tests for `ClaudeCodePlugin.parse_result`: returns `RunResult`, output = stdout, exit_code propagated, error_message always None, usage tokens parsed from stream, graceful on missing/malformed stdout, `duration_ms` is on `RunResult` (not on `Usage`).

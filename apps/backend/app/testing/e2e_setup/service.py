@@ -109,25 +109,75 @@ async def seed_github_install(
 
 
 async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: str) -> None:
-    """Write `skill_name` for a connected repo via the public repos service.
+    """Write `skill_name` for a connected repo via the public PUT route.
+
+    Calls ``PUT /api/claude_code/repos/{repo_external_id:path}`` through an
+    in-process ASGI transport so the seed exercises the same handler code path
+    as the settings UI. Auth is bypassed via ``dependency_overrides`` — the
+    org_id is resolved from ``org_slug`` and injected directly, since there is
+    no real session in a seed context.
 
     Requires the org to exist and have a Claude Code install (seeded by
     ``seed_github_install`` first). Used by e2e specs that trigger reviews
     so ``build_review_invocation`` can resolve a non-null skill name.
-
-    Deliberate side-effect: calls ``claude_code.repos.set_repo_skill`` —
-    the same path the PUT route exercises — so the seed is a smoke test of
-    the public write API.
     """
+    import json  # noqa: PLC0415
+    from urllib.parse import quote  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+    from fastapi import FastAPI  # noqa: PLC0415
+    from fastapi.routing import APIRoute  # noqa: PLC0415
+
+    from app.core.auth import org_id_var, route_security_resolved  # noqa: PLC0415
+    from app.core.webserver import get_specs, mount_specs  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
-    from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415
 
     org = await get_org_by_slug(org_slug)
     if org is None:
         raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
-    async with db_session() as s:
-        await set_repo_skill(org.id, repo_external_id, skill_name, session=s)
-        await s.commit()
+
+    resolved_org_id = org.id
+
+    # Locate the PUT route's auth dependency so we can override it precisely.
+    # The `require(Action.CODING_AGENT_WRITE)` closure is created once at module
+    # load in web.py; extracting it here keeps the override key in sync if the
+    # route's action ever changes.
+    _put_route_dep: object = None
+    _cc_router = get_specs()["claude_code"].router
+    for route in _cc_router.routes:
+        if (
+            isinstance(route, APIRoute)
+            and "PUT" in (route.methods or set())
+            and "{repo_external_id" in route.path
+        ):
+            if route.dependencies:
+                _put_route_dep = route.dependencies[0].dependency
+            break
+
+    def _seed_auth_override() -> None:
+        org_id_var.set(resolved_org_id)
+        route_security_resolved.set("org_scoped")
+
+    sub_app = FastAPI()
+    mount_specs(sub_app, only={"claude_code"})
+    if _put_route_dep is not None:
+        sub_app.dependency_overrides[_put_route_dep] = _seed_auth_override
+
+    encoded = quote(repo_external_id, safe="")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=sub_app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.put(
+            f"/api/claude_code/repos/{encoded}",
+            content=json.dumps({"skill_name": skill_name}),
+            headers={"content-type": "application/json"},
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"seed_repo_skill: PUT /api/claude_code/repos/{repo_external_id}"
+            f" returned {resp.status_code}: {resp.text}"
+        )
 
 
 async def seed_lesson(*, repo_external_id: str, title: str, body: str) -> UUID:
