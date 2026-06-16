@@ -3077,29 +3077,6 @@
         ]
       }
     },
-    "/api/claude_code/health": {
-      "get": {
-        "operationId": "health_api_claude_code_health_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Api Claude Code Health Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Health",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
     "/api/claude_code/repos": {
       "get": {
         "description": "List repos connected to the org, joined with each repo's stored skill name.\n\nJoins the live GitHub repo list (from the VCS install) with stored\n`claude_code_repos` rows. Repos present in GitHub but absent from the DB\nare included with `skill_name=null`. Repos in the DB but absent from the\nGitHub list are omitted — the admin must reconnect via GitHub App settings.",

@@ -16,7 +16,7 @@
 | **ReportedFinding** | Raw skill output before schema validation — same fields as `Finding` but raw strings (no enum validation). Lives in `domain/reviewer`. `domain/reviewer.publish_findings` validates and converts to `Finding`. |
 | **Lesson** | Repo-scoped institutional memory: `{title, body, source_pr_url}`, 1000-char body cap. Surfaces in agent prompts. Owned by `domain/lessons`. |
 | **Plugin** | Vendor-specific implementation of a Protocol in `core/`. Three Protocols: `VCSPlugin` (`core/vcs`, github), `CodingAgentPlugin` (`core/coding_agent`, claude_code), `WorkspaceProvider` (`core/workspace`). Vendor SDKs only in `apps/backend/app/plugins/`. |
-| **Verdict** | Terminal review state: `APPROVED / CHANGES_REQUESTED / COMMENT`. Decided by the CLI; returned in `ReviewResult.state`. |
+| **Verdict** | Terminal review state: `APPROVED / CHANGES_REQUESTED / COMMENT`. Decided by the CLI; returned in the agent's stdout JSON. |
 | **Skip reason** | Why a job didn't run: `fork`, `bot_author`, `trivial_diff`, `too_large`, `secrets_detected`, `ui_cancel`, `superseded`. |
 | **Audit entry** | One append-only row in `audit_log`. Kind: `<entity>.<verb_past>`. Payload: Pydantic model owned by the writing module. |
 | **Actor** | Who initiated an action — `{kind: "github_user" \| "agent" \| "system" \| "user" \| "workspace" \| "sso", login?, agent_id?, user_id?, workspace_id?}`. Required on every audit entry. Defined in `core/audit_log`. |

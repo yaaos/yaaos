@@ -1,6 +1,6 @@
 """HTTP routes owned by the claude_code plugin.
 
-Plugin-owned URL namespace: credentials + health under `/api/claude_code/...`.
+Plugin-owned URL namespace: settings under `/api/claude_code/...`.
 """
 
 from __future__ import annotations
@@ -10,22 +10,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import Action, public_route
+from app.core.auth import Action
 from app.core.database import session as db_session
 from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
-from app.plugins.claude_code.service import get_plugin
 
 DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-# Default-deny: each route declares either `public_route` (unscoped endpoints) or `require(action)` (settings UI endpoints).
+# Default-deny: each route declares `require(action)` (settings UI endpoints).
 router = APIRouter()
-
-
-@router.get("/health", dependencies=[Depends(public_route)])
-async def health() -> dict[str, object]:
-    h = await get_plugin().health_check()
-    return {"healthy": h.healthy, "message": h.message, "checked_at": h.checked_at}
 
 
 @router.get("/defaults", dependencies=[Depends(require(Action.CODING_AGENT_READ))])

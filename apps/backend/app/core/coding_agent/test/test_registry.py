@@ -1,56 +1,41 @@
-"""Registry + dispatch tests for `core/coding_agent`."""
+"""Registry tests for `core/coding_agent`."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
 from app.core.coding_agent import (
+    ActivityLog,
     CodingAgentRegistry,
-    HealthStatus,
-    InvocationStatus,
-    InvocationTelemetry,
-    OnActivity,
+    Invocation,
+    InvokeCodingAgent,
     PluginNotFoundError,
-    ReviewResult,
-    ValidationResult,
+    RunResult,
+    Usage,
     bind_coding_agent_registry,
     get_plugin,
-    health_check_all,
-    list_registered_plugins,
     register_plugin,
-    registered_plugin_ids,
-    review,
-    validate_config,
 )
-from app.domain.reviewer import ReviewContext
+from app.core.coding_agent.service import current_coding_agent_registry
 
 
 class _StubPlugin:
     plugin_id = "stub"
 
-    async def review(
-        self,
-        workspace: Any,
-        context: ReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> ReviewResult:
-        del workspace, context, on_activity
-        return ReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=[],
-            state="APPROVED",
-            summary_body="reviewed",
-            telemetry=InvocationTelemetry(tokens_in=1, tokens_out=2, latency_ms=5),
+    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+        return InvokeCodingAgent(
+            argv=["claude"], env={}, stdin=None, wallclock_seconds=invocation.wallclock_seconds
         )
 
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        return ValidationResult(valid=True, errors=[])
-
-    async def health_check(self) -> HealthStatus:
-        return HealthStatus(healthy=True, message="ok", checked_at=datetime.now(UTC))
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        return RunResult(
+            output="",
+            usage=Usage(),
+            activity=ActivityLog(),
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +50,6 @@ def test_register_and_get_plugin() -> None:
     plugin = _StubPlugin()
     register_plugin(plugin)
     assert get_plugin("stub") is plugin
-    assert "stub" in registered_plugin_ids()
 
 
 def test_register_duplicate_raises() -> None:
@@ -79,75 +63,39 @@ def test_get_unknown_plugin_raises() -> None:
         get_plugin("nope")
 
 
-@pytest.mark.asyncio
-async def test_review_dispatch() -> None:
-    from uuid import UUID as _UUID  # noqa: PLC0415
-
-    register_plugin(_StubPlugin())
-
-    ctx = ReviewContext(
-        org_id=_UUID(int=1),
-        repo_external_id="acme/web",
-        pr_external_id="acme/web#1",
-        head_sha="h",
-        base_sha="b",
-    )
-    result = await review("stub", workspace=None, context=ctx)  # type: ignore[arg-type]
-    assert result.status == InvocationStatus.SUCCESS
-    assert result.state == "APPROVED"
-
-
-@pytest.mark.asyncio
-async def test_validate_config_dispatch() -> None:
-    register_plugin(_StubPlugin())
-    res = await validate_config("stub", {})
-    assert res.valid is True
-
-
-@pytest.mark.asyncio
-async def test_health_check_all_handles_plugin_exception() -> None:
-    class _Broken:
-        plugin_id = "broken"
-
-        async def review(self, *a, **kw):
-            raise NotImplementedError
-
-        async def validate_config(self, *a, **kw):
-            return ValidationResult(valid=True, errors=[])
-
-        async def health_check(self) -> HealthStatus:
-            raise RuntimeError("boom")
-
-    register_plugin(_Broken())
-    out = await health_check_all()
-    assert out["broken"].healthy is False
-    assert "boom" in out["broken"].message
-
-
 def test_register_plugin_adds_and_is_retrievable() -> None:
     plugin = _StubPlugin()
     register_plugin(plugin)
     assert get_plugin("stub") is plugin
-    assert "stub" in registered_plugin_ids()
 
 
 def test_list_registered_plugins_returns_insertion_order() -> None:
     class _A:
         plugin_id = "aaa"
 
+        def build_invocation(self, inv: Invocation) -> InvokeCodingAgent:
+            return InvokeCodingAgent(argv=[], env={}, wallclock_seconds=1)
+
+        def parse_result(self, p: Mapping[str, Any]) -> RunResult:
+            return RunResult(output="", usage=Usage(), activity=ActivityLog())
+
     class _B:
         plugin_id = "bbb"
 
+        def build_invocation(self, inv: Invocation) -> InvokeCodingAgent:
+            return InvokeCodingAgent(argv=[], env={}, wallclock_seconds=1)
+
+        def parse_result(self, p: Mapping[str, Any]) -> RunResult:
+            return RunResult(output="", usage=Usage(), activity=ActivityLog())
+
     register_plugin(_A())
     register_plugin(_B())
-    result = list_registered_plugins()
+    result = current_coding_agent_registry().list()
     assert [p.plugin_id for p in result] == ["aaa", "bbb"]
 
 
 def test_registry_items_returns_tuple_of_pairs() -> None:
     """items() returns a tuple of (plugin_id, plugin) pairs matching registered entries."""
-    from app.core.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
-
     plugin = _StubPlugin()
     register_plugin(plugin)
     result = current_coding_agent_registry().items()
@@ -160,8 +108,6 @@ def test_registry_items_returns_tuple_of_pairs() -> None:
 
 def test_registry_items_is_immutable_snapshot() -> None:
     """Mutating the tuple returned by items() does not affect the registry."""
-    from app.core.coding_agent.service import current_coding_agent_registry  # noqa: PLC0415
-
     register_plugin(_StubPlugin())
     reg = current_coding_agent_registry()
     snapshot = reg.items()

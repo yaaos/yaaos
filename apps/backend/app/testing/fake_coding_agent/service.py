@@ -10,158 +10,36 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
 
 from app.core.coding_agent import (
     ActivityLog,
-    AnswerQuestionContext,
-    AnswerQuestionResult,
-    HealthStatus,
-    IncrementalReviewContext,
-    IncrementalReviewResult,
-    InvocationStatus,
-    InvocationTelemetry,
+    Invocation,
     InvokeCodingAgent,
-    OnActivity,
-    ReviewResult,
     RunResult,
-    StaleCheckContext,
-    StaleCheckResult,
     Usage,
-    ValidationResult,
-    VerifyFixContext,
-    VerifyFixResult,
 )
-from app.core.coding_agent import Invocation as _NewInvocation
-from app.core.workspace import Workspace
-from app.domain.reviewer import ReportedFinding, ReviewContext
 
-_TELEMETRY = InvocationTelemetry(tokens_in=0, tokens_out=0, latency_ms=0)
+_TOKENS_IN = 0
+_TOKENS_OUT = 0
 
 
 class FakeCodingAgentPlugin:
-    """Minimal `CodingAgentPlugin` impl. Tests can override the canned
-    returns by mutating the public attributes (`review_findings`,
-    `verify_fix_still_present`, etc.) on the registered instance."""
+    """Minimal `CodingAgentPlugin` impl satisfying the two-method Protocol.
+
+    Tests can override the canned returns by mutating the public attributes
+    on the registered instance.
+    """
 
     def __init__(self, plugin_id: str = "claude_code") -> None:
         self.plugin_id = plugin_id
         # Overridable per-instance return values.
-        self.review_findings: list[ReportedFinding] = []
-        self.incremental_findings: list[ReportedFinding] = []
-        self.verify_fix_still_present: bool = False
-        self.verify_fix_confidence: float = 0.95
-        self.stale_still_applies: bool = True
-        self.stale_confidence: float = 0.95
-        self.answer_text: str = "fake answer"
-        # ActivityEvents to emit on each invocation. Tests that want to
-        # exercise the activity-stream fan-out path set this attribute,
-        # and every coding-agent method invokes `on_activity` for each
-        # event in turn before returning the result.
-        self.activity_events: list = []
-        # Captures of last calls for assertions.
-        self.last_review_context: ReviewContext | None = None
-        self.last_verify_fix_context: VerifyFixContext | None = None
-        self.last_stale_context: StaleCheckContext | None = None
-        self.last_answer_context: AnswerQuestionContext | None = None
+        self.build_invocation_result: InvokeCodingAgent | None = None
 
-    async def _emit_activity(self, on_activity):  # type: ignore[no-untyped-def]
-        if on_activity is None:
-            return
-        for event in self.activity_events:
-            await on_activity(event)
-
-    def install_url(self, org_id: UUID) -> str | None:
-        del org_id
-        return None
-
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        return dict(settings)
-
-    async def review(
-        self,
-        workspace: Workspace,
-        context: ReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> ReviewResult:
-        del workspace
-        self.last_review_context = context
-        await self._emit_activity(on_activity)
-        return ReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=list(self.review_findings),
-            state="COMMENT",
-            summary_body="fake review",
-            telemetry=_TELEMETRY,
-        )
-
-    async def incremental_review(
-        self,
-        workspace: Workspace,
-        context: IncrementalReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> IncrementalReviewResult:
-        del workspace, context
-        await self._emit_activity(on_activity)
-        return IncrementalReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=list(self.incremental_findings),
-            telemetry=_TELEMETRY,
-        )
-
-    async def verify_fix(
-        self,
-        workspace: Workspace,
-        context: VerifyFixContext,
-        on_activity: OnActivity | None = None,
-    ) -> VerifyFixResult:
-        del workspace
-        self.last_verify_fix_context = context
-        await self._emit_activity(on_activity)
-        return VerifyFixResult(
-            status=InvocationStatus.SUCCESS,
-            still_present=self.verify_fix_still_present,
-            confidence=self.verify_fix_confidence,
-            reasoning="fake verdict",
-            telemetry=_TELEMETRY,
-        )
-
-    async def stale_check(
-        self,
-        workspace: Workspace,
-        context: StaleCheckContext,
-        on_activity: OnActivity | None = None,
-    ) -> StaleCheckResult:
-        del workspace
-        self.last_stale_context = context
-        await self._emit_activity(on_activity)
-        return StaleCheckResult(
-            status=InvocationStatus.SUCCESS,
-            still_applies=self.stale_still_applies,
-            confidence=self.stale_confidence,
-            reasoning="fake stale-check verdict",
-            telemetry=_TELEMETRY,
-        )
-
-    async def answer_question(
-        self,
-        workspace: Workspace,
-        context: AnswerQuestionContext,
-        on_activity: OnActivity | None = None,
-    ) -> AnswerQuestionResult:
-        del workspace
-        self.last_answer_context = context
-        await self._emit_activity(on_activity)
-        return AnswerQuestionResult(
-            status=InvocationStatus.SUCCESS,
-            answer=self.answer_text,
-            telemetry=_TELEMETRY,
-        )
-
-    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a stable canned exec block for the given invocation."""
+        if self.build_invocation_result is not None:
+            return self.build_invocation_result
         return InvokeCodingAgent(
             argv=["fake-claude", "--skill", invocation.skill, "--model", invocation.model],
             env={},
@@ -177,18 +55,11 @@ class FakeCodingAgentPlugin:
         return RunResult(
             output=stdout,
             error_message=None,
-            usage=Usage(tokens_in=0, tokens_out=0),
+            usage=Usage(tokens_in=_TOKENS_IN, tokens_out=_TOKENS_OUT),
             duration_ms=0,
             exit_code=exit_code,
             activity=ActivityLog(events=[]),
         )
-
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        del agent_config
-        return ValidationResult(valid=True, errors=[])
-
-    async def health_check(self) -> HealthStatus:
-        return HealthStatus(healthy=True, message="fake plugin", checked_at=datetime.now(UTC))
 
 
 @contextmanager

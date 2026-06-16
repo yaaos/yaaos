@@ -1,4 +1,4 @@
-"""Claude Code CLI wrapper. Implements `domain/coding_agent.CodingAgentPlugin`.
+"""Claude Code CLI wrapper. Implements `core/coding_agent.CodingAgentPlugin`.
 
 Vendor-only: this module talks to Anthropic's Claude Code CLI and nothing else.
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -22,16 +22,12 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core import byok as _byok
-from app.core.auth import org_id_var
 from app.core.coding_agent import (
     ActivityLog,
     CodingAgentError,
-    ExecSpec,
-    HealthStatus,
     InvokeCodingAgent,
     RunResult,
     Usage,
-    ValidationResult,
     register_plugin,
 )
 from app.core.coding_agent import (
@@ -39,13 +35,6 @@ from app.core.coding_agent import (
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.domain.reviewer import (
-    ReportedFinding,
-    ReviewContext,
-)
-from app.domain.reviewer import (
-    parse_review_output as _parse_review_output_reviewer,
-)
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")
@@ -359,16 +348,54 @@ def _summarize_tool_input(tool: str, inp: dict[str, Any]) -> str:
     return ""
 
 
-# ── Verdict ───────────────────────────────────────────────────────────────────
+# ── Parse helpers (used by build_invocation + parse_result) ──────────────────
 
 
-def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
-    """Severity tiers — only `blocker` requests changes."""
-    if not findings:
-        return "APPROVED"
-    if any(f.severity == "blocker" for f in findings):
-        return "CHANGES_REQUESTED"
-    return "COMMENT"
+def _parse_usage(stdout: str) -> Usage:
+    """Extract token usage from the terminal `type=result` event.
+
+    Reads the last `type=result` event and pulls `usage.input_tokens`
+    and `usage.output_tokens`. Missing fields surface as `None`. A
+    stream with no terminal `result` event returns an empty `Usage()` —
+    never raises.
+    """
+    events = _parse_stream_events(stdout)
+    result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    if result_event is None:
+        return Usage()
+    usage_blob = result_event.get("usage") or {}
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    if isinstance(usage_blob, dict):
+        raw_in = usage_blob.get("input_tokens")
+        raw_out = usage_blob.get("output_tokens")
+        if isinstance(raw_in, int):
+            tokens_in = raw_in
+        if isinstance(raw_out, int):
+            tokens_out = raw_out
+    return Usage(tokens_in=tokens_in, tokens_out=tokens_out)
+
+
+def _render_activity_log(stdout: str) -> ActivityLog:
+    """Pre-render the full activity stream from terminal stdout.
+
+    Walks every parseable stream-json event, drops null renders (events
+    with no useful UI representation), and assigns monotonic `seq`
+    starting from 0. Returns an empty `ActivityLog` for stdout with
+    no parseable events.
+    """
+    events = _parse_stream_events(stdout)
+    rendered: list[dict[str, Any]] = []
+    seq = 0
+    for raw_event in events:
+        ev = _render_activity(raw_event)
+        if ev is None:
+            continue
+        # `_render_activity` returns a dict with `seq=0` (placeholder);
+        # stamp the monotonic index here.
+        rendered.append({**ev, "seq": seq})
+        seq += 1
+    return ActivityLog(events=rendered)
 
 
 # ── Plugin ────────────────────────────────────────────────────────────────────
@@ -376,21 +403,6 @@ def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "C
 
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
-
-    def install_url(self, org_id: UUID) -> str | None:
-        """No out-of-band install — Claude Code settings are pure form. The
-        bespoke settings page handles it."""
-        del org_id
-        return None
-
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        """Pydantic validation: `{mcp_proxy_ids}` shape.
-        See `settings_schema.validate_settings`. Accepts an empty dict."""
-        from app.plugins.claude_code.settings_schema import (  # noqa: PLC0415
-            validate_settings as _validate,
-        )
-
-        return _validate(settings)
 
     async def _load_settings_for_invocation(self, org_id: UUID) -> tuple[SecretStr | None, str | None]:
         """Returns (api_key, cli_path). API key read from byok_keys; cli_path from claude_code_settings."""
@@ -402,162 +414,13 @@ class ClaudeCodePlugin:
         api_key = SecretStr(plaintext) if plaintext else None
         return api_key, row.cli_path if row else None
 
-    # ── Remote-dispatch methods ───────────────────────────────────────────
-
-    async def build_review_invocation(
-        self,
-        ctx: ReviewContext,
-        *,
-        session: Any,
-    ) -> Any:
-        """Build the `Invocation` for a remote PR review.
-
-        Resolves the per-repo skill name from `claude_code_repos`, reads
-        the Anthropic key from `byok_keys`, assembles the prompt
-        (review instructions + output schema appendix), and returns the
-        complete exec spec. The Anthropic key goes in `exec.env` — the
-        accepted carve-out for wire-bound exec.
-
-        Raises `CodingAgentError` when the skill name is unconfigured or the
-        Anthropic key is absent — the review step fails cleanly before dispatch.
-
-        Returns a `_LegacyInvocation` (internal to `core/coding_agent`) — the
-        type is `Any` here so the plugin layer does not import the private class
-        across the module boundary.
-        """
-        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
-        from app.core.coding_agent import _LegacyInvocation as _Inv  # noqa: PLC0415
-        from app.plugins.claude_code.repos import resolve_skill  # noqa: PLC0415
-
-        skill_name = await resolve_skill(ctx.org_id, ctx.repo_external_id, session=session)
-        if not skill_name:
-            raise CodingAgentError(
-                f"skill_name not configured for repo {ctx.repo_external_id!r} — "
-                "set it in Coding Agents settings before dispatching a review"
-            )
-
-        api_key, cli_path_setting = await self._load_settings_for_invocation(ctx.org_id)
-        if not api_key:
-            raise CodingAgentError("ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents")
-        cli_path = cli_path_setting or "claude"
-
-        # Assemble the review prompt + the canonical output-schema appendix.
-        # `ctx.output_schema` is the snapshot frozen at dispatch; we pass it
-        # directly so the prompt matches what the caller will validate against.
-        import json as _json  # noqa: PLC0415
-
-        schema_str = _json.dumps(ctx.output_schema, indent=2)
-        prompt = (
-            f"Review the pull request. Base SHA: {ctx.base_sha}. Head SHA: {ctx.head_sha}.\n"
-            f"Run `git diff {ctx.base_sha}..HEAD` to inspect changes.\n\n"
-            "## Output Format (STRICT)\n\n"
-            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
-            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
-            f"{schema_str}\n"
-        )
-
-        argv = (
-            cli_path,
-            "--print",
-            "--output-format=stream-json",
-            "--verbose",
-            "--permission-mode=bypassPermissions",
-            "--model",
-            _MODEL,
-            "--effort",
-            _EFFORT,
-            "--allowed-tools="
-            "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
-            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
-            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
-        )
-        env = {"ANTHROPIC_API_KEY": api_key.get_secret_value()}
-
-        return _Inv(
-            kind=skill_name,
-            exec=ExecSpec(argv=argv, stdin=prompt, env=env),
-            limits=InvokeClaudeCodeLimits(wallclock_seconds=_DEFAULT_TIMEOUT_SECONDS),
-        )
-
-    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
-        """Thin delegator — real implementation lives in `domain/reviewer.parse_review_output`.
-
-        Kept on the plugin for backward compatibility with callers that
-        invoke `plugin.parse_review_output(stdout)` directly. Delegates
-        to the canonical owner; raises `ValueError` on parse failure.
-        """
-        return _parse_review_output_reviewer(stdout)
-
-    async def review_preflight_steps(
-        self,
-        ctx: ReviewContext,
-        *,
-        session: Any,
-    ) -> tuple[str, ...]:
-        """Return WorkflowCommand kinds to insert before the review step.
-
-        Returns `()` — the per-repo skill name model has no preflight steps.
-        """
-        del ctx, session
-        return ()
-
-    def parse_usage(self, stdout: str) -> Usage:
-        """Extract token usage from the terminal `type=result` event.
-
-        Reads the last `type=result` event and pulls `usage.input_tokens`
-        and `usage.output_tokens`. Missing fields surface as `None`. A
-        stream with no terminal `result` event returns an empty `Usage()` —
-        never raises so callers can finalize a run row even when the agent
-        crashed mid-stream. Wall-clock duration is no longer part of `Usage`
-        — use `parse_result` to get `RunResult.duration_ms`.
-        """
-        events = _parse_stream_events(stdout)
-        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-        if result_event is None:
-            return Usage()
-        usage_blob = result_event.get("usage") or {}
-        tokens_in: int | None = None
-        tokens_out: int | None = None
-        if isinstance(usage_blob, dict):
-            raw_in = usage_blob.get("input_tokens")
-            raw_out = usage_blob.get("output_tokens")
-            if isinstance(raw_in, int):
-                tokens_in = raw_in
-            if isinstance(raw_out, int):
-                tokens_out = raw_out
-        return Usage(tokens_in=tokens_in, tokens_out=tokens_out)
-
-    def render_activity(self, stdout: str) -> ActivityLog:
-        """Pre-render the full activity stream from terminal stdout.
-
-        Walks every parseable stream-json event, drops null renders (events
-        with no useful UI representation), and assigns monotonic `seq`
-        starting from 0. Returns an empty `ActivityLog` for stdout with
-        no parseable events.
-        """
-        events = _parse_stream_events(stdout)
-        rendered: list[dict[str, Any]] = []
-        seq = 0
-        for raw_event in events:
-            ev = _render_activity(raw_event)
-            if ev is None:
-                continue
-            # `_render_activity` returns a dict with `seq=0` (placeholder);
-            # stamp the monotonic index here.
-            rendered.append({**ev, "seq": seq})
-            seq += 1
-        return ActivityLog(events=rendered)
-
-    # ── New generic Protocol methods ─────────────────────────────────────
-
     def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
-        Delegates argv/stdin/env composition to the existing `_exec_block`
-        helper in `core/coding_agent/invocation.py` via a synthetic
-        `ReviewContext`-shaped dict from `invocation.context` for the
-        `pr_review` skill. Raises `CodingAgentError` for unknown skills or
-        when the context dict lacks required keys.
+        Delegates argv/stdin/env composition to a synthetic ReviewContext
+        from `invocation.context` for the `pr_review` skill. Raises
+        `CodingAgentError` for unknown skills or when the context dict lacks
+        required keys.
         """
         if invocation.skill != "pr_review":
             raise CodingAgentError(
@@ -565,7 +428,6 @@ class ClaudeCodePlugin:
             )
         from pydantic import SecretStr as _SecretStr  # noqa: PLC0415
 
-        from app.core.coding_agent import build_invocation as _build_inv  # noqa: PLC0415
         from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
 
         # Build a ReviewContext-compatible object from the generic context dict.
@@ -587,24 +449,49 @@ class ClaudeCodePlugin:
             base_sha=ctx_dict["base_sha"],
             output_schema=ctx_dict.get("output_schema", {}),
         )
+
+        # Build the review prompt from the context.
+        import json as _json  # noqa: PLC0415
+
+        schema_str = _json.dumps(review_ctx.output_schema, indent=2)
+        prompt = (
+            f"Review the pull request. Base SHA: {review_ctx.base_sha}. Head SHA: {review_ctx.head_sha}.\n"
+            f"Run `git diff {review_ctx.base_sha}..HEAD` to inspect changes.\n\n"
+            "## Output Format (STRICT)\n\n"
+            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+            f"{schema_str}\n"
+        )
+
         # Read the API key from the context dict if supplied (used in tests);
         # production callers supply it via invocation.context["anthropic_api_key"].
         raw_api_key: str | None = ctx_dict.get("anthropic_api_key")
         api_key = _SecretStr(raw_api_key) if raw_api_key else None
-        # Delegate to the public build_invocation helper (core/coding_agent/invocation.py)
-        # which assembles the full invocation dict including the exec block.
-        inv_dict = _build_inv(
-            mode="review",
-            context=review_ctx,
-            model=invocation.model,
-            effort=invocation.effort,
-            anthropic_api_key=api_key,
-        )
-        exec_block = inv_dict["exec"]
+
+        cli_path = "claude"
+        argv = [
+            cli_path,
+            "--print",
+            "--output-format=stream-json",
+            "--verbose",
+            "--permission-mode=bypassPermissions",
+            "--model",
+            invocation.model,
+            "--effort",
+            invocation.effort,
+            "--allowed-tools="
+            "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
+            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
+            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
+        ]
+        env: dict[str, str] = {}
+        if api_key is not None:
+            env["ANTHROPIC_API_KEY"] = api_key.get_secret_value()
+
         return InvokeCodingAgent(
-            argv=list(exec_block["argv"]),
-            env=exec_block["env"],
-            stdin=exec_block.get("stdin") or None,
+            argv=argv,
+            env=env,
+            stdin=prompt,
             wallclock_seconds=invocation.wallclock_seconds,
         )
 
@@ -612,19 +499,18 @@ class ClaudeCodePlugin:
         """Decode a terminal AgentEvent payload into a `RunResult`.
 
         Reads `terminal_event_payload["stdout"]` / `["exit_code"]`, delegates
-        to `parse_usage` and `render_activity` to populate `usage` and
+        to `_parse_usage` and `_render_activity_log` to populate `usage` and
         `activity`. Reads `duration_ms` directly from the terminal `result`
-        stream event and populates `RunResult.duration_ms`. Sets
-        `error_message = None` (the sink derives status from the wire
-        `event_kind`, not from the payload). Never raises on missing keys —
-        missing stdout is treated as an empty string; missing exit_code and
-        duration_ms are None.
+        stream event. Sets `error_message = None` (the sink derives status
+        from the wire `event_kind`, not from the payload). Never raises on
+        missing keys — missing stdout is treated as an empty string; missing
+        exit_code and duration_ms are None.
         """
         stdout: str = terminal_event_payload.get("stdout", "") or ""
         exit_code_raw = terminal_event_payload.get("exit_code")
         exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
-        usage = self.parse_usage(stdout)
-        activity = self.render_activity(stdout)
+        usage = _parse_usage(stdout)
+        activity = _render_activity_log(stdout)
         # Read duration_ms directly from the terminal result event — it lives
         # on the result event itself, not inside the usage sub-object.
         events = _parse_stream_events(stdout)
@@ -642,28 +528,6 @@ class ClaudeCodePlugin:
             exit_code=exit_code,
             activity=activity,
         )
-
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        errors: list[str] = []
-        if "timeout_seconds" in agent_config:
-            v = agent_config["timeout_seconds"]
-            if not isinstance(v, int) or v <= 0:
-                errors.append("timeout_seconds must be a positive int")
-        unknown = set(agent_config) - {"timeout_seconds"}
-        errors.extend(f"unknown config key: {k}" for k in unknown)
-        return ValidationResult(valid=not errors, errors=errors)
-
-    async def health_check(self) -> HealthStatus:
-        org_id = org_id_var.get()
-        if org_id is None:
-            return HealthStatus(healthy=False, message="no org context", checked_at=_utcnow())
-        api_key, _ = await self._load_settings_for_invocation(org_id)
-        if not api_key:
-            return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
-        # Cached probe — verifies the key actually authenticates against Anthropic.
-        # Cache TTL keeps the cost low (~1 request per 5min per running process).
-        ok, message = await _probe_anthropic_auth(api_key)
-        return HealthStatus(healthy=ok, message=message, checked_at=_utcnow())
 
 
 _plugin = ClaudeCodePlugin()
@@ -690,8 +554,8 @@ async def _probe_anthropic_auth(api_key: SecretStr) -> tuple[bool, str]:
     In stub mode (`YAAOS_CODING_AGENT_STUB`), the e2e test stack has no
     outbound connectivity to `api.anthropic.com` — and shouldn't need it,
     since the stub agent never calls Anthropic anyway. Treat any non-empty
-    key as authenticating cleanly so onboarding and `/api/claude_code/health`
-    behave consistently with the rest of the stubbed pipeline.
+    key as authenticating cleanly so onboarding behaves consistently with
+    the rest of the stubbed pipeline.
     """
     if get_settings().yaaos_coding_agent_stub:
         return (True, "ok (stub)")

@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed via `domain/reviewer.parse_review_output` into `list[ReportedFinding]` (raw strings; reviewer's `publish_findings` validates into domain types).
+- Coding-agent CLI stdout parsed by `plugin.parse_result(terminal_event_payload)` into `RunResult`; the run-sink writes this to `coding_agent_runs`. Post-processing of the agent's text output (`parse_review_output` → `list[ReportedFinding]`) is a `domain/reviewer` concern at the `PostFindings` workflow step.
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 
@@ -56,7 +56,7 @@ Domain functions succeed or raise. No translation unless translation is genuinel
 
 ### Filesystem + processes via `core/workspace`
 
-Never touch the filesystem (`open()`, `pathlib`) or spawn processes (`subprocess`) directly for repo/code work. Workspace operations go through the remote agent via `dispatch_invoke_claude_code` (the workspace dispatches via `core/agent_gateway`). Consumers never see internal paths; the Protocol exposes operations, not paths.
+Never touch the filesystem (`open()`, `pathlib`) or spawn processes (`subprocess`) directly for repo/code work. Workspace operations go through the remote agent via `core/coding_agent.dispatch_invocation` (which enqueues via `core/agent_gateway`). Consumers never see internal paths; the Protocol exposes operations, not paths.
 
 Exceptions: `core/database` (Postgres connections), `core/observability` (log files).
 
@@ -387,7 +387,7 @@ When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer
 Mechanics:
 
 - **Real Postgres via `db_session`.** Transactional rollback per test — production code's `session()` hits the override; inner `commit()` calls become SAVEPOINT releases; outer transaction rolls back on teardown. Empty DB at start of each test.
-- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that returns a canned `ReviewResult`. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
+- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that implements `build_invocation` + `parse_result` without spawning any CLI. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
 - **HTTP routes via `httpx.ASGITransport`.** Drive endpoints in-process without a network listener. The pattern is already used by `app/domain/integrations/test/test_endpoints.py`, `app/domain/mcp_proxy/test/test_dispatch.py`, etc.
 - **Seed helpers from `app/testing/e2e_setup/`.** `seed_github_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
 

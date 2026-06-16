@@ -1,4 +1,4 @@
-"""Stream-json parsing — pure helpers used by `parse_review_output` and `render_activity`.
+"""Stream-json parsing — pure helpers used by `parse_result` and `_render_activity_log`.
 
 The CLI emits one JSON object per line under `--output-format=stream-json`.
 We parse the captured stdout post-hoc to extract the terminal `result` event
@@ -12,7 +12,12 @@ import json
 
 import pytest
 
-from app.plugins.claude_code.service import _log_stream_event, _parse_stream_events
+from app.plugins.claude_code.service import (
+    _log_stream_event,
+    _parse_stream_events,
+    _parse_usage,
+    _render_activity_log,
+)
 
 
 def _stream(*events: dict) -> str:
@@ -114,9 +119,7 @@ def test_log_event_handles_missing_fields_gracefully() -> None:
 
 
 def test_parse_usage_extracts_tokens() -> None:
-    """parse_usage reads input_tokens and output_tokens from the terminal `type=result` event."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
+    """_parse_usage reads input_tokens and output_tokens from the terminal `type=result` event."""
     stream = _stream(
         {"type": "system", "subtype": "init", "session_id": "s", "model": "m"},
         {
@@ -127,53 +130,45 @@ def test_parse_usage_extracts_tokens() -> None:
             "usage": {"input_tokens": 1234, "output_tokens": 567},
         },
     )
-    usage = _plugin.parse_usage(stream)
+    usage = _parse_usage(stream)
     assert usage.tokens_in == 1234
     assert usage.tokens_out == 567
 
 
 def test_parse_usage_handles_missing_usage_block() -> None:
     """Missing `usage` block → tokens_in/out are None."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
     stream = _stream(
         {"type": "result", "subtype": "success", "result": "{}", "duration_ms": 800},
     )
-    usage = _plugin.parse_usage(stream)
+    usage = _parse_usage(stream)
     assert usage.tokens_in is None
     assert usage.tokens_out is None
 
 
 def test_parse_usage_no_terminal_event_returns_empty() -> None:
     """A stream with no terminal `result` event returns empty Usage()."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
     stream = _stream(
         {"type": "system", "subtype": "init", "session_id": "s"},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}},
     )
-    usage = _plugin.parse_usage(stream)
+    usage = _parse_usage(stream)
     assert usage.tokens_in is None
     assert usage.tokens_out is None
 
 
 def test_parse_usage_empty_stdout_returns_empty() -> None:
     """Empty stdout returns empty Usage() (no raise)."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
-    usage = _plugin.parse_usage("")
+    usage = _parse_usage("")
     assert usage.tokens_in is None
     assert usage.tokens_out is None
 
 
-# ── render_activity ────────────────────────────────────────────────────────────
+# ── render_activity_log ────────────────────────────────────────────────────────
 
 
 def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
-    """render_activity produces one activity dict per useful stream line, with
+    """_render_activity_log produces one activity dict per useful stream line, with
     monotonic seq starting at 0."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
     stream = _stream(
         {"type": "system", "subtype": "init", "session_id": "s", "model": "opus"},
         {
@@ -195,7 +190,7 @@ def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
         },
         {"type": "result", "subtype": "success", "result": "{}", "duration_ms": 100},
     )
-    log = _plugin.render_activity(stream)
+    log = _render_activity_log(stream)
     assert len(log.events) == 4
     assert [ev["seq"] for ev in log.events] == [0, 1, 2, 3]
     assert [ev["kind"] for ev in log.events] == [
@@ -208,21 +203,17 @@ def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
 
 def test_render_activity_skips_null_renders() -> None:
     """Events with no useful render are dropped; remaining seq stays monotonic."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
     stream = _stream(
         {"type": "system", "subtype": "init", "session_id": "s", "model": "opus"},
         {"type": "unknown_kind"},  # filtered → no activity event
         {"type": "result", "subtype": "success", "result": "{}"},
     )
-    log = _plugin.render_activity(stream)
+    log = _render_activity_log(stream)
     assert len(log.events) == 2
     assert [ev["seq"] for ev in log.events] == [0, 1]
 
 
 def test_render_activity_empty_stdout_returns_empty() -> None:
     """Empty stdout returns an empty ActivityLog."""
-    from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
-
-    log = _plugin.render_activity("")
+    log = _render_activity_log("")
     assert log.events == []

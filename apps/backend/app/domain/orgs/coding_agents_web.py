@@ -77,15 +77,9 @@ async def install_endpoint(body: InstallRequest) -> CodingAgentView:
         raise _err(400, "no_org_context")
     actor = current_actor()
     try:
-        plugin = get_coding_agent_plugin(body.plugin_id)
+        get_coding_agent_plugin(body.plugin_id)
     except PluginNotFoundError as exc:
         raise _err(404, "plugin_not_found") from exc
-    try:
-        validated = plugin.validate_settings(body.settings)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail={"error": "invalid_settings", "message": str(exc)}
-        ) from exc
 
     created_by = user_id_var.get()
     async with db_session() as s:
@@ -94,7 +88,7 @@ async def install_endpoint(body: InstallRequest) -> CodingAgentView:
                 s,
                 org_id=org_id,
                 plugin_id=body.plugin_id,
-                settings=validated,
+                settings=body.settings,
                 actor=actor,
                 created_by=created_by,
             )
@@ -111,20 +105,14 @@ async def update_settings_endpoint(plugin_id: str, body: UpdateSettingsRequest) 
         raise _err(400, "no_org_context")
     actor = current_actor()
     try:
-        plugin = get_coding_agent_plugin(plugin_id)
+        get_coding_agent_plugin(plugin_id)
     except PluginNotFoundError as exc:
         raise _err(404, "plugin_not_found") from exc
-    try:
-        validated = plugin.validate_settings(body.settings)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail={"error": "invalid_settings", "message": str(exc)}
-        ) from exc
 
     async with db_session() as s:
         try:
             install = await ca_service.update_coding_agent_settings(
-                s, org_id=org_id, plugin_id=plugin_id, settings=validated, actor=actor
+                s, org_id=org_id, plugin_id=plugin_id, settings=body.settings, actor=actor
             )
         except ca_service.CodingAgentNotInstalledError as exc:
             raise _err(404, "not_installed") from exc

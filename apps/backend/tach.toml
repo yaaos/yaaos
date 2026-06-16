@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workflow", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.workflow"]
 
 [[modules]]
 path = "app.core.config"
@@ -127,7 +127,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "a
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -155,7 +155,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.coding_agent", "app.core.workspace", "app.domain.reviewer"]
+depends_on = ["app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -167,7 +167,7 @@ depends_on = []
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.coding_agent", "app.core.workspace", "app.domain.reviewer"]
+depends_on = ["app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -338,69 +338,25 @@ from = ["app.core.byok"]
 
 [[interfaces]]
 expose = [
-  "ActivityEvent",
   "ActivityLog",
-  "AnswerQuestionContext",
-  "AnswerQuestionDto",
-  "AnswerQuestionResult",
-  "CodingAgentCacheMiss",
   "CodingAgentError",
   "CodingAgentPlugin",
   "CodingAgentRegistry",
-  "CodingAgentRunSinkImpl",
   "Effort",
-  "ExecSpec",
-  "FindingAnchor",
-  "HealthStatus",
-  "IncrementalReviewContext",
-  "IncrementalReviewResult",
   "Invocation",
-  "InvocationMode",
-  "InvocationStatus",
-  "InvocationTelemetry",
   "InvokeCodingAgent",
-  "OnActivity",
   "PluginNotFoundError",
-  "PriorThreadMessage",
-  "ReviewResult",
   "RunResult",
   "RunStatus",
-  "Severity",
-  "StaleCheckContext",
-  "StaleCheckDto",
-  "StaleCheckResult",
   "Usage",
-  "ValidationResult",
-  "VerifyFixContext",
-  "VerifyFixDto",
-  "VerifyFixResult",
-  "_LegacyInvocation",
-  "answer_question",
-  "assemble_answer_question_prompt",
-  "assemble_incremental_review_prompt",
-  "assemble_stale_check_prompt",
-  "assemble_verify_fix_prompt",
   "bind_coding_agent_registry",
-  "build_invocation",
-  "create_run",
   "current_coding_agent_registry",
   "dispatch_invocation",
-  "finalize_run",
   "get_plugin",
   "get_run_id_for_command",
   "get_run_id_for_workflow_step",
   "get_step_activity",
-  "health_check_all",
-  "incremental_review",
-  "list_registered_plugins",
-  "register_coding_agent_plugin",
   "register_plugin",
-  "registered_plugin_ids",
-  "review",
-  "schema_appendix",
-  "stale_check",
-  "validate_config",
-  "verify_fix",
 ]
 from = ["app.core.coding_agent"]
 
@@ -796,7 +752,6 @@ expose = [
   "bind_workspace_registry",
   "close_workspace",
   "current_workspace_registry",
-  "dispatch_invoke_claude_code",
   "get_provider",
   "get_workflow_context_provider",
   "get_workspace_claim_state",
@@ -964,11 +919,9 @@ expose = [
   "category_prefix",
   "decide_trigger",
   "dispatch_events",
-  "find_pr_id_by_external_comment_id",
   "finding_handle",
   "finding_output_schema",
   "get_review",
-  "handle_developer_reply",
   "humanize_skip",
   "is_off_topic_message",
   "is_yaaos_command",
@@ -980,7 +933,6 @@ expose = [
   "refresh_ticket_findings_summary",
   "register_reviewer_start_hooks",
   "register_reviewer_terminal_hooks",
-  "start_incremental_review",
   "start_pr_review",
 ]
 from = ["app.domain.reviewer"]
@@ -1022,14 +974,7 @@ expose = [
 from = ["app.domain.tickets"]
 
 [[interfaces]]
-expose = [
-  "ClaudeCodePlugin",
-  "bootstrap",
-  "get_plugin",
-  "list_repos_with_skill",
-  "resolve_skill",
-  "set_repo_skill",
-]
+expose = ["ClaudeCodePlugin", "bootstrap"]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]

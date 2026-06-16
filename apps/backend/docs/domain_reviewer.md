@@ -55,7 +55,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Vocabulary
 
-- `ReviewContext` — remote dispatch context passed to `build_review_invocation`. Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`. Lives in `domain/reviewer`.
+- `ReviewContext` — remote dispatch context; its fields are serialised into `Invocation.context` by `CodeReview.dispatch` before calling `coding_agent.dispatch_invocation`. Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`. Lives in `domain/reviewer`.
 - `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `domain/reviewer`.
 - `FindingDraftList` — internal Pydantic model wrapping a `list[ReportedFinding]`; used by `parse_review_output` to validate the stream-json payload. Lives in `domain/reviewer`.
 - `finding_output_schema()` — returns the JSON schema for the skill's `findings` output; injected into the prompt appendix by `core/coding_agent/prompts.py`. Lives in `domain/reviewer`.

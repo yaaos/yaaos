@@ -26,55 +26,10 @@ class _RaisingPlugin:
 
     plugin_id = "claude_code"
 
-    def install_url(self, org_id: UUID) -> str | None:
-        del org_id
-        return None
-
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        return dict(settings)
-
     def build_invocation(self, invocation: Any) -> Any:
         raise RuntimeError("simulated build_invocation failure")
 
     def parse_result(self, terminal_event_payload: Any) -> Any:
-        raise NotImplementedError
-
-    # The remaining Protocol methods are unreachable in this test path but are
-    # included so type-checkers don't complain if Protocol is @runtime_checkable.
-    async def review(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def incremental_review(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def verify_fix(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def stale_check(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def answer_question(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def validate_config(self, agent_config: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def health_check(self) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    def parse_review_output(self, stdout: str) -> list:
-        raise NotImplementedError
-
-    def parse_usage(self, stdout: str) -> Any:
-        raise NotImplementedError
-
-    def render_activity(self, stdout: str) -> Any:
-        raise NotImplementedError
-
-    async def review_preflight_steps(self, ctx: Any, *, session: Any) -> tuple:
-        return ()
-
-    async def build_review_invocation(self, ctx: Any, *, session: Any) -> Any:
         raise NotImplementedError
 
 

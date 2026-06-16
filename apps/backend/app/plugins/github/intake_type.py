@@ -342,7 +342,6 @@ class GithubIntakeType:
         return IntakeSideEffect(detail="pr_review_started")
 
     async def _handle_synchronize(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        from app.domain import reviewer  # noqa: PLC0415
         from app.domain.tickets import get_by_external, upsert  # noqa: PLC0415
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
@@ -350,9 +349,6 @@ class GithubIntakeType:
         repo_full = (payload.get("repository") or {}).get("full_name") or ""
         pr_number = pr_payload.get("number")
         pr_external_id = f"{repo_full}#{pr_number}"
-
-        before_sha = payload.get("before") or ""
-        after_sha = pr_payload.get("head", {}).get("sha") or payload.get("after") or ""
 
         existing_pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if existing_pr is None:
@@ -366,13 +362,6 @@ class GithubIntakeType:
         async with db_session() as s:
             await upsert(fresh, ticket_id=existing_pr.ticket_id, org_id=org_id, session=s)
             await s.commit()
-
-        await reviewer.start_incremental_review(
-            existing_pr.id,
-            new_head_sha=after_sha or fresh.head_sha,
-            prev_head_sha=before_sha or None,
-            org_id=org_id,
-        )
 
     async def _handle_closed(self, *, payload: dict[str, Any], org_id: UUID) -> None:
         from app.domain import reviewer  # noqa: PLC0415
@@ -463,28 +452,8 @@ class GithubIntakeType:
                 await reviewer.cancel_workflows_for_ticket(ticket.id)
             elif cmd == "full review":
                 await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
-            elif cmd == "review":
-                await reviewer.start_incremental_review(
-                    pr.id, new_head_sha=pr.head_sha, prev_head_sha=None, org_id=org_id
-                )
             return IntakeSideEffect(detail=f"command_{cmd.replace(' ', '_')}")
 
-        # Developer-reply routing on a yaaos comment thread.
-        external_thread_id = None
-        if event == "pull_request_review_comment":
-            review_id = comment.get("pull_request_review_id")
-            external_thread_id = str(review_id) if review_id is not None else None
-
-        await reviewer.handle_developer_reply(
-            external_thread_id=external_thread_id,
-            external_comment_id=str(comment.get("id", "")),
-            in_reply_to_external_id=(
-                str(comment.get("in_reply_to_id")) if comment.get("in_reply_to_id") else None
-            ),
-            body=body,
-            author_external_id=author_login,
-            org_id=org_id,
-        )
         return IntakeSideEffect(detail="developer_reply")
 
     async def _handle_reaction(
@@ -494,37 +463,9 @@ class GithubIntakeType:
         org_id: UUID,
         session: AsyncSession,
     ) -> IntakeOutcome:
-        from app.domain import tickets  # noqa: PLC0415
-        from app.domain.reviewer import find_pr_id_by_external_comment_id  # noqa: PLC0415
-
-        reaction = payload.get("reaction") or {}
-        content = reaction.get("content")
-        mapped = {"+1": "thumbs_up", "-1": "thumbs_down"}.get(content)
-        if mapped is None:
-            return IntakeSideEffect(detail="ignored_reaction_kind")
-        target_id = (payload.get("comment") or {}).get("id")
-        if target_id is None:
-            return IntakeSideEffect(detail="ignored_no_target")
-
-        pr_id = await find_pr_id_by_external_comment_id(str(target_id))
-        if pr_id is None:
-            return IntakeSideEffect(detail="ignored_reaction_no_finding")
-        ticket = await tickets.get_by_pr(pr_id, org_id=org_id)
-        if ticket is None:
-            return IntakeSideEffect(detail="ignored_reaction_no_ticket")
-        actor_login = (reaction.get("user") or {}).get("login", "")
-        await audit_for_ticket(
-            ticket.id,
-            "ticket.reaction_received",
-            _ReactionReceivedPayload(
-                reaction=mapped,
-                target_comment_external_id=str(target_id),
-            ),
-            actor=Actor.github_user(actor_login),
-            org_id=org_id,
-            session=session,
-        )
-        return IntakeSideEffect(detail="reaction_recorded")
+        del payload, org_id, session
+        # Thread-based comment routing is not wired; reactions are not processed.
+        return IntakeSideEffect(detail="ignored_reaction_not_wired")
 
     async def _handle_installation(
         self,

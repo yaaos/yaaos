@@ -30,10 +30,12 @@ from app.domain.orgs import (
 
 @pytest.fixture(autouse=True)
 def _ensure_claude_code_registered() -> None:
-    from app.core.coding_agent import registered_plugin_ids  # noqa: PLC0415
+    from app.core.coding_agent import PluginNotFoundError, get_plugin  # noqa: PLC0415
     from app.plugins.claude_code import bootstrap  # noqa: PLC0415
 
-    if "claude_code" not in registered_plugin_ids():
+    try:
+        get_plugin("claude_code")
+    except PluginNotFoundError:
         bootstrap()
 
 
@@ -232,7 +234,8 @@ async def test_endpoint_install_and_list_via_http(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_endpoint_rejects_invalid_settings(seeded) -> None:
+async def test_endpoint_accepts_arbitrary_settings(seeded) -> None:
+    """Settings are stored as-is — the endpoint no longer validates via the plugin."""
     async with _client() as c:
         r = await c.post(
             "/api/coding-agents",
@@ -243,7 +246,7 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
             },
             headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
         )
-    assert r.status_code == 422
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio
