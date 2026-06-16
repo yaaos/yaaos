@@ -36,8 +36,8 @@ async def build_mcp_payload(review_id: UUID, *, org_id: UUID) -> dict[str, Any] 
 
     Returns None when no providers are connected (or all are broken/disabled) —
     the reviewer still runs, just without MCP context. The bearer + provider
-    catalogue are returned as a dict; the caller passes it into
-    `build_review_invocation` so `plugins/claude_code` includes MCP server
+    catalogue are returned as a dict; the caller threads it into the coding-agent
+    invocation so `plugins/claude_code`'s `build_invocation` includes MCP server
     config in the exec spec.
     """
     servers: list[dict[str, Any]] = []
