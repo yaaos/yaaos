@@ -1,8 +1,8 @@
 """Protocol surface smoke tests — asserts the exact public interface of `core/coding_agent`.
 
-These are the source-of-truth checks that the module's `__all__`, the 2-method
-`CodingAgentPlugin` Protocol, and the absence of retired names are all correct.
-No DB, no subprocess, no env — pure import assertions.
+These are the source-of-truth checks that the module's `__all__`, the
+`CodingAgentPlugin` Protocol methods, and the absence of retired names are all
+correct. No DB, no subprocess, no env — pure import assertions.
 """
 
 from __future__ import annotations
@@ -76,9 +76,9 @@ def test_all_matches_expected_set() -> None:
 
 
 @pytest.mark.service
-def test_protocol_has_exactly_build_invocation_and_parse_result() -> None:
-    """CodingAgentPlugin Protocol must expose exactly build_invocation + parse_result
-    as non-dunder, non-`plugin_id` protocol methods."""
+def test_protocol_has_expected_methods() -> None:
+    """CodingAgentPlugin Protocol must expose exactly build_invocation, parse_result,
+    and validate_settings as non-dunder, non-`plugin_id` protocol methods."""
     from app.core.coding_agent import CodingAgentPlugin  # noqa: PLC0415
 
     # Collect Protocol method names (non-dunder, non-plugin_id members
@@ -88,7 +88,7 @@ def test_protocol_has_exactly_build_invocation_and_parse_result() -> None:
         for name, _ in inspect.getmembers(CodingAgentPlugin, predicate=inspect.isfunction)
         if not name.startswith("_")
     }
-    assert proto_methods == {"build_invocation", "parse_result"}
+    assert proto_methods == {"build_invocation", "parse_result", "validate_settings"}
 
 
 @pytest.mark.service

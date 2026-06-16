@@ -83,6 +83,10 @@ class StubCodingAgentPlugin:
             wallclock_seconds=invocation.wallclock_seconds,
         )
 
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Stub implementation — always succeeds, returns settings unchanged."""
+        return dict(settings)
+
     def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
         """Return a minimal stub `RunResult` from the payload."""
         stdout: str = terminal_event_payload.get("stdout", "") or ""

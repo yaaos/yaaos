@@ -17,7 +17,12 @@ No HTTP routes. No `bootstrap()` — wired from `app/web.py` via env var, not im
 
 ### `StubCodingAgentPlugin(wrapped)`
 
-Wraps the real plugin. Implements `build_invocation` (delegates to the wrapped plugin's `build_invocation`) and `parse_result` (returns a canned `RunResult` with synthetic stdout containing one schema-valid `Finding` — no CLI spawn, no Anthropic call). `plugin_id` mirrors the wrapped plugin's.
+Wraps the real plugin. Implements the full `CodingAgentPlugin` Protocol surface:
+- `build_invocation` — returns a minimal stub exec block (`argv=["stub"]`, empty env) without running the real plugin.
+- `parse_result` — returns a canned `RunResult`; no CLI spawn, no Anthropic call.
+- `validate_settings` — always passes through `dict(settings)` unchanged. The stub deliberately skips validation so tests that exercise the full pipeline don't need valid settings; endpoint-level validation tests that need real rejection must bind `ClaudeCodePlugin` directly.
+
+`plugin_id` mirrors the wrapped plugin's.
 
 ### `wrap_all_registered_plugins()`
 

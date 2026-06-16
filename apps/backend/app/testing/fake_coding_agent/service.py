@@ -25,7 +25,7 @@ _TOKENS_OUT = 0
 
 
 class FakeCodingAgentPlugin:
-    """Minimal `CodingAgentPlugin` impl satisfying the two-method Protocol.
+    """Minimal `CodingAgentPlugin` impl satisfying the Protocol.
 
     Tests can override the canned returns by mutating the public attributes
     on the registered instance.
@@ -60,6 +60,10 @@ class FakeCodingAgentPlugin:
             exit_code=exit_code,
             activity=ActivityLog(events=[]),
         )
+
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Fake implementation — always succeeds, returns settings unchanged."""
+        return dict(settings)
 
 
 @contextmanager

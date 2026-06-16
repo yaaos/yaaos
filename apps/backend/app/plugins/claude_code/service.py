@@ -36,6 +36,7 @@ from app.core.coding_agent import (
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
+from app.plugins.claude_code.settings_schema import validate_settings as _validate_settings
 
 log = structlog.get_logger("claude_code")
 
@@ -494,6 +495,16 @@ class ClaudeCodePlugin:
             stdin=prompt,
             wallclock_seconds=invocation.wallclock_seconds,
         )
+
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate and normalize a raw settings dict via `ClaudeCodeSettings`.
+
+        Delegates to `settings_schema.validate_settings`, which parses through
+        `ClaudeCodeSettings(extra="forbid")`. Unknown keys raise `ValueError`.
+        Returns the normalized dict suitable for persisting to
+        `org_coding_agents.settings`.
+        """
+        return _validate_settings(dict(settings))
 
     def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
         """Decode a terminal AgentEvent payload into a `RunResult`.

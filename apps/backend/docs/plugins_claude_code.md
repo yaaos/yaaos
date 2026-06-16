@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — two methods (`build_invocation`, `parse_result`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — three methods (`build_invocation`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -21,6 +21,10 @@ Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_s
 ### `parse_result`
 
 Takes a terminal AgentEvent `outputs` dict. Reads `stdout` and `exit_code`. Delegates to `_parse_usage(stdout)` and `_render_activity_log(stdout)` internally. Reads `duration_ms` from the terminal `type=result` stream event inside stdout. Returns `RunResult{output, error_message=None, usage, duration_ms, exit_code, activity}`. Never raises on missing keys.
+
+### `validate_settings`
+
+Parses the raw settings dict through `ClaudeCodeSettings(extra="forbid")`. Unknown keys raise `ValueError` (Pydantic's `ValidationError` is a `ValueError` subclass, so `extra="forbid"` rejects foreign keys with a `ValueError`). Returns `model_dump(mode="python")` — a normalized dict with `mcp_proxy_ids: list[UUID]` (defaults to `[]`). Delegates to `settings_schema.validate_settings`; the plugin method is the Protocol entry point.
 
 ### Stream-json parsing helpers
 

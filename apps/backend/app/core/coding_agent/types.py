@@ -1,11 +1,11 @@
 """Types + Protocol for the coding-agent abstraction.
 
-`CodingAgentPlugin` is the two-method Protocol every coding-agent plugin
-must satisfy: `build_invocation` translates a high-level `Invocation` into
-a concrete `InvokeCodingAgent` exec block; `parse_result` decodes a terminal
-AgentEvent payload into a `RunResult`. Plugins own skill resolution, model
-mapping, and stdout parsing; `core/coding_agent` owns dispatch and the run
-lifecycle.
+`CodingAgentPlugin` is the Protocol every coding-agent plugin must satisfy:
+`build_invocation` translates a high-level `Invocation` into a concrete
+`InvokeCodingAgent` exec block; `parse_result` decodes a terminal AgentEvent
+payload into a `RunResult`; `validate_settings` validates and normalizes a raw
+settings dict. Plugins own skill resolution, model mapping, stdout parsing, and
+settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
 
 `ReviewContext` and `ReportedFinding` live in `domain/reviewer` — they are
 reviewer-domain types, not generic coding-agent types.
@@ -114,13 +114,15 @@ class RunResult(BaseModel):
 
 @runtime_checkable
 class CodingAgentPlugin(Protocol):
-    """Two-method Protocol every coding-agent plugin must satisfy.
+    """Protocol every coding-agent plugin must satisfy.
 
     `plugin_id` identifies the plugin in the registry and on run rows.
     `build_invocation` is a pure function that translates a high-level
     `Invocation` into a concrete `InvokeCodingAgent` exec block.
     `parse_result` is a pure function that decodes a terminal AgentEvent
     payload dict into a `RunResult`.
+    `validate_settings` validates a raw settings dict and returns the
+    normalized form; raises `ValueError` on invalid input.
     """
 
     plugin_id: str
@@ -145,6 +147,15 @@ class CodingAgentPlugin(Protocol):
         `exit_code` populated. Does NOT determine status — the sink sets
         `RunStatus` from the wire `event_kind`. Raises `CodingAgentError`
         on irrecoverable parse failure.
+        """
+        ...
+
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate the raw settings dict and return the normalized dict.
+
+        Pure function — no IO, no session. Raises `ValueError` on invalid
+        input (unknown keys, bad types). The returned dict is the canonical
+        form that gets persisted to the `org_coding_agents.settings` column.
         """
         ...
 
