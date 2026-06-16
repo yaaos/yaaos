@@ -19,7 +19,6 @@ from uuid import UUID
 import httpx
 import structlog
 from pydantic import SecretStr
-from sqlalchemy import select
 
 from app.core import byok as _byok
 from app.core.coding_agent import (
@@ -36,7 +35,6 @@ from app.core.coding_agent import (
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 from app.plugins.claude_code.settings_schema import validate_settings as _validate_settings
 
 log = structlog.get_logger("claude_code")
@@ -407,15 +405,9 @@ def _render_activity_log(stdout: str) -> ActivityLog:
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
 
-    async def _load_settings_for_invocation(self, org_id: UUID) -> tuple[SecretStr | None, str | None]:
-        """Returns (api_key, cli_path). API key read from byok_keys; cli_path from claude_code_settings."""
-        async with db_session() as s:
-            plaintext = await _byok.get(org_id, "anthropic", session=s)
-            row = (
-                await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-            ).scalar_one_or_none()
-        api_key = SecretStr(plaintext) if plaintext else None
-        return api_key, row.cli_path if row else None
+    def byok_requirement(self) -> str | None:
+        """Claude Code requires an Anthropic API key delivered via BYOK."""
+        return "anthropic"
 
     def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
@@ -429,8 +421,6 @@ class ClaudeCodePlugin:
             raise CodingAgentError(
                 f"ClaudeCodePlugin does not support skill {invocation.skill!r}; only 'pr_review' is supported"
             )
-        from pydantic import SecretStr as _SecretStr  # noqa: PLC0415
-
         from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
 
         # Build a ReviewContext-compatible object from the generic context dict.
@@ -466,14 +456,8 @@ class ClaudeCodePlugin:
             f"{schema_str}\n"
         )
 
-        # Read the API key from the context dict if supplied (used in tests);
-        # production callers supply it via invocation.context["anthropic_api_key"].
-        raw_api_key: str | None = ctx_dict.get("anthropic_api_key")
-        api_key = _SecretStr(raw_api_key) if raw_api_key else None
-
-        cli_path = "claude"
         argv = [
-            cli_path,
+            "claude",
             "--print",
             "--output-format=stream-json",
             "--verbose",
@@ -487,13 +471,10 @@ class ClaudeCodePlugin:
             "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
             "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
         ]
-        env: dict[str, str] = {}
-        if api_key is not None:
-            env["ANTHROPIC_API_KEY"] = api_key.get_secret_value()
 
         return InvokeCodingAgent(
             argv=argv,
-            env=env,
+            env={},
             stdin=prompt,
             wallclock_seconds=invocation.wallclock_seconds,
         )

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 )
 
 // noopClone is a CloneFunc that succeeds without touching the network.
@@ -655,9 +656,10 @@ func (e *recordingEmitter) Progress(outputs map[string]any) bool {
 
 func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 	// Happy path: fake RunFunc returns multi-line stdout with ExitCode 0.
-	// Asserts: env layering (BYOK key reaches RunFunc), emitter forwarding
-	// (each line becomes a progress event), stdout accumulation (RunClaude
-	// replaces RunStreaming's empty Stdout with the accumulated bytes).
+	// Asserts: env layering (BYOK key reaches RunFunc via ByokSecrets getter,
+	// not via the invocation env), emitter forwarding (each line becomes a
+	// progress event), stdout accumulation (RunClaude replaces RunStreaming's
+	// empty Stdout with the accumulated bytes).
 	cannedOutput := []byte("line-one\nline-two\n")
 	var capturedOpts RunStreamingOptions
 	fake := fakeRunFunc(
@@ -665,7 +667,17 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		nil,
 		func(opts RunStreamingOptions) { capturedOpts = opts },
 	)
-	h := realHandlerWithFakeRun(t, fake)
+	// Wire the BYOK key via the ByokSecrets getter — the invocation env is
+	// intentionally empty (backend no longer ships ANTHROPIC_API_KEY there).
+	byokKey := secret.New("sk-test-byok")
+	h := NewRealHandler(RealHandlerConfig{
+		Root:      t.TempDir(),
+		CloneFunc: noopClone,
+		RunFunc:   fake,
+		ByokSecrets: func() map[string]secret.Secret {
+			return map[string]secret.Secret{"anthropic": byokKey}
+		},
+	})
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	_ = cr
 
@@ -677,14 +689,14 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		Invocation: rawInvocation(t,
 			[]string{"claude", "--print"},
 			"prompt text",
-			map[string]string{"ANTHROPIC_API_KEY": "sk-test-byok"},
+			map[string]string{}, // intentionally empty — BYOK comes from the getter
 		),
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
 	}
 
-	// env layering: BYOK key must be in the env RunFunc received.
+	// env layering: BYOK key must reach RunFunc via the ByokSecrets getter.
 	foundBYOK := false
 	for _, kv := range capturedOpts.Env {
 		if kv == "ANTHROPIC_API_KEY=sk-test-byok" {
@@ -692,7 +704,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		}
 	}
 	if !foundBYOK {
-		t.Errorf("BYOK key not found in RunFunc env: %v", capturedOpts.Env)
+		t.Errorf("BYOK key not found in RunFunc env (expected ANTHROPIC_API_KEY=sk-test-byok): %v", capturedOpts.Env)
 	}
 
 	// emitter forwarding: two lines → two progress events.

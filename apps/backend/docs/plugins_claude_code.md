@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — three methods (`build_invocation`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — four methods (`build_invocation`, `byok_requirement`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -16,7 +16,11 @@ Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — sett
 
 ### `build_invocation`
 
-Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Supports only `skill="pr_review"`. Validates `context` carries required keys (`org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`). Reads `context["anthropic_api_key"]` if supplied (production callers inject it from `byok`). Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --allowed-tools=…`), a review prompt (with base/head SHA + strict JSON output directive), and `env["ANTHROPIC_API_KEY"]`. Returns `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}`. Raises `CodingAgentError` on unknown skills or missing context keys.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Supports only `skill="pr_review"`. Validates `context` carries required keys (`org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`). Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --allowed-tools=…`), and a review prompt (with base/head SHA + strict JSON output directive). Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time. Raises `CodingAgentError` on unknown skills or missing context keys.
+
+### `byok_requirement`
+
+Returns `"anthropic"` — the BYOK `provider_id` this plugin needs. Called by `core/coding_agent.build_byok_secrets_for_org` to look up the org's stored Anthropic key and include it in `AgentConfig.byok_secrets` on every ConfigUpdate.
 
 ### `parse_result`
 

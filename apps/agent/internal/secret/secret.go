@@ -1,10 +1,10 @@
 // Package secret holds the agent's secret-redaction wrapper type.
 //
 // Secrets flow through the agent's command-handling path: the
-// ANTHROPIC_API_KEY in `InvokeClaudeCodeCommand.invocation.exec.env`,
-// the github-installation token in `ProvisionWorkspace.auth.token`, future
-// per-org OAuth tokens. A wrong `log.Printf("%v", cmd)` or `json.Marshal`
-// would leak those into stderr / structured logs / audit events.
+// ANTHROPIC_API_KEY delivered via ConfigUpdateCommand.byok_secrets,
+// the github-installation token in `ProvisionWorkspace.auth.token`, and
+// any other per-org credentials. A wrong `log.Printf("%v", cmd)` or
+// `json.Marshal` would leak those into stderr / structured logs / audit events.
 //
 // `Secret` wraps a string with redacted-by-default formatting:
 //
@@ -21,7 +21,10 @@
 // line someone adds during incident response.
 package secret
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // redactedPlaceholder is the string every accidental serialization
 // surfaces. Picked so grepping logs for it surfaces redaction sites at
@@ -72,6 +75,19 @@ func (s Secret) GoString() string {
 // upstream.
 func (s Secret) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + redactedPlaceholder + `"`), nil
+}
+
+// UnmarshalJSON reads a JSON string into the Secret without exposing the
+// value through any intermediary. This is the only inbound path for secrets
+// arriving on the wire (e.g. byok_secrets in ConfigUpdateCommand). The raw
+// string is captured directly; no redacted placeholder is ever stored.
+func (s *Secret) UnmarshalJSON(b []byte) error {
+	var raw string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return fmt.Errorf("secret: UnmarshalJSON: %w", err)
+	}
+	s.v = raw
+	return nil
 }
 
 // IsZero reports whether the Secret carries no value. Useful for

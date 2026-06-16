@@ -56,6 +56,24 @@ class ByokKey(BaseModel):
 # string to an `async (plaintext: str) -> bool` callable.
 _VALIDATORS: dict[str, Callable[[str], Awaitable[bool]]] = {}
 
+# On-change callbacks — called after every successful `set` or `clear`.
+# Signature: async (org_id: UUID, *, session: AsyncSession) -> None.
+# Registered by consumers (e.g. `core/coding_agent`) that need to fan-out
+# a ConfigUpdate whenever a key changes. Session is the caller's transaction
+# so the fan-out enqueue is atomic with the byok mutation.
+_OnChangeCb = Callable[..., Awaitable[None]]
+_ON_CHANGE: list[_OnChangeCb] = []
+
+
+def register_on_change(cb: _OnChangeCb) -> None:
+    """Register a callback invoked after every successful byok `set` or `clear`.
+
+    Callback signature: ``async (org_id: UUID, *, session: AsyncSession) -> None``.
+    Idempotent — re-registering the same callable is a no-op.
+    """
+    if cb not in _ON_CHANGE:
+        _ON_CHANGE.append(cb)
+
 
 def register_validator(provider: str, validator: Callable[[str], Awaitable[bool]]) -> None:
     """Idempotent — re-registering the same provider overwrites. Called from
@@ -134,6 +152,8 @@ async def set(
         org_id=org_id,
         session=session,
     )
+    for cb in _ON_CHANGE:
+        await cb(org_id, session=session)
 
 
 async def clear(
@@ -159,6 +179,8 @@ async def clear(
             org_id=org_id,
             session=session,
         )
+        for cb in _ON_CHANGE:
+            await cb(org_id, session=session)
     return removed
 
 

@@ -31,6 +31,7 @@ import (
 	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/observability"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 	"github.com/yaaos/agent/internal/tracing"
 )
 
@@ -244,21 +245,18 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 	if cfg.ClaimWaitSeconds <= 0 {
 		cfg.ClaimWaitSeconds = 30
 	}
-	if cfg.Spawn == nil {
-		cfg.Spawn = ExecSpawn(os.Args[0], 5*time.Second, log)
-	}
+	needsDefaultSpawn := cfg.Spawn == nil
 	if cfg.ActivityBatchInterval <= 0 {
 		cfg.ActivityBatchInterval = 250 * time.Millisecond
 	}
 	// Parse the ops backoff env once; each surface gets its own schedule built
 	// from the shared step list (a malformed value WARNs once, not three times).
 	opsSteps, opsCustom := opsBackoffSteps()
-	return &Supervisor{
+	s := &Supervisor{
 		cfg:      cfg,
 		client:   client,
 		log:      log,
 		provider: prov,
-		pool:     NewPool(cfg.Spawn, log),
 		// stsBackoff: a fresh pod that has never successfully exchanged identity
 		// gives up after 1 hour so the container crashes and the orchestrator
 		// can restart it (a misconfigured ARN won't fix itself by retrying
@@ -274,6 +272,21 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		eventPostSteps:   defaultEventPostSteps,
 		dedup:            newDedupCache(dedupCacheSize),
 	}
+	if needsDefaultSpawn {
+		// ExecSpawn's byok getter is a closure over s.config — it reads the
+		// most recent AgentConfig atomically so keys reflect the latest
+		// ConfigUpdate at workspace spawn time. nil config (unconfigured) →
+		// getter returns nil → ExecSpawn skips injection.
+		s.cfg.Spawn = ExecSpawn(os.Args[0], 5*time.Second, log, func() map[string]secret.Secret {
+			cfg := s.config.Load()
+			if cfg == nil {
+				return nil
+			}
+			return cfg.ByokSecrets
+		})
+	}
+	s.pool = NewPool(s.cfg.Spawn, log)
+	return s
 }
 
 // Run exchanges identity and starts the claim + heartbeat goroutines.

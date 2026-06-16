@@ -16,9 +16,11 @@
 //                            mid-flight.
 //   - RunClaude            — read `invocation.exec` from the wire
 //                            ({argv, stdin, env}), merge env
-//                            on top of `os.Environ()`, add TRACEPARENT
-//                            for span linkage, dispatch via the
-//                            configured `RunFunc` (production default:
+//                            on top of `os.Environ()`, inject BYOK
+//                            secrets from the last ConfigUpdate (e.g.
+//                            ANTHROPIC_API_KEY), add TRACEPARENT for
+//                            span linkage, dispatch via the configured
+//                            `RunFunc` (production default:
 //                            `RunStreaming`) with the workspace tempdir
 //                            as cwd. Captured stdout is returned in the
 //                            typed InvokeResult. Zero biz logic — the
@@ -57,6 +59,15 @@ import (
 // at package init since redaction runs on every git failure path.
 var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 
+// byokProviderEnvVars maps provider_id → environment variable name. When the
+// control plane delivers a BYOK secret for a known provider, RunClaude injects
+// it into the subprocess env under this variable. Unknown providers are ignored.
+//
+// Adding a new provider here requires no other change in the agent.
+var byokProviderEnvVars = map[string]string{
+	"anthropic": "ANTHROPIC_API_KEY",
+}
+
 // RealHandlerConfig customizes the production handler's behaviour. Zero
 // values pick safe defaults.
 type RealHandlerConfig struct {
@@ -86,6 +97,13 @@ type RealHandlerConfig struct {
 	// `RunStreaming`; production default is a real child process. Tests
 	// inject a fake so they don't spawn a real Claude binary.
 	RunFunc RunFunc
+
+	// ByokSecrets returns the current per-org BYOK secret map
+	// (provider_id → secret.Secret) as last delivered by the control
+	// plane via ConfigUpdateCommand. Nil return means no keys available.
+	// Production wires this to a closure over the supervisor's atomic
+	// config pointer. Tests inject a fixed map.
+	ByokSecrets func() map[string]secret.Secret
 }
 
 // CloneFunc clones `repo` into `dest`. `auth` carries the credential
@@ -304,13 +322,26 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// Env layering, low-to-high priority:
 	//   1. Parent process env (PATH, HOME, …) so claude can find its
 	//      binary + write to $HOME/.claude state.
-	//   2. exec.env from the wire (ANTHROPIC_API_KEY, etc.). Backend-
-	//      supplied secrets win over anything the parent inherited.
-	//   3. TRACEPARENT from the current ctx so the spawned subprocess
+	//   2. BYOK secrets from the last ConfigUpdate (e.g. ANTHROPIC_API_KEY
+	//      from byok_secrets["anthropic"]). These override anything inherited
+	//      from the parent — the control-plane key is authoritative.
+	//   3. exec.env from the wire. Reserved for non-secret overrides; in
+	//      practice the backend sends an empty map now that ANTHROPIC_API_KEY
+	//      is delivered via ConfigUpdate.
+	//   4. TRACEPARENT from the current ctx so the spawned subprocess
 	//      can link its spans into the supervisor's trace (the
 	//      supervisor → workspace hop links the same way; this hop
 	//      extends it one more step to the Claude Code grand-child).
 	env := os.Environ()
+	if h.cfg.ByokSecrets != nil {
+		if byok := h.cfg.ByokSecrets(); byok != nil {
+			for providerID, envVar := range byokProviderEnvVars {
+				if sec, ok := byok[providerID]; ok && !sec.IsZero() {
+					env = append(env, envVar+"="+sec.Value())
+				}
+			}
+		}
+	}
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}

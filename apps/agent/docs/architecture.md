@@ -64,7 +64,7 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
 - `internal/identity/` — `Provider` interface + `Credentials` struct; `placeholderProvider` carries the signed-STS payload; `Supervisor` depends on the interface for first-exchange and renewal. See [identity.md](identity.md).
 - `internal/activity/` — activity WebSocket protocol: `SubscriptionSet`, `WorkspaceMapping`, `Batcher` (250 ms flush), `Conductor`. See [activity.md](activity.md).
-- `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap.
+- `internal/secret/` — `Secret` type; `String/GoString/MarshalJSON/Format` all return `"[REDACTED]"`; `.Value()` is the explicit unwrap; `UnmarshalJSON` reads the raw string into `s.v` so `map[string]secret.Secret` can be populated via JSON decode (used for `AgentConfig.ByokSecrets`).
 - `internal/backoff/` — `1m → 3m → 5m → 15m → 60m` schedule with ±20 % jitter; per-surface counters (`sts`, `claim`, `heartbeat`, `ws`). `NewWithStepsAndDeadline` allows custom step lists with the same deadline ceiling (used for the env-tunable STS surface).
 - `internal/observability/` — OTel SDK bootstrap, metric instrument declarations, standard dimension helpers (`SetStandardDimensions`, `StandardAttrs`). See [observability.md](observability.md).
 
@@ -98,6 +98,25 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 ### Per-command timeouts
 
 `Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` reads `Limits.WallclockSeconds` from the wire; all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `ProvisionWorkspace` can respawn.
+
+### BYOK credential delivery
+
+Per-org API keys (e.g. `ANTHROPIC_API_KEY`) arrive via `ConfigUpdate.AgentConfig.ByokSecrets` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:
+
+- `byokProviderEnvVars` in `internal/workspace/realhandler.go` — used by `RealHandlerConfig.RunClaude` when the workspace subprocess is run in-process (test path; `InProcessSpawn`).
+- `byokProcessEnvVars` in `internal/supervisor/exec_spawn.go` — used by `ExecSpawn` to inject secrets into the OS subprocess's `cmd.Env` before `exec.Command.Start`. This is the production path.
+
+The production flow: `ExecSpawn` accepts a `byokGetter func() map[string]secret.Secret` parameter. The supervisor passes a closure over `s.config.Load()` (`atomic.Pointer[command.AgentConfig]`) so `byokGetter` always reads the latest applied config — key rotations take effect on the next workspace spawn without restarting the supervisor. Secret values are unwrapped via `.Value()` only at the `cmd.Env = append(cmd.Env, envVar+"="+sec.Value())` site inside `ExecSpawn` — the only point they leave the `secret.Secret` wrapper.
+
+**Two-phase supervisor construction** — `New()` must create the `Supervisor` struct (`s`) before wiring `ExecSpawn`, because the byok getter closure captures `s.config`. The order in `New()`:
+1. Detect `needsDefaultSpawn := cfg.Spawn == nil`.
+2. Allocate `s := &Supervisor{...}` (without `pool`).
+3. If `needsDefaultSpawn`, set `s.cfg.Spawn = ExecSpawn(..., func() { return s.config.Load().ByokSecrets })`.
+4. Set `s.pool = NewPool(s.cfg.Spawn, log)`.
+
+This avoids a forward-reference: the closure captures the already-allocated `s` pointer, which is safe because no goroutine reads `s.config` until `Run()` is called.
+
+**`secret.Secret.UnmarshalJSON`** — added to `internal/secret/secret.go` so `map[string]secret.Secret` can be populated by `command.Decode` from the `AgentConfigWire.ByokSecrets map[string]string` field. Unmarshal reads the raw string value and stores it in `s.v` — never logging the plaintext.
 
 ### Credential redaction
 

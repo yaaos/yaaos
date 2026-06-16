@@ -65,6 +65,10 @@ class FakeCodingAgentPlugin:
         """Fake implementation — always succeeds, returns settings unchanged."""
         return dict(settings)
 
+    def byok_requirement(self) -> str | None:
+        """Fake implementation — stateless, needs no byok key."""
+        return None
+
 
 @contextmanager
 def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[no-untyped-def]

@@ -106,6 +106,7 @@ linters:
             - github.com/yaaos/agent/internal/observability
             - github.com/yaaos/agent/internal/observability/observabilitytest
             - github.com/yaaos/agent/internal/protocol
+            - github.com/yaaos/agent/internal/secret
             - github.com/yaaos/agent/internal/tracing
             - github.com/yaaos/agent/internal/workspace
             - github.com/yaaos/agent/internal/supervisor/supervisortest

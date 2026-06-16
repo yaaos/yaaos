@@ -26,7 +26,6 @@ def _pr_review_invocation(**overrides) -> Invocation:  # type: ignore[no-untyped
             "pr_external_id": "acme/web#42",
             "head_sha": "deadbeef",
             "base_sha": "cafebabe",
-            "anthropic_api_key": "sk-test-key",
         },
         "wallclock_seconds": 300,
     }
@@ -59,17 +58,17 @@ def test_wallclock_seconds_propagated() -> None:
     assert result.wallclock_seconds == 600
 
 
-def test_env_carries_api_key_when_supplied() -> None:
+def test_env_does_not_carry_anthropic_api_key() -> None:
+    """ANTHROPIC_API_KEY is never in InvokeCodingAgent.env — it is delivered via
+    ConfigUpdate.byok_secrets and injected by the agent at exec time."""
     result = _plugin().build_invocation(_pr_review_invocation())
-    assert result.env.get("ANTHROPIC_API_KEY") == "sk-test-key"
-
-
-def test_env_empty_when_no_api_key_in_context() -> None:
-    inv = _pr_review_invocation()
-    ctx = dict(inv.context)
-    ctx.pop("anthropic_api_key")
-    result = _plugin().build_invocation(Invocation(**{**inv.model_dump(), "context": ctx}))
     assert "ANTHROPIC_API_KEY" not in result.env
+
+
+def test_env_is_empty_dict() -> None:
+    """build_invocation always produces an empty env dict — no secrets inline."""
+    result = _plugin().build_invocation(_pr_review_invocation())
+    assert result.env == {}
 
 
 def test_unknown_skill_raises_coding_agent_error() -> None:

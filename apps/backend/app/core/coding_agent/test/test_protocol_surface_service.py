@@ -36,6 +36,8 @@ EXPECTED_ALL = frozenset(
         "dispatch_invocation",
         "create_run",
         "get_step_activity",
+        # BYOK secrets provider
+        "build_byok_secrets_for_org",
     ]
 )
 
@@ -90,7 +92,7 @@ def test_protocol_has_expected_methods() -> None:
         for name, _ in inspect.getmembers(CodingAgentPlugin, predicate=inspect.isfunction)
         if not name.startswith("_")
     }
-    assert proto_methods == {"build_invocation", "parse_result", "validate_settings"}
+    assert proto_methods == {"build_invocation", "byok_requirement", "parse_result", "validate_settings"}
 
 
 @pytest.mark.service
