@@ -60,10 +60,10 @@ export async function seedGithubInstall(
   });
 }
 
-/** Seed the `skill_name` for a connected repo so `build_review_invocation`
- *  can resolve a non-null skill handle. Required before dispatching a real
- *  review in e2e specs (otherwise the review step fails with "skill_name
- *  not configured").
+/** Seed the `skill_name` for a connected repo. Used by e2e specs that render
+ *  the Code Connect settings page and expect a non-null skill_name. The seed
+ *  exists for SPA read-back assertions — the reviewer dispatch flow hardcodes
+ *  skill='pr_review' and does not read this value.
  */
 export async function seedRepoSkill(opts: {
   orgSlug: string;
