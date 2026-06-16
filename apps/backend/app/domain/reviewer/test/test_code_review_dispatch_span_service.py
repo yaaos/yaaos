@@ -49,6 +49,8 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
     db_session,
 ) -> None:
     """build_invocation failure records exception event + ERROR on active span."""
+    from app.core import byok  # noqa: PLC0415
+    from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.coding_agent import (  # noqa: PLC0415
         bind_coding_agent_registry,
         current_coding_agent_registry,
@@ -58,11 +60,14 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         WorkspaceTicketContext,
         register_workflow_context_provider,
     )
+    from app.domain.orgs import create_org  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
     from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
     from app.testing.seed import seed_workspace as _seed_workspace  # noqa: PLC0415
 
-    org_id = uuid4()
+    # Seed a real org so the byok key insert FK passes.
+    org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
+    org_id = org.id
 
     # Seed the DB rows dispatch needs to pass its workspace-owner guard.
     agent_row = await _seed_agent(org_id=org_id, session=db_session)
@@ -73,6 +78,8 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         agent_id=agent_row["id"],
         caller_session=db_session,
     )
+    # CodeReview.dispatch loads the Anthropic key before calling build_invocation.
+    await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
     # Install a context provider that returns a minimal valid WorkspaceTicketContext.

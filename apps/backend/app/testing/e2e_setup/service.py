@@ -118,8 +118,9 @@ async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: s
     no real session in a seed context.
 
     Requires the org to exist and have a Claude Code install (seeded by
-    ``seed_github_install`` first). Used by e2e specs that trigger reviews
-    so ``build_review_invocation`` can resolve a non-null skill name.
+    ``seed_github_install`` first). The written `skill_name` is currently
+    unused by the live PR-review path (`CodeReview.dispatch` hardcodes
+    `skill="pr_review"`); the row is kept for the settings UI's round-trip.
     """
     import json  # noqa: PLC0415
     from urllib.parse import quote  # noqa: PLC0415

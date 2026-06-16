@@ -10,11 +10,11 @@ HTTP boundary.
 | Event | Action | What happens |
 |---|---|---|
 | `pull_request` | `opened` (non-draft) / `reopened` / `ready_for_review` | Race-safe ticket+PR insert; `engine.start("pr_review_v1", …)` on the endpoint session. |
-| `pull_request` | `synchronize` | Refresh PR metadata, call `reviewer.start_incremental_review`. |
+| `pull_request` | `synchronize` | Refresh PR metadata only (incremental review is not wired). |
 | `pull_request` | `closed` | PR state → merged/closed, ticket completed, workflows cancelled. |
 | `pull_request` | `reopened` | PR state → open. |
-| `issue_comment` / `pull_request_review_comment` | `created` | Parse yaaos commands or route as a developer reply. |
-| `reaction` | `created` | Audit row on the related ticket. |
+| `issue_comment` / `pull_request_review_comment` | `created` | Parse yaaos commands (cancel / full review); other comments are accepted as a no-op. |
+| `reaction` | `created` | Accepted as a no-op (`ignored_reaction_not_wired`). |
 | `installation` | `created` / `unsuspend` / `new_permissions_accepted` | Upsert install row. |
 | `installation` | `deleted` / `suspend` | Mark install inactive. |
 | anything else | — | `IntakeSideEffect(detail="ignored")` (200, no work). |
@@ -454,7 +454,7 @@ class GithubIntakeType:
                 await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
             return IntakeSideEffect(detail=f"command_{cmd.replace(' ', '_')}")
 
-        return IntakeSideEffect(detail="developer_reply")
+        return IntakeSideEffect(detail="comment_no_command")
 
     async def _handle_reaction(
         self,

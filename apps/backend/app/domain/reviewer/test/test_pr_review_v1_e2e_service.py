@@ -21,6 +21,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+from app.core import byok
+from app.core.audit_log import Actor
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary
 from app.core.workspace import (
@@ -28,6 +30,7 @@ from app.core.workspace import (
     register_workflow_context_provider,
     register_workspace_provider,
 )
+from app.domain.orgs import create_org
 from app.domain.reviewer.commands import (
     ALL_LOCAL_COMMANDS,
     ALL_WORKSPACE_COMMANDS,
@@ -37,6 +40,13 @@ from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.seed import seed_agent as _seed_agent_for_tests
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
+
+
+async def _seed_org_with_anthropic_key(db_session) -> UUID:  # type: ignore[no-untyped-def]
+    """Seed a real orgs row + an anthropic byok key so CodeReview.dispatch finds one."""
+    org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
+    await byok.set(org.id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
+    return org.id
 
 
 class _StubWorkspaceProvider:
@@ -192,7 +202,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(
 
     register_workspace_provider(_StubProviderWithFiles())
 
-    org_id = uuid4()
+    org_id = await _seed_org_with_anthropic_key(db_session)
 
     # 2. Real ticket + PR rows so findings FK has somewhere to land.
     ext_id = f"e2e-{uuid4().hex[:6]}"
@@ -359,7 +369,7 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     `_advance_pending_agent_event`. Local commands (`CheckShouldReview`,
     `PostFindings`) execute inline on the control plane. Workflow ends DONE
     with no pending agent command."""
-    org_id = uuid4()
+    org_id = await _seed_org_with_anthropic_key(db_session)
     ticket_id, _ = await create_ticket(
         org_id=org_id,
         source_external_id="42",

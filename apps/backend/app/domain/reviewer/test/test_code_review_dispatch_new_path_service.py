@@ -11,12 +11,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.core import byok
+from app.core.audit_log import Actor
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
     get_workspace_command_state,
     register_workflow_context_provider,
 )
+from app.domain.orgs import create_org
 from app.domain.reviewer.commands import CodeReview
 from app.testing.seed import seed_agent as _seed_agent
 from app.testing.seed import seed_workspace as _seed_workspace
@@ -41,8 +44,12 @@ async def test_code_review_dispatch_new_path(
 ) -> None:
     """CodeReview.dispatch inserts agent_commands + coding_agent_runs rows and claims
     the workspace via the new coding_agent.dispatch_invocation path."""
-    org_id = uuid4()
     wfx_id = uuid4()
+
+    # Seed a real org row — CodeReview.dispatch loads the Anthropic key from
+    # byok at dispatch time, and the byok_keys FK requires an existing org.
+    org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
+    org_id = org.id
 
     # Seed a reachable agent + workspace so dispatch's ownership guard passes.
     agent_row = await _seed_agent(org_id=org_id, session=db_session)
@@ -55,6 +62,10 @@ async def test_code_review_dispatch_new_path(
         caller_session=db_session,
     )
     ws_id = UUID(str(ws_id_str))
+
+    # CodeReview.dispatch loads the Anthropic key from byok before building
+    # the invocation; seed one so dispatch doesn't bail with a missing-key error.
+    await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
     # Install a context provider that returns a minimal valid WorkspaceTicketContext.

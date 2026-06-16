@@ -114,10 +114,10 @@ async def dispatch_invocation(
     callers source it from their org context (e.g. the workflow execution's
     org, the ticket's org, or the workspace owner's org).
 
-    Raises `CodingAgentError` on invalid arguments. Raises
-    `WorkspaceNotActive` (from `core/workspace`) if the workspace is
-    in a non-active state (checked implicitly by the claim guard in the
-    agent gateway layer — the present function does not double-check).
+    No workspace-state check. Callers are expected to follow
+    `dispatch_invocation` with `try_claim` to enter single-flight mode and to
+    surface the `try_claim` failure (which is the single source of truth for
+    workspace busy/inactive). Raises `CodingAgentError` on invalid arguments.
     """
     from uuid import uuid7  # noqa: PLC0415
 
@@ -167,7 +167,7 @@ async def dispatch_invocation(
 
     await pin_command_to_agent(command_id, agent_id, session=session)
 
-    log.debug(
+    log.info(
         "coding_agent.dispatch_invocation",
         command_id=str(command_id),
         workspace_id=str(workspace_id),

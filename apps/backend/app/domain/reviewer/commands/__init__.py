@@ -124,6 +124,26 @@ class CodeReview:
             output_schema=finding_output_schema(),
         )
 
+        # Load the Anthropic API key from byok at dispatch time. The plugin's
+        # build_invocation is sync and pure, so the key cannot be loaded inside
+        # it. Without this, the Go agent spawns the Claude Code CLI with an empty
+        # env and every real review fails authentication. If no key is configured
+        # for the org, surface a clear error here — the subprocess would fail
+        # anyway, but with a less useful message.
+        from app.core import byok  # noqa: PLC0415
+
+        anthropic_api_key = await byok.get(ticket_ctx.org_id, "anthropic", session=session)
+        if anthropic_api_key is None:
+            raise RuntimeError(
+                f"no anthropic api key configured for org {ticket_ctx.org_id}; "
+                "configure one in settings before dispatching a review"
+            )
+
+        invocation_context: dict[str, object] = {
+            **review_ctx.model_dump(mode="json"),
+            "anthropic_api_key": anthropic_api_key,
+        }
+
         plugin = coding_agent.get_plugin("claude_code")
         try:
             invocation_data = plugin.build_invocation(
@@ -131,7 +151,7 @@ class CodeReview:
                     skill="pr_review",
                     model="opus",
                     effort="medium",
-                    context=review_ctx.model_dump(mode="json"),
+                    context=invocation_context,
                     wallclock_seconds=1200,
                 )
             )
