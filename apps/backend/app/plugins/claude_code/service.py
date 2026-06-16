@@ -11,6 +11,7 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -28,15 +29,19 @@ from app.core.coding_agent import (
     CodingAgentError,
     ExecSpec,
     HealthStatus,
-    Invocation,
+    InvokeCodingAgent,
     ReportedFinding,
     ReviewContext,
+    RunResult,
     Usage,
     ValidationResult,
     register_plugin,
 )
 from app.core.coding_agent import (
     FindingDraftList as _FindingDraftList,
+)
+from app.core.coding_agent import (
+    Invocation as _NewInvocation,
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
@@ -393,7 +398,7 @@ class ClaudeCodePlugin:
         ctx: ReviewContext,
         *,
         session: Any,
-    ) -> Invocation:
+    ) -> Any:
         """Build the `Invocation` for a remote PR review.
 
         Resolves the per-repo skill name from `claude_code_repos`, reads
@@ -404,7 +409,13 @@ class ClaudeCodePlugin:
 
         Raises `CodingAgentError` when the skill name is unconfigured or the
         Anthropic key is absent — the review step fails cleanly before dispatch.
+
+        Returns a `_LegacyInvocation` (internal to `core/coding_agent`) — the
+        type is `Any` here so the plugin layer does not import the private class
+        across the module boundary.
         """
+        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
+        from app.core.coding_agent import _LegacyInvocation as _Inv  # noqa: PLC0415
         from app.plugins.claude_code.repos import resolve_skill  # noqa: PLC0415
 
         skill_name = await resolve_skill(ctx.org_id, ctx.repo_external_id, session=session)
@@ -450,9 +461,8 @@ class ClaudeCodePlugin:
             "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
         )
         env = {"ANTHROPIC_API_KEY": api_key.get_secret_value()}
-        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
 
-        return Invocation(
+        return _Inv(
             kind=skill_name,
             exec=ExecSpec(argv=argv, stdin=prompt, env=env),
             limits=InvokeClaudeCodeLimits(wallclock_seconds=_DEFAULT_TIMEOUT_SECONDS),
@@ -552,6 +562,90 @@ class ClaudeCodePlugin:
             rendered.append(ev.model_copy(update={"seq": seq}))
             seq += 1
         return ActivityLog(events=tuple(rendered))
+
+    # ── New generic Protocol methods ─────────────────────────────────────
+
+    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+        """Translate a high-level `Invocation` into a concrete exec block.
+
+        Delegates argv/stdin/env composition to the existing `_exec_block`
+        helper in `core/coding_agent/invocation.py` via a synthetic
+        `ReviewContext`-shaped dict from `invocation.context` for the
+        `pr_review` skill. Raises `CodingAgentError` for unknown skills or
+        when the context dict lacks required keys.
+        """
+        if invocation.skill != "pr_review":
+            raise CodingAgentError(
+                f"ClaudeCodePlugin does not support skill {invocation.skill!r}; only 'pr_review' is supported"
+            )
+        from pydantic import SecretStr as _SecretStr  # noqa: PLC0415
+
+        from app.core.coding_agent import ReviewContext as _ReviewContext  # noqa: PLC0415
+        from app.core.coding_agent import build_invocation as _build_inv  # noqa: PLC0415
+
+        # Build a ReviewContext-compatible object from the generic context dict.
+        # The invocation.context for pr_review carries the same keys as
+        # ReviewContext (org_id, repo_external_id, pr_external_id, head_sha,
+        # base_sha, output_schema). We validate required keys here.
+        ctx_dict = invocation.context
+        required = {"head_sha", "base_sha", "pr_external_id", "repo_external_id", "org_id"}
+        missing = required - set(ctx_dict)
+        if missing:
+            raise CodingAgentError(
+                f"build_invocation: context missing required keys for pr_review: {sorted(missing)}"
+            )
+        review_ctx = _ReviewContext(
+            org_id=ctx_dict["org_id"],
+            repo_external_id=ctx_dict["repo_external_id"],
+            pr_external_id=ctx_dict["pr_external_id"],
+            head_sha=ctx_dict["head_sha"],
+            base_sha=ctx_dict["base_sha"],
+            output_schema=ctx_dict.get("output_schema", {}),
+        )
+        # Read the API key from the context dict if supplied (used in tests);
+        # production callers supply it via invocation.context["anthropic_api_key"].
+        raw_api_key: str | None = ctx_dict.get("anthropic_api_key")
+        api_key = _SecretStr(raw_api_key) if raw_api_key else None
+        # Delegate to the public build_invocation helper (core/coding_agent/invocation.py)
+        # which assembles the full invocation dict including the exec block.
+        inv_dict = _build_inv(
+            mode="review",
+            context=review_ctx,
+            model=invocation.model,
+            effort=invocation.effort,
+            anthropic_api_key=api_key,
+        )
+        exec_block = inv_dict["exec"]
+        return InvokeCodingAgent(
+            argv=list(exec_block["argv"]),
+            env=exec_block["env"],
+            stdin=exec_block.get("stdin") or None,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Decode a terminal AgentEvent payload into a `RunResult`.
+
+        Reads `terminal_event_payload["stdout"]` / `["exit_code"]`, delegates
+        to `parse_usage` and `render_activity` to populate `usage` and
+        `activity`. Sets `output = stdout`, `error_message = None` (the
+        sink derives status from the wire `event_kind`, not from the payload).
+        Never raises on missing keys — missing stdout is treated as an empty
+        string; missing exit_code is None.
+        """
+        stdout: str = terminal_event_payload.get("stdout", "") or ""
+        exit_code_raw = terminal_event_payload.get("exit_code")
+        exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
+        usage = self.parse_usage(stdout)
+        activity = self.render_activity(stdout)
+        return RunResult(
+            output=stdout,
+            error_message=None,
+            usage=usage,
+            duration_ms=usage.duration_ms,
+            exit_code=exit_code,
+            activity=activity,
+        )
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
         errors: list[str] = []

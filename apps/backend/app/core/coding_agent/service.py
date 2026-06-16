@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import structlog
 from opentelemetry import trace
@@ -17,6 +18,7 @@ from app.core.coding_agent.types import (
     HealthStatus,
     IncrementalReviewContext,
     IncrementalReviewResult,
+    InvokeCodingAgent,
     OnActivity,
     PluginNotFoundError,
     ReviewContext,
@@ -28,6 +30,11 @@ from app.core.coding_agent.types import (
     VerifyFixResult,
 )
 from app.core.workspace import Workspace
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.workflow.types import CommandContext
 
 log = structlog.get_logger("coding_agent")
 _tracer = trace.get_tracer(__name__)
@@ -233,3 +240,88 @@ async def health_check_all() -> dict[str, HealthStatus]:
 
 def registered_plugin_ids() -> list[str]:
     return current_coding_agent_registry().ids()
+
+
+async def dispatch_invocation(
+    *,
+    workspace_id: UUID,
+    org_id: UUID,
+    agent_id: UUID,
+    workflow_execution_id: UUID,
+    plugin: CodingAgentPlugin,
+    invocation_data: InvokeCodingAgent,
+    ctx: CommandContext,
+    session: AsyncSession,
+) -> UUID:
+    """Enqueue an `InvokeClaudeCode` AgentCommand and insert a run row.
+
+    Mints a `command_id` (UUIDv7), enqueues the command via
+    `core/agent_gateway.enqueue_command`, inserts a `coding_agent_runs`
+    row (status=running), and pins the command to `agent_id` so the
+    workspace's owning agent will claim it. Returns the minted
+    `command_id`. Durable iff the caller's transaction commits.
+
+    `org_id` is required for the agent_commands and coding_agent_runs rows —
+    callers source it from their org context (e.g. the workflow execution's
+    org, the ticket's org, or the workspace owner's org).
+
+    Raises `CodingAgentError` on invalid arguments. Raises
+    `WorkspaceNotActive` (from `core/workspace`) if the workspace is
+    in a non-active state (checked implicitly by the claim guard in the
+    agent gateway layer — the present function does not double-check).
+    """
+    from uuid import uuid7  # noqa: PLC0415
+
+    from app.core.agent_gateway import (  # noqa: PLC0415
+        InvokeClaudeCodeCommand,
+        InvokeClaudeCodeLimits,
+        enqueue_command,
+        pin_command_to_agent,
+    )
+    from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
+
+    command_id = uuid7()
+
+    # Build the wire command from the concrete exec block.
+    # `traceparent` is "" when no parent span is active; `enqueue_command`
+    # overwrites it with the dispatch span's traceparent before persisting.
+    wire_command = InvokeClaudeCodeCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent=ctx.traceparent or "",
+        invocation={
+            "argv": invocation_data.argv,
+            "stdin": invocation_data.stdin or "",
+            "env": dict(invocation_data.env),
+        },
+        limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
+    )
+
+    await enqueue_command(
+        org_id,
+        wire_command,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
+
+    await create_run(
+        org_id=org_id,
+        workflow_execution_id=workflow_execution_id,
+        step_id=ctx.step_id,
+        agent_command_id=command_id,
+        command_kind="InvokeClaudeCode",
+        plugin_id=plugin.plugin_id,
+        session=session,
+    )
+
+    await pin_command_to_agent(command_id, agent_id, session=session)
+
+    log.debug(
+        "coding_agent.dispatch_invocation",
+        command_id=str(command_id),
+        workspace_id=str(workspace_id),
+        agent_id=str(agent_id),
+        plugin_id=plugin.plugin_id,
+        wallclock_seconds=invocation_data.wallclock_seconds,
+    )
+    return command_id

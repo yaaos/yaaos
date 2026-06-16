@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol, per-mode context/result types (`ExecSpec`, `Invocation`, `ReviewContext`, …), telemetry enums, plugin registry, typed exception hierarchy, per-mode prompt builders and DTOs (`prompts.py`).
+Owns: `CodingAgentPlugin` Protocol, per-mode context/result types (`ExecSpec`, `Invocation`, `InvokeCodingAgent`, `RunResult`, `RunStatus`, `ReviewContext`, …), telemetry enums, plugin registry, typed exception hierarchy, per-mode prompt builders and DTOs (`prompts.py`), and the `dispatch_invocation` helper.
 
 Does NOT own: prompt assembly for the remote-dispatch full-review path (that's `plugins/claude_code.build_review_invocation`), output-format choice, workspace mechanics.
 
@@ -12,26 +12,44 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 
 ## Why / invariants
 
-- **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process. The `CodingAgentPlugin` Protocol owns the exec-spec build (`build_review_invocation`) and the parse step (`parse_review_output`, `parse_usage`, `render_activity`); dispatch is the caller's responsibility.
-- **Five remote-dispatch methods.** `build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`. Adding a mode requires a Protocol change.
-- **Remote path: plugin owns exec spec + parse; caller dispatches.** `build_review_invocation` returns a typed `Invocation{kind, exec: ExecSpec, limits}` — the exact command the Go agent spawns. `parse_review_output` receives the agent's raw stream-json stdout and returns `list[ReportedFinding]` or raises `ValueError`. The caller (`CodeReview.dispatch` + `PostFindings.execute`) drives dispatch and parse; the plugin owns translation.
-- **`ExecSpec.env` carries the Anthropic key.** Documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate). The key is never logged or placed in audit rows; it's decrypted on the control plane and placed into the exec block.
+- **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process. The `CodingAgentPlugin` Protocol owns the exec-spec build (`build_review_invocation`, `build_invocation`) and the parse step (`parse_review_output`, `parse_usage`, `render_activity`, `parse_result`); dispatch is the caller's responsibility.
+- **Seven remote-dispatch methods.** Legacy path: `build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`. New path: `build_invocation`, `parse_result`. Adding a mode requires a Protocol change.
+- **Remote path: plugin owns exec spec + parse; caller dispatches.** `build_review_invocation` returns a `_LegacyInvocation{kind, exec: ExecSpec, limits}` (legacy shape). `build_invocation` returns an `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}` (new shape). Both describe the exact command the Go agent spawns. The caller drives dispatch; the plugin owns translation.
+- **`ExecSpec.env` / `InvokeCodingAgent.env` carries the Anthropic key.** Documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate). The key is never logged or placed in audit rows; it's decrypted on the control plane and placed into the exec block.
 - **`ReviewContext` is the remote dispatch context.** Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`, `output_schema`. No diff blob — the skill clones the repo and computes `git diff base..head` itself.
+- **`Invocation` is the high-level intent.** Fields: `skill`, `model`, `effort`, `context` (opaque mapping), `wallclock_seconds`. `build_invocation` translates it into an `InvokeCodingAgent`.
+- **`dispatch_invocation` is the one-shot dispatch helper.** Mints a UUIDv7 `command_id`, calls `enqueue_command`, inserts a `coding_agent_runs` row, calls `pin_command_to_agent`, returns the `command_id`. All in the caller's transaction — durable iff the transaction commits.
 
 ## `CodingAgentPlugin` Protocol
 
 Signatures in `app/core/coding_agent/types.py`.
 
-### Remote-dispatch methods
+### Remote-dispatch methods — legacy path
 
-- `build_review_invocation(ctx: ReviewContext, *, session) -> Invocation` — resolves the skill handle, decrypts the API key, assembles the prompt + output-schema appendix, returns the exec spec. Never dispatches.
+- `build_review_invocation(ctx: ReviewContext, *, session) -> Any` — resolves the skill handle, decrypts the API key, assembles the prompt + output-schema appendix, returns a `_LegacyInvocation`. Never dispatches. Return type is `Any` at the boundary to avoid cross-module import of the private type.
 - `parse_review_output(stdout: str) -> list[ReportedFinding]` — finds the terminal `type=result` stream event, extracts `result`, parses against `FindingDraftList`. Raises `ValueError` on any failure.
 - `review_preflight_steps(ctx, *, session) -> tuple[str, ...]` — returns `WorkflowCommand` kind strings to insert before the review step. Returns `()` — no preflight needed.
 - `parse_usage(stdout: str) -> Usage` — reads the terminal `type=result` stream event and extracts `input_tokens` / `output_tokens` / `duration_ms`. Returns an empty `Usage()` if there's no terminal event or the stream is empty. Never raises.
 - `render_activity(stdout: str) -> ActivityLog` — walks every parseable stream event, drops null renders, stamps a monotonic `seq` (starting at 0) onto each surviving `ActivityEvent`, and returns the full log. Never raises.
 
+### Remote-dispatch methods — new path
+
+- `build_invocation(invocation: Invocation) -> InvokeCodingAgent` — translates a high-level `Invocation` into a concrete exec block. Raises `CodingAgentError` on unknown skills or missing context keys.
+- `parse_result(terminal_event_payload: Mapping[str, Any]) -> RunResult` — decodes a terminal AgentEvent payload into a `RunResult`. Reads `stdout` and `exit_code` from the payload dict; delegates to `parse_usage` and `render_activity` for telemetry. Never raises on missing keys.
+
+### `dispatch_invocation`
+
+`dispatch_invocation(*, workspace_id, org_id, agent_id, workflow_execution_id, plugin, invocation_data: InvokeCodingAgent, ctx: CommandContext, session) -> UUID`
+
+One-shot helper that mints a UUIDv7 `command_id`, enqueues the `InvokeClaudeCode` AgentCommand via `core/agent_gateway.enqueue_command`, inserts a `coding_agent_runs` row (status=running), and pins the command to `agent_id`. Returns the `command_id`. Durable iff the caller's transaction commits. `org_id` is required — callers source it from their org context.
+
 ### Value objects
 
+- `Invocation{skill, model, effort, context, wallclock_seconds}` — high-level intent passed to `build_invocation`. Skill-keyed; context is an opaque mapping the plugin interprets.
+- `Effort = str` — plugin-specific effort level string (e.g. `"low"`, `"medium"`, `"high"`). Opaque to `core/coding_agent`.
+- `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}` — concrete exec block returned by `build_invocation`.
+- `RunResult{output, error_message, usage, duration_ms, exit_code, activity}` — result returned by `parse_result`. `error_message` is always `None` from `parse_result`; the sink derives status from the wire event kind.
+- `RunStatus` — `StrEnum` with values `SUCCESS`, `FAILURE`, `TIMEOUT`, `CANCELLED`.
 - `Usage{tokens_in: int | None, tokens_out: int | None, duration_ms: int | None}` — populated from the terminal `result` event; any field may be `None` when the CLI omits it.
 - `ActivityLog{events: tuple[ActivityEvent, ...]}` — pre-rendered, immutable log persisted to `coding_agent_activity` as a single JSONB blob.
 - `ActivityEvent{seq: int, ts, kind, message, detail}` — one row per useful stream event; `seq` is monotonic per log.
@@ -107,7 +125,10 @@ The row's SQLAlchemy mapped class (`CodingAgentActivityRow`) lives on the shared
 - `app/core/coding_agent/test/test_dispatch_spans_service.py` — service test: a plugin `review` that raises `CodingAgentError` produces a `coding_agent.{plugin_id}.review` span with `StatusCode.ERROR` and an `exception` event.
 - `app/core/coding_agent/test/test_health_check_span_service.py` — service test: a plugin `health_check` that raises produces a `coding_agent.{plugin_id}.health_check` span with `StatusCode.ERROR` and an `exception` event, while `health_check_all` still returns an unhealthy `HealthStatus` (no re-raise).
 - `app/core/coding_agent/test/test_invocation.py` — `build_invocation` exec-block shape, argv/stdin/env, allowed-tools constants.
+- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service test: `dispatch_invocation` returns a UUIDv7, inserts a `coding_agent_runs` row (status=running, correct plugin_id and step_id), and is resolvable via `get_run_id_for_command`. Each call mints a distinct command_id.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service tests: `create_run`/`finalize_run` round-trip (tokens + duration land on the row; `plugin_id` persists), run-sink no-op for non-`InvokeClaudeCode`, run-sink resolves the plugin from the run row's `plugin_id` and skips (logs + returns, no raise, run stays unfinalised) when that plugin is unregistered, activity blob persists to `coding_agent_activity`, `reviews.run_id` populated via `publish_findings`, `get_step_activity` returns the rendered log when present and `None` when no run exists or the activity row is absent (aged-out partition).
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `parse_usage` (extracts tokens + duration, tolerates missing usage block, empty stream) and `render_activity` (monotonic seq across the full stream, null-render filtering, empty-stream → empty log).
+- `app/plugins/claude_code/test/test_build_invocation_method.py` — unit tests for `ClaudeCodePlugin.build_invocation`: returns `InvokeCodingAgent`, argv non-empty (starts with `claude`), model/effort propagated, wallclock propagated, `env` carries API key when supplied, unknown skill raises `CodingAgentError`, missing context key raises `CodingAgentError`.
+- `app/plugins/claude_code/test/test_parse_result_method.py` — unit tests for `ClaudeCodePlugin.parse_result`: returns `RunResult`, output = stdout, exit_code propagated, error_message always None, usage tokens parsed from stream, graceful on missing/malformed stdout, duration_ms matches usage.
 - `app/core/database/test/test_coding_agent_activity_migration.py` — verifies that after `migrate()`: the parent is RANGE-partitioned, ≥3 weekly child partitions exist, `_coding_agent_activity_partition_ddl` names partitions deterministically for a known UTC date, and a `created_at=now()` row routes to the current-week child.
 - Plugin-specific behaviour in `app/plugins/<plugin>/test/`.

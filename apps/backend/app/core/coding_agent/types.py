@@ -153,17 +153,88 @@ class ExecSpec(BaseModel):
     env: dict[str, str] = {}
 
 
-class Invocation(BaseModel):
+class _LegacyInvocation(BaseModel):
     """Output of `build_*_invocation`. Serialised into `InvokeClaudeCodeCommand.invocation`.
 
     `kind` identifies the skill handle the agent should run.
     `exec` carries the argv/stdin/env block.
     `limits` are the per-run wallclock caps passed through to the agent.
+
+    Renamed from `Invocation` to avoid a name clash with the new high-level
+    `Invocation` value object. Used internally by `core/coding_agent/invocation.py`
+    and the existing `build_review_invocation` path until those are retired.
     """
 
     kind: str
     exec: ExecSpec
     limits: InvokeClaudeCodeLimits
+
+
+# ── New high-level value objects ─────────────────────────────────────────────
+
+# Plugin/model-specific effort level string. The plugin validates its
+# own allowed values; `core/coding_agent` treats this as an opaque str.
+Effort = str
+
+
+class Invocation(BaseModel):
+    """High-level intent passed to `CodingAgentPlugin.build_invocation`.
+
+    Carries the skill name, model, effort level, generic context dict
+    (plugin interprets the keys for the skill), and the wallclock cap.
+    Pure data — no exec block. `build_invocation` translates this into
+    an `InvokeCodingAgent` with the concrete argv/env/stdin the agent runs.
+    """
+
+    skill: str
+    model: str
+    effort: Effort
+    context: Mapping[str, Any]
+    wallclock_seconds: int
+
+
+class InvokeCodingAgent(BaseModel):
+    """Concrete exec block returned by `CodingAgentPlugin.build_invocation`.
+
+    Carries the exact argv, env overrides, optional stdin, and wallclock
+    cap the Go agent uses to spawn the Claude Code subprocess.
+    `env` carries the Anthropic API key — the accepted carve-out for
+    wire-bound exec (same contract as `ExecSpec.env` today).
+    """
+
+    argv: list[str]
+    env: Mapping[str, str]
+    stdin: str | None = None
+    wallclock_seconds: int
+
+
+class RunStatus(StrEnum):
+    """Terminal state of a coding-agent run as reported by the wire event_kind.
+
+    Set by the run sink from the wire `event_kind`, NOT by the plugin.
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+
+
+class RunResult(BaseModel):
+    """Result returned by `CodingAgentPlugin.parse_result`.
+
+    Carries the raw skill stdout, optional error message, token usage,
+    wall-clock duration, exit code, and the pre-rendered activity log.
+    Does NOT carry status — the sink derives status from the wire event_kind
+    and stores it on the run row independently of the plugin's parse step.
+    """
+
+    output: str
+    error_message: str | None = None
+    usage: Usage
+    duration_ms: int | None = None
+    exit_code: int | None = None
+    activity: ActivityLog
 
 
 class ReviewContext(BaseModel):
@@ -409,8 +480,8 @@ class CodingAgentPlugin(Protocol):
         ctx: ReviewContext,
         *,
         session: AsyncSession,
-    ) -> Invocation:
-        """Build the `Invocation` (argv/stdin/env + limits) for a PR review.
+    ) -> _LegacyInvocation:
+        """Build the `_LegacyInvocation` (argv/stdin/env + limits) for a PR review.
 
         Resolves the skill handle, decrypts the Anthropic API key, assembles
         the prompt and output-schema appendix, and returns the complete exec
@@ -458,6 +529,33 @@ class CodingAgentPlugin(Protocol):
         Returns `("SeedSkills",)` when the repo uses the yaaos skill bundle;
         returns `()` otherwise. Hardcoded to `()` until skill-assignment
         resolution is implemented.
+        """
+        ...
+
+    # Generic Protocol surface — two pure methods covering build + parse.
+    # The 8 remote-dispatch + in-process methods above remain on the Protocol
+    # alongside these for the duration of the migration to the generic shape.
+
+    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+        """Translate a high-level `Invocation` into a concrete exec block.
+
+        Pure function — no IO, no session. The plugin owns skill resolution
+        (mapping `invocation.skill` to an argv shape), model/effort mapping
+        to vendor-specific CLI flags, and context encoding for the skill that
+        runs inside the workspace. Raises `CodingAgentError` for unknown
+        skills or missing configuration that can be verified without IO.
+        """
+        ...
+
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Decode a terminal AgentEvent payload into a `RunResult`.
+
+        Pure function — no IO, no session. Reads `terminal_event_payload`
+        (the `outputs` dict from the agent's terminal event) and returns a
+        `RunResult` with `output`, `usage`, `activity`, `duration_ms`, and
+        `exit_code` populated. Does NOT determine status — the sink sets
+        `RunStatus` from the wire `event_kind`. Raises `CodingAgentError`
+        on irrecoverable parse failure.
         """
         ...
 

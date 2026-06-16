@@ -8,12 +8,14 @@ tests can drive the workflow end-to-end without real plugin auth.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from app.core.coding_agent import (
+    ActivityLog,
     AnswerQuestionContext,
     AnswerQuestionResult,
     HealthStatus,
@@ -21,16 +23,20 @@ from app.core.coding_agent import (
     IncrementalReviewResult,
     InvocationStatus,
     InvocationTelemetry,
+    InvokeCodingAgent,
     OnActivity,
     ReportedFinding,
     ReviewContext,
     ReviewResult,
+    RunResult,
     StaleCheckContext,
     StaleCheckResult,
+    Usage,
     ValidationResult,
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.coding_agent import Invocation as _NewInvocation
 from app.core.workspace import Workspace
 
 _TELEMETRY = InvocationTelemetry(tokens_in=0, tokens_out=0, latency_ms=0)
@@ -153,6 +159,29 @@ class FakeCodingAgentPlugin:
             status=InvocationStatus.SUCCESS,
             answer=self.answer_text,
             telemetry=_TELEMETRY,
+        )
+
+    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+        """Return a stable canned exec block for the given invocation."""
+        return InvokeCodingAgent(
+            argv=["fake-claude", "--skill", invocation.skill, "--model", invocation.model],
+            env={},
+            stdin=None,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Return a minimal canned `RunResult`."""
+        stdout: str = terminal_event_payload.get("stdout", "") or ""
+        exit_code_raw = terminal_event_payload.get("exit_code")
+        exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
+        return RunResult(
+            output=stdout,
+            error_message=None,
+            usage=Usage(tokens_in=0, tokens_out=0, duration_ms=0),
+            duration_ms=0,
+            exit_code=exit_code,
+            activity=ActivityLog(events=()),
         )
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:

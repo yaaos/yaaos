@@ -13,6 +13,7 @@ through; `health_check` reports stub mode.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,10 +29,12 @@ from app.core.coding_agent import (
     IncrementalReviewResult,
     InvocationStatus,
     InvocationTelemetry,
+    InvokeCodingAgent,
     OnActivity,
     ReportedFinding,
     ReviewContext,
     ReviewResult,
+    RunResult,
     StaleCheckContext,
     StaleCheckResult,
     Usage,
@@ -39,6 +42,7 @@ from app.core.coding_agent import (
     VerifyFixContext,
     VerifyFixResult,
 )
+from app.core.coding_agent import Invocation as _NewInvocation
 from app.core.workspace import Workspace
 
 log = structlog.get_logger("testing.stub_coding_agent")
@@ -200,17 +204,47 @@ class StubCodingAgentPlugin:
         )
 
     async def build_review_invocation(self, ctx: ReviewContext, *, session: Any) -> Any:
-        """Returns a minimal stub `Invocation` so service tests that exercise
+        """Returns a minimal stub invocation so service tests that exercise
         `CodeReview.dispatch` don't need a real API key or DB settings row.
+
+        Imports `_LegacyInvocation` via the public `core/coding_agent` package
+        interface (it's exported from `__all__` as a legacy shim).
         """
         from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
-        from app.core.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
+        from app.core.coding_agent import ExecSpec, _LegacyInvocation  # noqa: PLC0415
 
         del ctx, session
-        return Invocation(
+        return _LegacyInvocation(
             kind="code-review",
             exec=ExecSpec(argv=("claude", "--print"), stdin="stub prompt", env={}),
             limits=InvokeClaudeCodeLimits(wallclock_seconds=60),
+        )
+
+    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+        """Return a minimal stub exec block — argv=["stub"], empty env."""
+        return InvokeCodingAgent(
+            argv=["stub"],
+            env={},
+            stdin=None,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Return a minimal stub `RunResult` from the payload."""
+        stdout: str = terminal_event_payload.get("stdout", "") or ""
+        exit_code_raw = terminal_event_payload.get("exit_code")
+        exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
+        return RunResult(
+            output=stdout,
+            error_message=None,
+            usage=Usage(
+                tokens_in=_STUB_TELEMETRY.tokens_in,
+                tokens_out=_STUB_TELEMETRY.tokens_out,
+                duration_ms=_STUB_TELEMETRY.latency_ms,
+            ),
+            duration_ms=_STUB_TELEMETRY.latency_ms,
+            exit_code=exit_code,
+            activity=ActivityLog(events=tuple(_canned_activity())),
         )
 
     def parse_review_output(self, stdout: str) -> list[ReportedFinding]:

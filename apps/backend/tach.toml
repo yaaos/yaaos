@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workflow", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.config"
@@ -348,6 +348,7 @@ expose = [
   "CodingAgentPlugin",
   "CodingAgentRegistry",
   "CodingAgentRunSinkImpl",
+  "Effort",
   "ExecSpec",
   "FindingAnchor",
   "FindingDraftList",
@@ -358,12 +359,15 @@ expose = [
   "InvocationMode",
   "InvocationStatus",
   "InvocationTelemetry",
+  "InvokeCodingAgent",
   "OnActivity",
   "PluginNotFoundError",
   "PriorThreadMessage",
   "ReportedFinding",
   "ReviewContext",
   "ReviewResult",
+  "RunResult",
+  "RunStatus",
   "Severity",
   "StaleCheckContext",
   "StaleCheckDto",
@@ -373,6 +377,7 @@ expose = [
   "VerifyFixContext",
   "VerifyFixDto",
   "VerifyFixResult",
+  "_LegacyInvocation",
   "answer_question",
   "assemble_answer_question_prompt",
   "assemble_incremental_review_prompt",
@@ -382,6 +387,7 @@ expose = [
   "build_invocation",
   "create_run",
   "current_coding_agent_registry",
+  "dispatch_invocation",
   "finalize_run",
   "finding_output_schema",
   "get_plugin",
