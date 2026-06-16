@@ -71,7 +71,7 @@ One-shot helper in `service.py`. Builds the `InvokeClaudeCode` wire payload from
 
 ### Service functions
 
-- `create_run(...)` — inserts with `status=running`, flushes, returns the run id.
+- `create_run(...)` — inserts with `status=running`, flushes, returns the run id. In `__all__`; cross-module tests (e.g. `agent_gateway/test/`) seed run rows via this public function.
 - `get_run_ref_for_command(agent_command_id, *, session)` — returns `(run_id, plugin_id)`; used by the run sink to resolve which plugin parses the terminal event.
 - `finalize_run(run_id, *, usage, duration_ms, activity, exit_code, status, session)` — updates status, tokens, duration, activity blob.
 - `get_step_activity(workflow_execution_id, step_id, *, session)` — public; two-hop: resolve run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).

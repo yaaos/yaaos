@@ -88,8 +88,9 @@ def register_run_sink(sink: AgentRunSink) -> None:
 def get_run_sink() -> AgentRunSink | None:
     """Return the registered sink, or None when not yet registered.
 
-    Callers treat None as "no run tracking" — graceful degradation when
-    `domain/coding_agent` is not loaded (minimal test configs).
+    In production, web.py and worker.py both assert the return value is not
+    None after `core/coding_agent` is imported. The None return is only
+    reachable in tests that explicitly clear the slot via `clear_run_sink`.
     """
     return _SINK
 

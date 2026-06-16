@@ -55,6 +55,13 @@ def main() -> int:
     register_reviewer_terminal_hooks()
     assert_workflow_context_provider()
 
+    # Structural run-sink assertion — `app.core.coding_agent` (imported above)
+    # registers the sink at import time. Crash loud here rather than silently
+    # dropping agent stdout in `record_agent_event` mid-flow.
+    from app.core.agent_gateway import get_run_sink as _get_run_sink  # noqa: PLC0415
+
+    assert _get_run_sink() is not None, "coding-agent run sink must be registered"
+
     # Side-effect imports: register `@scheduled` tasks with the broker.
     # Each import triggers the module-level `scheduled(...)` decorator, which
     # wires the task body into the taskiq broker registry.

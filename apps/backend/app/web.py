@@ -85,6 +85,13 @@ register_workspace_recovery_policies()
 register_reviewer_start_hooks()
 register_reviewer_terminal_hooks()
 assert_workflow_context_provider()
+
+# 5b. Structural run-sink assertion — `core/coding_agent` registers the sink
+# at import time (step 4 above). Crash loud here rather than silently dropping
+# agent stdout in `record_agent_event` mid-flow.
+from app.core.agent_gateway import get_run_sink as _get_run_sink  # noqa: E402
+
+assert _get_run_sink() is not None, "coding-agent run sink must be registered"
 from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402

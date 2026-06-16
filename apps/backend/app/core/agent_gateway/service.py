@@ -877,22 +877,22 @@ async def record_agent_event(
 
     # Fan out to the coding-agent run sink — only `InvokeClaudeCode` terminal
     # events need a run row finalized. The sink filters on command_kind and
-    # is a no-op for all other kinds. The sink is optional (None when
-    # domain/coding_agent is not loaded), so it degrades gracefully.
+    # is a no-op for all other kinds. Presence is structurally guaranteed by
+    # the boot-time assert in web.py and worker.py.
     from app.core.agent_gateway.run_sink import AgentEventEnrichment, get_run_sink  # noqa: PLC0415
 
     outputs: dict = dict(event.outputs)  # type: ignore[type-arg]
-    _run_sink = get_run_sink()
-    if _run_sink is not None:
-        sink_extras: AgentEventEnrichment | None = await _run_sink.handle_terminal_event(
-            command_id=event.command_id,
-            command_kind=cmd_row.command_kind,
-            event_kind=event.kind.value,
-            outputs=outputs,
-            session=session,
-        )
-        if sink_extras is not None:
-            outputs = {**outputs, **sink_extras}
+    sink = get_run_sink()
+    assert sink is not None, "run sink must be registered (asserted at boot)"
+    sink_extras: AgentEventEnrichment | None = await sink.handle_terminal_event(
+        command_id=event.command_id,
+        command_kind=cmd_row.command_kind,
+        event_kind=event.kind.value,
+        outputs=outputs,
+        session=session,
+    )
+    if sink_extras is not None:
+        outputs = {**outputs, **sink_extras}
 
     # Strip raw agent `stdout` after the sink has processed it. The sink is
     # the source of truth for what flows forward — it returns `{"output": ...}`

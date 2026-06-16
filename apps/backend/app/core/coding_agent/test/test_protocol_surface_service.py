@@ -34,6 +34,7 @@ EXPECTED_ALL = frozenset(
         "register_plugin",
         "get_plugin",
         "dispatch_invocation",
+        "create_run",
         "get_step_activity",
     ]
 )
