@@ -12,13 +12,13 @@ from app.core.coding_agent import (
     CodingAgentRegistry,
     HealthStatus,
     InvocationStatus,
-    ReviewContext,
     ReviewResult,
     ValidationResult,
     bind_coding_agent_registry,
     list_registered_plugins,
     register_plugin,
 )
+from app.domain.reviewer import ReviewContext
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
     wrap_all_registered_plugins,

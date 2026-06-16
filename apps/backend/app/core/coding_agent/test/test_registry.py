@@ -14,7 +14,6 @@ from app.core.coding_agent import (
     InvocationTelemetry,
     OnActivity,
     PluginNotFoundError,
-    ReviewContext,
     ReviewResult,
     ValidationResult,
     bind_coding_agent_registry,
@@ -26,6 +25,7 @@ from app.core.coding_agent import (
     review,
     validate_config,
 )
+from app.domain.reviewer import ReviewContext
 
 
 class _StubPlugin:

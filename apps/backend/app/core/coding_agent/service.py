@@ -21,7 +21,6 @@ from app.core.coding_agent.types import (
     InvokeCodingAgent,
     OnActivity,
     PluginNotFoundError,
-    ReviewContext,
     ReviewResult,
     StaleCheckContext,
     StaleCheckResult,
@@ -121,7 +120,7 @@ def get_plugin(plugin_id: str) -> CodingAgentPlugin:
 async def review(
     plugin_id: str,
     workspace: Workspace,
-    context: ReviewContext,
+    context: Any,
     on_activity: OnActivity | None = None,
 ) -> ReviewResult:
     plugin = get_plugin(plugin_id)

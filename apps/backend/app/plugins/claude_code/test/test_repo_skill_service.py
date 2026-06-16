@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import SecretStr
 
-from app.core.coding_agent import CodingAgentError, ReviewContext
+from app.core.coding_agent import CodingAgentError
 from app.domain.orgs import create_org
+from app.domain.reviewer import ReviewContext
 from app.plugins.claude_code import resolve_skill, set_repo_skill
 from app.plugins.claude_code.service import ClaudeCodePlugin
 

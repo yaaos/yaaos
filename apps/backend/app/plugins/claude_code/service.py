@@ -18,7 +18,7 @@ from uuid import UUID
 
 import httpx
 import structlog
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core import byok as _byok
@@ -30,21 +30,23 @@ from app.core.coding_agent import (
     ExecSpec,
     HealthStatus,
     InvokeCodingAgent,
-    ReportedFinding,
-    ReviewContext,
     RunResult,
     Usage,
     ValidationResult,
     register_plugin,
 )
 from app.core.coding_agent import (
-    FindingDraftList as _FindingDraftList,
-)
-from app.core.coding_agent import (
     Invocation as _NewInvocation,
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.domain.reviewer import (
+    ReportedFinding,
+    ReviewContext,
+)
+from app.domain.reviewer import (
+    parse_review_output as _parse_review_output_reviewer,
+)
 from app.plugins.claude_code.models import ClaudeCodeSettingsRow
 
 log = structlog.get_logger("claude_code")
@@ -469,38 +471,13 @@ class ClaudeCodePlugin:
         )
 
     def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
-        """Parse the agent's stream-json stdout into `ReportedFinding` objects.
+        """Thin delegator — real implementation lives in `domain/reviewer.parse_review_output`.
 
-        Finds the terminal `type=result` event, extracts the `result` field,
-        and parses the JSON payload against `FindingDraftList`. Raises
-        `ValueError` on any parse failure so `PostFindings` can gate on it.
+        Kept on the plugin for backward compatibility with callers that
+        invoke `plugin.parse_review_output(stdout)` directly. Delegates
+        to the canonical owner; raises `ValueError` on parse failure.
         """
-        events = _parse_stream_events(stdout)
-        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-        if result_event is None:
-            raise ValueError("no 'type=result' event found in stdout")
-        raw_result = result_event.get("result", "")
-        if not isinstance(raw_result, str):
-            raise ValueError(f"result field is not a string: {type(raw_result)}")
-        try:
-            parsed_dict = json.loads(raw_result)
-            parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise ValueError(f"agent output did not match FindingDraftList: {exc}") from exc
-        return [
-            ReportedFinding(
-                file=d.file,
-                line=d.line,
-                category=d.category,
-                severity=d.severity,
-                confidence=d.confidence,
-                rationale=d.rationale,
-                rule_violated=d.rule_violated,
-                rule_source=d.rule_source,
-                suggested_fix=d.suggested_fix,
-            )
-            for d in parsed.findings
-        ]
+        return _parse_review_output_reviewer(stdout)
 
     async def review_preflight_steps(
         self,
@@ -580,8 +557,8 @@ class ClaudeCodePlugin:
             )
         from pydantic import SecretStr as _SecretStr  # noqa: PLC0415
 
-        from app.core.coding_agent import ReviewContext as _ReviewContext  # noqa: PLC0415
         from app.core.coding_agent import build_invocation as _build_inv  # noqa: PLC0415
+        from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
 
         # Build a ReviewContext-compatible object from the generic context dict.
         # The invocation.context for pr_review carries the same keys as

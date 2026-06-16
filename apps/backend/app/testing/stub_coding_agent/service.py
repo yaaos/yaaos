@@ -31,8 +31,6 @@ from app.core.coding_agent import (
     InvocationTelemetry,
     InvokeCodingAgent,
     OnActivity,
-    ReportedFinding,
-    ReviewContext,
     ReviewResult,
     RunResult,
     StaleCheckContext,
@@ -44,6 +42,7 @@ from app.core.coding_agent import (
 )
 from app.core.coding_agent import Invocation as _NewInvocation
 from app.core.workspace import Workspace
+from app.domain.reviewer import ReportedFinding, ReviewContext
 
 log = structlog.get_logger("testing.stub_coding_agent")
 

@@ -4,11 +4,11 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol, per-mode context/result types (`ExecSpec`, `Invocation`, `InvokeCodingAgent`, `RunResult`, `RunStatus`, `ReviewContext`, …), telemetry enums, plugin registry, typed exception hierarchy, per-mode prompt builders and DTOs (`prompts.py`), and the `dispatch_invocation` helper.
+Owns: `CodingAgentPlugin` Protocol, per-mode context/result types (`ExecSpec`, `Invocation`, `InvokeCodingAgent`, `RunResult`, `RunStatus`, …), telemetry enums, plugin registry, typed exception hierarchy, per-mode prompt builders and DTOs (`prompts.py`), and the `dispatch_invocation` helper.
 
-Does NOT own: prompt assembly for the remote-dispatch full-review path (that's `plugins/claude_code.build_review_invocation`), output-format choice, workspace mechanics.
+Does NOT own: `ReviewContext`, `ReportedFinding`, `FindingDraftList`, `finding_output_schema`, or `parse_review_output` — those live in `domain/reviewer` and are the canonical skill-output types. Does NOT own prompt assembly for the remote-dispatch full-review path (that's `plugins/claude_code.build_review_invocation`), output-format choice, or workspace mechanics.
 
-Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Protocol and is depended on by `plugins/`. `IncrementalReviewContext.lessons` is typed `list[Any]` at the core boundary to avoid a core→domain import; callers supply `domain/lessons.Lesson` objects, which satisfy the duck-typed `.id`/`.title`/`.body` access in `prompts.py`.
+Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Protocol and is depended on by `plugins/`. `IncrementalReviewContext.lessons` is typed `list[Any]` at the core boundary to avoid a core→domain import; callers supply `domain/lessons.Lesson` objects, which satisfy the duck-typed `.id`/`.title`/`.body` access in `prompts.py`. Protocol methods whose signatures formerly referenced `ReviewContext` or `ReportedFinding` use `Any` at the `core` boundary for the same reason.
 
 ## Why / invariants
 
@@ -16,7 +16,7 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 - **Seven remote-dispatch methods.** Legacy path: `build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`. New path: `build_invocation`, `parse_result`. Adding a mode requires a Protocol change.
 - **Remote path: plugin owns exec spec + parse; caller dispatches.** `build_review_invocation` returns a `_LegacyInvocation{kind, exec: ExecSpec, limits}` (legacy shape). `build_invocation` returns an `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}` (new shape). Both describe the exact command the Go agent spawns. The caller drives dispatch; the plugin owns translation.
 - **`ExecSpec.env` / `InvokeCodingAgent.env` carries the Anthropic key.** Documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate). The key is never logged or placed in audit rows; it's decrypted on the control plane and placed into the exec block.
-- **`ReviewContext` is the remote dispatch context.** Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`, `output_schema`. No diff blob — the skill clones the repo and computes `git diff base..head` itself.
+- **`ReviewContext` (in `domain/reviewer`) is the remote dispatch context.** Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`, `output_schema`. No diff blob — the skill clones the repo and computes `git diff base..head` itself.
 - **`Invocation` is the high-level intent.** Fields: `skill`, `model`, `effort`, `context` (opaque mapping), `wallclock_seconds`. `build_invocation` translates it into an `InvokeCodingAgent`.
 - **`dispatch_invocation` is the one-shot dispatch helper.** Mints a UUIDv7 `command_id`, calls `enqueue_command`, inserts a `coding_agent_runs` row, calls `pin_command_to_agent`, returns the `command_id`. All in the caller's transaction — durable iff the transaction commits.
 
@@ -26,8 +26,8 @@ Signatures in `app/core/coding_agent/types.py`.
 
 ### Remote-dispatch methods — legacy path
 
-- `build_review_invocation(ctx: ReviewContext, *, session) -> Any` — resolves the skill handle, decrypts the API key, assembles the prompt + output-schema appendix, returns a `_LegacyInvocation`. Never dispatches. Return type is `Any` at the boundary to avoid cross-module import of the private type.
-- `parse_review_output(stdout: str) -> list[ReportedFinding]` — finds the terminal `type=result` stream event, extracts `result`, parses against `FindingDraftList`. Raises `ValueError` on any failure.
+- `build_review_invocation(ctx: Any, *, session) -> Any` — resolves the skill handle, decrypts the API key, assembles the prompt + output-schema appendix, returns a `_LegacyInvocation`. Never dispatches. Both parameter and return type are `Any` at the `core` boundary to avoid core→domain imports.
+- `parse_review_output(stdout: str) -> list[Any]` — thin delegator: calls `domain/reviewer.parse_review_output`. The real implementation lives in `domain/reviewer`; the plugin method exists for backward compatibility.
 - `review_preflight_steps(ctx, *, session) -> tuple[str, ...]` — returns `WorkflowCommand` kind strings to insert before the review step. Returns `()` — no preflight needed.
 - `parse_usage(stdout: str) -> Usage` — reads the terminal `type=result` stream event and extracts `input_tokens` / `output_tokens` / `duration_ms`. Returns an empty `Usage()` if there's no terminal event or the stream is empty. Never raises.
 - `render_activity(stdout: str) -> ActivityLog` — walks every parseable stream event, drops null renders, stamps a monotonic `seq` (starting at 0) onto each surviving `ActivityEvent`, and returns the full log. Never raises.

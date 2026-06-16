@@ -127,7 +127,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "a
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.tickets"]
+depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -155,7 +155,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.coding_agent", "app.core.workspace"]
+depends_on = ["app.core.coding_agent", "app.core.workspace", "app.domain.reviewer"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -167,7 +167,7 @@ depends_on = []
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.coding_agent", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.coding_agent", "app.core.workspace", "app.domain.reviewer"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -351,7 +351,6 @@ expose = [
   "Effort",
   "ExecSpec",
   "FindingAnchor",
-  "FindingDraftList",
   "HealthStatus",
   "IncrementalReviewContext",
   "IncrementalReviewResult",
@@ -363,8 +362,6 @@ expose = [
   "OnActivity",
   "PluginNotFoundError",
   "PriorThreadMessage",
-  "ReportedFinding",
-  "ReviewContext",
   "ReviewResult",
   "RunResult",
   "RunStatus",
@@ -389,7 +386,6 @@ expose = [
   "current_coding_agent_registry",
   "dispatch_invocation",
   "finalize_run",
-  "finding_output_schema",
   "get_plugin",
   "get_run_id_for_command",
   "get_run_id_for_workflow_step",
@@ -939,11 +935,14 @@ expose = [
   "Debounce",
   "DomainEvent",
   "Finding",
+  "FindingDraftList",
   "FindingRaised",
   "FindingView",
   "PRReviewAggregate",
+  "ReportedFinding",
   "Review",
   "ReviewCompleted",
+  "ReviewContext",
   "ReviewFailed",
   "ReviewJob",
   "ReviewJobInput",
@@ -967,6 +966,7 @@ expose = [
   "dispatch_events",
   "find_pr_id_by_external_comment_id",
   "finding_handle",
+  "finding_output_schema",
   "get_review",
   "handle_developer_reply",
   "humanize_skip",
@@ -974,6 +974,7 @@ expose = [
   "is_yaaos_command",
   "list_findings_for_pr",
   "list_reviews_for_pr",
+  "parse_review_output",
   "prefix_broken_creds_warning",
   "publish_findings",
   "refresh_ticket_findings_summary",

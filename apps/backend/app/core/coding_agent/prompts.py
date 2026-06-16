@@ -181,10 +181,8 @@ class FindingDraftList(BaseModel):
 def finding_output_schema() -> dict:  # type: ignore[type-arg]
     """The canonical finding output contract as a JSON schema dict.
 
-    Single source of truth: generated from `FindingDraftList.model_json_schema()`.
-    Consumers: the skill-invocation prompt (schema appendix) and the skills
-    popover endpoint. `ReportedFinding` in `core/coding_agent/types.py` is
-    the lenient raw-string parse twin; a unit test pins its field set to this.
+    Internal helper kept for `invocation.py`. Canonical export is
+    `domain/reviewer.finding_output_schema` — use that from outside this module.
     """
     return FindingDraftList.model_json_schema()
 
@@ -228,13 +226,11 @@ def schema_appendix(response_model: type[BaseModel]) -> str:
 
 __all__ = [
     "AnswerQuestionDto",
-    "FindingDraftList",
     "StaleCheckDto",
     "VerifyFixDto",
     "assemble_answer_question_prompt",
     "assemble_incremental_review_prompt",
     "assemble_stale_check_prompt",
     "assemble_verify_fix_prompt",
-    "finding_output_schema",
     "schema_appendix",
 ]

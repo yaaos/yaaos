@@ -18,14 +18,12 @@ from app.core.coding_agent import partition_maintenance as _partition_maintenanc
 from app.core.coding_agent.invocation import InvocationMode, build_invocation
 from app.core.coding_agent.prompts import (
     AnswerQuestionDto,
-    FindingDraftList,
     StaleCheckDto,
     VerifyFixDto,
     assemble_answer_question_prompt,
     assemble_incremental_review_prompt,
     assemble_stale_check_prompt,
     assemble_verify_fix_prompt,
-    finding_output_schema,
     schema_appendix,
 )
 from app.core.coding_agent.run_service import (
@@ -75,8 +73,6 @@ from app.core.coding_agent.types import (
     OnActivity,
     PluginNotFoundError,
     PriorThreadMessage,
-    ReportedFinding,
-    ReviewContext,
     ReviewResult,
     RunResult,
     RunStatus,
@@ -106,7 +102,6 @@ __all__ = [
     "Effort",
     "ExecSpec",
     "FindingAnchor",
-    "FindingDraftList",
     "HealthStatus",
     "IncrementalReviewContext",
     "IncrementalReviewResult",
@@ -118,8 +113,6 @@ __all__ = [
     "OnActivity",
     "PluginNotFoundError",
     "PriorThreadMessage",
-    "ReportedFinding",
-    "ReviewContext",
     "ReviewResult",
     "RunResult",
     "RunStatus",
@@ -144,7 +137,6 @@ __all__ = [
     "current_coding_agent_registry",
     "dispatch_invocation",
     "finalize_run",
-    "finding_output_schema",
     "get_plugin",
     "get_run_id_for_command",
     "get_run_id_for_workflow_step",

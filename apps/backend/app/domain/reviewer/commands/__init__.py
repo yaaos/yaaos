@@ -92,11 +92,8 @@ class CodeReview:
         from uuid import UUID as _UUID  # noqa: PLC0415
 
         from app.core import coding_agent  # noqa: PLC0415
-        from app.core.coding_agent import (  # noqa: PLC0415
-            ReviewContext,
-            create_run,
-            finding_output_schema,
-        )
+        from app.core.coding_agent import create_run  # noqa: PLC0415
+        from app.domain.reviewer.types import ReviewContext, finding_output_schema  # noqa: PLC0415
 
         ws_id_raw = inputs.get("workspace_id")
         if not ws_id_raw:
@@ -359,7 +356,6 @@ class PostFindings(_LocalReviewCommand):
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
         stdout_raw = inputs.get("stdout") or ""
 
-        from app.core import coding_agent  # noqa: PLC0415
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
         from app.domain.tickets import PullRequestNotFoundError, get_pull_request  # noqa: PLC0415
@@ -369,9 +365,10 @@ class PostFindings(_LocalReviewCommand):
             # No output from the agent — zero findings, nothing to post.
             return Outcome.success(outputs={"admitted_count": 0})
         else:
-            plugin = coding_agent.get_plugin("claude_code")
+            from app.domain.reviewer.types import parse_review_output  # noqa: PLC0415
+
             try:
-                findings = plugin.parse_review_output(stdout_raw)
+                findings = parse_review_output(stdout_raw)
             except ValueError as exc:
                 log.warning(
                     "post_findings.parse_failed",

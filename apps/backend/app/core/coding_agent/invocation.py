@@ -61,7 +61,6 @@ from app.core.coding_agent.prompts import (
 from app.core.coding_agent.types import (
     AnswerQuestionContext,
     IncrementalReviewContext,
-    ReviewContext,
     StaleCheckContext,
     VerifyFixContext,
 )
@@ -93,16 +92,17 @@ _ANSWER_QUESTION_ALLOWED_TOOLS = (
 
 
 # The five typed contexts the build_invocation function accepts. Each
-# command body picks the one that matches its `mode`.
-_Context = (
-    ReviewContext | IncrementalReviewContext | VerifyFixContext | StaleCheckContext | AnswerQuestionContext
-)
+# command body picks the one that matches its `mode`. ReviewContext moved
+# to domain/reviewer; `Any` here to avoid core→domain import. The `review`
+# mode's assert-isinstance check uses duck-typing attrs instead.
+_Context = IncrementalReviewContext | VerifyFixContext | StaleCheckContext | AnswerQuestionContext
+_AnyContext = _Context  # alias that admits unknown types; accept Any for `review` mode
 
 
 def _exec_block(
     *,
     mode: InvocationMode,
-    context: _Context,
+    context: Any,
     model: str,
     effort: str,
     anthropic_api_key: SecretStr | None,
@@ -138,7 +138,7 @@ def _exec_block(
     return {"argv": argv, "stdin": stdin, "env": env}
 
 
-def _render(mode: InvocationMode, context: _Context) -> tuple[str, str]:
+def _render(mode: InvocationMode, context: Any) -> tuple[str, str]:
     """Dispatch over the 5 modes — returns (rendered_prompt, allowed_tools).
     Each mode pairs its prompt assembler with the schema appendix that
     matches the expected response DTO."""
@@ -146,10 +146,11 @@ def _render(mode: InvocationMode, context: _Context) -> tuple[str, str]:
         # The review path now uses plugin.build_review_invocation (Shape B).
         # build_invocation("review", ...) is retained for tests that verify
         # the allowed-tools constant; it no longer generates a prompt body.
-        assert isinstance(context, ReviewContext)
+        # ReviewContext moved to domain/reviewer; duck-type the required fields.
+        assert hasattr(context, "pr_external_id") and hasattr(context, "repo_external_id")
         dummy_prompt = (
-            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "
-            f"Base: {context.base_sha}, Head: {context.head_sha}."
+            f"Review PR {context.pr_external_id} in {context.repo_external_id}. "  # type: ignore[union-attr]
+            f"Base: {context.base_sha}, Head: {context.head_sha}."  # type: ignore[union-attr]
         )
         return dummy_prompt + schema_appendix(FindingDraftList), _DEFAULT_ALLOWED_TOOLS
     if mode == "incremental_review":
@@ -176,7 +177,7 @@ def _render(mode: InvocationMode, context: _Context) -> tuple[str, str]:
 def build_invocation(
     *,
     mode: InvocationMode,
-    context: _Context,
+    context: Any,
     model: str | None = None,
     effort: str | None = None,
     anthropic_api_key: SecretStr | None = None,

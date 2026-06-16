@@ -6,6 +6,8 @@
 
 Owns review runs and the findings they produce: `Review`s and `Finding`s. Findings carry the canonical schema — `severity ∈ {blocker, should_fix, nit}`, `confidence ∈ {verified, plausible, speculative}`, `category`, `rationale`, `rule_violated`, `rule_source`, `suggested_fix`, optional `file`/`line`, persisted `finding_display_id`.
 
+Also owns the skill-output contract types: `ReviewContext` (the remote dispatch context), `ReportedFinding` (the raw, pre-validation skill output), `FindingDraftList` (the internal Pydantic model for stream-JSON parsing), `finding_output_schema()` (generates the JSON schema appended to the skill prompt and used to validate output), and `parse_review_output()` (finds the terminal `type=result` stream event, validates against `FindingDraftList`, returns `list[ReportedFinding]`, raises `ValueError` on any failure).
+
 Does NOT call an LLM for code review — `core/coding_agent` + `plugins/claude_code` do that. Reviewer is skill-agnostic: it dispatches the review and writes whatever findings the skill emits, validating against the canonical schema.
 
 ## Workflows + commands
@@ -36,7 +38,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Canonical output schema
 
-`finding_output_schema() -> dict` (in `core/coding_agent.__all__`) is the single source of truth — generated from a Pydantic model's `model_json_schema()`. The skill-invocation prompt appends this schema as a strict output contract; `PostFindings` re-validates the returned findings against it. `ReportedFinding` in `core/coding_agent/types.py` is the lenient raw-string parse twin; a unit test pins its field set to `finding_output_schema()`.
+`finding_output_schema() -> dict` (in `domain/reviewer.__all__`) is the single source of truth — generated from a Pydantic model's `model_json_schema()`. The skill-invocation prompt appends this schema as a strict output contract; `PostFindings` calls `parse_review_output` directly (no plugin lookup) to validate and parse the agent's stream-json stdout. `ReportedFinding` in `domain/reviewer/types.py` is the lenient raw-string parse twin; a unit test pins its field set to `finding_output_schema()`.
 
 ## Invariants + why
 
@@ -53,7 +55,11 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Vocabulary
 
-- `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `core/coding_agent` (the agent's output type).
+- `ReviewContext` — remote dispatch context passed to `build_review_invocation`. Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`. Lives in `domain/reviewer`.
+- `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `domain/reviewer`.
+- `FindingDraftList` — internal Pydantic model wrapping a `list[ReportedFinding]`; used by `parse_review_output` to validate the stream-json payload. Lives in `domain/reviewer`.
+- `finding_output_schema()` — returns the JSON schema for the skill's `findings` output; injected into the prompt appendix by `core/coding_agent/prompts.py`. Lives in `domain/reviewer`.
+- `parse_review_output(stdout)` — parses stream-json stdout into `list[ReportedFinding]`; raises `ValueError` on any parse failure. Lives in `domain/reviewer`.
 - `Finding` — validated, persisted finding. Lives in `domain/reviewer`.
 - `finding_display_id` — per-PR monotonic integer; rendered as `<category-prefix>-<id>` (`sec-3`, `arch-7`).
 - `Review` — one row per PR review run.
@@ -96,6 +102,7 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
   - `test_start_hook_service.py` — bootstrap hook flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
   - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
+  - `test_parse_review_output_owns_service.py` — unit tests for `domain/reviewer.parse_review_output`: valid stdout → `list[ReportedFinding]`, null-anchor accepted, no-result-event raises, empty stdout raises, invalid JSON raises, wrong schema raises, last result event wins.
   - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema.
   - `test_pr_review_v1_e2e_service.py` — full pipeline (stub VCS + coding-agent + workspace).
   - `test_findings_summary_service.py` — rollup written on review end.

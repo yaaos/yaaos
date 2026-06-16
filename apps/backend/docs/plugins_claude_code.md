@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`), plus `validate_config` and `health_check`. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`), plus `validate_config` and `health_check`. `parse_review_output` is a thin delegator to `domain/reviewer.parse_review_output` — the real implementation lives there. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -14,11 +14,11 @@ Singleton holds no decrypted credentials — settings loaded per-invocation so k
 
 ### `build_review_invocation` — remote-dispatch exec spec
 
-Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Reads `skill_name` for the repo via `resolve_skill` — raises `CodingAgentError` if absent or empty. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (review instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind=<skill_name>, exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
+Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}` (`ReviewContext` lives in `domain/reviewer`). Reads `skill_name` for the repo via `resolve_skill` — raises `CodingAgentError` if absent or empty. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (review instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind=<skill_name>, exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
 
-### `parse_review_output` — stream-json parse
+### `parse_review_output` — thin delegator
 
-Receives raw stdout from the agent's terminal event. Finds the terminal `type=result` event, extracts `result`, validates against `_FindingDraftList`. Raises `ValueError` on any failure — `PostFindings` gates on this and returns `schema_invalid` failure when it raises.
+Delegates to `domain/reviewer.parse_review_output`. The canonical implementation — finding the terminal `type=result` event, validating against `FindingDraftList`, raising `ValueError` on failure — lives in `domain/reviewer`. The plugin method is kept for Protocol conformance.
 
 ### `validate_config`
 

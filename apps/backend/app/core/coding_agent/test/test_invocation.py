@@ -16,9 +16,9 @@ from app.core.coding_agent import (
     AnswerQuestionContext,
     FindingAnchor,
     InvocationMode,
-    ReviewContext,
     build_invocation,
 )
+from app.domain.reviewer import ReviewContext
 
 
 def _ctx() -> AnswerQuestionContext:

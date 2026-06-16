@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed into a plugin-internal Pydantic model, then converted to `ReportedFinding` (raw strings; reviewer validates into domain types).
+- Coding-agent CLI stdout parsed via `domain/reviewer.parse_review_output` into `list[ReportedFinding]` (raw strings; reviewer's `publish_findings` validates into domain types).
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 

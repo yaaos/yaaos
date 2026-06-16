@@ -17,12 +17,12 @@ from opentelemetry.trace import StatusCode
 from app.core.coding_agent import (
     CodingAgentError,
     OnActivity,
-    ReviewContext,
     ReviewResult,
     bind_coding_agent_registry,
     current_coding_agent_registry,
     review,
 )
+from app.domain.reviewer import ReviewContext
 from app.testing.observability import span_capture
 
 pytestmark = pytest.mark.service

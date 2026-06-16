@@ -10,13 +10,14 @@ no production plugin currently implements them. Plugins own prompt assembly,
 exec spec construction, and parsing for each mode; consumers hand over domain
 context and receive domain results.
 
-`ReportedFinding` is the raw-string output twin for findings returned by
-the agent. It carries no enum constraints (those live in `domain/reviewer`)
-so `core/coding_agent` stays free of domain imports.
-
 `Invocation` + `ExecSpec` are the value objects `build_review_invocation`
 returns. `ExecSpec.env` carries the Anthropic API key in cleartext — the
 documented carve-out for wire-bound exec (matches `otlp_token` on ConfigUpdate).
+
+`ReviewContext` and `ReportedFinding` live in `domain/reviewer` — they are
+reviewer-domain types, not generic coding-agent types. Protocol method
+signatures that previously used those types now use `Any` to avoid a
+core→domain import.
 """
 
 from __future__ import annotations
@@ -237,34 +238,17 @@ class RunResult(BaseModel):
     activity: ActivityLog
 
 
-class ReviewContext(BaseModel):
-    """Context for a remote PR review dispatch.
-
-    Carries the identifiers the skill needs to run `git diff base..head` in
-    the clone and emit structured findings. No diff blob crosses the wire —
-    the skill computes it from the clone.
-
-    `output_schema` is an immutable snapshot of `finding_output_schema()`
-    frozen at dispatch, so the skill validates against the exact shape the
-    run launched with (no mid-run drift). `PostFindings` re-validates the
-    returned stdout against the same contract.
-    """
-
-    org_id: UUID
-    repo_external_id: str
-    pr_external_id: str
-    head_sha: str
-    base_sha: str
-    output_schema: Mapping[str, Any] = {}
-
-
 class ReviewResult(BaseModel):
-    """The plugin's review returns `ReportedFinding`s; posting is handled
-    by `domain/reviewer.publish_findings`.
+    """The plugin's review result; posting handled by `domain/reviewer.publish_findings`.
+
+    `findings` carries raw finding dicts from the old in-process review path.
+    Used by test fakes and the Protocol; not used in the remote dispatch path.
+    `ReportedFinding` moved to `domain/reviewer`; callers that need the typed
+    form import from there directly.
     """
 
     status: InvocationStatus
-    findings: list[ReportedFinding] = []
+    findings: list[Any] = []
     state: Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"] | None = None
     summary_body: str | None = None
     lesson_ids_consulted: list[UUID] = []
@@ -275,25 +259,6 @@ class ReviewResult(BaseModel):
 class ValidationResult(BaseModel):
     valid: bool
     errors: list[str] = []
-
-
-class ReportedFinding(BaseModel):
-    """One raw finding produced by an agent task.
-
-    Raw strings only — no enum validation. `domain/reviewer` validates
-    `severity` and `confidence` into typed values when converting to `Finding`.
-    `file` and `line` are optional — general (PR-wide) findings carry no anchor.
-    """
-
-    file: str | None = None
-    line: int | None = None
-    category: str
-    severity: str
-    confidence: str
-    rationale: str
-    rule_violated: str
-    rule_source: str
-    suggested_fix: str
 
 
 class IncrementalReviewContext(BaseModel):
@@ -323,7 +288,7 @@ class IncrementalReviewContext(BaseModel):
 
 class IncrementalReviewResult(BaseModel):
     status: InvocationStatus
-    findings: list[ReportedFinding] = []
+    findings: list[Any] = []  # list[ReportedFinding] — ReportedFinding moved to domain/reviewer
     telemetry: InvocationTelemetry = InvocationTelemetry()
     error_message: str | None = None
 
@@ -432,7 +397,7 @@ class CodingAgentPlugin(Protocol):
     async def review(
         self,
         workspace: Workspace,
-        context: ReviewContext,
+        context: Any,  # ReviewContext — now in domain/reviewer; Any avoids core→domain import
         on_activity: OnActivity | None = None,
     ) -> ReviewResult: ...
 
@@ -477,7 +442,7 @@ class CodingAgentPlugin(Protocol):
 
     async def build_review_invocation(
         self,
-        ctx: ReviewContext,
+        ctx: Any,  # ReviewContext — now in domain/reviewer; Any avoids core→domain import
         *,
         session: AsyncSession,
     ) -> _LegacyInvocation:
@@ -490,12 +455,15 @@ class CodingAgentPlugin(Protocol):
         """
         ...
 
-    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
+    def parse_review_output(self, stdout: str) -> list[Any]:
         """Parse the agent's stream-json stdout into `ReportedFinding` objects.
 
         Finds the terminal `type=result` event, extracts the `result` field,
         and lenient-parses the JSON. Raises `ValueError` on any parse failure
         or structurally non-conforming output so `PostFindings` can gate on it.
+        Returns `list[ReportedFinding]`; typed as `list[Any]` to avoid
+        core→domain import. Delegator on the plugin — real parser is
+        `domain/reviewer.parse_review_output`.
         """
         ...
 
@@ -520,7 +488,7 @@ class CodingAgentPlugin(Protocol):
 
     async def review_preflight_steps(
         self,
-        ctx: ReviewContext,
+        ctx: Any,  # ReviewContext — now in domain/reviewer; Any avoids core→domain import
         *,
         session: AsyncSession,
     ) -> tuple[str, ...]:
