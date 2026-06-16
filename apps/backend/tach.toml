@@ -337,6 +337,8 @@ from = ["app.core.byok"]
 
 [[interfaces]]
 expose = [
+  "ACTIVITY_EVENT_KINDS",
+  "ActivityEvent",
   "ActivityLog",
   "CodingAgentError",
   "CodingAgentPlugin",

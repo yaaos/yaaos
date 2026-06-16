@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`build_invocation`, `parse_result`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`build_invocation`, `parse_result`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
 Does NOT own: `ReviewContext`, `ReportedFinding`, `FindingDraftList`, or `parse_review_output` — those live in `domain/reviewer`. Does NOT own prompt assembly, skill resolution, output-format choice, or workspace mechanics.
 
@@ -40,7 +40,8 @@ One-shot helper in `service.py`. Builds the `InvokeClaudeCode` wire payload from
 - `RunResult{output, error_message, usage, duration_ms, exit_code, activity}` — `error_message` is always `None` from `parse_result`; the sink derives status from the wire event kind. `duration_ms` lives here, not on `Usage`.
 - `RunStatus` — `StrEnum`: `SUCCESS`, `FAILURE`, `TIMEOUT`, `CANCELLED`.
 - `Usage{tokens_in: int | None, tokens_out: int | None}` — token counts from the terminal `result` stream event.
-- `ActivityLog{events: list[Mapping[str, Any]]}` — opaque per-event dicts; persisted as a JSONB blob.
+- `ActivityEvent{seq, ts, kind, message, detail}` — one rendered event. `kind` is a `Literal` over six values: `session_start`, `subagent_dispatched`, `tool_call_started`, `assistant_message`, `tool_call_finished`, `result`. `ts` is a `datetime` (Pydantic coerces ISO strings on parse). `detail` is a kind-specific `dict[str, Any]` — shapes documented in `app/core/coding_agent/types.py`. Construction rejects unknown `kind` values. `ACTIVITY_EVENT_KINDS` is a `frozenset` of the same values, exported for tests.
+- `ActivityLog{events: list[ActivityEvent]}` — typed list of activity events; persisted as a JSONB blob. Wire shape `{"events": [{seq, ts, kind, message, detail}, ...]}` unchanged; `ts` serializes as ISO-8601.
 
 ## Registry
 

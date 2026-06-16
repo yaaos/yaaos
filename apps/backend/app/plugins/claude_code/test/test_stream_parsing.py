@@ -192,8 +192,8 @@ def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
     )
     log = _render_activity_log(stream)
     assert len(log.events) == 4
-    assert [ev["seq"] for ev in log.events] == [0, 1, 2, 3]
-    assert [ev["kind"] for ev in log.events] == [
+    assert [ev.seq for ev in log.events] == [0, 1, 2, 3]
+    assert [ev.kind for ev in log.events] == [
         "session_start",
         "tool_call_started",
         "tool_call_finished",
@@ -210,7 +210,7 @@ def test_render_activity_skips_null_renders() -> None:
     )
     log = _render_activity_log(stream)
     assert len(log.events) == 2
-    assert [ev["seq"] for ev in log.events] == [0, 1]
+    assert [ev.seq for ev in log.events] == [0, 1]
 
 
 def test_render_activity_empty_stdout_returns_empty() -> None:

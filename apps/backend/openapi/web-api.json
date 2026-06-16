@@ -14,14 +14,57 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActivityEvent": {
+        "description": "One rendered event in a coding-agent activity stream.\n\nProduced by `plugins/claude_code._render_activity_log` from Claude Code\nstream-json events. Persisted inside the `ActivityLog.events` JSONB array.\n\nFields:\n- `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.\n- `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).\n  Pydantic coerces ISO-8601 strings to `datetime` on construction.\n- `kind` — one of the six canonical values in `ActivityEventKind`.\n- `message` — pre-rendered one-liner for the SPA activity feed.\n- `detail` — kind-specific metadata dict (safe for cross-boundary transport).\n\nPer-kind `detail` shapes:\n- `session_start`: `{model: str, session_id: str | None}`\n- `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`\n- `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`\n- `assistant_message`: `{}` (message carries the text excerpt)\n- `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`\n- `result`: `{duration_ms: int | None, num_turns: int | None}`",
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Detail",
+            "type": "object"
+          },
+          "kind": {
+            "enum": [
+              "session_start",
+              "subagent_dispatched",
+              "tool_call_started",
+              "assistant_message",
+              "tool_call_finished",
+              "result"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "kind",
+          "message"
+        ],
+        "title": "ActivityEvent",
+        "type": "object"
+      },
       "ActivityLog": {
-        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced by `CodingAgentPlugin.parse_result` — the same event sequence\nthe in-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.\n\nElement type is an opaque `Mapping[str, Any]` — the model no longer\nenforces inner schema. JSON wire shape `{\"events\": [...]}` is unchanged.",
+        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced by `CodingAgentPlugin.parse_result` — the same event sequence\nthe in-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.\n\nJSON wire shape `{\"events\": [{seq, ts, kind, message, detail}, ...]}` is\nunchanged from the prior opaque-dict form; `model_dump(mode=\"json\")` emits\nthe same structure with `ts` serialized as an ISO-8601 string.",
         "properties": {
           "events": {
             "default": [],
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ActivityEvent"
             },
             "title": "Events",
             "type": "array"

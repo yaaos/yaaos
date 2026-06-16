@@ -1666,6 +1666,52 @@ export interface components {
             token: string;
         };
         /**
+         * ActivityEvent
+         * @description One rendered event in a coding-agent activity stream.
+         *
+         *     Produced by `plugins/claude_code._render_activity_log` from Claude Code
+         *     stream-json events. Persisted inside the `ActivityLog.events` JSONB array.
+         *
+         *     Fields:
+         *     - `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.
+         *     - `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).
+         *       Pydantic coerces ISO-8601 strings to `datetime` on construction.
+         *     - `kind` — one of the six canonical values in `ActivityEventKind`.
+         *     - `message` — pre-rendered one-liner for the SPA activity feed.
+         *     - `detail` — kind-specific metadata dict (safe for cross-boundary transport).
+         *
+         *     Per-kind `detail` shapes:
+         *     - `session_start`: `{model: str, session_id: str | None}`
+         *     - `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`
+         *     - `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`
+         *     - `assistant_message`: `{}` (message carries the text excerpt)
+         *     - `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`
+         *     - `result`: `{duration_ms: int | None, num_turns: int | None}`
+         */
+        ActivityEvent: {
+            /**
+             * Detail
+             * @default {}
+             */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "session_start" | "subagent_dispatched" | "tool_call_started" | "assistant_message" | "tool_call_finished" | "result";
+            /** Message */
+            message: string;
+            /** Seq */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /**
          * ActivityLog
          * @description Pre-rendered activity stream for one coding-agent run.
          *
@@ -1674,17 +1720,16 @@ export interface components {
          *     Activity tab. Persisted as a JSONB blob in the partitioned
          *     `coding_agent_activity` table.
          *
-         *     Element type is an opaque `Mapping[str, Any]` — the model no longer
-         *     enforces inner schema. JSON wire shape `{"events": [...]}` is unchanged.
+         *     JSON wire shape `{"events": [{seq, ts, kind, message, detail}, ...]}` is
+         *     unchanged from the prior opaque-dict form; `model_dump(mode="json")` emits
+         *     the same structure with `ts` serialized as an ISO-8601 string.
          */
         ActivityLog: {
             /**
              * Events
              * @default []
              */
-            events: {
-                [key: string]: unknown;
-            }[];
+            events: components["schemas"]["ActivityEvent"][];
         };
         /** AgentEvent */
         AgentEvent: {

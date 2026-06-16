@@ -28,6 +28,8 @@ from app.core.coding_agent.service import (
     register_plugin,
 )
 from app.core.coding_agent.types import (
+    ACTIVITY_EVENT_KINDS,
+    ActivityEvent,
     ActivityLog,
     CodingAgentError,
     CodingAgentPlugin,
@@ -43,6 +45,8 @@ from app.core.coding_agent.types import (
 _register_run_sink(CodingAgentRunSinkImpl())
 
 __all__ = [
+    "ACTIVITY_EVENT_KINDS",
+    "ActivityEvent",
     "ActivityLog",
     "CodingAgentError",
     "CodingAgentPlugin",

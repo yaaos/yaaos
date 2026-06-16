@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 
 from app.core.coding_agent import (
+    ActivityEvent,
     ActivityLog,
     Invocation,
     InvokeCodingAgent,
@@ -33,31 +34,37 @@ log = structlog.get_logger("testing.stub_coding_agent")
 
 def _canned_activity_log() -> ActivityLog:
     """Default activity log for the stub's `parse_result` path."""
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
     return ActivityLog(
         events=[
-            {
-                "seq": 0,
-                "ts": now,
-                "kind": "session_start",
-                "message": "Session started · model opus",
-                "detail": {"model": "opus", "session_id": "stub-session"},
-            },
-            {
-                "seq": 1,
-                "ts": now,
-                "kind": "subagent_dispatched",
-                "message": "Dispatching yaaos-architecture",
-                "detail": {"subagent": "yaaos-architecture"},
-            },
-            {
-                "seq": 2,
-                "ts": now,
-                "kind": "tool_call_started",
-                "message": "Read src/example.ts",
-                "detail": {"tool": "Read", "input": {"file_path": "src/example.ts"}},
-            },
-            {"seq": 3, "ts": now, "kind": "result", "message": "Review complete", "detail": {"num_turns": 1}},
+            ActivityEvent(
+                seq=0,
+                ts=now,
+                kind="session_start",
+                message="Session started · model opus",
+                detail={"model": "opus", "session_id": "stub-session"},
+            ),
+            ActivityEvent(
+                seq=1,
+                ts=now,
+                kind="subagent_dispatched",
+                message="Dispatching yaaos-architecture",
+                detail={"subagent": "yaaos-architecture"},
+            ),
+            ActivityEvent(
+                seq=2,
+                ts=now,
+                kind="tool_call_started",
+                message="Read src/example.ts",
+                detail={"tool": "Read", "input_summary": {"file_path": "src/example.ts"}},
+            ),
+            ActivityEvent(
+                seq=3,
+                ts=now,
+                kind="result",
+                message="Review complete",
+                detail={"num_turns": 1},
+            ),
         ]
     )
 

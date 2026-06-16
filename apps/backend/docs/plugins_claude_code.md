@@ -32,9 +32,9 @@ Three module-private functions, each operating on `stdout: str`:
 
 - `_parse_stream_events(stdout)` — newline-delimiter JSON parser; skips blank/unparseable lines silently.
 - `_parse_usage(stdout)` → `Usage` — finds the last `type=result` event, extracts `usage.input_tokens` and `usage.output_tokens`. Returns empty `Usage()` when absent.
-- `_render_activity_log(stdout)` → `ActivityLog` — walks every parseable event through `_render_activity`, drops nulls, stamps monotonic `seq`. Returns `ActivityLog(events=[])` for empty stdout.
+- `_render_activity_log(stdout)` → `ActivityLog` — walks every parseable event through `_render_activity`, drops nulls, stamps monotonic `seq`, constructs typed `ActivityEvent` instances. Returns `ActivityLog(events=[])` for empty stdout.
 
-`_render_activity` converts one stream event into a user-facing `{seq, ts, kind, message, detail}` dict. Trust-boundary discipline: `tool_result` blocks (raw workspace file/Bash output) appear as size-and-error-flag only — never the body content. `Edit`/`Write`/`MultiEdit`/`NotebookEdit` input dicts keep `file_path` only. This redaction lives in `_safe_tool_input`.
+`_render_activity` converts one stream event into a raw dict with `{seq, ts, kind, message, detail}` — `ts` is a `datetime` object. `_render_activity_log` wraps each non-null result in `ActivityEvent(...)` which validates `kind` against the canonical six-value `Literal`. Trust-boundary discipline: `tool_result` blocks (raw workspace file/Bash output) appear as size-and-error-flag only — never the body content. `Edit`/`Write`/`MultiEdit`/`NotebookEdit` input dicts keep `file_path` only. This redaction lives in `_safe_tool_input`.
 
 ### Anthropic auth probe
 

@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from app.core import byok as _byok
 from app.core.coding_agent import (
+    ActivityEvent,
     ActivityLog,
     CodingAgentError,
     InvokeCodingAgent,
@@ -168,12 +169,13 @@ def _render_activity(event: dict[str, Any]) -> dict[str, Any] | None:
     assistant turns). The `message` is pre-rendered for direct UI display; raw
     event data lands in `detail` for the expanded view.
 
-    The returned dict matches the shape expected by the SPA activity renderer:
+    The returned dict matches the shape expected by `ActivityEvent`:
     `{seq, ts, kind, message, detail}`. `seq` is assigned monotonically by
-    `render_activity` after filtering null renders.
+    `_render_activity_log` after filtering null renders. `ts` is a `datetime`
+    object — `_render_activity_log` constructs the typed `ActivityEvent`.
     """
     et = event.get("type")
-    ts = _utcnow().isoformat()
+    ts = _utcnow()
     if et == "system" and event.get("subtype") == "init":
         model = event.get("model") or "?"
         return {
@@ -386,15 +388,15 @@ def _render_activity_log(stdout: str) -> ActivityLog:
     no parseable events.
     """
     events = _parse_stream_events(stdout)
-    rendered: list[dict[str, Any]] = []
+    rendered: list[ActivityEvent] = []
     seq = 0
     for raw_event in events:
         ev = _render_activity(raw_event)
         if ev is None:
             continue
         # `_render_activity` returns a dict with `seq=0` (placeholder);
-        # stamp the monotonic index here.
-        rendered.append({**ev, "seq": seq})
+        # stamp the monotonic index and construct the typed ActivityEvent here.
+        rendered.append(ActivityEvent(**{**ev, "seq": seq}))
         seq += 1
     return ActivityLog(events=rendered)
 

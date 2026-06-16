@@ -23,7 +23,9 @@ EXPECTED_ALL = frozenset(
         "Usage",
         "CodingAgentError",
         "PluginNotFoundError",
+        "ActivityEvent",
         "ActivityLog",
+        "ACTIVITY_EVENT_KINDS",
         # Registry (also needed by testing layer for per-test isolation)
         "CodingAgentRegistry",
         "bind_coding_agent_registry",
@@ -59,7 +61,6 @@ RETIRED_NAMES = [
     "AnswerQuestionContext",
     "AnswerQuestionResult",
     "OnActivity",
-    "ActivityEvent",
     "ExecSpec",
     "FindingAnchor",
     "CodingAgentCacheMiss",

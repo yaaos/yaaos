@@ -21,9 +21,14 @@ boundary (see docs/system-security.md § Source code stays in-VPC).
 
 from __future__ import annotations
 
-import json
-
+from app.core.coding_agent import ActivityEvent
 from app.plugins.claude_code.service import _render_activity, _safe_tool_input
+
+
+def _serialize(activity: dict) -> str:
+    """Serialize an activity dict via ActivityEvent to get the real wire JSON."""
+    ev = ActivityEvent(**{**activity, "seq": 0})
+    return ev.model_dump_json()
 
 
 def test_edit_tool_input_does_not_leak_new_string() -> None:
@@ -49,7 +54,7 @@ def test_edit_tool_input_does_not_leak_new_string() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    serialized = json.dumps(activity)
+    serialized = _serialize(activity)
     assert "sk-leaked-secret" not in serialized
     assert "API_KEY" not in serialized
     assert "src/auth.py" in serialized  # path metadata is OK
@@ -73,7 +78,7 @@ def test_write_tool_input_does_not_leak_content() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    serialized = json.dumps(activity)
+    serialized = _serialize(activity)
     assert "hunter2" not in serialized
 
 
@@ -100,7 +105,7 @@ def test_multiedit_tool_input_does_not_leak_replacements() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    serialized = json.dumps(activity)
+    serialized = _serialize(activity)
     assert "AWS_SECRET" not in serialized
     assert "PRIVATE_KEY" not in serialized
 
@@ -124,7 +129,7 @@ def test_tool_result_does_not_leak_read_body() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    serialized = json.dumps(activity)
+    serialized = _serialize(activity)
     assert "DB_PASSWORD" not in serialized
     assert "do-not-ship" not in serialized
     # Size metadata is fine.
@@ -150,10 +155,11 @@ def test_tool_result_error_does_not_leak_error_body() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    serialized = json.dumps(activity)
+    serialized = _serialize(activity)
     assert "customer" not in serialized
     assert "Traceback" not in serialized
-    assert activity["detail"].get("is_error") is True
+    ev = ActivityEvent(**{**activity, "seq": 0})
+    assert ev.detail.get("is_error") is True
 
 
 def test_bash_tool_command_caps_at_120_chars() -> None:
@@ -175,7 +181,8 @@ def test_bash_tool_command_caps_at_120_chars() -> None:
     }
     activity = _render_activity(event)
     assert activity is not None
-    prefix = activity["detail"]["input_summary"]["command_prefix"]
+    ev = ActivityEvent(**{**activity, "seq": 0})
+    prefix = ev.detail["input_summary"]["command_prefix"]
     assert len(prefix) <= 120
     assert prefix.endswith("…")
 

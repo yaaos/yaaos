@@ -440,7 +440,7 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
     assert result is not None
     assert isinstance(result, ActivityLog)
     assert len(result.events) == 1
-    assert result.events[0]["kind"] == "session_start"
+    assert result.events[0].kind == "session_start"
 
 
 @pytest.mark.service

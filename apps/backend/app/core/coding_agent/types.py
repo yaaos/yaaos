@@ -14,8 +14,9 @@ reviewer-domain types, not generic coding-agent types.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -80,6 +81,59 @@ class Usage(BaseModel):
     tokens_out: int | None = None
 
 
+# Canonical set of kind values the producer (`plugins/claude_code._render_activity`)
+# emits. Exposed so tests and docs can reference the authoritative tuple.
+ACTIVITY_EVENT_KINDS = frozenset(
+    {
+        "session_start",  # system.init — model + session established
+        "subagent_dispatched",  # assistant.tool_use with tool == "Task"
+        "tool_call_started",  # assistant.tool_use with any other tool
+        "assistant_message",  # assistant.text block
+        "tool_call_finished",  # user.tool_result block
+        "result",  # terminal result event
+    }
+)
+
+ActivityEventKind = Literal[
+    "session_start",
+    "subagent_dispatched",
+    "tool_call_started",
+    "assistant_message",
+    "tool_call_finished",
+    "result",
+]
+
+
+class ActivityEvent(BaseModel):
+    """One rendered event in a coding-agent activity stream.
+
+    Produced by `plugins/claude_code._render_activity_log` from Claude Code
+    stream-json events. Persisted inside the `ActivityLog.events` JSONB array.
+
+    Fields:
+    - `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.
+    - `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).
+      Pydantic coerces ISO-8601 strings to `datetime` on construction.
+    - `kind` — one of the six canonical values in `ActivityEventKind`.
+    - `message` — pre-rendered one-liner for the SPA activity feed.
+    - `detail` — kind-specific metadata dict (safe for cross-boundary transport).
+
+    Per-kind `detail` shapes:
+    - `session_start`: `{model: str, session_id: str | None}`
+    - `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`
+    - `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`
+    - `assistant_message`: `{}` (message carries the text excerpt)
+    - `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`
+    - `result`: `{duration_ms: int | None, num_turns: int | None}`
+    """
+
+    seq: int
+    ts: datetime
+    kind: ActivityEventKind
+    message: str
+    detail: dict[str, Any] = {}
+
+
 class ActivityLog(BaseModel):
     """Pre-rendered activity stream for one coding-agent run.
 
@@ -88,11 +142,12 @@ class ActivityLog(BaseModel):
     Activity tab. Persisted as a JSONB blob in the partitioned
     `coding_agent_activity` table.
 
-    Element type is an opaque `Mapping[str, Any]` — the model no longer
-    enforces inner schema. JSON wire shape `{"events": [...]}` is unchanged.
+    JSON wire shape `{"events": [{seq, ts, kind, message, detail}, ...]}` is
+    unchanged from the prior opaque-dict form; `model_dump(mode="json")` emits
+    the same structure with `ts` serialized as an ISO-8601 string.
     """
 
-    events: list[Mapping[str, Any]] = []
+    events: list[ActivityEvent] = []
 
 
 class RunResult(BaseModel):
