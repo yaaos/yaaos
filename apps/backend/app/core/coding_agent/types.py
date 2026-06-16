@@ -88,6 +88,10 @@ class ActivityEvent(BaseModel):
 
     `seq` is the monotonic 0-based index inside the run's `ActivityLog`,
     assigned by `render_activity` after filtering null renders.
+
+    Kept for the live-streaming path (`OnActivity` callback type) and for
+    callers that still construct events for SSE fanout. No longer used as
+    the element type inside `ActivityLog` (which is now opaque).
     """
 
     seq: int = 0
@@ -101,30 +105,31 @@ OnActivity = Callable[[ActivityEvent], Awaitable[None]]
 
 
 class Usage(BaseModel):
-    """Per-run token usage + wallclock duration.
+    """Per-run token usage.
 
-    Parsed from the terminal `type=result` stream-json event by
-    `CodingAgentPlugin.parse_usage`. Persisted onto `coding_agent_runs`
-    by `finalize_run`. Fields default to None when the agent didn't report
-    them (e.g. a non-conforming or truncated terminal event).
+    Populated by `CodingAgentPlugin.parse_result` from the terminal
+    stream-json event. Persisted onto `coding_agent_runs` by `finalize_run`.
+    Fields default to None when the agent didn't report them.
+    Wall-clock duration lives on `RunResult.duration_ms`, not here.
     """
 
     tokens_in: int | None = None
     tokens_out: int | None = None
-    duration_ms: int | None = None
 
 
 class ActivityLog(BaseModel):
     """Pre-rendered activity stream for one coding-agent run.
 
-    Produced once per run from the terminal stdout by
-    `CodingAgentPlugin.render_activity` — the same event sequence the
-    in-process path streams via `OnActivity`, captured durably for the
+    Produced by `CodingAgentPlugin.parse_result` — the same event sequence
+    the in-process path streams via `OnActivity`, captured durably for the
     Activity tab. Persisted as a JSONB blob in the partitioned
     `coding_agent_activity` table.
+
+    Element type is an opaque `Mapping[str, Any]` — the model no longer
+    enforces inner schema. JSON wire shape `{"events": [...]}` is unchanged.
     """
 
-    events: tuple[ActivityEvent, ...] = ()
+    events: list[Mapping[str, Any]] = []
 
 
 class FindingAnchor(BaseModel):

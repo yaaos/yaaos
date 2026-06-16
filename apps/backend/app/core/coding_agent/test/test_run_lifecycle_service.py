@@ -29,7 +29,7 @@ from app.core.coding_agent.run_service import (
     get_step_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
-from app.core.coding_agent.types import ActivityEvent, ActivityLog, Usage
+from app.core.coding_agent.types import ActivityLog, Usage
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -112,7 +112,8 @@ async def test_finalize_run_writes_status_exit_code_duration(db_session) -> None
 
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=10, tokens_out=20, duration_ms=500),
+        usage=Usage(tokens_in=10, tokens_out=20),
+        duration_ms=500,
         activity=None,
         exit_code=0,
         status="success",
@@ -124,7 +125,7 @@ async def test_finalize_run_writes_status_exit_code_duration(db_session) -> None
     ).scalar_one()
     assert row.status == "success"
     assert row.exit_code == 0
-    # `usage.duration_ms` takes precedence over wallclock when present.
+    # caller-supplied duration_ms takes precedence over wallclock when present.
     assert row.duration_ms == 500
     assert row.completed_at is not None
     # Token usage written from the supplied `Usage`.
@@ -139,28 +140,30 @@ async def test_finalize_run_persists_activity_blob(db_session) -> None:
     org_id = uuid.uuid4()
     run_id, *_ = await _seed_run(db_session, org_id=org_id)
 
+    now_ts = datetime_now().isoformat()
     activity = ActivityLog(
-        events=(
-            ActivityEvent(
-                seq=0,
-                ts=datetime_now(),
-                kind="session_start",
-                message="Session started · model opus",
-                detail={"model": "opus"},
-            ),
-            ActivityEvent(
-                seq=1,
-                ts=datetime_now(),
-                kind="result",
-                message="Review complete",
-                detail={"num_turns": 1},
-            ),
-        )
+        events=[
+            {
+                "seq": 0,
+                "ts": now_ts,
+                "kind": "session_start",
+                "message": "Session started · model opus",
+                "detail": {"model": "opus"},
+            },
+            {
+                "seq": 1,
+                "ts": now_ts,
+                "kind": "result",
+                "message": "Review complete",
+                "detail": {"num_turns": 1},
+            },
+        ]
     )
 
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=100, tokens_out=50, duration_ms=1200),
+        usage=Usage(tokens_in=100, tokens_out=50),
+        duration_ms=1200,
         activity=activity,
         exit_code=0,
         status="success",
@@ -198,6 +201,7 @@ async def test_finalize_run_failure_status(db_session) -> None:
     await finalize_run(
         run_id,
         usage=Usage(),
+        duration_ms=None,
         activity=None,
         exit_code=1,
         status="failure",
@@ -478,20 +482,22 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
         session=db_session,
     )
 
+    now_ts = datetime_now().isoformat()
     activity = ActivityLog(
-        events=(
-            ActivityEvent(
-                seq=0,
-                ts=datetime_now(),
-                kind="session_start",
-                message="Session started",
-                detail={"model": "opus"},
-            ),
-        )
+        events=[
+            {
+                "seq": 0,
+                "ts": now_ts,
+                "kind": "session_start",
+                "message": "Session started",
+                "detail": {"model": "opus"},
+            },
+        ]
     )
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=1, tokens_out=2, duration_ms=10),
+        usage=Usage(tokens_in=1, tokens_out=2),
+        duration_ms=10,
         activity=activity,
         exit_code=0,
         status="success",
@@ -502,7 +508,7 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
     assert result is not None
     assert isinstance(result, ActivityLog)
     assert len(result.events) == 1
-    assert result.events[0].kind == "session_start"
+    assert result.events[0]["kind"] == "session_start"
 
 
 @pytest.mark.service
@@ -537,6 +543,7 @@ async def test_get_step_activity_returns_none_when_partition_aged_out(db_session
     await finalize_run(
         run_id,
         usage=Usage(),
+        duration_ms=None,
         activity=None,
         exit_code=0,
         status="success",

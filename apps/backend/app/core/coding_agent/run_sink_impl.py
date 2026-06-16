@@ -6,10 +6,11 @@ are silently no-ops so the sink can be registered without per-kind checks
 in `agent_gateway`.
 
 On each terminal event the sink resolves the coding-agent plugin from the
-run row's `plugin_id`, runs `parse_usage(stdout)` + `render_activity(stdout)`
-to derive the real `Usage` + `ActivityLog`, and passes them to `finalize_run`
-which writes both the run row and the activity blob in the caller's
-transaction.
+run row's `plugin_id`, calls `plugin.parse_result(outputs)` to derive a
+`RunResult`, derives `RunStatus` from the wire `event_kind`, and persists
+via `finalize_run`. Returns `{"output": result.output, "error_message":
+result.error_message}` so agent_gateway can merge those keys into the
+workflow outputs.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.coding_agent.run_service import finalize_run, get_run_ref_for_command
 from app.core.coding_agent.service import PluginNotFoundError, get_plugin
-from app.core.coding_agent.types import ActivityLog, Usage
 
 log = structlog.get_logger("core.coding_agent.run_sink")
 
@@ -51,10 +51,14 @@ class CodingAgentRunSinkImpl:
         No-ops silently for all other command kinds — provision/cleanup/
         writefiles/refreshauth do not have run rows.
 
-        `outputs` carries `exit_code` (int | None) and `stdout` (str | None)
-        from `AgentEvent.outputs` (set by `apps/agent/internal/command/results.go`).
+        `outputs` is the full AgentEvent outputs dict from the agent; it is
+        passed directly to `plugin.parse_result` which reads `stdout` and
+        `exit_code` from it.
 
-        Returns `None` — does not contribute extra keys to the workflow outputs.
+        Returns `{"output": str, "error_message": str | None}` on
+        `InvokeClaudeCode` terminal events so `agent_gateway` can merge
+        those keys into the workflow outputs. Returns `None` for all other
+        command kinds.
         """
         if command_kind != _INVOKE_CLAUDE_CODE_KIND:
             return None
@@ -67,7 +71,7 @@ class CodingAgentRunSinkImpl:
                 command_id=str(command_id),
                 command_kind=command_kind,
             )
-            return
+            return None
 
         run_id = run_ref.run_id
 
@@ -85,24 +89,21 @@ class CodingAgentRunSinkImpl:
                 run_id=str(run_id),
                 plugin_id=run_ref.plugin_id,
             )
-            return
+            return None
 
+        # Derive status from the wire event_kind — NOT from the plugin.
         status = "success" if event_kind == "completed_success" else "failure"
-        exit_code_raw = outputs.get("exit_code")
-        exit_code: int | None = int(exit_code_raw) if exit_code_raw is not None else None
-        stdout_raw = outputs.get("stdout") or ""
 
-        # Resolve usage + activity from the terminal stdout via the plugin.
-        # A malformed stream collapses to empty `Usage()` / empty `ActivityLog`
-        # — never raises; the run row still finalizes.
-        usage: Usage = plugin.parse_usage(stdout_raw)
-        activity: ActivityLog = plugin.render_activity(stdout_raw)
+        # parse_result is a pure function — never raises on missing keys;
+        # a malformed payload collapses to an empty RunResult.
+        result = plugin.parse_result(outputs)
 
         await finalize_run(
             run_id,
-            usage=usage,
-            activity=activity,
-            exit_code=exit_code,
+            usage=result.usage,
+            duration_ms=result.duration_ms,
+            activity=result.activity,
+            exit_code=result.exit_code,
             status=status,
             session=session,
         )
@@ -111,9 +112,10 @@ class CodingAgentRunSinkImpl:
             run_id=str(run_id),
             command_id=str(command_id),
             status=status,
-            exit_code=exit_code,
-            tokens_in=usage.tokens_in,
-            tokens_out=usage.tokens_out,
-            activity_events=len(activity.events),
+            exit_code=result.exit_code,
+            tokens_in=result.usage.tokens_in,
+            tokens_out=result.usage.tokens_out,
+            duration_ms=result.duration_ms,
+            activity_events=len(result.activity.events),
         )
-        return None
+        return {"output": result.output, "error_message": result.error_message}

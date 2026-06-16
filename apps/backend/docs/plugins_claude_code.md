@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`), plus `validate_config` and `health_check`. `parse_review_output` is a thin delegator to `domain/reviewer.parse_review_output` — the real implementation lives there. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`, `build_invocation`, `parse_result`), plus `validate_config` and `health_check`. `parse_review_output` is a thin delegator to `domain/reviewer.parse_review_output` — the real implementation lives there. `parse_result` is the single method the run sink calls; it delegates to `parse_usage` + `render_activity` internally and packs `duration_ms` separately onto `RunResult`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 

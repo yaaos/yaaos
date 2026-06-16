@@ -14,49 +14,14 @@
         "title": "AcceptRequest",
         "type": "object"
       },
-      "ActivityEvent": {
-        "description": "One captured event from a coding-agent run.\n\nPre-rendered by the plugin so the FE doesn't have to interpret raw\nClaude Code stream-json shapes — `message` is the user-facing string\nshown in the UI; `detail` is the raw event data for the expanded view.\n\n`seq` is the monotonic 0-based index inside the run's `ActivityLog`,\nassigned by `render_activity` after filtering null renders.",
-        "properties": {
-          "detail": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Detail",
-            "type": "object"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "seq": {
-            "default": 0,
-            "title": "Seq",
-            "type": "integer"
-          },
-          "ts": {
-            "format": "date-time",
-            "title": "Ts",
-            "type": "string"
-          }
-        },
-        "required": [
-          "ts",
-          "kind",
-          "message"
-        ],
-        "title": "ActivityEvent",
-        "type": "object"
-      },
       "ActivityLog": {
-        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced once per run from the terminal stdout by\n`CodingAgentPlugin.render_activity` — the same event sequence the\nin-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.",
+        "description": "Pre-rendered activity stream for one coding-agent run.\n\nProduced by `CodingAgentPlugin.parse_result` — the same event sequence\nthe in-process path streams via `OnActivity`, captured durably for the\nActivity tab. Persisted as a JSONB blob in the partitioned\n`coding_agent_activity` table.\n\nElement type is an opaque `Mapping[str, Any]` — the model no longer\nenforces inner schema. JSON wire shape `{\"events\": [...]}` is unchanged.",
         "properties": {
           "events": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/ActivityEvent"
+              "additionalProperties": true,
+              "type": "object"
             },
             "title": "Events",
             "type": "array"

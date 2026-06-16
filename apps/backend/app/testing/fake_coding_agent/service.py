@@ -177,10 +177,10 @@ class FakeCodingAgentPlugin:
         return RunResult(
             output=stdout,
             error_message=None,
-            usage=Usage(tokens_in=0, tokens_out=0, duration_ms=0),
+            usage=Usage(tokens_in=0, tokens_out=0),
             duration_ms=0,
             exit_code=exit_code,
-            activity=ActivityLog(events=()),
+            activity=ActivityLog(events=[]),
         )
 
     async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:

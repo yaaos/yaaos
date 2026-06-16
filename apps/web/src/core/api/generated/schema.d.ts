@@ -1683,55 +1683,25 @@ export interface components {
             token: string;
         };
         /**
-         * ActivityEvent
-         * @description One captured event from a coding-agent run.
-         *
-         *     Pre-rendered by the plugin so the FE doesn't have to interpret raw
-         *     Claude Code stream-json shapes — `message` is the user-facing string
-         *     shown in the UI; `detail` is the raw event data for the expanded view.
-         *
-         *     `seq` is the monotonic 0-based index inside the run's `ActivityLog`,
-         *     assigned by `render_activity` after filtering null renders.
-         */
-        ActivityEvent: {
-            /**
-             * Detail
-             * @default {}
-             */
-            detail: {
-                [key: string]: unknown;
-            };
-            /** Kind */
-            kind: string;
-            /** Message */
-            message: string;
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-        };
-        /**
          * ActivityLog
          * @description Pre-rendered activity stream for one coding-agent run.
          *
-         *     Produced once per run from the terminal stdout by
-         *     `CodingAgentPlugin.render_activity` — the same event sequence the
-         *     in-process path streams via `OnActivity`, captured durably for the
+         *     Produced by `CodingAgentPlugin.parse_result` — the same event sequence
+         *     the in-process path streams via `OnActivity`, captured durably for the
          *     Activity tab. Persisted as a JSONB blob in the partitioned
          *     `coding_agent_activity` table.
+         *
+         *     Element type is an opaque `Mapping[str, Any]` — the model no longer
+         *     enforces inner schema. JSON wire shape `{"events": [...]}` is unchanged.
          */
         ActivityLog: {
             /**
              * Events
              * @default []
              */
-            events: components["schemas"]["ActivityEvent"][];
+            events: {
+                [key: string]: unknown;
+            }[];
         };
         /** AgentEvent */
         AgentEvent: {

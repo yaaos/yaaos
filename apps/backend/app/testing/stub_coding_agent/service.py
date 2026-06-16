@@ -57,9 +57,8 @@ _STUB_TELEMETRY = InvocationTelemetry(
 )
 
 
-def _canned_activity() -> list[ActivityEvent]:
-    """Default sequence emitted by the stub — enough events to exercise the
-    persisted activity log + SSE path without inventing realistic content."""
+def _canned_activity_events() -> list[ActivityEvent]:
+    """Default sequence emitted by the stub for the SSE on_activity path."""
     now = datetime.now(UTC)
     return [
         ActivityEvent(
@@ -89,6 +88,37 @@ def _canned_activity() -> list[ActivityEvent]:
     ]
 
 
+def _canned_activity_log() -> ActivityLog:
+    """Default activity log for the stub's `parse_result` / `render_activity` path."""
+    now = datetime.now(UTC).isoformat()
+    return ActivityLog(
+        events=[
+            {
+                "seq": 0,
+                "ts": now,
+                "kind": "session_start",
+                "message": "Session started · model opus",
+                "detail": {"model": "opus", "session_id": "stub-session"},
+            },
+            {
+                "seq": 1,
+                "ts": now,
+                "kind": "subagent_dispatched",
+                "message": "Dispatching yaaos-architecture",
+                "detail": {"subagent": "yaaos-architecture"},
+            },
+            {
+                "seq": 2,
+                "ts": now,
+                "kind": "tool_call_started",
+                "message": "Read src/example.ts",
+                "detail": {"tool": "Read", "input": {"file_path": "src/example.ts"}},
+            },
+            {"seq": 3, "ts": now, "kind": "result", "message": "Review complete", "detail": {"num_turns": 1}},
+        ]
+    )
+
+
 class StubCodingAgentPlugin:
     """Wraps a real `CodingAgentPlugin`; intercepts `review`."""
 
@@ -106,7 +136,7 @@ class StubCodingAgentPlugin:
         # Emit a canned event sequence so consumers exercise the activity-log
         # path (persistence + SSE) the same way the real CLI would.
         if on_activity is not None:
-            for event in _canned_activity():
+            for event in _canned_activity_events():
                 try:
                     await on_activity(event)
                 except Exception:
@@ -239,11 +269,10 @@ class StubCodingAgentPlugin:
             usage=Usage(
                 tokens_in=_STUB_TELEMETRY.tokens_in,
                 tokens_out=_STUB_TELEMETRY.tokens_out,
-                duration_ms=_STUB_TELEMETRY.latency_ms,
             ),
             duration_ms=_STUB_TELEMETRY.latency_ms,
             exit_code=exit_code,
-            activity=ActivityLog(events=tuple(_canned_activity())),
+            activity=_canned_activity_log(),
         )
 
     def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
@@ -264,18 +293,16 @@ class StubCodingAgentPlugin:
         return Usage(
             tokens_in=_STUB_TELEMETRY.tokens_in,
             tokens_out=_STUB_TELEMETRY.tokens_out,
-            duration_ms=_STUB_TELEMETRY.latency_ms,
         )
 
     def render_activity(self, stdout: str) -> ActivityLog:
         """Delegate to the wrapped plugin's `render_activity` when present;
-        otherwise emit the canned-activity sequence with monotonic `seq` so
-        finalize_run persists a non-empty blob in offline tests.
+        otherwise emit the canned-activity log so finalize_run persists a
+        non-empty blob in offline tests.
         """
         if hasattr(self._wrapped, "render_activity"):
             return self._wrapped.render_activity(stdout)
-        events = tuple(ev.model_copy(update={"seq": i}) for i, ev in enumerate(_canned_activity()))
-        return ActivityLog(events=events)
+        return _canned_activity_log()
 
     async def review_preflight_steps(self, ctx: ReviewContext, *, session: Any) -> tuple[str, ...]:
         del ctx, session

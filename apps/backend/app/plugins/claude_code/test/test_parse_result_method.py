@@ -65,7 +65,8 @@ def test_usage_tokens_parsed_from_stdout() -> None:
     result = _plugin().parse_result(_payload(stdout=stdout))
     assert result.usage.tokens_in == 42
     assert result.usage.tokens_out == 7
-    assert result.usage.duration_ms == 500
+    # duration_ms is on RunResult, not on Usage
+    assert result.duration_ms == 500
 
 
 def test_usage_empty_when_no_result_event() -> None:
@@ -76,7 +77,8 @@ def test_usage_empty_when_no_result_event() -> None:
     assert result.usage.tokens_out is None
 
 
-def test_duration_ms_matches_usage_duration() -> None:
+def test_duration_ms_on_run_result() -> None:
+    """duration_ms lives on RunResult, not on Usage."""
     stdout = _stream(
         {
             "type": "result",
@@ -88,7 +90,8 @@ def test_duration_ms_matches_usage_duration() -> None:
     )
     result = _plugin().parse_result(_payload(stdout=stdout))
     assert result.duration_ms == 999
-    assert result.usage.duration_ms == 999
+    # Usage is tokens-only — no duration_ms attribute
+    assert not hasattr(result.usage, "duration_ms")
 
 
 def test_activity_log_non_empty_for_real_stream() -> None:

@@ -113,9 +113,8 @@ def test_log_event_handles_missing_fields_gracefully() -> None:
 # ── parse_usage ────────────────────────────────────────────────────────────────
 
 
-def test_parse_usage_extracts_tokens_and_duration() -> None:
-    """parse_usage reads input_tokens, output_tokens, and duration_ms from the
-    terminal `type=result` event."""
+def test_parse_usage_extracts_tokens() -> None:
+    """parse_usage reads input_tokens and output_tokens from the terminal `type=result` event."""
     from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
 
     stream = _stream(
@@ -131,11 +130,10 @@ def test_parse_usage_extracts_tokens_and_duration() -> None:
     usage = _plugin.parse_usage(stream)
     assert usage.tokens_in == 1234
     assert usage.tokens_out == 567
-    assert usage.duration_ms == 1500
 
 
 def test_parse_usage_handles_missing_usage_block() -> None:
-    """Missing `usage` block → tokens_in/out are None; duration_ms still read."""
+    """Missing `usage` block → tokens_in/out are None."""
     from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
 
     stream = _stream(
@@ -144,7 +142,6 @@ def test_parse_usage_handles_missing_usage_block() -> None:
     usage = _plugin.parse_usage(stream)
     assert usage.tokens_in is None
     assert usage.tokens_out is None
-    assert usage.duration_ms == 800
 
 
 def test_parse_usage_no_terminal_event_returns_empty() -> None:
@@ -158,7 +155,6 @@ def test_parse_usage_no_terminal_event_returns_empty() -> None:
     usage = _plugin.parse_usage(stream)
     assert usage.tokens_in is None
     assert usage.tokens_out is None
-    assert usage.duration_ms is None
 
 
 def test_parse_usage_empty_stdout_returns_empty() -> None:
@@ -168,14 +164,13 @@ def test_parse_usage_empty_stdout_returns_empty() -> None:
     usage = _plugin.parse_usage("")
     assert usage.tokens_in is None
     assert usage.tokens_out is None
-    assert usage.duration_ms is None
 
 
 # ── render_activity ────────────────────────────────────────────────────────────
 
 
 def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
-    """render_activity produces one ActivityEvent per useful stream line, with
+    """render_activity produces one activity dict per useful stream line, with
     monotonic seq starting at 0."""
     from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
 
@@ -202,8 +197,8 @@ def test_render_activity_walks_full_stream_with_monotonic_seq() -> None:
     )
     log = _plugin.render_activity(stream)
     assert len(log.events) == 4
-    assert [ev.seq for ev in log.events] == [0, 1, 2, 3]
-    assert [ev.kind for ev in log.events] == [
+    assert [ev["seq"] for ev in log.events] == [0, 1, 2, 3]
+    assert [ev["kind"] for ev in log.events] == [
         "session_start",
         "tool_call_started",
         "tool_call_finished",
@@ -217,12 +212,12 @@ def test_render_activity_skips_null_renders() -> None:
 
     stream = _stream(
         {"type": "system", "subtype": "init", "session_id": "s", "model": "opus"},
-        {"type": "unknown_kind"},  # filtered → no ActivityEvent
+        {"type": "unknown_kind"},  # filtered → no activity event
         {"type": "result", "subtype": "success", "result": "{}"},
     )
     log = _plugin.render_activity(stream)
     assert len(log.events) == 2
-    assert [ev.seq for ev in log.events] == [0, 1]
+    assert [ev["seq"] for ev in log.events] == [0, 1]
 
 
 def test_render_activity_empty_stdout_returns_empty() -> None:
@@ -230,4 +225,4 @@ def test_render_activity_empty_stdout_returns_empty() -> None:
     from app.plugins.claude_code.service import _plugin  # noqa: PLC0415
 
     log = _plugin.render_activity("")
-    assert log.events == ()
+    assert log.events == []

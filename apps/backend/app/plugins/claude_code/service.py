@@ -24,7 +24,6 @@ from sqlalchemy import select
 from app.core import byok as _byok
 from app.core.auth import org_id_var
 from app.core.coding_agent import (
-    ActivityEvent,
     ActivityLog,
     CodingAgentError,
     ExecSpec,
@@ -172,27 +171,32 @@ def _log_stream_event(event: dict[str, Any]) -> None:
         )
 
 
-def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
-    """Convert one Claude Code stream event into a user-facing `ActivityEvent`.
+def _render_activity(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert one Claude Code stream event into a user-facing activity dict.
 
     Returns `None` for events with no useful render (e.g. unknown types, empty
     assistant turns). The `message` is pre-rendered for direct UI display; raw
     event data lands in `detail` for the expanded view.
+
+    The returned dict matches the shape expected by the SPA activity renderer:
+    `{seq, ts, kind, message, detail}`. `seq` is assigned monotonically by
+    `render_activity` after filtering null renders.
     """
     et = event.get("type")
-    ts = _utcnow()
+    ts = _utcnow().isoformat()
     if et == "system" and event.get("subtype") == "init":
         model = event.get("model") or "?"
-        return ActivityEvent(
-            ts=ts,
-            kind="session_start",
-            message=f"Session started · model {model}",
-            detail={"model": model, "session_id": event.get("session_id")},
-        )
+        return {
+            "seq": 0,
+            "ts": ts,
+            "kind": "session_start",
+            "message": f"Session started · model {model}",
+            "detail": {"model": model, "session_id": event.get("session_id")},
+        }
     if et == "assistant":
         msg = event.get("message", {}) or {}
         # An assistant turn may contain a mix of text + tool_use blocks. Render
-        # them in order — emit the first block we can, since one ActivityEvent
+        # them in order — emit the first block we can, since one activity event
         # per stream event keeps the feed cardinality 1:1 with stream lines.
         for block in msg.get("content", []) or []:
             btype = block.get("type")
@@ -201,43 +205,46 @@ def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
                 inp = block.get("input") if isinstance(block.get("input"), dict) else {}
                 if tool == "Task":
                     subagent = inp.get("subagent_type") or "subagent"
-                    return ActivityEvent(
-                        ts=ts,
-                        kind="subagent_dispatched",
-                        message=f"Dispatching {subagent}",
-                        detail={
+                    return {
+                        "seq": 0,
+                        "ts": ts,
+                        "kind": "subagent_dispatched",
+                        "message": f"Dispatching {subagent}",
+                        "detail": {
                             "subagent": subagent,
                             "tool_use_id": block.get("id"),
                             "description": inp.get("description"),
                         },
-                    )
+                    }
                 # Other tool calls — Read, Bash, Grep, Glob, etc.
                 target = _summarize_tool_input(tool, inp)
-                return ActivityEvent(
-                    ts=ts,
-                    kind="tool_call_started",
-                    message=f"{tool}: {target}" if target else tool,
-                    # Trust-boundary: ActivityEvents cross from the customer's
+                return {
+                    "seq": 0,
+                    "ts": ts,
+                    "kind": "tool_call_started",
+                    "message": f"{tool}: {target}" if target else tool,
+                    # Trust-boundary: activity events cross from the customer's
                     # workspace to yaaos' control plane. `inp` for Edit / Write
                     # tools carries the full source content the agent is about
                     # to commit; we MUST NOT leak it across the boundary. Only
                     # metadata fields (paths, command summaries) are kept.
-                    detail={
+                    "detail": {
                         "tool": tool,
                         "tool_use_id": block.get("id"),
                         "input_summary": _safe_tool_input(tool, inp),
                     },
-                )
+                }
             if btype == "text":
                 text = (block.get("text") or "").strip()
                 if text:
                     excerpt = text if len(text) < 200 else text[:197] + "…"
-                    return ActivityEvent(
-                        ts=ts,
-                        kind="assistant_message",
-                        message=excerpt,
-                        detail={},
-                    )
+                    return {
+                        "seq": 0,
+                        "ts": ts,
+                        "kind": "assistant_message",
+                        "message": excerpt,
+                        "detail": {},
+                    }
         return None
     if et == "user":
         msg = event.get("message", {}) or {}
@@ -260,27 +267,29 @@ def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
                 message = "→ error"
             else:
                 message = f"→ ok ({size_bytes} bytes)" if size_bytes else "→ ok (empty)"
-            return ActivityEvent(
-                ts=ts,
-                kind="tool_call_finished",
-                message=message,
-                detail={
+            return {
+                "seq": 0,
+                "ts": ts,
+                "kind": "tool_call_finished",
+                "message": message,
+                "detail": {
                     "tool_use_id": block.get("tool_use_id"),
                     "is_error": is_error,
                     "size_bytes": size_bytes,
                 },
-            )
+            }
         return None
     if et == "result":
-        return ActivityEvent(
-            ts=ts,
-            kind="result",
-            message="Review complete",
-            detail={
+        return {
+            "seq": 0,
+            "ts": ts,
+            "kind": "result",
+            "message": "Review complete",
+            "detail": {
                 "duration_ms": event.get("duration_ms"),
                 "num_turns": event.get("num_turns"),
             },
-        )
+        }
     return None
 
 
@@ -493,13 +502,14 @@ class ClaudeCodePlugin:
         return ()
 
     def parse_usage(self, stdout: str) -> Usage:
-        """Extract token usage + duration from the terminal `type=result` event.
+        """Extract token usage from the terminal `type=result` event.
 
-        Reads the last `type=result` event and pulls `usage.input_tokens`,
-        `usage.output_tokens`, and `duration_ms`. Missing fields surface
-        as `None`. A stream with no terminal `result` event returns an
-        empty `Usage()` — never raises so callers can finalize a run row
-        even when the agent crashed mid-stream.
+        Reads the last `type=result` event and pulls `usage.input_tokens`
+        and `usage.output_tokens`. Missing fields surface as `None`. A
+        stream with no terminal `result` event returns an empty `Usage()` —
+        never raises so callers can finalize a run row even when the agent
+        crashed mid-stream. Wall-clock duration is no longer part of `Usage`
+        — use `parse_result` to get `RunResult.duration_ms`.
         """
         events = _parse_stream_events(stdout)
         result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
@@ -515,9 +525,7 @@ class ClaudeCodePlugin:
                 tokens_in = raw_in
             if isinstance(raw_out, int):
                 tokens_out = raw_out
-        duration_raw = result_event.get("duration_ms")
-        duration_ms: int | None = duration_raw if isinstance(duration_raw, int) else None
-        return Usage(tokens_in=tokens_in, tokens_out=tokens_out, duration_ms=duration_ms)
+        return Usage(tokens_in=tokens_in, tokens_out=tokens_out)
 
     def render_activity(self, stdout: str) -> ActivityLog:
         """Pre-render the full activity stream from terminal stdout.
@@ -528,17 +536,17 @@ class ClaudeCodePlugin:
         no parseable events.
         """
         events = _parse_stream_events(stdout)
-        rendered: list[ActivityEvent] = []
+        rendered: list[dict[str, Any]] = []
         seq = 0
         for raw_event in events:
             ev = _render_activity(raw_event)
             if ev is None:
                 continue
-            # `_render_activity` returns a new ActivityEvent with `seq=0`
-            # (the default); stamp the monotonic index here.
-            rendered.append(ev.model_copy(update={"seq": seq}))
+            # `_render_activity` returns a dict with `seq=0` (placeholder);
+            # stamp the monotonic index here.
+            rendered.append({**ev, "seq": seq})
             seq += 1
-        return ActivityLog(events=tuple(rendered))
+        return ActivityLog(events=rendered)
 
     # ── New generic Protocol methods ─────────────────────────────────────
 
@@ -605,21 +613,32 @@ class ClaudeCodePlugin:
 
         Reads `terminal_event_payload["stdout"]` / `["exit_code"]`, delegates
         to `parse_usage` and `render_activity` to populate `usage` and
-        `activity`. Sets `output = stdout`, `error_message = None` (the
-        sink derives status from the wire `event_kind`, not from the payload).
-        Never raises on missing keys — missing stdout is treated as an empty
-        string; missing exit_code is None.
+        `activity`. Reads `duration_ms` directly from the terminal `result`
+        stream event and populates `RunResult.duration_ms`. Sets
+        `error_message = None` (the sink derives status from the wire
+        `event_kind`, not from the payload). Never raises on missing keys —
+        missing stdout is treated as an empty string; missing exit_code and
+        duration_ms are None.
         """
         stdout: str = terminal_event_payload.get("stdout", "") or ""
         exit_code_raw = terminal_event_payload.get("exit_code")
         exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
         usage = self.parse_usage(stdout)
         activity = self.render_activity(stdout)
+        # Read duration_ms directly from the terminal result event — it lives
+        # on the result event itself, not inside the usage sub-object.
+        events = _parse_stream_events(stdout)
+        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        duration_ms: int | None = None
+        if result_event is not None:
+            duration_raw = result_event.get("duration_ms")
+            if isinstance(duration_raw, int):
+                duration_ms = duration_raw
         return RunResult(
             output=stdout,
             error_message=None,
             usage=usage,
-            duration_ms=usage.duration_ms,
+            duration_ms=duration_ms,
             exit_code=exit_code,
             activity=activity,
         )

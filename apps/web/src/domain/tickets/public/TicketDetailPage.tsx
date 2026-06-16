@@ -16,7 +16,7 @@
  *   - Terminal `CodeReview` step: `useStepActivity` accordion.
  */
 
-import type { Ticket } from "@core/api/public/client";
+import type { ReviewJobActivityEvent, Ticket } from "@core/api/public/client";
 import {
   type WorkflowRunView,
   useCancelReviewerJobs,
@@ -479,18 +479,23 @@ function StepActivityContent({
 
   return (
     <div className="max-h-[400px] overflow-y-auto" data-testid="step-activity-blob">
-      {events.map((ev, i) => (
-        <ActivityEventRow
-          key={`${ev.seq}-${i}`}
-          event={{
-            ts: ev.ts,
-            kind: ev.kind,
-            // A blank message would render as an empty row; surface the gap.
-            message: ev.message || "(no message)",
-            detail: ev.detail ?? null,
-          }}
-        />
-      ))}
+      {events.map((ev, i) => {
+        // events items are opaque { [key: string]: unknown } from the backend;
+        // cast to the known wire shape the plugin guarantees to serialize.
+        const row = ev as unknown as ReviewJobActivityEvent & { seq?: number };
+        return (
+          <ActivityEventRow
+            key={`${row.seq}-${i}`}
+            event={{
+              ts: row.ts,
+              kind: row.kind,
+              // A blank message would render as an empty row; surface the gap.
+              message: row.message || "(no message)",
+              detail: row.detail ?? null,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
