@@ -183,6 +183,7 @@ expose = [
   "AgentCommandKind",
   "AgentConfig",
   "AgentEvent",
+  "AgentEventEnrichment",
   "AgentEventKind",
   "AgentMetadata",
   "AgentRef",

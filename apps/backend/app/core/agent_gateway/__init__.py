@@ -34,6 +34,7 @@ from app.core.agent_gateway.report_sink import (
     register_report_sink,
 )
 from app.core.agent_gateway.run_sink import (
+    AgentEventEnrichment,
     AgentRunSink,
     clear_run_sink,
     get_run_sink,
@@ -105,6 +106,7 @@ __all__ = [
     "AgentCommandKind",
     "AgentConfig",
     "AgentEvent",
+    "AgentEventEnrichment",
     "AgentEventKind",
     "AgentMetadata",
     "AgentRef",

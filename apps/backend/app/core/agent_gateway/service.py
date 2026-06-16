@@ -879,12 +879,12 @@ async def record_agent_event(
     # events need a run row finalized. The sink filters on command_kind and
     # is a no-op for all other kinds. The sink is optional (None when
     # domain/coding_agent is not loaded), so it degrades gracefully.
-    from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
+    from app.core.agent_gateway.run_sink import AgentEventEnrichment, get_run_sink  # noqa: PLC0415
 
     outputs: dict = dict(event.outputs)  # type: ignore[type-arg]
     _run_sink = get_run_sink()
     if _run_sink is not None:
-        sink_extras = await _run_sink.handle_terminal_event(
+        sink_extras: AgentEventEnrichment | None = await _run_sink.handle_terminal_event(
             command_id=event.command_id,
             command_kind=cmd_row.command_kind,
             event_kind=event.kind.value,

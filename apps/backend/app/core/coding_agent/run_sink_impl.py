@@ -15,13 +15,12 @@ workflow outputs.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
 from uuid import UUID
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway import AgentEventEnrichment
 from app.core.coding_agent.run_service import finalize_run, get_run_ref_for_command
 from app.core.coding_agent.service import PluginNotFoundError, get_plugin
 
@@ -45,7 +44,7 @@ class CodingAgentRunSinkImpl:
         event_kind: str,
         outputs: dict,  # type: ignore[type-arg]
         session: AsyncSession,
-    ) -> Mapping[str, Any] | None:
+    ) -> AgentEventEnrichment | None:
         """Finalize the run row + persist the activity blob for this terminal event.
 
         No-ops silently for all other command kinds — provision/cleanup/
@@ -55,10 +54,9 @@ class CodingAgentRunSinkImpl:
         passed directly to `plugin.parse_result` which reads `stdout` and
         `exit_code` from it.
 
-        Returns `{"output": str, "error_message": str | None}` on
-        `InvokeClaudeCode` terminal events so `agent_gateway` can merge
-        those keys into the workflow outputs. Returns `None` for all other
-        command kinds.
+        Returns an `AgentEventEnrichment` on `InvokeClaudeCode` terminal events
+        so `agent_gateway` can merge those keys into the workflow outputs.
+        Returns `None` for all other command kinds.
         """
         if command_kind != _INVOKE_CLAUDE_CODE_KIND:
             return None
@@ -118,4 +116,8 @@ class CodingAgentRunSinkImpl:
             duration_ms=result.duration_ms,
             activity_events=len(result.activity.events),
         )
-        return {"output": result.output, "error_message": result.error_message}
+        enrichment: AgentEventEnrichment = {
+            "output": result.output,
+            "error_message": result.error_message,
+        }
+        return enrichment
