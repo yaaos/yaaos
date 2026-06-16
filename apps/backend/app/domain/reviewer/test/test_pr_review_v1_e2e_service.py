@@ -322,11 +322,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(
 
             # ProvisionWorkspace: return the pre-seeded workspace_id.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
-            # CodeReview: return the stream-json stdout via outputs; PostFindings parses it.
+            # CodeReview: return the parsed output via outputs; PostFindings parses it.
             await _advance_pending_agent_event(
                 db_session,
                 wfx_id,
-                outputs={"stdout": spy_stdout},
+                outputs={"output": spy_stdout},
             )
             # PostFindings (LOCAL) ran inline. CleanupWorkspace parks.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={})
@@ -415,11 +415,11 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     await db_session.commit()
     await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
-    # CodeReview parks. Simulate empty stdout (no findings path — PostFindings treats no stdout as zero findings).
+    # CodeReview parks. Simulate empty output (no findings path — PostFindings treats no output as zero findings).
     await _advance_pending_agent_event(
         db_session,
         wfx_id,
-        outputs={"stdout": ""},
+        outputs={"output": ""},
     )
 
     # PostFindings (Local) ran inline with empty stdout → success-no-op;

@@ -55,7 +55,7 @@ pr_review_v1 = Workflow(
             id="post",
             command_kind="PostFindings",
             inputs={
-                "stdout": "$review.stdout",
+                "output": "$review.output",
                 "workspace_id": "$provision.workspace_id",
             },
             transitions={

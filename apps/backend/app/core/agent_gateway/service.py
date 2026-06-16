@@ -826,6 +826,13 @@ async def record_agent_event(
         if sink_extras is not None:
             outputs = {**outputs, **sink_extras}
 
+    # Strip raw agent `stdout` after the sink has processed it. The sink is
+    # the source of truth for what flows forward — it returns `{"output": ...}`
+    # (the parsed skill stdout) so workflow steps read the correct key.
+    # Leaving `stdout` in the forwarded dict would allow stale reads of the
+    # old key from any future step that accidentally used it.
+    outputs.pop("stdout", None)
+
     # Lean workspace row materialisation for ProvisionWorkspace.
     #
     # The Go agent never sends workspace events (WorkspaceEvent is a

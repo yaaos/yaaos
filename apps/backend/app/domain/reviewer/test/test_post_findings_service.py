@@ -29,10 +29,10 @@ async def test_empty_stdout_returns_success_zero_count(workflow_context_provider
     assert outcome.outputs.get("admitted_count") == 0
 
 
-async def test_nonconforming_stdout_returns_schema_invalid_failure() -> None:
-    """Stdout that contains no terminal result event → schema_invalid failure."""
+async def test_nonconforming_output_returns_schema_invalid_failure() -> None:
+    """output that contains no terminal result event → schema_invalid failure."""
     outcome = await PostFindings().execute(
-        {"stdout": "not valid json stream output"},
+        {"output": "not valid json stream output"},
         _ctx(),
     )
     assert outcome.label == "failure"

@@ -281,7 +281,10 @@ async def dispatch_invocation(
 
     command_id = uuid7()
 
-    # Build the wire command from the concrete exec block.
+    # Build the wire command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
+    # the top-level `exec` wrapper is required — a flat `{argv,stdin,env}` dict
+    # leaves `inv.Exec.Argv` empty after json.Unmarshal and causes
+    # `completed_failure` with "invocation.exec.argv missing or empty".
     # `traceparent` is "" when no parent span is active; `enqueue_command`
     # overwrites it with the dispatch span's traceparent before persisting.
     wire_command = InvokeClaudeCodeCommand(
@@ -289,9 +292,11 @@ async def dispatch_invocation(
         workspace_id=workspace_id,
         traceparent=ctx.traceparent or "",
         invocation={
-            "argv": invocation_data.argv,
-            "stdin": invocation_data.stdin or "",
-            "env": dict(invocation_data.env),
+            "exec": {
+                "argv": invocation_data.argv,
+                "stdin": invocation_data.stdin or "",
+                "env": dict(invocation_data.env),
+            }
         },
         limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
     )

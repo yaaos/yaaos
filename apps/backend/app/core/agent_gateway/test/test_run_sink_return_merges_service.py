@@ -280,4 +280,6 @@ async def test_sink_returning_none_leaves_outputs_unchanged(db_session) -> None:
     assert len(handle_payloads) == 1
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
-    assert task_outputs == {"exit_code": 0, "stdout": "hello"}
+    # `stdout` is stripped from forwarded outputs after sink processing so
+    # downstream workflow steps cannot accidentally read the stale raw key.
+    assert task_outputs == {"exit_code": 0}

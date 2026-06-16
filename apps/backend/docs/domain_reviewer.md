@@ -22,11 +22,11 @@ One workflow in `domain/reviewer/workflows/`, plus reused workspace lifecycle co
 
 For the top-level review arc see [`docs/system-architecture.md`](../../../docs/system-architecture.md). Reviewer-internal detail only:
 
-`CodeReview` dispatches the coding-agent invocation against the provisioned workspace; the agent runs the assigned skill against the real clone and returns its output. `PostFindings` parses the agent's output into `list[ReportedFinding]` and hands them to `publish_findings`. **Non-conforming agent output (parse failure or out-of-range enum) → `Outcome.failure(reason="schema_invalid") → FAIL_WORKFLOW`** — the runtime gate; no findings are persisted or posted.
+`CodeReview` dispatches the coding-agent invocation against the provisioned workspace via `coding_agent.dispatch_invocation` (which enqueues the `InvokeClaudeCode` AgentCommand, inserts a `coding_agent_runs` row, and pins the command to the owning agent). The agent runs the assigned skill and returns its output; the run-sink processes the terminal event, calls `plugin.parse_result`, and contributes `{"output": ...}` to the workflow step outputs. `PostFindings` reads `inputs["output"]` (not `stdout`), parses it into `list[ReportedFinding]` via `parse_review_output`, and hands them to `publish_findings`. **Non-conforming agent output (parse failure or out-of-range enum) → `Outcome.failure(reason="schema_invalid") → FAIL_WORKFLOW`** — the runtime gate; no findings are persisted or posted.
 
 ## `publish_findings` — the canonical entry point
 
-`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], run_id: UUID | None = None, session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). `run_id` links the review row to its `coding_agent_runs` row when provided; passed by `PostFindings.execute` after it resolves the preceding `CodeReview` step's run via `get_run_id_for_workflow_step`.
+`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], run_id: UUID | None = None, session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). `run_id` is optional — `PostFindings.execute` no longer passes it (the link from a review to its activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`).
 
 1. Open a `Review` row for this run.
 2. For each `ReportedFinding`: validate `severity`/`confidence` raw strings against the `Severity`/`Confidence` `Literal` aliases — out-of-range raises (caught by `PostFindings` as the runtime gate above).
@@ -50,7 +50,7 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Data owned
 
-- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`, `scope_prev_sha`. Run config: `model`, `effort`. Lifecycle state: `current_step`, `last_heartbeat_at`, `completed_at`, `skip_reason`, `error_message`. `pending_replay` is write-only — stamped True when a push arrives while a review is in-flight on the same PR; no production reader (replay-on-completion is separate work). `run_id` (nullable FK → `coding_agent_runs.id`) links the review to the run that produced it; NULL when no run row exists (e.g. zero-findings fast-path or pre-run-tracking rows).
+- `reviews` — one row per PR run. `sequence_number` (per-PR ordinal), `trigger_reason`, `commit_sha_at_start`, `scope_prev_sha`. Run config: `model`, `effort`. Lifecycle state: `current_step`, `last_heartbeat_at`, `completed_at`, `skip_reason`, `error_message`. `pending_replay` is write-only — stamped True when a push arrives while a review is in-flight on the same PR; no production reader (replay-on-completion is separate work). `run_id` (nullable FK → `coding_agent_runs.id`) — write-only; zero production readers. The link from a review to its run activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
 - `findings` — canonical schema: `severity, confidence, category, rationale, rule_violated, rule_source, suggested_fix, file (nullable), line (nullable), review_id (FK → reviews.id), finding_display_id`. Unique `(pr_id, finding_display_id)`.
 
 ## Vocabulary
@@ -103,7 +103,9 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
   - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
   - `test_parse_review_output_owns_service.py` — unit tests for `domain/reviewer.parse_review_output`: valid stdout → `list[ReportedFinding]`, null-anchor accepted, no-result-event raises, empty stdout raises, invalid JSON raises, wrong schema raises, last result event wins.
-  - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema.
+  - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema (via `inputs["output"]` key).
+  - `test_post_findings_reads_output_service.py` — `PostFindings` reads `inputs["output"]` (not `stdout`); empty/missing key → zero findings; valid stdout → finding persists without `run_id`.
+  - `test_code_review_dispatch_new_path_service.py` — `CodeReview.dispatch` via `coding_agent.dispatch_invocation`: asserts `agent_commands` row with `command_kind="InvokeClaudeCode"`, `coding_agent_runs` row with `plugin_id="claude_code"`, and workspace claim acquired.
   - `test_pr_review_v1_e2e_service.py` — full pipeline (stub VCS + coding-agent + workspace).
   - `test_findings_summary_service.py` — rollup written on review end.
   - `test_start_incremental_review_under_lock_service.py` — two concurrent pushes to the same PR race; exactly one ReviewRow + one `engine.start`, loser returns `skipped:in_flight`, surviving row carries `pending_replay=True`.

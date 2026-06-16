@@ -278,7 +278,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.command.PostFindings"):
-                outcome = await PostFindings().execute({"stdout": stdout}, ctx)
+                outcome = await PostFindings().execute({"output": stdout}, ctx)
     finally:
         bind_vcs_registry(prior_registry)
 

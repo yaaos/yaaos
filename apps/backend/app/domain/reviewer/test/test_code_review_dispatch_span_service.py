@@ -1,10 +1,10 @@
 """Service test: CodeReview.dispatch records exception + ERROR status on span
-when build_review_invocation raises.
+when build_invocation raises.
 
-Exercises the catch block at commands/__init__.py ~line 133 that was missing
-set_status(ERROR). Registers a minimal plugin stub whose build_review_invocation
-raises, seeds the DB rows dispatch needs, then asserts the surrounding span
-carries both an exception event and StatusCode.ERROR.
+Exercises the catch block in commands/__init__.py `CodeReview.dispatch`. Registers
+a minimal plugin stub whose `build_invocation` raises, seeds the DB rows dispatch
+needs, then asserts the surrounding span carries both an exception event and
+StatusCode.ERROR.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.service
 
 
 class _RaisingPlugin:
-    """Minimal CodingAgentPlugin stub whose build_review_invocation always raises."""
+    """Minimal CodingAgentPlugin stub whose build_invocation always raises."""
 
     plugin_id = "claude_code"
 
@@ -33,8 +33,11 @@ class _RaisingPlugin:
     def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
         return dict(settings)
 
-    async def build_review_invocation(self, ctx: Any, *, session: Any) -> Any:
-        raise RuntimeError("simulated build_review_invocation failure")
+    def build_invocation(self, invocation: Any) -> Any:
+        raise RuntimeError("simulated build_invocation failure")
+
+    def parse_result(self, terminal_event_payload: Any) -> Any:
+        raise NotImplementedError
 
     # The remaining Protocol methods are unreachable in this test path but are
     # included so type-checkers don't complain if Protocol is @runtime_checkable.
@@ -71,6 +74,9 @@ class _RaisingPlugin:
     async def review_preflight_steps(self, ctx: Any, *, session: Any) -> tuple:
         return ()
 
+    async def build_review_invocation(self, ctx: Any, *, session: Any) -> Any:
+        raise NotImplementedError
+
 
 class _StaticTicketContextProvider:
     """WorkflowContextProvider stub that returns a fixed WorkspaceTicketContext."""
@@ -87,7 +93,7 @@ class _StaticTicketContextProvider:
 async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
     db_session,
 ) -> None:
-    """build_review_invocation failure records exception event + ERROR on active span."""
+    """build_invocation failure records exception event + ERROR on active span."""
     from app.core.coding_agent import (  # noqa: PLC0415
         bind_coding_agent_registry,
         current_coding_agent_registry,
@@ -145,7 +151,7 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.start_step.CodeReview"):
-                with pytest.raises(RuntimeError, match="build_review_invocation failed"):
+                with pytest.raises(RuntimeError, match="build_invocation failed"):
                     await cmd.dispatch(inputs, ctx, session=db_session)
     finally:
         bind_coding_agent_registry(prior_registry)
