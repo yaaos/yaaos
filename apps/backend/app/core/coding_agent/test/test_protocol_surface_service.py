@@ -33,8 +33,6 @@ EXPECTED_ALL = frozenset(
         "get_plugin",
         "dispatch_invocation",
         "get_step_activity",
-        "get_run_id_for_command",
-        "get_run_id_for_workflow_step",
     ]
 )
 

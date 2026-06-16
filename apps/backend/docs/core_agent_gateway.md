@@ -65,7 +65,7 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 
 ## Dispatch spans
 
-`enqueue_command` opens an `agent_command.dispatch.{kind}` OTel span covering the full DB insert. Attributes set on the span:
+Both `enqueue_command` and `enqueue_command_payload` open an `agent_command.dispatch.{kind}` OTel span covering the full DB insert. Attributes set on the span:
 
 - `kind` — the `AgentCommandKind` string (e.g. `ProvisionWorkspace`, `InvokeClaudeCode`).
 - `command_id` — the UUID of the command being enqueued.
@@ -76,9 +76,15 @@ Vault AWS-auth pattern. The agent submits a sigv4-signed STS `GetCallerIdentity`
 
 The span is a child of whatever span is current at the call site (typically a `workflow.command.{kind}` span). On the agent side, `supervisor.dispatch.{kind}` continues the trace via the `traceparent` injected into the `AgentCommand` wire payload.
 
-**`traceparent` ownership rule:** `enqueue_command` unconditionally overwrites `AgentCommand.traceparent` with the dispatch span's own traceparent (via `current_traceparent()`) before serializing the row. Callers must not pre-fill this field — pass `traceparent=""` when constructing an `AgentCommand`; `enqueue_command` owns the value.
+**`traceparent` ownership rule:** both dispatch functions unconditionally overwrite `traceparent` in the persisted payload with the dispatch span's own traceparent (via `current_traceparent()`). Callers pass `traceparent=""` (or the current context traceparent) as a hint; the dispatch function owns the final value.
 
-Service test: `test/test_dispatch_service.py`.
+**Two dispatch entry points:**
+- `enqueue_command(org_id, command, *, session, workflow_execution_id)` — accepts any typed `AgentCommand` instance (the five workspace-lifecycle kinds). Unpacks the command into primitives and delegates to `enqueue_command_payload`.
+- `enqueue_command_payload(org_id, *, command_id, kind, workspace_id, payload, traceparent, session, workflow_execution_id)` — accepts primitives only; no vendor-specific type imports required. Used by `core/coding_agent.dispatch_invocation` to enqueue `InvokeClaudeCode` without importing `InvokeClaudeCodeCommand`.
+
+**`InvokeClaudeCodeCommand` / `InvokeClaudeCodeLimits` are package-private.** Both classes remain defined in `core/agent_gateway/types.py` and are members of the `AgentCommand` discriminated union used by `_COMMAND_ADAPTER` for `claim_next` deserialization. They are NOT re-exported from `core/agent_gateway.__init__` (not in `__all__`). Callers outside agent_gateway must not import them — use `enqueue_command_payload` with primitives instead.
+
+Service tests: `test/test_dispatch_service.py` (typed `enqueue_command`); `test/test_enqueue_command_payload_service.py` (primitive `enqueue_command_payload`).
 
 ## Command dispatch — `agent_commands` durable queue
 
@@ -88,7 +94,7 @@ Commands are persisted in `agent_commands` before delivery. The queue provides:
 - **Capacity-pull** — the claim request carries `new_workspaces` (cap for new `ProvisionWorkspace` rows) and `workspace_ids` (idle workspaces awaiting a command). `claim_next` runs `FOR UPDATE SKIP LOCKED LIMIT 1` across the eligible set, returning exactly ONE command per call. No Redis; no in-process queues; no batch-overshoot into `claimed` limbo.
 - **Idempotency** — `command_id` is the PK (UUIDv7 FIFO key); the single-flight claim + stale-claim outcome absorb re-delivery.
 
-`enqueue_command(org_id, command, *, session)` inserts a `pending` row in the caller's transaction (atomic with `try_claim`). `agent_id` is NULL at enqueue; `claim_next` stamps it at claim time. Post-create commands (cleanup etc.) are pre-stamped via `pin_command_to_agent` so `claim_next`'s `workspace_ids` sweep finds them.
+`enqueue_command(org_id, command, *, session)` inserts a `pending` row in the caller's transaction (atomic with `try_claim`). `agent_id` is NULL at enqueue; `claim_next` stamps it at claim time. Post-create commands (cleanup etc.) are pre-stamped via `pin_command_to_agent` so `claim_next`'s `workspace_ids` sweep finds them. `enqueue_command_payload` is the primitive-field variant used by callers that build payloads without importing typed AgentCommand subclasses.
 
 `enqueue_config_update_for_agent(agent_id, *, org_id, session)` is the identity-exchange-specific helper: wraps `enqueue_command` for a `ConfigUpdateCommand` built from `get_settings()`, then immediately pre-stamps `agent_id` on the row so the unconfigured-lifecycle claim SELECT can find it by `(kind='ConfigUpdate', agent_id=this agent)` without a workspace sweep. Called in the same transaction as `ensure_agent_row`. Enqueues unconditionally — duplicate rows drain in FIFO order and `ApplyConfig` is idempotent.
 

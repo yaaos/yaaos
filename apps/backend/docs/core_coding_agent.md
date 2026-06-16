@@ -30,7 +30,7 @@ Signatures in `app/core/coding_agent/types.py`.
 
 `dispatch_invocation(*, workspace_id, org_id, agent_id, workflow_execution_id, plugin, invocation_data: InvokeCodingAgent, ctx: CommandContext, session) -> UUID`
 
-One-shot helper in `service.py`. Uses lazy imports of `InvokeClaudeCodeCommand` / `InvokeClaudeCodeLimits` from `core/agent_gateway` (those types stay in `agent_gateway` as part of the `AgentCommand` union but are not in `agent_gateway.__all__`; the lazy import avoids a module-level cross-layer reference). Returns `command_id`. `org_id` sourced from caller's org context.
+One-shot helper in `service.py`. Builds the `InvokeClaudeCode` wire payload from primitives (`invocation.exec`, `limits`, `mcp_servers`, `result_spec`) and calls `enqueue_command_payload` from `core/agent_gateway` — no `InvokeClaudeCodeCommand` or `InvokeClaudeCodeLimits` types are imported. Returns `command_id`. `org_id` sourced from caller's org context.
 
 ### Value objects
 
@@ -73,9 +73,9 @@ One-shot helper in `service.py`. Uses lazy imports of `InvokeClaudeCodeCommand` 
 - `create_run(...)` — inserts with `status=running`, flushes, returns the run id.
 - `get_run_ref_for_command(agent_command_id, *, session)` — returns `(run_id, plugin_id)`; used by the run sink to resolve which plugin parses the terminal event.
 - `finalize_run(run_id, *, usage, duration_ms, activity, exit_code, status, session)` — updates status, tokens, duration, activity blob.
-- `get_run_id_for_command(agent_command_id, *, session)` — lookup by command id.
-- `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session)` — lookup by `(workflow_execution_id, step_id)`.
-- `get_step_activity(workflow_execution_id, step_id, *, session)` — two-hop: resolve run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
+- `get_step_activity(workflow_execution_id, step_id, *, session)` — public; two-hop: resolve run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
+- `get_run_id_for_command(agent_command_id, *, session)` — internal helper (not in `__all__`); lookup by command id. Reachable via direct submodule import within `core/coding_agent/test/`.
+- `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session)` — internal helper (not in `__all__`); lookup by `(workflow_execution_id, step_id)`. Reachable via direct submodule import within `core/coding_agent/test/`.
 
 ### `AgentRunSink` (IoC seam)
 

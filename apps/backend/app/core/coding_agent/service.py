@@ -121,39 +121,36 @@ async def dispatch_invocation(
     """
     from uuid import uuid7  # noqa: PLC0415
 
-    from app.core.agent_gateway import (  # noqa: PLC0415
-        InvokeClaudeCodeCommand,
-        InvokeClaudeCodeLimits,
-        enqueue_command,
-        pin_command_to_agent,
-    )
+    from app.core.agent_gateway import enqueue_command_payload, pin_command_to_agent  # noqa: PLC0415
     from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
 
     command_id = uuid7()
 
-    # Build the wire command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
+    # Build the wire payload from primitives — no agent_gateway typed classes
+    # imported here. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the top-level `exec` wrapper is required — a flat `{argv,stdin,env}` dict
     # leaves `inv.Exec.Argv` empty after json.Unmarshal and causes
     # `completed_failure` with "invocation.exec.argv missing or empty".
-    # `traceparent` is "" when no parent span is active; `enqueue_command`
+    # `traceparent` is "" when no parent span is active; `enqueue_command_payload`
     # overwrites it with the dispatch span's traceparent before persisting.
-    wire_command = InvokeClaudeCodeCommand(
-        command_id=command_id,
-        workspace_id=workspace_id,
-        traceparent=ctx.traceparent or "",
-        invocation={
-            "exec": {
-                "argv": invocation_data.argv,
-                "stdin": invocation_data.stdin or "",
-                "env": dict(invocation_data.env),
-            }
-        },
-        limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
-    )
-
-    await enqueue_command(
+    await enqueue_command_payload(
         org_id,
-        wire_command,
+        command_id=command_id,
+        kind="InvokeClaudeCode",
+        workspace_id=workspace_id,
+        payload={
+            "invocation": {
+                "exec": {
+                    "argv": invocation_data.argv,
+                    "stdin": invocation_data.stdin or "",
+                    "env": dict(invocation_data.env),
+                }
+            },
+            "mcp_servers": [],
+            "limits": {"wallclock_seconds": invocation_data.wallclock_seconds},
+            "result_spec": {},
+        },
+        traceparent=ctx.traceparent or "",
         session=session,
         workflow_execution_id=workflow_execution_id,
     )

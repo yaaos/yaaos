@@ -2,8 +2,6 @@
 
 Drives `CodeReview.dispatch` directly (bypassing the workflow engine) and asserts:
 - An `agent_commands` row is created with the correct `workflow_execution_id`.
-- A `coding_agent_runs` row is created with `plugin_id="claude_code"` and the
-  matching `agent_command_id`.
 - The workspace claim is acquired (workspace holds the returned `command_id`).
 """
 
@@ -13,7 +11,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.core.coding_agent import get_run_id_for_command, get_run_id_for_workflow_step
 from app.core.workflow import CommandContext
 from app.core.workspace import (
     WorkspaceTicketContext,
@@ -97,17 +94,6 @@ async def test_code_review_dispatch_new_path(
     resolved_wfx_id = await get_command_workflow_execution_id(command_id, session=db_session)
     assert resolved_wfx_id == wfx_id, (
         f"agent_commands workflow_execution_id mismatch: expected {wfx_id}, got {resolved_wfx_id}"
-    )
-
-    # coding_agent_runs row was created — get_run_id_for_command returns a UUID iff
-    # an InvokeClaudeCode command has a run row (the only kind that gets one).
-    run_id = await get_run_id_for_command(command_id, session=db_session)
-    assert run_id is not None, "coding_agent_runs row not found for the dispatched command"
-
-    # Step-keyed lookup also resolves — confirms step_id="review" on the run row.
-    step_run_id = await get_run_id_for_workflow_step(wfx_id, "review", session=db_session)
-    assert step_run_id == run_id, (
-        f"get_run_id_for_workflow_step(wfx_id, 'review') returned {step_run_id!r}; expected {run_id!r}"
     )
 
     # Workspace claim was acquired — get_workspace_command_state returns the

@@ -16,8 +16,6 @@ from app.core.agent_gateway import register_run_sink as _register_run_sink
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
 from app.core.coding_agent.run_service import (
-    get_run_id_for_command,
-    get_run_id_for_workflow_step,
     get_step_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
@@ -60,8 +58,6 @@ __all__ = [
     "current_coding_agent_registry",
     "dispatch_invocation",
     "get_plugin",
-    "get_run_id_for_command",
-    "get_run_id_for_workflow_step",
     "get_step_activity",
     "register_plugin",
 ]

@@ -18,9 +18,9 @@ import app.web  # noqa: F401 — registers all models so FK metadata resolves co
 from app.core.coding_agent import (
     InvokeCodingAgent,
     dispatch_invocation,
-    get_run_id_for_command,
 )
 from app.core.coding_agent.models import CodingAgentRunRow
+from app.core.coding_agent.run_service import get_run_id_for_command
 from app.core.workflow import CommandContext
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
 

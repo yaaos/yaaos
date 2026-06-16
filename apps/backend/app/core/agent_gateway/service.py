@@ -21,7 +21,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
@@ -89,6 +89,95 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
 # ── Durable command queue ───────────────────────────────────────────────
 
 
+async def enqueue_command_payload(
+    org_id: UUID,
+    *,
+    command_id: UUID,
+    kind: str,
+    workspace_id: UUID | None,
+    payload: dict[str, Any],
+    traceparent: str,
+    session: AsyncSession,
+    workflow_execution_id: UUID | None = None,
+) -> None:
+    """Insert an AgentCommand row in `pending` status from primitive fields.
+
+    The primitive-field counterpart to `enqueue_command`. Callers that build
+    wire payloads from first principles (e.g. `core/coding_agent`) use this to
+    avoid importing any vendor-specific AgentCommand subclass.
+
+    `traceparent` is the caller's span context; this function overwrites it
+    with the dispatch span's own traceparent before persisting so the agent's
+    `supervisor.dispatch.<kind>` span is parented to
+    `agent_command.dispatch.<kind>`. Callers should pass `ctx.traceparent or ""`
+    as the initial value — the function replaces it when an active span exists.
+
+    The caller-supplied `command_id` becomes the row PK and the FIFO sort key.
+    Producers must mint it with `uuid7()` so claim order matches enqueue order.
+
+    Opens an `agent_command.dispatch.{kind}` OTel span covering the full insert.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind}") as span:
+        span.set_attribute("kind", kind)
+        span.set_attribute("command_id", str(command_id))
+        span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
+        span.set_attribute(
+            "workflow_id",
+            str(workflow_execution_id) if workflow_execution_id is not None else "",
+        )
+        try:
+            # Overwrite the caller-supplied traceparent with the dispatch span's
+            # own traceparent so the agent's supervisor.dispatch.<kind> span is
+            # parented to agent_command.dispatch.<kind>, not the outer caller's
+            # span. This function is the sole owner of this field on the wire.
+            dispatch_tp = current_traceparent()
+            effective_tp = dispatch_tp if dispatch_tp is not None else traceparent
+            # Merge the _CommandBase envelope fields (kind, command_id, workspace_id,
+            # traceparent, completion_token, workflow_execution_id) into the payload so
+            # `_row_to_command` can deserialise it back to a typed AgentCommand via
+            # the discriminated union adapter. completion_token is NULL at enqueue
+            # time — `claim_next` injects the raw token into the returned DTO without
+            # re-persisting, so it is never stored here.
+            # workspace_id is omitted when None (ConfigUpdateCommand has no workspace_id
+            # field); the caller-supplied payload keys take precedence if they are already
+            # present, but typically callers supply only the command-kind-specific fields.
+            envelope: dict[str, Any] = {
+                "kind": kind,
+                "command_id": str(command_id),
+                "traceparent": effective_tp,
+                "completion_token": None,
+                "workflow_execution_id": str(workflow_execution_id)
+                if workflow_execution_id is not None
+                else None,
+            }
+            if workspace_id is not None:
+                envelope["workspace_id"] = str(workspace_id)
+            # Merge envelope (base fields) + caller-supplied payload (kind-specific
+            # fields). traceparent is always the dispatch span's value — override any
+            # caller-supplied traceparent in the payload.
+            final_payload = {**envelope, **payload}
+            final_payload["traceparent"] = effective_tp
+            # The caller-supplied command_id is the row PK and FIFO sort key.
+            # Producers mint it with uuid7() so it is time-ordered (see docstring).
+            row = AgentCommandRow(
+                id=command_id,
+                org_id=org_id,
+                workspace_id=workspace_id,
+                workflow_execution_id=workflow_execution_id,
+                command_kind=kind,
+                payload=final_payload,
+                status="pending",
+            )
+            session.add(row)
+            await session.flush()
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+
+
 async def enqueue_command(
     org_id: UUID,
     command: AgentCommand,
@@ -119,48 +208,27 @@ async def enqueue_command(
     `org_id`/`actor_kind`/`workflow_id` are auto-stamped by the
     `YaaosDimensionsSpanProcessor`. `command_id` and `workspace_id` are set
     explicitly here since they are command-scoped (not process-wide dimensions).
-    """
-    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
+    Thin wrapper around `enqueue_command_payload` — unpacks the typed command
+    into primitives and delegates. Retained for the workspace-lifecycle callers
+    that already have typed `AgentCommand` instances.
+    """
     kind = str(command.kind)
     workspace_id: UUID | None = getattr(command, "workspace_id", None)
     if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
         workspace_id = None
-
-    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind}") as span:
-        span.set_attribute("kind", kind)
-        span.set_attribute("command_id", str(command.command_id))
-        span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
-        span.set_attribute(
-            "workflow_id",
-            str(workflow_execution_id) if workflow_execution_id is not None else "",
-        )
-        try:
-            # Overwrite the command's traceparent with the dispatch span's own
-            # traceparent so the agent's supervisor.dispatch.<kind> span is
-            # parented to agent_command.dispatch.<kind>, not the outer caller's
-            # span. `enqueue_command` is the sole owner of this field on the
-            # wire; callers must not pre-fill it.
-            dispatch_tp = current_traceparent()
-            if dispatch_tp is not None:
-                command = command.model_copy(update={"traceparent": dispatch_tp})
-            # The caller-supplied command_id is the row PK and FIFO sort key.
-            # Producers mint it with uuid7() so it is time-ordered (see docstring).
-            row = AgentCommandRow(
-                id=command.command_id,
-                org_id=org_id,
-                workspace_id=workspace_id,
-                workflow_execution_id=workflow_execution_id,
-                command_kind=kind,
-                payload=command.model_dump(mode="json"),
-                status="pending",
-            )
-            session.add(row)
-            await session.flush()
-        except Exception as exc:
-            span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            raise
+    payload = command.model_dump(mode="json")
+    traceparent = getattr(command, "traceparent", "") or ""
+    await enqueue_command_payload(
+        org_id,
+        command_id=command.command_id,
+        kind=kind,
+        workspace_id=workspace_id,
+        payload=payload,
+        traceparent=traceparent,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
 
 
 async def pin_command_to_agent(
