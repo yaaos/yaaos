@@ -109,6 +109,28 @@ class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
 
 
+class InvokeClaudeCodeFields(BaseModel):
+    """Kind-specific payload fields for an `InvokeClaudeCode` command.
+
+    Carries only the command-kind-specific fields — no envelope keys
+    (`kind`, `command_id`, `workspace_id`, `traceparent`, `completion_token`,
+    `workflow_execution_id`). Those are owned and injected by
+    `enqueue_command_payload` after this model is serialised, ensuring
+    they cannot be overwritten by the caller.
+
+    `model_dump(mode="json")` yields the flat keys the Go agent expects and
+    that `_COMMAND_ADAPTER` deserialises back to `InvokeClaudeCodeCommand`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    # The `invocation` body is intentionally permissive at the wire layer;
+    # its shape is owned by `domain/coding_agent`.
+    invocation: dict[str, Any]
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+    limits: dict[str, Any]
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 

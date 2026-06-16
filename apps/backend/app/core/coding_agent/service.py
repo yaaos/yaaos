@@ -121,35 +121,42 @@ async def dispatch_invocation(
     """
     from uuid import uuid7  # noqa: PLC0415
 
-    from app.core.agent_gateway import enqueue_command_payload, pin_command_to_agent  # noqa: PLC0415
+    from app.core.agent_gateway import (  # noqa: PLC0415
+        AgentCommandKind,
+        InvokeClaudeCodeFields,
+        enqueue_command_payload,
+        pin_command_to_agent,
+    )
     from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
 
     command_id = uuid7()
 
-    # Build the wire payload from primitives — no agent_gateway typed classes
-    # imported here. The Go agent reads `invocation.exec.{argv,stdin,env}`;
-    # the top-level `exec` wrapper is required — a flat `{argv,stdin,env}` dict
-    # leaves `inv.Exec.Argv` empty after json.Unmarshal and causes
-    # `completed_failure` with "invocation.exec.argv missing or empty".
-    # `traceparent` is "" when no parent span is active; `enqueue_command_payload`
-    # overwrites it with the dispatch span's traceparent before persisting.
+    # Build the kind-specific fields via the typed model — no envelope keys here.
+    # The Go agent reads `invocation.exec.{argv,stdin,env}`; the top-level `exec`
+    # wrapper is required — a flat `{argv,stdin,env}` dict leaves `inv.Exec.Argv`
+    # empty after json.Unmarshal and causes `completed_failure` with
+    # "invocation.exec.argv missing or empty".
+    # `enqueue_command_payload` injects all envelope fields (kind, command_id,
+    # workspace_id, traceparent, completion_token, workflow_execution_id) LAST,
+    # so they cannot be overwritten here.
+    invoke_fields = InvokeClaudeCodeFields(
+        invocation={
+            "exec": {
+                "argv": invocation_data.argv,
+                "stdin": invocation_data.stdin or "",
+                "env": dict(invocation_data.env),
+            }
+        },
+        mcp_servers=[],
+        limits={"wallclock_seconds": invocation_data.wallclock_seconds},
+        result_spec={},
+    )
     await enqueue_command_payload(
         org_id,
         command_id=command_id,
-        kind="InvokeClaudeCode",
+        kind=AgentCommandKind.INVOKE_CLAUDE_CODE,
         workspace_id=workspace_id,
-        payload={
-            "invocation": {
-                "exec": {
-                    "argv": invocation_data.argv,
-                    "stdin": invocation_data.stdin or "",
-                    "env": dict(invocation_data.env),
-                }
-            },
-            "mcp_servers": [],
-            "limits": {"wallclock_seconds": invocation_data.wallclock_seconds},
-            "result_spec": {},
-        },
+        payload_fields=invoke_fields,
         traceparent=ctx.traceparent or "",
         session=session,
         workflow_execution_id=workflow_execution_id,

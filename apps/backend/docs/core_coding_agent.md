@@ -30,7 +30,7 @@ Signatures in `app/core/coding_agent/types.py`.
 
 `dispatch_invocation(*, workspace_id, org_id, agent_id, workflow_execution_id, plugin, invocation_data: InvokeCodingAgent, ctx: CommandContext, session) -> UUID`
 
-One-shot helper in `service.py`. Builds the `InvokeClaudeCode` wire payload from primitives (`invocation.exec`, `limits`, `mcp_servers`, `result_spec`) and calls `enqueue_command_payload` from `core/agent_gateway` — no `InvokeClaudeCodeCommand` or `InvokeClaudeCodeLimits` types are imported. Returns `command_id`. `org_id` sourced from caller's org context.
+One-shot helper in `service.py`. Constructs an `InvokeClaudeCodeFields` instance from `invocation_data` and calls `enqueue_command_payload` from `core/agent_gateway` with `kind=AgentCommandKind.INVOKE_CLAUDE_CODE` — no `InvokeClaudeCodeCommand` type is imported. The gateway injects envelope identity fields (`kind`, `command_id`, `workspace_id`, `traceparent`, etc.) LAST, so the caller cannot overwrite them. Returns `command_id`. `org_id` sourced from caller's org context.
 
 ### Value objects
 

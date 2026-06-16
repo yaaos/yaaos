@@ -27,7 +27,7 @@ from uuid import UUID
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from pydantic import Field, TypeAdapter
+from pydantic import BaseModel, Field, RootModel, TypeAdapter
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,29 +88,47 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
 
 # ── Durable command queue ───────────────────────────────────────────────
 
+# Envelope keys that are gateway-owned and must never come from a caller's
+# payload_fields. Stripped from the full command dump in `enqueue_command`
+# so only kind-specific keys flow through `enqueue_command_payload`.
+_ENVELOPE_KEYS: frozenset[str] = frozenset(
+    {
+        "kind",
+        "command_id",
+        "workspace_id",
+        "traceparent",
+        "completion_token",
+        "workflow_execution_id",
+    }
+)
+
 
 async def enqueue_command_payload(
     org_id: UUID,
     *,
     command_id: UUID,
-    kind: str,
+    kind: AgentCommandKind | str,
     workspace_id: UUID | None,
-    payload: dict[str, Any],
-    traceparent: str,
+    payload_fields: BaseModel,
     session: AsyncSession,
+    traceparent: str | None = None,
     workflow_execution_id: UUID | None = None,
 ) -> None:
-    """Insert an AgentCommand row in `pending` status from primitive fields.
+    """Insert an AgentCommand row in `pending` status from typed payload fields.
 
-    The primitive-field counterpart to `enqueue_command`. Callers that build
+    The typed-fields counterpart to `enqueue_command`. Callers that build
     wire payloads from first principles (e.g. `core/coding_agent`) use this to
     avoid importing any vendor-specific AgentCommand subclass.
 
-    `traceparent` is the caller's span context; this function overwrites it
-    with the dispatch span's own traceparent before persisting so the agent's
-    `supervisor.dispatch.<kind>` span is parented to
-    `agent_command.dispatch.<kind>`. Callers should pass `ctx.traceparent or ""`
-    as the initial value — the function replaces it when an active span exists.
+    `payload_fields` carries only the command-kind-specific fields — no envelope
+    keys. The envelope (`kind`, `command_id`, `workspace_id`, `traceparent`,
+    `completion_token`, `workflow_execution_id`) is built from the named parameters
+    and merged LAST, so identity fields can never be overwritten by the caller.
+
+    Merge order: `{**payload_fields.model_dump(mode="json"), **envelope}`.
+    The envelope's `traceparent` is unconditionally set to the dispatch span's
+    own traceparent (via `current_traceparent()`), making `enqueue_command_payload`
+    the sole owner of that field on the wire.
 
     The caller-supplied `command_id` becomes the row PK and the FIFO sort key.
     Producers must mint it with `uuid7()` so claim order matches enqueue order.
@@ -119,8 +137,9 @@ async def enqueue_command_payload(
     """
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind}") as span:
-        span.set_attribute("kind", kind)
+    kind_str = str(kind)
+    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind_str}") as span:
+        span.set_attribute("kind", kind_str)
         span.set_attribute("command_id", str(command_id))
         span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
         span.set_attribute(
@@ -133,18 +152,16 @@ async def enqueue_command_payload(
             # parented to agent_command.dispatch.<kind>, not the outer caller's
             # span. This function is the sole owner of this field on the wire.
             dispatch_tp = current_traceparent()
-            effective_tp = dispatch_tp if dispatch_tp is not None else traceparent
-            # Merge the _CommandBase envelope fields (kind, command_id, workspace_id,
-            # traceparent, completion_token, workflow_execution_id) into the payload so
-            # `_row_to_command` can deserialise it back to a typed AgentCommand via
-            # the discriminated union adapter. completion_token is NULL at enqueue
-            # time — `claim_next` injects the raw token into the returned DTO without
+            effective_tp = dispatch_tp if dispatch_tp is not None else (traceparent or "")
+            # Build the envelope from named parameters. These are the gateway-owned
+            # identity fields — they must always win over anything the caller-supplied
+            # payload_fields could produce. completion_token is NULL at enqueue time;
+            # `claim_next` injects the raw token into the returned DTO without
             # re-persisting, so it is never stored here.
             # workspace_id is omitted when None (ConfigUpdateCommand has no workspace_id
-            # field); the caller-supplied payload keys take precedence if they are already
-            # present, but typically callers supply only the command-kind-specific fields.
+            # field in its discriminated-union shape).
             envelope: dict[str, Any] = {
-                "kind": kind,
+                "kind": kind_str,
                 "command_id": str(command_id),
                 "traceparent": effective_tp,
                 "completion_token": None,
@@ -154,11 +171,10 @@ async def enqueue_command_payload(
             }
             if workspace_id is not None:
                 envelope["workspace_id"] = str(workspace_id)
-            # Merge envelope (base fields) + caller-supplied payload (kind-specific
-            # fields). traceparent is always the dispatch span's value — override any
-            # caller-supplied traceparent in the payload.
-            final_payload = {**envelope, **payload}
-            final_payload["traceparent"] = effective_tp
+            # Merge: kind-specific fields first, envelope LAST — so identity fields
+            # (kind, command_id, traceparent, completion_token, workflow_execution_id,
+            # workspace_id) can never be overwritten by the caller's payload_fields.
+            final_payload = {**payload_fields.model_dump(mode="json"), **envelope}
             # The caller-supplied command_id is the row PK and FIFO sort key.
             # Producers mint it with uuid7() so it is time-ordered (see docstring).
             row = AgentCommandRow(
@@ -166,7 +182,7 @@ async def enqueue_command_payload(
                 org_id=org_id,
                 workspace_id=workspace_id,
                 workflow_execution_id=workflow_execution_id,
-                command_kind=kind,
+                command_kind=kind_str,
                 payload=final_payload,
                 status="pending",
             )
@@ -217,14 +233,21 @@ async def enqueue_command(
     workspace_id: UUID | None = getattr(command, "workspace_id", None)
     if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
         workspace_id = None
-    payload = command.model_dump(mode="json")
+    # Dump the full command and strip envelope keys so `enqueue_command_payload`
+    # receives only the kind-specific fields. The envelope fields (kind, command_id,
+    # workspace_id, traceparent, completion_token, workflow_execution_id) are
+    # re-injected by `enqueue_command_payload` from the named parameters —
+    # ensuring the gateway always owns those identity fields.
+    full_dump = command.model_dump(mode="json")
+    kind_fields = {k: v for k, v in full_dump.items() if k not in _ENVELOPE_KEYS}
+    payload_fields: BaseModel = RootModel[dict[str, Any]](kind_fields)
     traceparent = getattr(command, "traceparent", "") or ""
     await enqueue_command_payload(
         org_id,
         command_id=command.command_id,
         kind=kind,
         workspace_id=workspace_id,
-        payload=payload,
+        payload_fields=payload_fields,
         traceparent=traceparent,
         session=session,
         workflow_execution_id=workflow_execution_id,

@@ -2,9 +2,9 @@
 
 Two scenarios:
 - `test_enqueue_command_payload_row_and_span` — happy path: the row lands with
-  the supplied `command_id`, `kind`, and `payload` (modulo injected `traceparent`);
-  the `agent_command.dispatch.InvokeClaudeCode` span fires with the expected
-  `kind`, `command_id`, and `workspace_id` attributes.
+  the supplied `command_id`, `kind`, and `payload_fields` (modulo injected
+  `traceparent`); the `agent_command.dispatch.InvokeClaudeCode` span fires with
+  the expected `kind`, `command_id`, and `workspace_id` attributes.
 - `test_enqueue_command_payload_span_records_error` — error path: a duplicate-PK
   constraint violation causes the span to record the exception and carry
   `StatusCode.ERROR`.
@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.agent_gateway.models import AgentCommandRow
 from app.core.agent_gateway.service import enqueue_command_payload
+from app.core.agent_gateway.types import AgentCommandKind, InvokeClaudeCodeFields
 from app.testing.observability import span_capture
 from app.testing.seed import seed_agent
 
@@ -30,19 +31,19 @@ pytestmark = pytest.mark.service
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _invoke_payload() -> dict:
-    return {
-        "invocation": {
+def _invoke_fields() -> InvokeClaudeCodeFields:
+    return InvokeClaudeCodeFields(
+        invocation={
             "exec": {
                 "argv": ["claude", "--print", "hello"],
                 "stdin": "",
                 "env": {},
             }
         },
-        "mcp_servers": [],
-        "limits": {"wallclock_seconds": 300},
-        "result_spec": {},
-    }
+        mcp_servers=[],
+        limits={"wallclock_seconds": 300},
+        result_spec={},
+    )
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ def _invoke_payload() -> dict:
 @pytest.mark.asyncio
 async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     """`enqueue_command_payload` inserts an `agent_commands` row with the
-    supplied `command_id` + `kind` + `payload`, and emits an
+    supplied `command_id` + `kind` + `payload_fields`, and emits an
     `agent_command.dispatch.InvokeClaudeCode` span."""
     # Need an org row for the FK on agent_commands.
     org_id = uuid4()
@@ -64,16 +65,15 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     command_id = uuid7()
     workspace_id = uuid4()
     workflow_id = uuid4()
-    payload = _invoke_payload()
+    fields = _invoke_fields()
 
     with span_capture() as exporter:
         await enqueue_command_payload(
             org_id,
             command_id=command_id,
-            kind="InvokeClaudeCode",
+            kind=AgentCommandKind.INVOKE_CLAUDE_CODE,
             workspace_id=workspace_id,
-            payload=payload,
-            traceparent="",
+            payload_fields=fields,
             session=db_session,
             workflow_execution_id=workflow_id,
         )
@@ -88,8 +88,8 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     assert row.workflow_execution_id == workflow_id
     # The dispatch span injects `traceparent` into the payload — all other keys
     # must be present and untouched.
-    assert row.payload.get("invocation") == payload["invocation"]
-    assert row.payload.get("limits") == payload["limits"]
+    assert row.payload.get("invocation") == fields.invocation
+    assert row.payload.get("limits") == fields.limits
     assert "traceparent" in row.payload, "traceparent must be injected into the persisted payload"
 
     # Dispatch span was emitted.
@@ -122,10 +122,9 @@ async def test_enqueue_command_payload_span_records_error(db_session) -> None:
     await enqueue_command_payload(
         org_id,
         command_id=command_id,
-        kind="InvokeClaudeCode",
+        kind=AgentCommandKind.INVOKE_CLAUDE_CODE,
         workspace_id=workspace_id,
-        payload=_invoke_payload(),
-        traceparent="",
+        payload_fields=_invoke_fields(),
         session=db_session,
     )
     await db_session.flush()
@@ -136,10 +135,9 @@ async def test_enqueue_command_payload_span_records_error(db_session) -> None:
             await enqueue_command_payload(
                 org_id,
                 command_id=command_id,
-                kind="InvokeClaudeCode",
+                kind=AgentCommandKind.INVOKE_CLAUDE_CODE,
                 workspace_id=workspace_id,
-                payload=_invoke_payload(),
-                traceparent="",
+                payload_fields=_invoke_fields(),
                 session=db_session,
             )
 
