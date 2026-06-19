@@ -178,7 +178,10 @@ tasks:
       export PATH="/usr/local/go/bin:$(go env GOPATH 2>/dev/null || echo $HOME/go)/bin:$PATH"
       curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
         | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
-      go install golang.org/x/vuln/cmd/govulncheck@latest
+      # Pinned to v1.3.0: v1.4.0 vendors x/tools@v0.46.0, which panics on
+      # Go 1.26 generics (ForEachElement + *types.TypeParam). Bump when a
+      # newer x/vuln ships with an x/tools that understands Go 1.26.
+      go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
       pip install --quiet semgrep
       cd apps/agent && bin/ci
 
