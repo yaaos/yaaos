@@ -100,7 +100,7 @@ Commands are persisted in `agent_commands` before delivery. The queue provides:
 
 `enqueue_config_update_for_agent(agent_id, *, org_id, session)` is the identity-exchange-specific helper: wraps `enqueue_command` for a `ConfigUpdateCommand` built from `get_settings()`, then immediately pre-stamps `agent_id` on the row so the unconfigured-lifecycle claim SELECT can find it by `(kind='ConfigUpdate', agent_id=this agent)` without a workspace sweep. Called in the same transaction as `ensure_agent_row`. Enqueues unconditionally — duplicate rows drain in FIFO order and `ApplyConfig` is idempotent.
 
-The `claim_next` lifecycle gate: `unconfigured` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `configured` → unchanged two-SELECT logic (`ProvisionWorkspace` priority + agent-pinned workspace commands).
+The `claim_next` lifecycle gate: `unconfigured` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `configured` → three-SELECT priority chain — `ConfigUpdate` pinned to this agent (so post-boot key/cert rotations from `enqueue_config_update_for_all_org_agents` actually drain), then unassigned `ProvisionWorkspace`, then agent-pinned workspace commands. ConfigUpdate sits at priority 1 because credentials and OTLP endpoint must land before the next `ProvisionWorkspace` injects per-workspace env at `ExecSpawn` time (the env is set once and lives for the workspace's whole life).
 
 The `received` EventKind is non-terminal: it cancels the lease requeue on the row (`claimed → delivered`). Terminal events retire the row to `done`.
 
@@ -167,7 +167,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_durable_command_service.py` covers: `enqueue_command` inserts a `pending` row; command survives a simulated backend restart; `claim_next` returns exactly ONE row per call leaving no others in `claimed` limbo; never returns a command for an unlisted workspace; unconfigured claim returns only `ConfigUpdate`; lease: `received` flips `claimed → delivered`; no `received` within 30s requeues to `pending`; terminal event → `done`; attempt cap → `done` (terminal failure); redelivery of `received` is idempotent.
 
-`test/test_claim_lifecycle_service.py` covers `claim_next` lifecycle gate: unconfigured leaves DB rows untouched; configured returns a single ProvisionWorkspace command; empty queue returns `None`.
+`test/test_claim_lifecycle_service.py` covers `claim_next` lifecycle gate: unconfigured leaves DB rows untouched; configured returns a single ProvisionWorkspace command; empty queue returns `None`; a ConfigUpdate enqueued after the agent is configured (BYOK rotation fan-out) is claimable in the configured lifecycle; when both kinds are pending, configured claim returns ConfigUpdate before ProvisionWorkspace.
 
 `test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
 
@@ -187,7 +187,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_command_event_outcome_service.py` covers: stale command returns `410 {"error": "stale_claim"}`; recorded event returns `200 {"command_event_outcome": "event_recorded"}`; active span carries `command_event.outcome="event_recorded"` attribute.
 
-`test/test_config_update_row_service.py` covers: identity exchange enqueues one ConfigUpdate row with `status='pending'` and non-null `completion_token_hash`; unconfigured claim returns the ConfigUpdate row (not a ProvisionWorkspace); configured claim returns ProvisionWorkspace when both kinds are pending; duplicate enqueues produce two claimable rows, both ackable; stale command_id returns 410; `_build_config_update` is not importable.
+`test/test_config_update_row_service.py` covers: identity exchange enqueues one ConfigUpdate row with `status='pending'` and non-null `completion_token_hash`; unconfigured claim returns the ConfigUpdate row (not a ProvisionWorkspace); configured claim returns ConfigUpdate before ProvisionWorkspace when both kinds are pending (priority-1 placement so credential rotations land before workspace env injection); duplicate enqueues produce two claimable rows, both ackable; stale command_id returns 410; `_build_config_update` is not importable.
 
 `test/test_byok_config_update_service.py` covers: `AgentConfig.byok_secrets` keeps `SecretStr` in Python mode; unwraps to plaintext in JSON mode; defaults to empty dict when no provider registered; `_build_config_update_dto` populates `byok_secrets` from the registered provider; `enqueue_config_update_for_all_org_agents` inserts one ConfigUpdate row per active agent in the org; a `byok.set` call triggers a ConfigUpdate for all org agents via `register_on_change`; a `byok.clear` call does the same; `ClaudeCodePlugin.build_invocation` no longer emits `ANTHROPIC_API_KEY` in env.
 

@@ -201,9 +201,12 @@ async def test_claim_next_unconfigured_returns_row_backed_config_update(db_sessi
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_claim_next_configured_returns_workspace_command_when_both_pending(db_session) -> None:
-    """lifecycle='configured' claim returns ProvisionWorkspace even when a
-    ConfigUpdate row is also pending (ConfigUpdate is not in the configured path)."""
+async def test_claim_next_configured_returns_config_update_first_when_both_pending(db_session) -> None:
+    """lifecycle='configured' claim returns the ConfigUpdate before the
+    ProvisionWorkspace when both are pending. ConfigUpdate sits at priority 1
+    because credential / OTLP-token rotations must land before the next
+    workspace spawn injects per-process env (e.g. ANTHROPIC_API_KEY at
+    ExecSpawn time, which lives for the workspace's whole life)."""
     org_id = uuid4()
     agent_id = await _make_agent(db_session, org_id=org_id)
     provision_cmd = _make_provision_cmd(org_id)
@@ -220,8 +223,16 @@ async def test_claim_next_configured_returns_workspace_command_when_both_pending
         session=db_session,
     )
     assert claimed is not None
-    assert claimed.kind == AgentCommandKind.PROVISION_WORKSPACE
-    assert claimed.command_id == provision_cmd.command_id
+    assert claimed.kind == AgentCommandKind.CONFIG_UPDATE
+
+    # The ProvisionWorkspace stays pending until the next claim.
+    prow = (
+        await db_session.execute(
+            select(AgentCommandRow).where(AgentCommandRow.id == provision_cmd.command_id)
+        )
+    ).scalar_one_or_none()
+    assert prow is not None
+    assert prow.status == "pending"
 
 
 @pytest.mark.asyncio

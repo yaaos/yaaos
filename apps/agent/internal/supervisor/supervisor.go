@@ -758,15 +758,28 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		// 30-second stall before the goroutine's Pool.Dispatch registers the
 		// workspace.
 		s.pool.MarkDispatchPending()
-		// Spawn a dispatch goroutine for this command and re-arm the claim
-		// loop immediately. The dispatch goroutine owns postReceivedEvent +
-		// routeCommand + postTerminalEvent. It is NOT added to Run()'s
-		// WaitGroup — on shutdown the root ctx is cancelled, claim workers
-		// exit, pool.CloseAll SIGTERMs in-flight subprocesses (unblocking
+		// AgentCommands (e.g. ConfigUpdate) execute in the supervisor itself —
+		// they're supervisor-local, cheap, and their side effect (ApplyConfig
+		// storing the config pointer) must be visible to the next claim cycle.
+		// Running them inline blocks the claim worker briefly but guarantees
+		// the next buildClaimRequest sees the post-apply lifecycle. Without
+		// this, the claim loop re-arms before the dispatch goroutine has run
+		// ApplyConfig, so during boot multiple pinned ConfigUpdates get over-
+		// claimed under "unconfigured" lifecycle in rapid succession.
+		//
+		// WorkspaceCommands can run for minutes — they keep the goroutine
+		// model. The dispatch goroutine owns postReceivedEvent + routeCommand
+		// + postTerminalEvent. It is NOT added to Run()'s WaitGroup — on
+		// shutdown the root ctx is cancelled, claim workers exit,
+		// pool.CloseAll SIGTERMs in-flight subprocesses (unblocking
 		// Pool.Dispatch), and dispatch goroutines' terminal-event posts fail
 		// fast on the cancelled ctx. The backend failsafe synthesizes
 		// in-flight failures for abandoned commands.
-		go s.dispatch(ctx, cmd)
+		if _, isAgentCmd := cmd.(command.AgentCommand); isAgentCmd {
+			s.dispatch(ctx, cmd)
+		} else {
+			go s.dispatch(ctx, cmd)
+		}
 	}
 }
 

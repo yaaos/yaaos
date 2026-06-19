@@ -455,13 +455,17 @@ async def claim_next(
       of the queue is untouched so non-ConfigUpdate commands accumulate while
       the agent bootstraps.
     - `configured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across the
-      eligible set (FIFO by UUIDv7 id):
+      eligible set, evaluated in priority order (FIFO by UUIDv7 id within each):
+        * A pending ConfigUpdate pinned to this agent — runs FIRST so credential
+          and endpoint rotations (BYOK keys, OTLP token) land before any
+          ProvisionWorkspace injects per-workspace env that lives for the
+          workspace's whole life.
         * A pending unassigned ProvisionWorkspace (status=pending, agent_id NULL,
           kind=ProvisionWorkspace), when `new_workspaces > 0`.
         * A pending command pinned to this agent for a workspace in
           `workspace_ids` (status=pending, agent_id=this agent, workspace_id ∈
           workspace_ids).
-      The two sets are evaluated with a single UNION-like approach: we query
+      The three sets are evaluated with a single UNION-like approach: we query
       each eligible set in priority order and take the first result, so the
       caller receives exactly one command per call. Stamps `agent_id`,
       `status=claimed`, `claimed_at=now`.
@@ -526,8 +530,30 @@ async def claim_next(
             if row is None:
                 return None
     else:
-        # Try unassigned ProvisionWorkspace first (capacity for new workspaces).
-        if new_workspaces > 0:
+        # ConfigUpdate first: a pinned ConfigUpdate carries credential / endpoint
+        # rotations (BYOK keys, OTLP token) that must land before the next
+        # ProvisionWorkspace injects per-workspace env (e.g. ANTHROPIC_API_KEY at
+        # ExecSpawn time, which lives for the workspace's whole life).
+        row = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                        AgentCommandRow.agent_id == agent_id,
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+        # Then unassigned ProvisionWorkspace (capacity for new workspaces).
+        if row is None and new_workspaces > 0:
             row = (
                 (
                     await session.execute(
@@ -581,7 +607,24 @@ async def claim_next(
                 if datetime.now(UTC) >= deadline:
                     break
                 # Re-run the same claim SELECTs without recursion.
-                if new_workspaces > 0:
+                row = (
+                    (
+                        await session.execute(
+                            select(AgentCommandRow)
+                            .where(
+                                AgentCommandRow.status == "pending",
+                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandRow.agent_id == agent_id,
+                            )
+                            .order_by(AgentCommandRow.id)
+                            .limit(1)
+                            .with_for_update(skip_locked=True)
+                        )
+                    )
+                    .scalars()
+                    .one_or_none()
+                )
+                if row is None and new_workspaces > 0:
                     row = (
                         (
                             await session.execute(
