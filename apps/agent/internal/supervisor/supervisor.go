@@ -463,7 +463,7 @@ func (s *Supervisor) dialAndStartWS(ctx context.Context, bearer string) bool {
 	// first transport error; we log and let the reconnect loop re-dial.
 	go func() {
 		defer close(s.wsReadLoopDone)
-		if err := activity.RunInbound(ctx, conn, s.conductor); err != nil && ctx.Err() == nil {
+		if err := activity.RunInbound(ctx, conn, s.conductor); ctx.Err() == nil {
 			s.log.Warn("supervisor.activity_ws_read_loop_exited", "err", err.Error())
 		}
 	}()

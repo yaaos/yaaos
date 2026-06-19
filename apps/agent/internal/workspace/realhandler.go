@@ -68,6 +68,42 @@ var byokProviderEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
 }
 
+// Excerpt caps for the `claude exit N` failure string. Stderr stays small;
+// stdout gets a larger tail because claude with `--output-format=stream-json`
+// emits its `{"type":"result","is_error":true,…}` event at the end of stdout,
+// not stderr.
+const (
+	claudeErrStderrCap     = 2048
+	claudeErrStdoutTailCap = 4096
+)
+
+// excerptHead returns the first `limit` bytes of `b`, suffixed with a
+// truncation marker when bytes were cut. Returns "<empty>" for an empty input
+// so the reader can distinguish "captured nothing" from "field missing".
+func excerptHead(b []byte, limit int) string {
+	if len(b) == 0 {
+		return "<empty>"
+	}
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "...[truncated tail]"
+}
+
+// excerptTail returns the last `limit` bytes of `b`, prefixed with a
+// truncation marker when bytes were cut. Used for stdout where the meaningful
+// diagnostic (claude's `result` stream-json event) lands at the end. Returns
+// "<empty>" for an empty input.
+func excerptTail(b []byte, limit int) string {
+	if len(b) == 0 {
+		return "<empty>"
+	}
+	if len(b) <= limit {
+		return string(b)
+	}
+	return "...[truncated head]" + string(b[len(b)-limit:])
+}
+
 // RealHandlerConfig customizes the production handler's behaviour. Zero
 // values pick safe defaults.
 type RealHandlerConfig struct {
@@ -391,17 +427,21 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	}
 	if err != nil {
 		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
-		// res still populated; we surface stderr + exit code via the
-		// returned error so the supervisor's failure event carries
-		// actionable info. Context cancel / timeout → ctx.Err which the
-		// supervisor's pool already maps to a "timeout:" reason.
+		// res still populated; surface exit code + stderr + the tail of
+		// stdout so the supervisor's failure event carries actionable
+		// info. claude with `--output-format=stream-json` emits its
+		// `is_error:true` result event on stdout, so stderr alone is
+		// usually empty/uninformative. Context cancel / timeout →
+		// ctx.Err which the supervisor's pool already maps to a
+		// "timeout:" reason.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && res != nil {
-			stderrExcerpt := string(res.Stderr)
-			if len(stderrExcerpt) > 2048 {
-				stderrExcerpt = stderrExcerpt[:2048] + "...[truncated]"
-			}
-			return command.InvokeResult{}, fmt.Errorf("claude exit %d: %s", res.ExitCode, stderrExcerpt)
+			return command.InvokeResult{}, fmt.Errorf(
+				"claude exit %d: stderr=%s stdout_tail=%s",
+				res.ExitCode,
+				excerptHead(res.Stderr, claudeErrStderrCap),
+				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+			)
 		}
 		return command.InvokeResult{}, fmt.Errorf("claude subprocess: %w", err)
 	}

@@ -99,6 +99,10 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 
 `Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` reads `Limits.WallclockSeconds` from the wire; all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `ProvisionWorkspace` can respawn.
 
+### InvokeClaudeCode failure excerpt
+
+On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…head…> stdout_tail=<…tail…>` — the supervisor maps this to the `completed_failure` event's `failure_reason`. Both halves ride because claude with `--output-format=stream-json` emits its `{"type":"result","is_error":true,…}` event at the end of stdout, so stderr alone is usually empty. Caps live in `realhandler.go` (`claudeErrStderrCap`, `claudeErrStdoutTailCap`); excerpts mark truncation explicitly (`...[truncated tail]` on stderr head, `...[truncated head]` on stdout tail). Empty halves render `<empty>` so a missing capture is distinguishable from a captured-nothing.
+
 ### BYOK credential delivery
 
 Per-org API keys (e.g. `ANTHROPIC_API_KEY`) arrive via `ConfigUpdate.AgentConfig.ByokSecrets` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:
