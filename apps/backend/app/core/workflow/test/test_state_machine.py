@@ -10,7 +10,6 @@ Covers:
 - Workspace step async cycle: start_step → awaiting_agent → terminal event → route → done.
 - Failure + retry → fail_workflow after exhaustion.
 - HITL pause + resume.
-- `append_steps` inserts at front of remaining sequence.
 - Cancellation during `awaiting_agent`: cancel + event → cancelled.
 - Stale event handling: duplicate event is a no-op.
 """
@@ -100,25 +99,6 @@ class _HitlAsk:
     async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.hitl_pending(question={"prompt": "approve?"})
-
-
-class _AppendOnce:
-    """First call returns Outcome.success with append_steps; subsequent calls
-    just return success. Used to verify append_steps insertion."""
-
-    def __init__(self, kind: str, extra: tuple[Step, ...]) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
-        self._extra = extra
-        self._fired = False
-
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        if not self._fired:
-            self._fired = True
-            return Outcome.success(append_steps=self._extra)
-        return Outcome.success()
 
 
 class _WorkspaceStub:
@@ -360,32 +340,6 @@ async def test_input_resolution_pulls_prior_step_outputs(db_session) -> None:
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.DONE.value
     assert b.calls[0]["inputs"] == {"workspace_id": "ws-123"}
-
-
-@pytest.mark.asyncio
-async def test_append_steps_inserts_at_front(db_session) -> None:
-    inserted = _RecordingLocal("Inserted", outputs={"i": True})
-    appender = _AppendOnce("Appender", extra=(Step(id="inserted", command_kind="Inserted"),))
-    tail = _RecordingLocal("Tail")
-    wf = Workflow(
-        name="append-1",
-        version=1,
-        steps=(
-            Step(id="appender", command_kind="Appender"),
-            Step(id="tail", command_kind="Tail", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}),
-        ),
-        entry_step_id="appender",
-    )
-    eng = _engine_with(appender, inserted, tail, workflow=wf)
-    exec_id = await eng.start(workflow_name="append-1", ticket_id=_ticket_id(), session=db_session)
-    await db_session.commit()
-    await _drain_workflow_outbox(db_session)
-
-    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
-    assert wfx.state == WorkflowState.DONE.value
-    # The inserted step ran between appender and tail.
-    assert len(inserted.calls) == 1
-    assert len(tail.calls) == 1
 
 
 @pytest.mark.asyncio

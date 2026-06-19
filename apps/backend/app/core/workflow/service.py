@@ -73,20 +73,6 @@ class WorkflowFailedPayload(BaseModel):
     failure_reason: str | None
 
 
-# Key prefix in WorkflowExecutionRow.step_state used to persist append_steps
-# inserted dynamically by a Command's outcome. Anything not under this key is
-# a step-id mapping (step_id → outcome+outputs).
-_APPEND_QUEUE_KEY = "__append_queue__"
-_APPENDED_POOL_KEY = "__appended_pool__"
-_AFTER_APPEND_KEY = "__after_append__"
-_ATTEMPTS_KEY = "__attempts__"
-_RECOVERED_STEPS_KEY = "__recovered_steps__"
-_TICKET_PAYLOAD_KEY = "__ticket_payload__"
-# Marks that the workflow's declared finalizer has already been dispatched once,
-# preventing double-fire on the failure path.
-_FINALIZER_FIRED_KEY = "__finalizer_fired__"
-
-
 # ── The three taskiq task bodies ────────────────────────────────────────
 
 
@@ -287,7 +273,7 @@ async def _start_step_impl(
         # Local command — persist outcome + enqueue route_workflow.
         # Use wfx.otel_trace_context as the traceparent so downstream hops
         # always parent to workflow.run.*, not to the caller's context.
-        _persist_attempt(wfx, step_id, attempt)
+        wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
         await enqueue(
             ROUTE_WORKFLOW,
             args={
@@ -509,21 +495,21 @@ async def _route_workflow_impl(
 
         # Tier-1 recovery: if the failure label has a registered recovery
         # policy (e.g. `auth_expired → RefreshWorkspaceAuth`), insert the
-        # recovery command as an appended step that runs BEFORE the original
+        # recovery command as a synthetic step that runs BEFORE the original
         # step retries. Recovery fires at most once per step instance — the
         # second hit falls through to Tier-2 retry / Tier-3 transition.
+        # Recovery steps use a deterministic id `_recover_{original_step_id}`
+        # so _resolve_step can synthesise the Step from recovered_steps without
+        # a persistent pool, and _resolve_transition can return the original
+        # step id on success.
         if outcome_label and outcome_label != "success":
             recovery_kind = get_recovery_policy(outcome_label)
             if recovery_kind is not None and not _has_recovered(wfx, completed_step_id):
                 _mark_recovered(wfx, completed_step_id, outcome_label)
                 # Reset the failed step's attempt counter so the post-recovery
                 # retry isn't already eating into the Tier-2 budget.
-                _persist_attempt(wfx, completed_step_id, 0)
-                from uuid import uuid4 as _uuid4  # noqa: PLC0415
-
-                recovery_step = Step(id=f"_recover_{_uuid4().hex[:8]}", command_kind=recovery_kind)
-                _queue_appended_steps(wfx, [recovery_step])
-                _set_after_append(wfx, completed_step_id)
+                wfx.step_attempts = {**wfx.step_attempts, completed_step_id: 0}
+                recovery_step_id = f"_recover_{completed_step_id}"
                 wfx.state = WorkflowState.RUNNING.value
                 _publish_state_changed(s, wfx)
                 log.debug(
@@ -533,10 +519,7 @@ async def _route_workflow_impl(
                     failure_label=outcome_label,
                     recovery_kind=recovery_kind,
                 )
-                # Drain the appended step (the recovery) immediately.
-                head = _dequeue_appended(wfx)
-                assert head is not None  # we just queued it
-                await _enqueue_start_step(s, wfx, wf, head.id, attempt=0)
+                await _enqueue_start_step(s, wfx, wf, recovery_step_id, attempt=0)
                 await s.commit()
                 return
 
@@ -552,31 +535,9 @@ async def _route_workflow_impl(
                 await s.commit()
                 return
 
-        # If the outcome included append_steps, queue them at the front and
-        # snapshot the natural successor for after the chain is exhausted.
-        append_steps_payload = outputs.get("__append_steps__") or []
-        if append_steps_payload:
-            natural_next = _resolve_transition(wf, step, outcome_label or "success")
-            _queue_appended_steps(wfx, [Step.model_validate(d) for d in append_steps_payload])
-            _set_after_append(wfx, natural_next)
-
-        # Drain the append queue first — appended steps preempt static transitions.
-        head = _dequeue_appended(wfx)
-        if head is not None:
-            wfx.state = WorkflowState.RUNNING.value
-            _publish_state_changed(s, wfx)
-            await _enqueue_start_step(s, wfx, wf, head.id, attempt=0)
-            await s.commit()
-            return
-
-        # Chain empty — if a post-chain destination was queued, take it.
-        # Otherwise evaluate the completing step's static transition.
+        # Evaluate the completing step's static transition.
         target: str | TerminalAction
-        after = _pop_after_append(wfx)
-        if after is not None:
-            target = after
-        else:
-            target = _resolve_transition(wf, step, outcome_label or "success")
+        target = _resolve_transition(wf, step, outcome_label or "success")
 
         if target is TerminalAction.COMPLETE_WORKFLOW:
             # If the finalizer step already ran (i.e. we're completing the
@@ -585,7 +546,7 @@ async def _route_workflow_impl(
             # "success → COMPLETE_WORKFLOW" is the *normal-path* contract;
             # during the failure path the finalizer's completion is just the
             # resource-release gate before recording failure.
-            if _has_finalizer_fired(wfx) and completed_step_id == wf.finalizer_step_id:
+            if wfx.finalizer_fired and completed_step_id == wf.finalizer_step_id:
                 target = TerminalAction.FAIL_WORKFLOW
             else:
                 await _enter_terminal_state(s, wfx, WorkflowState.DONE)
@@ -597,8 +558,8 @@ async def _route_workflow_impl(
             # has a chance to release resources even on the failure path.
             # Guard: fires only once per execution; if the finalizer itself
             # fails, it arrives here again with the fired flag set → skip.
-            if wf.finalizer_step_id is not None and not _has_finalizer_fired(wfx):
-                _mark_finalizer_fired(wfx)
+            if wf.finalizer_step_id is not None and not wfx.finalizer_fired:
+                wfx.finalizer_fired = True
                 # Capture the failure context before routing to the finalizer;
                 # the failure reason comes from the *original* failing step.
                 failure_reason = _extract_failure_reason(outputs, outcome_label)
@@ -996,10 +957,9 @@ def _step_summary(
 def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
     """Merge workflow definition + execution row into a `WorkflowRunView`.
 
-    Step order follows the workflow's declared `steps` tuple. Dynamically
-    appended steps (via `Outcome.append_steps`) are not surfaced — the UI
-    renders only the static pipeline. Unknown workflow names produce an
-    empty step list rather than raising; the SPA still renders the run.
+    Step order follows the workflow's declared `steps` tuple. Unknown workflow
+    names produce an empty step list rather than raising; the SPA still renders
+    the run.
     """
     engine = get_engine()
     try:
@@ -1076,20 +1036,36 @@ async def _load_execution(session: AsyncSession, workflow_execution_id: str) -> 
 
 
 def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> Step | None:
-    """Look up a step by id. Checks the appended-steps pool (filled by
-    Outcome.append_steps) before falling back to the static workflow def.
-    The pool is append-only for the lifetime of the workflow so a step
-    that's been dequeued is still resolvable while it executes."""
-    pool = wfx.step_state.get(_APPENDED_POOL_KEY, {})
-    if step_id in pool:
-        return Step.model_validate(pool[step_id])
+    """Look up a step by id. Synthetic recovery steps (id prefix `_recover_`)
+    are reconstructed from the recovered_steps column; all other step ids are
+    resolved from the static workflow definition."""
+    if step_id.startswith("_recover_"):
+        # Recovery steps carry a deterministic id `_recover_{original_step_id}`.
+        # Reconstruct the Step from the recorded failure label → command_kind.
+        original_step_id = step_id[len("_recover_") :]
+        failure_label = (wfx.recovered_steps or {}).get(original_step_id)
+        if failure_label is None:
+            return None
+        recovery_kind = get_recovery_policy(failure_label)
+        if recovery_kind is None:
+            return None
+        return Step(id=step_id, command_kind=recovery_kind)
     return wf.step_by_id(step_id)
 
 
 def _resolve_transition(wf: Workflow, step: Step, outcome_label: str) -> str | TerminalAction:
     """Resolve the next target from the step's transition map. Defaults:
     success → next listed step (or `complete_workflow` if step is last);
-    failure → `fail_workflow`."""
+    failure → `fail_workflow`.
+
+    Synthetic recovery steps (`_recover_{original_step_id}`) receive special
+    routing: success returns control to the original step for a fresh attempt;
+    any failure immediately fails the workflow (no further recovery loop)."""
+    if step.id.startswith("_recover_"):
+        if outcome_label == "success":
+            # Return to the step that triggered recovery.
+            return step.id[len("_recover_") :]
+        return TerminalAction.FAIL_WORKFLOW
     explicit = step.transitions.get(outcome_label)
     if explicit is not None:
         return explicit
@@ -1112,7 +1088,7 @@ async def _enqueue_start_step(
     *,
     attempt: int,
 ) -> None:
-    """Resolve the step's `inputs` map against ticket payload + prior step
+    """Resolve the step's `inputs` map against workflow_input + prior step
     outputs, then enqueue `workflow.start_step`.
 
     The `traceparent` in the enqueued args always comes from
@@ -1148,7 +1124,7 @@ def _resolve_input_expression(wfx: WorkflowExecutionRow, expr: Any) -> Any:
     Supported shapes:
     - `$<step_id>.<field>` — resolves from prior step's `outputs`. Returns
       None if the step hasn't completed or the field isn't in outputs.
-    - `$ticket.<field>` — resolves from the ticket payload stashed at
+    - `$ticket.<field>` — resolves from the workflow_input column stashed at
       `engine.start()` time (passed via the `ticket_payload` parameter,
       typically by the intake layer that already has it in hand). Returns
       None if `ticket_payload` wasn't supplied at start time or the field
@@ -1161,7 +1137,7 @@ def _resolve_input_expression(wfx: WorkflowExecutionRow, expr: Any) -> Any:
         return None
     head, tail = body.split(".", 1)
     if head == "ticket":
-        payload = wfx.step_state.get(_TICKET_PAYLOAD_KEY)
+        payload = wfx.workflow_input
         if not isinstance(payload, dict):
             return None
         return payload.get(tail)
@@ -1174,77 +1150,18 @@ def _resolve_input_expression(wfx: WorkflowExecutionRow, expr: Any) -> Any:
 def _has_recovered(wfx: WorkflowExecutionRow, step_id: str) -> bool:
     """Has recovery already been inserted for this step instance? One-shot
     per step to prevent infinite auth-refresh loops."""
-    return step_id in wfx.step_state.get(_RECOVERED_STEPS_KEY, {})
+    return step_id in (wfx.recovered_steps or {})
 
 
 def _mark_recovered(wfx: WorkflowExecutionRow, step_id: str, failure_label: str) -> None:
     """Mark this step as having had recovery applied (with the triggering
-    label) so a second attempt at recovery falls through to Tier-2 retry."""
-    bucket = dict(wfx.step_state)
-    recovered = dict(bucket.get(_RECOVERED_STEPS_KEY, {}))
-    recovered[step_id] = failure_label
-    bucket[_RECOVERED_STEPS_KEY] = recovered
-    wfx.step_state = bucket
-
-
-def _persist_attempt(wfx: WorkflowExecutionRow, step_id: str, attempt: int) -> None:
-    """Reassigns the whole `step_state` dict so SQLAlchemy detects the
-    change — JSONB columns don't track in-place mutation."""
-    bucket = dict(wfx.step_state)
-    attempts = dict(bucket.get(_ATTEMPTS_KEY, {}))
-    attempts[step_id] = attempt
-    bucket[_ATTEMPTS_KEY] = attempts
-    wfx.step_state = bucket
+    label) so a second attempt at recovery falls through to Tier-2 retry.
+    Assigns a new dict so SQLAlchemy detects the JSONB column change."""
+    wfx.recovered_steps = {**wfx.recovered_steps, step_id: failure_label}
 
 
 def _get_attempt(wfx: WorkflowExecutionRow, step_id: str) -> int:
-    attempts = wfx.step_state.get(_ATTEMPTS_KEY, {})
-    return int(attempts.get(step_id, 0))
-
-
-def _dequeue_appended(wfx: WorkflowExecutionRow) -> Step | None:
-    """Pop the head id off the execution queue and return the corresponding
-    Step from the pool. The pool retains the definition so the in-flight
-    step can still be resolved by id after dequeueing."""
-    queue = list(wfx.step_state.get(_APPEND_QUEUE_KEY, []))
-    if not queue:
-        return None
-    head_id = queue.pop(0)
-    bucket = dict(wfx.step_state)
-    bucket[_APPEND_QUEUE_KEY] = queue
-    wfx.step_state = bucket
-    pool = wfx.step_state.get(_APPENDED_POOL_KEY, {})
-    raw = pool.get(head_id)
-    if raw is None:
-        return None
-    return Step.model_validate(raw)
-
-
-def _set_after_append(wfx: WorkflowExecutionRow, target: str | TerminalAction | None) -> None:
-    """Persist the post-append-chain destination. Stored as a string id or
-    a TerminalAction value; cleared by assignment to None."""
-    bucket = dict(wfx.step_state)
-    if target is None:
-        bucket.pop(_AFTER_APPEND_KEY, None)
-    elif isinstance(target, TerminalAction):
-        bucket[_AFTER_APPEND_KEY] = {"terminal": target.value}
-    else:
-        bucket[_AFTER_APPEND_KEY] = {"step_id": target}
-    wfx.step_state = bucket
-
-
-def _pop_after_append(
-    wfx: WorkflowExecutionRow,
-) -> str | TerminalAction | None:
-    raw = wfx.step_state.get(_AFTER_APPEND_KEY)
-    if raw is None:
-        return None
-    bucket = dict(wfx.step_state)
-    bucket.pop(_AFTER_APPEND_KEY, None)
-    wfx.step_state = bucket
-    if "terminal" in raw:
-        return TerminalAction(raw["terminal"])
-    return raw["step_id"]
+    return int((wfx.step_attempts or {}).get(step_id, 0))
 
 
 def _persist_outputs(
@@ -1336,26 +1253,9 @@ async def _enter_terminal_state(
         )
 
 
-def _queue_appended_steps(wfx: WorkflowExecutionRow, steps: list[Step]) -> None:
-    """Register the appended step defs in the persistent pool AND prepend
-    their ids to the execution queue."""
-    bucket = dict(wfx.step_state)
-    pool = dict(bucket.get(_APPENDED_POOL_KEY, {}))
-    for s in steps:
-        pool[s.id] = s.model_dump(mode="json")
-    bucket[_APPENDED_POOL_KEY] = pool
-    queue = list(bucket.get(_APPEND_QUEUE_KEY, []))
-    queue = [s.id for s in steps] + queue
-    bucket[_APPEND_QUEUE_KEY] = queue
-    wfx.step_state = bucket
-
-
 def _outcome_payload(outcome: Outcome) -> dict[str, Any]:
-    """Pack an Outcome's outputs + append_steps into the routing task's
-    `outputs` argument."""
+    """Pack an Outcome's outputs into the routing task's `outputs` argument."""
     payload: dict[str, Any] = dict(outcome.outputs)
-    if outcome.append_steps:
-        payload["__append_steps__"] = [s.model_dump(mode="json") for s in outcome.append_steps]
     if outcome.failure_reason is not None:
         payload["__failure_reason__"] = outcome.failure_reason
     return payload
@@ -1363,21 +1263,8 @@ def _outcome_payload(outcome: Outcome) -> dict[str, Any]:
 
 # ── Finalizer helpers ────────────────────────────────────────────────────
 # The finalizer is a one-shot per execution: once dispatched it is never
-# re-dispatched even if it itself fails. The fired-flag + pending-failure
-# cache live in step_state under control keys so SQLAlchemy detects changes.
-
-_PENDING_FAILURE_STEP_KEY = "__pending_failure_step__"
-_PENDING_FAILURE_REASON_KEY = "__pending_failure_reason__"
-
-
-def _has_finalizer_fired(wfx: WorkflowExecutionRow) -> bool:
-    return bool(wfx.step_state.get(_FINALIZER_FIRED_KEY))
-
-
-def _mark_finalizer_fired(wfx: WorkflowExecutionRow) -> None:
-    bucket = dict(wfx.step_state)
-    bucket[_FINALIZER_FIRED_KEY] = True
-    wfx.step_state = bucket
+# re-dispatched even if it itself fails. The fired-flag and pending-failure
+# context live in typed columns on workflow_executions.
 
 
 def _store_pending_failure(
@@ -1387,32 +1274,22 @@ def _store_pending_failure(
 ) -> None:
     """Stash the failure context so it survives the finalizer step's round-trip
     and can be read when the finalizer itself completes (or fails)."""
-    bucket = dict(wfx.step_state)
     if failed_step_id is not None:
-        bucket[_PENDING_FAILURE_STEP_KEY] = failed_step_id
+        wfx.pending_failure_step_id = failed_step_id
     if failure_reason is not None:
-        bucket[_PENDING_FAILURE_REASON_KEY] = failure_reason
-    wfx.step_state = bucket
+        wfx.pending_failure_reason = failure_reason
 
 
 def _pop_pending_failure_step(wfx: WorkflowExecutionRow) -> str | None:
-    raw = wfx.step_state.get(_PENDING_FAILURE_STEP_KEY)
-    if raw is None:
-        return None
-    bucket = dict(wfx.step_state)
-    bucket.pop(_PENDING_FAILURE_STEP_KEY, None)
-    wfx.step_state = bucket
-    return str(raw)
+    value = wfx.pending_failure_step_id
+    wfx.pending_failure_step_id = None
+    return value
 
 
 def _pop_pending_failure_reason(wfx: WorkflowExecutionRow) -> str | None:
-    raw = wfx.step_state.get(_PENDING_FAILURE_REASON_KEY)
-    if raw is None:
-        return None
-    bucket = dict(wfx.step_state)
-    bucket.pop(_PENDING_FAILURE_REASON_KEY, None)
-    wfx.step_state = bucket
-    return str(raw)
+    value = wfx.pending_failure_reason
+    wfx.pending_failure_reason = None
+    return value
 
 
 def _extract_failure_reason(outputs: dict[str, Any], outcome_label: str | None) -> str | None:
@@ -1432,7 +1309,7 @@ def _workflow_org_id(wfx: WorkflowExecutionRow) -> UUID:
 
     Route-workflow task bodies run inside `OrgContextMiddleware` which sets
     the `org_id` contextvar from the task metadata. Use that when available;
-    fall back to the ticket_payload stash for test cases that bypass the
+    fall back to the workflow_input column for test cases that bypass the
     middleware.
     """
     from app.core.auth import current_org_id  # noqa: PLC0415
@@ -1440,8 +1317,8 @@ def _workflow_org_id(wfx: WorkflowExecutionRow) -> UUID:
     org_id = current_org_id()
     if org_id is not None:
         return org_id
-    # Fallback: ticket_payload may carry org_id for tests that bypass middleware.
-    payload = wfx.step_state.get(_TICKET_PAYLOAD_KEY)
+    # Fallback: workflow_input may carry org_id for tests that bypass middleware.
+    payload = wfx.workflow_input
     if isinstance(payload, dict):
         raw = payload.get("org_id")
         if raw is not None:
@@ -1605,10 +1482,6 @@ class WorkflowEngine:
         for step in wf.steps:
             self.get_command(step.command_kind)
 
-        initial_state: dict[str, Any] = {}
-        if ticket_payload is not None:
-            initial_state[_TICKET_PAYLOAD_KEY] = dict(ticket_payload)
-
         with with_remote_parent_span(_tracer, f"workflow.run.{wf.name}", traceparent) as run_span:
             # Capture the run span's own traceparent — task bodies and the stored
             # otel_trace_context use this so they parent to the run span, not to
@@ -1622,9 +1495,10 @@ class WorkflowEngine:
                 state=WorkflowState.PENDING.value,
                 current_step_id=None,
                 pending_agent_command_id=None,
-                step_state=initial_state,
+                step_state={},
                 cancel_requested=False,
                 otel_trace_context=run_traceparent,
+                workflow_input=dict(ticket_payload) if ticket_payload is not None else None,
             )
             session.add(row)
             await session.flush()

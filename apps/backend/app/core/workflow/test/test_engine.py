@@ -217,3 +217,202 @@ async def test_start_unknown_command_kind_raises_before_writing(db_session) -> N
 
     rows = (await db_session.execute(select(WorkflowExecutionRow))).scalars().all()
     assert rows == []
+
+
+# ── New typed-column service tests ────────────────────────────────────────
+
+
+class _FailOnceInputs(BaseModel):
+    pass
+
+
+class _FailOnce:
+    """Fails the first call; succeeds all subsequent calls."""
+
+    kind = "FailOnce"
+    category = CommandCategory.LOCAL
+    restart_safe = True
+    _fired: bool = False
+
+    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        del inputs, ctx
+        if not self._fired:
+            self._fired = True
+            return Outcome.failure(reason="transient")
+        return Outcome.success()
+
+
+class _CleanupCommand:
+    """Finalizer step that always succeeds."""
+
+    kind = "Cleanup"
+    category = CommandCategory.LOCAL
+    restart_safe = True
+
+    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        del inputs, ctx
+        return Outcome.success()
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_engine_state_persists_to_columns_service(db_session) -> None:
+    """Run a workflow with a retry step and a finalizer. After completing,
+    assert: (a) the six typed columns hold the correct values, (b) step_state
+    contains NO engine-internal __ keys (only step-output buckets)."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
+
+    fail_once = _FailOnce()
+    cleanup = _CleanupCommand()
+
+    wf = Workflow(
+        name="columns-test",
+        version=1,
+        steps=(
+            Step(
+                id="work",
+                command_kind="FailOnce",
+                retry_policy=__import__("app.core.workflow.types", fromlist=["RetryPolicy"]).RetryPolicy(
+                    max_attempts=2
+                ),
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+            Step(
+                id="cleanup",
+                command_kind="Cleanup",
+                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
+            ),
+        ),
+        entry_step_id="work",
+        finalizer_step_id="cleanup",
+    )
+
+    eng = WorkflowEngine()
+    eng.register_command(fail_once)
+    eng.register_command(cleanup)
+    eng.register_workflow(wf)
+    svc._engine = eng
+
+    exec_id = await eng.start(
+        workflow_name="columns-test",
+        ticket_id=str(uuid4()),
+        session=db_session,
+        ticket_payload={"org_id": str(uuid4()), "repo": "owner/repo"},
+    )
+    await db_session.commit()
+    await _drain_via_broker(db_session)
+
+    row = (
+        await db_session.execute(select(WorkflowExecutionRow).where(WorkflowExecutionRow.id == exec_id))
+    ).scalar_one()
+
+    # Workflow should complete DONE: work fails once (retry attempt 1 succeeds),
+    # cleanup never fires (no terminal-fail).
+    assert row.state == WorkflowState.DONE.value
+
+    # step_attempts column: work step attempt was incremented from 0 to 1 before retry.
+    assert row.step_attempts.get("work") is not None
+
+    # workflow_input column carries the ticket_payload dict.
+    assert isinstance(row.workflow_input, dict)
+    assert row.workflow_input.get("repo") == "owner/repo"
+
+    # finalizer_fired stays False — the normal path doesn't trigger it.
+    assert row.finalizer_fired is False
+
+    # No engine-internal __ keys should remain in step_state.
+    engine_keys = [k for k in (row.step_state or {}) if k.startswith("__") and k.endswith("__")]
+    assert engine_keys == [], f"Unexpected engine keys in step_state: {engine_keys}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_migration_backfill_from_step_state_service(db_session) -> None:
+    """Seed a workflow_executions row with the old JSONB magic keys, run the
+    backfill+strip SQL from migration b3c4d5e6f7a8, and assert the typed
+    columns are populated and the keys are stripped from step_state."""
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    from app.core.workflow.models import WorkflowExecutionRow  # noqa: PLC0415
+
+    old_step_state = {
+        "__finalizer_fired__": True,
+        "__attempts__": {"provision": 2},
+        "__recovered_steps__": {"provision": "auth_expired"},
+        "__append_queue__": [],
+        "__appended_pool__": {},
+        "__after_append__": {"step_id": "review"},
+        "__ticket_payload__": {"org_id": "test-org", "repo": "x/y"},
+        "__pending_failure_step__": "provision",
+        "__pending_failure_reason__": "agent_failure",
+        "provision": {"outputs": {"workspace_id": "ws-1"}},
+    }
+
+    row = WorkflowExecutionRow(
+        ticket_id=uuid4(),
+        workflow_name="old-format",
+        workflow_version=1,
+        state="failed",
+        step_state=old_step_state,
+    )
+    db_session.add(row)
+    await db_session.flush()
+    await db_session.commit()
+
+    # Run the migration backfill SQL (same SQL as in migration b3c4d5e6f7a8).
+    await db_session.execute(
+        sa_text("""
+UPDATE workflow_executions
+SET
+    finalizer_fired = COALESCE(
+        (step_state->>'__finalizer_fired__')::boolean,
+        FALSE
+    ),
+    step_attempts = COALESCE(
+        step_state->'__attempts__',
+        '{}'::jsonb
+    ),
+    recovered_steps = COALESCE(
+        step_state->'__recovered_steps__',
+        '{}'::jsonb
+    ),
+    pending_failure_step_id = step_state->>'__pending_failure_step__',
+    pending_failure_reason   = step_state->>'__pending_failure_reason__',
+    workflow_input           = step_state->'__ticket_payload__'
+WHERE step_state <> '{}'::jsonb
+""")
+    )
+
+    # Run the strip SQL.
+    await db_session.execute(
+        sa_text("""
+UPDATE workflow_executions
+SET step_state =
+    step_state
+    - '__finalizer_fired__'
+    - '__attempts__'
+    - '__recovered_steps__'
+    - '__append_queue__'
+    - '__appended_pool__'
+    - '__after_append__'
+    - '__ticket_payload__'
+    - '__pending_failure_step__'
+    - '__pending_failure_reason__'
+WHERE step_state <> '{}'::jsonb
+""")
+    )
+    await db_session.commit()
+
+    await db_session.refresh(row)
+    assert row.finalizer_fired is True
+    assert row.step_attempts == {"provision": 2}
+    assert row.recovered_steps == {"provision": "auth_expired"}
+    assert row.pending_failure_step_id == "provision"
+    assert row.pending_failure_reason == "agent_failure"
+    assert isinstance(row.workflow_input, dict)
+    assert row.workflow_input.get("repo") == "x/y"
+
+    # Only step-output keys survive in step_state.
+    assert row.step_state == {"provision": {"outputs": {"workspace_id": "ws-1"}}}
+    engine_keys = [k for k in row.step_state if k.startswith("__") and k.endswith("__")]
+    assert engine_keys == []

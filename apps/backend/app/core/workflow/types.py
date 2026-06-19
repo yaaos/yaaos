@@ -108,9 +108,7 @@ class OutcomeKind(StrEnum):
 
 class Outcome(BaseModel):
     """The result of a WorkflowCommand.execute(). One of three shapes —
-    discriminated by `kind`. `append_steps` is the escape hatch the engine
-    inserts at the front of the remaining sequence before evaluating the
-    transition."""
+    discriminated by `kind`."""
 
     model_config = ConfigDict(frozen=True)
     kind: OutcomeKind
@@ -118,7 +116,6 @@ class Outcome(BaseModel):
     outputs: Mapping[str, Any] = Field(default_factory=dict)
     failure_reason: str | None = None
     hitl_question: Mapping[str, Any] | None = None
-    append_steps: tuple[Step, ...] = ()
 
     @classmethod
     def success(
@@ -126,13 +123,11 @@ class Outcome(BaseModel):
         *,
         label: str = "success",
         outputs: Mapping[str, Any] | None = None,
-        append_steps: tuple[Step, ...] = (),
     ) -> Outcome:
         return cls(
             kind=OutcomeKind.SUCCESS,
             label=label,
             outputs=outputs or {},
-            append_steps=append_steps,
         )
 
     @classmethod

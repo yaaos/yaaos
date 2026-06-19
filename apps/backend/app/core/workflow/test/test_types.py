@@ -49,12 +49,6 @@ def test_outcome_factories() -> None:
     assert h.hitl_question == {"prompt": "approve?"}
 
 
-def test_outcome_append_steps_carries_steps() -> None:
-    extra = (_step("plan"), _step("implement"))
-    s = Outcome.success(append_steps=extra)
-    assert s.append_steps == extra
-
-
 def test_terminal_action_in_transitions_is_valid() -> None:
     wf = Workflow(
         name="x",
