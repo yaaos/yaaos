@@ -282,6 +282,16 @@ Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data
 
 Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
 
+### Dispatch helper discipline
+
+Three layers gate every AgentCommand enqueue in the reviewer/workspace path:
+
+- **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `ProvisionWorkspace.dispatch` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
+- **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `CleanupWorkspace.dispatch` and `RefreshWorkspaceAuth.dispatch` route here with `claim_workspace=False`.
+- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the `InvokeClaudeCodeCommand` from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `CodeReview.dispatch` routes here.
+
+`apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside `app/domain/reviewer/commands/` or `app/core/workspace/commands.py` fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
+
 ### Single-flight per workspace
 
 The workspace state machine accepts one in-flight AgentCommand at a time. [`core/workspace.try_claim`](core_workspace.md) is an atomic conditional UPDATE that succeeds iff `current_command_id IS NULL` AND `status='active'`. Concurrent dispatch attempts see `rowcount=0` and back off. Pair every claim with `release_claim(workspace_id, command_id=…)` once the terminal event has been observed.

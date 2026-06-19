@@ -23,17 +23,14 @@ from uuid import UUID, uuid7
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
-from sqlalchemy import select
 
 from app.core.agent_gateway import (
     AuthBlock,
     CleanupWorkspaceCommand,
     RepoRef,
-    enqueue_command,
-    pin_command_to_agent,
 )
 from app.core.workflow import CommandCategory, CommandContext, Outcome
-from app.core.workspace.models import WorkspaceRow
+from app.core.workspace.dispatch import dispatch_via_workspace
 from app.core.workspace.remote_provider import dispatch_provision_workspace
 from app.core.workspace.service import close_workspace, list_workspace_providers
 from app.core.workspace.workflow_context import get_workflow_context_provider
@@ -83,18 +80,19 @@ class ProvisionWorkspace(_LifecycleCommand):
         *,
         session: AsyncSession,
     ) -> UUID:
-        """Mint a `workspace_id` UUID (no row yet), enqueue a `ProvisionWorkspace`
-        AgentCommand durably inside the caller's transaction, and return its
-        command_id. The `workspaces` row is created lean on the agent's first
-        workspace event (`created` or `ready`) by the sink in `agent_report.py`.
+        """Mint a `workspace_id` UUID (no row yet), fetch install credentials,
+        enqueue a `ProvisionWorkspace` AgentCommand durably inside the caller's
+        transaction, and return its command_id. The `workspaces` row is created
+        lean on the agent's first workspace event (`created` or `ready`) by the
+        sink in `agent_report.py`.
 
-        `clone_url` and `installation_token` come from `WorkspaceTicketContext`
-        populated by the registered `WorkflowContextProvider` implementation.
-        When the context carries empty values (e.g. in unit tests that bypass the
-        real provider), the dispatch still enqueues with empty auth — the agent
-        rejects the clone and reports a failure event, which is the expected path
-        for tests that only exercise the engine correlation machinery.
+        `clone_url` and `installation_token` come from `core/vcs.get_install_credentials`
+        rather than the workflow-context provider, so credentials are fetched
+        at dispatch time and the provider no longer needs to carry them.
+        Raises `VcsInstallNotFound` when the org has no active VCS App installation.
         """
+        from app.core import vcs as _vcs  # noqa: PLC0415
+
         del inputs
         providers = list_workspace_providers()
         if not providers:
@@ -113,16 +111,23 @@ class ProvisionWorkspace(_LifecycleCommand):
         # and the WorkspaceEvent key.
         ws_id = uuid7()
 
+        # Fetch credentials at dispatch time — fresh token, no stale data in ctx.
+        creds = await _vcs.get_install_credentials(
+            ticket_ctx.plugin_id,
+            ticket_ctx.org_id,
+            ticket_ctx.repo_external_id,
+        )
+
         repo = RepoRef(
             plugin_id=ticket_ctx.plugin_id,
             external_id=ticket_ctx.repo_external_id,
-            clone_url=ticket_ctx.clone_url,
+            clone_url=creds.clone_url,
             head_sha=head_sha,
             base_sha=str(base_sha) if base_sha else None,
         )
         auth = AuthBlock(
             kind="github_installation",
-            token=ticket_ctx.installation_token.get_secret_value(),
+            token=creds.installation_token.get_secret_value(),
         )
         result = await dispatch_provision_workspace(
             ticket_ctx.org_id,
@@ -186,43 +191,27 @@ class CleanupWorkspace(_LifecycleCommand):
         *,
         session: AsyncSession,
     ) -> UUID:
-        """Enqueue a `CleanupWorkspace` AgentCommand for the prior step's
-        workspace_id and return its command_id. Pins to the workspace's
-        owning agent via the existing `dispatch_cleanup_workspace` helper
-        when the workspace row carries one; otherwise enqueues unpinned for
-        any agent to claim (used when the prior provision didn't land a row).
-
-        The unpinned arm covers partial-failure paths where the prior provision
-        left a workspace row without an owning agent.
+        """Enqueue a `CleanupWorkspace` AgentCommand via `dispatch_via_workspace`
+        (Layer 2) and return its command_id. Layer 2 looks up the workspace row,
+        calls enqueue_command, and pins to the owning agent when one is set.
         """
         ws_id_raw = inputs.get("workspace_id")
         if not ws_id_raw:
             raise RuntimeError("CleanupWorkspace.dispatch missing workspace_id input")
         ws_id = UUID(str(ws_id_raw))
 
-        ws_row = (
-            await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == ws_id))
-        ).scalar_one_or_none()
-        if ws_row is None:
-            raise RuntimeError(f"workspace {ws_id} not found for cleanup dispatch")
-        org_id = ws_row.org_id
-        owning_agent_id = ws_row.owning_agent_id
-
-        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
-            command_id=command_id,
+            command_id=uuid7(),
             workspace_id=ws_id,
             traceparent="",
         )
-        await enqueue_command(
-            org_id=org_id,
+        return await dispatch_via_workspace(
             command=cmd,
+            workspace_id=ws_id,
+            ctx=ctx,
             session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
+            claim_workspace=False,
         )
-        if owning_agent_id is not None:
-            await pin_command_to_agent(command_id, owning_agent_id, session=session)
-        return command_id
 
 
 class RefreshWorkspaceAuth(_LifecycleCommand):
@@ -254,46 +243,29 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
         *,
         session: AsyncSession,
     ) -> UUID:
-        """Enqueue a placeholder AgentCommand for auth refresh and return the
-        new command_id. The real `RefreshWorkspaceAuth` AgentCommand kind is not
-        yet wired over the wire; this enqueues a `CleanupWorkspace`-shaped no-op
-        against the recovering workspace so the correlation path is exercised.
-        The label on the recovery policy in
-        `core/workspace.register_recovery_policy` is unchanged.
+        """Enqueue a placeholder AgentCommand for auth refresh via
+        `dispatch_via_workspace` (Layer 2) and return the new command_id.
+        The real `RefreshWorkspaceAuth` AgentCommand kind is not yet wired
+        over the wire; this enqueues a `CleanupWorkspace`-shaped no-op against
+        the recovering workspace so the correlation path is exercised.
         """
         ws_id_raw = inputs.get("workspace_id")
-        ws_id: UUID | None = None
-        if ws_id_raw:
-            ws_id = UUID(str(ws_id_raw))
-
-        org_id: UUID
-        owning_agent_id: UUID | None = None
-        if ws_id is not None:
-            ws_row = (
-                await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == ws_id))
-            ).scalar_one_or_none()
-            if ws_row is None:
-                raise RuntimeError(f"workspace {ws_id} not found for refresh-auth dispatch")
-            org_id = ws_row.org_id
-            owning_agent_id = ws_row.owning_agent_id
-        else:
+        if not ws_id_raw:
             raise RuntimeError("RefreshWorkspaceAuth.dispatch missing workspace_id input")
+        ws_id = UUID(str(ws_id_raw))
 
-        command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
-            command_id=command_id,
+            command_id=uuid7(),
             workspace_id=ws_id,
             traceparent="",
         )
-        await enqueue_command(
-            org_id=org_id,
+        return await dispatch_via_workspace(
             command=cmd,
+            workspace_id=ws_id,
+            ctx=ctx,
             session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
+            claim_workspace=False,
         )
-        if owning_agent_id is not None:
-            await pin_command_to_agent(command_id, owning_agent_id, session=session)
-        return command_id
 
 
 ALL_LIFECYCLE_COMMANDS: tuple[_LifecycleCommand, ...] = (

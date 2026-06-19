@@ -4,9 +4,10 @@ The Protocol exposes two pure methods: `build_invocation` translates a
 high-level `Invocation` (skill, model, effort, context, wallclock cap) into
 a concrete `InvokeCodingAgent` exec block; `parse_result` decodes a terminal
 AgentEvent payload into a `RunResult`. Plugins own skill resolution, model
-mapping, and stdout parsing. `dispatch_invocation` enqueues the exec block
-as an `InvokeClaudeCode` AgentCommand, inserts a run row, and pins the
-command to the owning agent.
+mapping, and stdout parsing. `dispatch_invocation` (Layer 3) calls
+`plugin.build_invocation`, builds an `InvokeClaudeCodeCommand`, delegates to
+`dispatch_via_workspace` (Layer 2) with `claim_workspace=True` for the atomic
+enqueue + pin + claim, then inserts a `coding_agent_runs` row.
 """
 
 from __future__ import annotations

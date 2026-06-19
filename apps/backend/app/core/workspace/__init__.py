@@ -8,6 +8,7 @@ from app.core.agent_gateway import register_report_sink as _register_report_sink
 from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
 from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
 from app.core.workspace.dispatch import (
+    dispatch_via_workspace,
     register_workspace_recovery_policies,
     release_claim,
     try_claim,
@@ -38,6 +39,7 @@ from app.core.workspace.types import (
     RepoRefForSpec,
     ResourceCaps,
     Workspace,
+    WorkspaceClaimFailed,
     WorkspaceClaimState,
     WorkspaceCommandState,
     WorkspaceDestroyError,
@@ -73,6 +75,7 @@ __all__ = [
     "WorkflowContextProvider",
     "Workspace",
     "WorkspaceAgentReportSinkImpl",
+    "WorkspaceClaimFailed",
     "WorkspaceClaimState",
     "WorkspaceCommandState",
     "WorkspaceDestroyError",
@@ -92,6 +95,7 @@ __all__ = [
     "bind_workspace_registry",
     "close_workspace",
     "current_workspace_registry",
+    "dispatch_via_workspace",
     "get_provider",
     "get_workflow_context_provider",
     "get_workspace_claim_state",

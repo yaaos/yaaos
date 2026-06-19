@@ -23,8 +23,6 @@ from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
 from app.core.workspace import (
     get_workflow_context_provider,
-    get_workspace_owner,
-    try_claim,
 )
 from app.domain.tickets import get_payload as get_ticket_payload
 
@@ -60,6 +58,42 @@ def _activity_publisher_for(ctx: CommandContext):  # type: ignore[no-untyped-def
     return _publisher
 
 
+def _build_code_review_invocation(ticket_ctx: Any, inputs: dict[str, Any], anthropic_api_key: str) -> Any:
+    """Pure helper: build the `Invocation` for a PR review from ticket context + inputs.
+
+    `anthropic_api_key` is passed in (not fetched here) because `build_invocation` is
+    sync/pure and cannot do async I/O — the caller loads it from BYOK before calling.
+    """
+    from app.core.coding_agent import Invocation  # noqa: PLC0415
+    from app.domain.reviewer.types import ReviewContext, finding_output_schema  # noqa: PLC0415
+
+    head_sha = str(ticket_ctx.payload.get("head_sha") or inputs.get("head_sha") or "")
+    base_sha = str(ticket_ctx.payload.get("base_sha") or inputs.get("base_sha") or "")
+    pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
+    review_ctx = ReviewContext(
+        org_id=ticket_ctx.org_id,
+        repo_external_id=ticket_ctx.repo_external_id,
+        pr_external_id=pr_external_id,
+        head_sha=head_sha,
+        base_sha=base_sha,
+        output_schema=finding_output_schema(),
+    )
+    return Invocation(
+        skill="pr_review",
+        model="opus",
+        effort="medium",
+        context={**review_ctx.model_dump(mode="json"), "anthropic_api_key": anthropic_api_key},
+        wallclock_seconds=1200,
+    )
+
+
+def _record_exc_on_span(exc: Exception) -> None:
+    """Record an exception + ERROR status on the active OTel span."""
+    span = trace.get_current_span()
+    span.record_exception(exc)
+    span.set_status(StatusCode.ERROR, str(exc))
+
+
 # ── CodeReview ──────────────────────────────────────────────────────────────
 
 
@@ -89,114 +123,27 @@ class CodeReview:
         *,
         session: Any,
     ) -> UUID:
-        from uuid import UUID as _UUID  # noqa: PLC0415
+        from app.core import byok, coding_agent  # noqa: PLC0415
 
-        from app.core import coding_agent  # noqa: PLC0415
-        from app.core.coding_agent import Invocation  # noqa: PLC0415
-        from app.domain.reviewer.types import ReviewContext, finding_output_schema  # noqa: PLC0415
-
-        ws_id_raw = inputs.get("workspace_id")
-        if not ws_id_raw:
+        if not (ws_id_raw := inputs.get("workspace_id")):
             raise RuntimeError("CodeReview.dispatch missing workspace_id input")
-        ws_id = _UUID(str(ws_id_raw))
-
-        owner = await get_workspace_owner(ws_id, session=session)
-        if owner is None:
-            raise RuntimeError(f"workspace {ws_id} not found for CodeReview.dispatch")
-        if owner.owning_agent_id is None:
-            raise RuntimeError(f"workspace {ws_id} has no owning_agent_id; cannot dispatch review")
-
+        ws_id = UUID(str(ws_id_raw))
         provider = get_workflow_context_provider()
-        ticket_ctx = await provider.get_workspace_ticket_context(_UUID(ctx.ticket_id))
+        ticket_ctx = await provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
         if ticket_ctx is None:
             raise RuntimeError(f"ticket {ctx.ticket_id} not found for CodeReview.dispatch")
-
-        head_sha = str(ticket_ctx.payload.get("head_sha") or inputs.get("head_sha") or "")
-        base_sha = str(ticket_ctx.payload.get("base_sha") or inputs.get("base_sha") or "")
-        pr_external_id = str(ticket_ctx.payload.get("pr_external_id") or "")
-
-        review_ctx = ReviewContext(
-            org_id=ticket_ctx.org_id,
-            repo_external_id=ticket_ctx.repo_external_id,
-            pr_external_id=pr_external_id,
-            head_sha=head_sha,
-            base_sha=base_sha,
-            output_schema=finding_output_schema(),
-        )
-
-        # Load the Anthropic API key from byok at dispatch time. The plugin's
-        # build_invocation is sync and pure, so the key cannot be loaded inside
-        # it. Without this, the Go agent spawns the Claude Code CLI with an empty
-        # env and every real review fails authentication. If no key is configured
-        # for the org, surface a clear error here — the subprocess would fail
-        # anyway, but with a less useful message.
-        from app.core import byok  # noqa: PLC0415
-
         anthropic_api_key = await byok.get(ticket_ctx.org_id, "anthropic", session=session)
         if anthropic_api_key is None:
-            raise RuntimeError(
-                f"no anthropic api key configured for org {ticket_ctx.org_id}; "
-                "configure one in settings before dispatching a review"
-            )
-
-        invocation_context: dict[str, object] = {
-            **review_ctx.model_dump(mode="json"),
-            "anthropic_api_key": anthropic_api_key,
-        }
-
+            raise RuntimeError(f"no Anthropic API key for org {ticket_ctx.org_id}; add one in Org Settings")
         plugin = coding_agent.get_plugin("claude_code")
+        invocation = _build_code_review_invocation(ticket_ctx, inputs, anthropic_api_key)
         try:
-            invocation_data = plugin.build_invocation(
-                Invocation(
-                    skill="pr_review",
-                    model="opus",
-                    effort="medium",
-                    context=invocation_context,
-                    wallclock_seconds=1200,
-                )
+            return await coding_agent.dispatch_invocation(
+                workspace_id=ws_id, invocation=invocation, plugin=plugin, ctx=ctx, session=session
             )
         except Exception as exc:
-            # inside-span failure: workflow.start_step outer span is active during dispatch
-            span = trace.get_current_span()
-            span.record_exception(exc)
-            span.set_status(StatusCode.ERROR, str(exc))
-            log.exception(
-                "code_review.build_invocation_failed",
-                workflow_execution_id=ctx.workflow_execution_id,
-                ticket_id=ctx.ticket_id,
-            )
-            raise RuntimeError(f"build_invocation failed: {exc}") from exc
-
-        # Enqueue the InvokeClaudeCode command pinned to the owning agent first,
-        # then atomically claim the workspace with the returned command_id.
-        # This ordering guarantees the AgentCommand row exists before claim.
-        command_id = await coding_agent.dispatch_invocation(
-            workspace_id=ws_id,
-            org_id=owner.org_id,
-            agent_id=owner.owning_agent_id,
-            workflow_execution_id=_UUID(ctx.workflow_execution_id),
-            plugin=plugin,
-            invocation_data=invocation_data,
-            ctx=ctx,
-            session=session,
-        )
-
-        claimed = await try_claim(
-            ws_id,
-            command_id=command_id,
-            workflow_execution_id=_UUID(ctx.workflow_execution_id),
-            session=session,
-        )
-        if not claimed:
-            raise RuntimeError(f"workspace {ws_id} is busy or inactive; cannot claim for CodeReview")
-
-        log.debug(
-            "code_review.dispatched",
-            workspace_id=str(ws_id),
-            command_id=str(command_id),
-            workflow_execution_id=ctx.workflow_execution_id,
-        )
-        return command_id
+            _record_exc_on_span(exc)
+            raise
 
 
 # ── Local command base ──────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 - **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process.
 - **Plugin owns skill resolution, stdout parsing, and settings validation.** `core/coding_agent` owns dispatch and the run lifecycle; plugins own the exec-spec shape, parse logic, and schema enforcement for their settings.
 - **BYOK secrets delivered via ConfigUpdate, not invocation env.** `build_byok_secrets_for_org` aggregates per-org secrets across all registered plugins and registers as the `BytokSecretsProvider` IoC seam in `core/agent_gateway`. `_build_config_update_dto` calls the provider to populate `AgentConfig.byok_secrets` on every ConfigUpdate. The agent injects them as env vars when spawning Claude Code. `InvokeCodingAgent.env` is intentionally empty — no credentials travel via the exec env.
-- **`dispatch_invocation` is the one-shot dispatch helper.** Mints a UUIDv7 `command_id`, calls `enqueue_command`, inserts a `coding_agent_runs` row, calls `pin_command_to_agent`, returns the `command_id`. All in the caller's transaction — durable iff the transaction commits.
+- **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `workspace_id`, `invocation`, `plugin`, `ctx`, `session`. Loads the workspace owner for `org_id`, calls `plugin.build_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns the minted `command_id`. Durable iff the caller's transaction commits.
 
 ## `CodingAgentPlugin` Protocol
 
@@ -29,9 +29,15 @@ Signatures in `app/core/coding_agent/types.py`.
 
 ### `dispatch_invocation`
 
-`dispatch_invocation(*, workspace_id, org_id, agent_id, workflow_execution_id, plugin, invocation_data: InvokeCodingAgent, ctx: CommandContext, session) -> UUID`
+`dispatch_invocation(*, workspace_id: UUID, invocation: Invocation, plugin: CodingAgentPlugin, ctx: CommandContext, session: AsyncSession) -> UUID`
 
-One-shot helper in `service.py`. Constructs an `InvokeClaudeCodeFields` instance from `invocation_data` and calls `enqueue_command_payload` from `core/agent_gateway` with `kind=AgentCommandKind.INVOKE_CLAUDE_CODE` — no `InvokeClaudeCodeCommand` type is imported. The gateway injects envelope identity fields (`kind`, `command_id`, `workspace_id`, `traceparent`, etc.) LAST, so the caller cannot overwrite them. Returns `command_id`. `org_id` sourced from caller's org context.
+Layer 3 helper in `service.py`. Flow:
+1. `get_workspace_owner(workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
+2. `plugin.build_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on unknown skills.
+3. Mints a UUIDv7 `command_id`; builds `InvokeClaudeCodeCommand` with `invocation.exec` wrapped correctly.
+4. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
+5. `create_run(...)` — inserts `coding_agent_runs` row.
+Returns `command_id`. `org_id` is resolved from the workspace row, not a caller parameter.
 
 ### Value objects
 

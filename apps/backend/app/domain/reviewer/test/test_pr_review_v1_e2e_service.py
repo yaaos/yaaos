@@ -368,7 +368,13 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     AWAITING_AGENT; the test simulates each terminal AgentEvent via
     `_advance_pending_agent_event`. Local commands (`CheckShouldReview`,
     `PostFindings`) execute inline on the control plane. Workflow ends DONE
-    with no pending agent command."""
+    with no pending agent command.
+
+    Uses `register_stub_vcs` so `ProvisionWorkspace.dispatch` can call
+    `get_install_credentials` without a real GitHub App installation.
+    """
+    from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
+
     org_id = await _seed_org_with_anthropic_key(db_session)
     ticket_id, _ = await create_ticket(
         org_id=org_id,
@@ -400,41 +406,42 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         )
     )
 
-    wfx_id = await _registered_engine.start(
-        workflow_name="pr_review_v1",
-        ticket_id=str(ticket_id),
-        session=db_session,
-    )
-    await db_session.commit()
-
-    # Initial drain — CheckShouldReview (Local) executes inline; then
-    # ProvisionWorkspace (Workspace) dispatches and parks at AWAITING_AGENT.
-    await _drain_workflow_outbox(db_session)
-
-    # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
-    sim_workspace_id = str(
-        await _seed_workspace_for_tests(
-            org_id=org_id,
-            provider_id="in_process",
-            sha="deadbeefcafef00d",
-            agent_id=agent_row["id"],
-            caller_session=db_session,
+    with register_stub_vcs(plugin_id="github"):
+        wfx_id = await _registered_engine.start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(ticket_id),
+            session=db_session,
         )
-    )
-    await db_session.commit()
-    await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
+        await db_session.commit()
 
-    # CodeReview parks. Simulate empty output (no findings path — PostFindings treats no output as zero findings).
-    await _advance_pending_agent_event(
-        db_session,
-        wfx_id,
-        outputs={"output": ""},
-    )
+        # Initial drain — CheckShouldReview (Local) executes inline; then
+        # ProvisionWorkspace (Workspace) dispatches and parks at AWAITING_AGENT.
+        await _drain_workflow_outbox(db_session)
 
-    # PostFindings (Local) ran inline with empty stdout → success-no-op;
-    # CleanupWorkspace then parked. Simulate its terminal event.
-    await _advance_pending_agent_event(db_session, wfx_id, outputs={})
+        # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
+        agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+        sim_workspace_id = str(
+            await _seed_workspace_for_tests(
+                org_id=org_id,
+                provider_id="in_process",
+                sha="deadbeefcafef00d",
+                agent_id=agent_row["id"],
+                caller_session=db_session,
+            )
+        )
+        await db_session.commit()
+        await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
+
+        # CodeReview parks. Simulate empty output (no findings path — PostFindings treats no output as zero findings).
+        await _advance_pending_agent_event(
+            db_session,
+            wfx_id,
+            outputs={"output": ""},
+        )
+
+        # PostFindings (Local) ran inline with empty stdout → success-no-op;
+        # CleanupWorkspace then parked. Simulate its terminal event.
+        await _advance_pending_agent_event(db_session, wfx_id, outputs={})
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value

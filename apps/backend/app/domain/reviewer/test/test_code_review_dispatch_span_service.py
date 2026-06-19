@@ -113,7 +113,7 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.start_step.CodeReview"):
-                with pytest.raises(RuntimeError, match="build_invocation failed"):
+                with pytest.raises(RuntimeError, match="simulated build_invocation failure"):
                     await cmd.dispatch(inputs, ctx, session=db_session)
     finally:
         bind_coding_agent_registry(prior_registry)

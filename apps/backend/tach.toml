@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workflow", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.config"
@@ -99,7 +99,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.core.workspace"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.domain.integrations"
@@ -619,6 +619,7 @@ expose = [
   "CommentCreated",
   "Diff",
   "FileSummary",
+  "InstallCredentials",
   "PluginNotFoundError",
   "PullRequestClosed",
   "PullRequestReadyForReview",
@@ -638,12 +639,14 @@ expose = [
   "VCSRegistry",
   "VCSTransientError",
   "VCSValidationError",
+  "VcsInstallNotFound",
   "bind_vcs_registry",
   "clone_url",
   "current_vcs_registry",
   "detect_force_push",
   "fetch_diff",
   "fetch_pr",
+  "get_install_credentials",
   "get_installation_token",
   "get_plugin",
   "install_url",
@@ -743,6 +746,7 @@ expose = [
   "WorkflowContextProvider",
   "Workspace",
   "WorkspaceAgentReportSinkImpl",
+  "WorkspaceClaimFailed",
   "WorkspaceClaimState",
   "WorkspaceCommandState",
   "WorkspaceDestroyError",
@@ -762,6 +766,7 @@ expose = [
   "bind_workspace_registry",
   "close_workspace",
   "current_workspace_registry",
+  "dispatch_via_workspace",
   "get_provider",
   "get_workflow_context_provider",
   "get_workspace_claim_state",

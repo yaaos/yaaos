@@ -6,8 +6,18 @@ from contextvars import ContextVar
 from uuid import UUID
 
 from opentelemetry import trace
+from pydantic import SecretStr
 
-from app.core.vcs.types import Comment, Diff, PluginNotFoundError, VCSPlugin, VCSPullRequest
+from app.core.vcs.types import (
+    Comment,
+    Diff,
+    InstallCredentials,
+    PluginNotFoundError,
+    VCSAuthError,
+    VcsInstallNotFound,
+    VCSPlugin,
+    VCSPullRequest,
+)
 
 _tracer = trace.get_tracer(__name__)
 
@@ -217,3 +227,19 @@ def validate_settings(plugin_id: str, settings: dict[str, object]) -> dict[str, 
 def clone_url(plugin_id: str, repo_external_id: str) -> str:
     """Dispatch to `VCSPlugin.clone_url` (synchronous — no network IO)."""
     return get_plugin(plugin_id).clone_url(repo_external_id)
+
+
+async def get_install_credentials(plugin_id: str, org_id: UUID, repo_external_id: str) -> InstallCredentials:
+    """Return clone URL and installation token for a repo in one call.
+
+    Raises `VcsInstallNotFound` when no active installation exists for the org
+    (e.g. the VCS App was uninstalled or the org has no installation row).
+    Raises `PluginNotFoundError` when `plugin_id` is not registered.
+    """
+    plugin = get_plugin(plugin_id)
+    url = plugin.clone_url(repo_external_id)
+    try:
+        token_str = await plugin.get_installation_token(org_id)
+    except VCSAuthError as exc:
+        raise VcsInstallNotFound(str(exc)) from exc
+    return InstallCredentials(clone_url=url, installation_token=SecretStr(token_str))

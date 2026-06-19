@@ -33,7 +33,9 @@ Signatures in `app/core/vcs/types.py`:
 
 **Typed dispatch helpers** — callers always use the module-level helpers exported from `core/vcs` rather than calling `get_plugin(id).method(...)` directly. Each async helper opens a `vcs.{plugin_id}.{op}` OTel span around the underlying plugin call so every VCS network hop appears as a named child span in the trace. Exceptions propagate unchanged; `start_as_current_span` automatically records the exception and sets `StatusCode.ERROR` on the span. Synchronous helpers (`install_url`, `validate_settings`, `clone_url`) have no span — they do no network I/O.
 
-Exported helpers: `fetch_pr`, `fetch_diff`, `list_yaaos_comments`, `is_repo_accessible`, `detect_force_push`, `list_commit_messages`, `post_finding`, `post_comment`, `post_comment_reply`, `mark_comments_outdated`, `install_url`, `validate_settings`, `clone_url`, `get_installation_token`, `list_installation_repos`.
+Exported helpers: `fetch_pr`, `fetch_diff`, `list_yaaos_comments`, `is_repo_accessible`, `detect_force_push`, `list_commit_messages`, `post_finding`, `post_comment`, `post_comment_reply`, `mark_comments_outdated`, `install_url`, `validate_settings`, `clone_url`, `get_installation_token`, `list_installation_repos`, `get_install_credentials`.
+
+**`get_install_credentials(plugin_id, org_id, repo_external_id) -> InstallCredentials`** — convenience helper that combines `clone_url` + `get_installation_token` into a single call. Returns a frozen `InstallCredentials` model (`clone_url: str`, `installation_token: SecretStr`). Raises `VcsInstallNotFound` (subclass of `VCSError + LookupError`) when the token call raises `VCSAuthError` (e.g., app uninstalled or org has no install row). Called by `ProvisionWorkspace.dispatch` at workspace-dispatch time.
 
 ## Events
 
