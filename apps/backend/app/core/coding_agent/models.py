@@ -60,10 +60,10 @@ class CodingAgentRunRow(Base):
     effort: Mapped[str | None] = mapped_column(String, nullable=True)
     # running | success | failure — code-enforced, not a DB enum.
     status: Mapped[str] = mapped_column(String, nullable=False)
-    # Token usage — NULL today; finalize_run writes the columns when
-    # usage-parsing is added to the run-sink.
-    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Token usage — finalize_run always writes these; 0 when the run
+    # completed before usage was available (backfilled by migration).
+    tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     # Duration — set by finalize_run from (started_at → terminal event time).
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Exit code from the agent subprocess — set by finalize_run.

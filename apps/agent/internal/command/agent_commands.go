@@ -10,15 +10,19 @@ import (
 
 // AgentConfig carries the typed configuration the control plane delivers via
 // ConfigUpdateCommand. Fields grow only by addition — never a map[string]any
-// bag. OTLPToken is a Secret so it never leaks into logs or serialized structs.
-// Environment is the OTel `deployment.environment.name` resource attribute,
-// plain string, never logged with the token.
+// bag. OTLPToken and ByokSecrets values are Secrets so they never leak into
+// logs or serialized structs. Environment is the OTel
+// `deployment.environment.name` resource attribute, plain string.
 type AgentConfig struct {
 	MaxWorkspaces int
 	OTLPEndpoint  string
 	OTLPToken     secret.Secret
 	OTLPDataset   string
 	Environment   string
+	// ByokSecrets maps provider_id → credential for per-org API keys
+	// delivered by the control plane. The agent injects them as env vars
+	// when spawning Claude Code (e.g. "anthropic" → ANTHROPIC_API_KEY).
+	ByokSecrets map[string]secret.Secret
 }
 
 // ConfigUpdateCommand is the only AgentCommand today. It carries an AgentConfig

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 )
 
 // noopClone is a CloneFunc that succeeds without touching the network.
@@ -358,9 +359,12 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
 	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
 
+	// claude's --output-format=stream-json puts the diagnostic on stdout,
+	// not stderr — assert both halves ride in the error string so the
+	// supervisor's FailureReason carries actionable info.
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
-			"argv":  []string{"sh", "-c", "echo error-text >&2; exit 9"},
+			"argv":  []string{"sh", "-c", "echo on-stdout-line; echo error-text >&2; exit 9"},
 			"stdin": "",
 			"env":   map[string]string{},
 		},
@@ -372,11 +376,44 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
 	}
-	if !strings.Contains(err.Error(), "exit 9") {
-		t.Errorf("err: want 'exit 9' substring, got %q", err.Error())
+	for _, want := range []string{"exit 9", "error-text", "on-stdout-line", "stderr=", "stdout_tail="} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err: want %q substring, got %q", want, err.Error())
+		}
 	}
-	if !strings.Contains(err.Error(), "error-text") {
-		t.Errorf("err should include stderr excerpt, got %q", err.Error())
+}
+
+func TestRealHandler_RunClaude_NonZeroExit_StdoutTailTruncated(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	h := realHandlerWithNoopClone(t)
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+
+	// Produce >8 KiB of stdout ending in a known sentinel so we can assert
+	// the tail (with truncation marker) survives while the head is cut.
+	rawInv, _ := json.Marshal(map[string]any{
+		"exec": map[string]any{
+			"argv": []string{
+				"sh", "-c",
+				"head -c 8192 /dev/zero | tr '\\0' 'A'; echo; echo END-MARKER; exit 1",
+			},
+			"stdin": "",
+			"env":   map[string]string{},
+		},
+	})
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-trunc", WorkspaceID: "ws-1"},
+		Invocation:    rawInv,
+	})
+	if err == nil {
+		t.Fatal("want error on non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "[truncated head]") {
+		t.Errorf("err: want '[truncated head]' marker, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "END-MARKER") {
+		t.Errorf("err: want tail sentinel 'END-MARKER', got %q", err.Error())
 	}
 }
 
@@ -655,9 +692,10 @@ func (e *recordingEmitter) Progress(outputs map[string]any) bool {
 
 func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 	// Happy path: fake RunFunc returns multi-line stdout with ExitCode 0.
-	// Asserts: env layering (BYOK key reaches RunFunc), emitter forwarding
-	// (each line becomes a progress event), stdout accumulation (RunClaude
-	// replaces RunStreaming's empty Stdout with the accumulated bytes).
+	// Asserts: env layering (BYOK key reaches RunFunc via ByokSecrets getter,
+	// not via the invocation env), emitter forwarding (each line becomes a
+	// progress event), stdout accumulation (RunClaude replaces RunStreaming's
+	// empty Stdout with the accumulated bytes).
 	cannedOutput := []byte("line-one\nline-two\n")
 	var capturedOpts RunStreamingOptions
 	fake := fakeRunFunc(
@@ -665,7 +703,17 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		nil,
 		func(opts RunStreamingOptions) { capturedOpts = opts },
 	)
-	h := realHandlerWithFakeRun(t, fake)
+	// Wire the BYOK key via the ByokSecrets getter — the invocation env is
+	// intentionally empty (backend no longer ships ANTHROPIC_API_KEY there).
+	byokKey := secret.New("sk-test-byok")
+	h := NewRealHandler(RealHandlerConfig{
+		Root:      t.TempDir(),
+		CloneFunc: noopClone,
+		RunFunc:   fake,
+		ByokSecrets: func() map[string]secret.Secret {
+			return map[string]secret.Secret{"anthropic": byokKey}
+		},
+	})
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	_ = cr
 
@@ -677,14 +725,14 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		Invocation: rawInvocation(t,
 			[]string{"claude", "--print"},
 			"prompt text",
-			map[string]string{"ANTHROPIC_API_KEY": "sk-test-byok"},
+			map[string]string{}, // intentionally empty — BYOK comes from the getter
 		),
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
 	}
 
-	// env layering: BYOK key must be in the env RunFunc received.
+	// env layering: BYOK key must reach RunFunc via the ByokSecrets getter.
 	foundBYOK := false
 	for _, kv := range capturedOpts.Env {
 		if kv == "ANTHROPIC_API_KEY=sk-test-byok" {
@@ -692,7 +740,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		}
 	}
 	if !foundBYOK {
-		t.Errorf("BYOK key not found in RunFunc env: %v", capturedOpts.Env)
+		t.Errorf("BYOK key not found in RunFunc env (expected ANTHROPIC_API_KEY=sk-test-byok): %v", capturedOpts.Env)
 	}
 
 	// emitter forwarding: two lines → two progress events.

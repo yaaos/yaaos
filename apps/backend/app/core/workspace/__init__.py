@@ -12,7 +12,7 @@ from app.core.workspace.dispatch import (
     release_claim,
     try_claim,
 )
-from app.core.workspace.remote_provider import dispatch_invoke_claude_code, register_workspace_providers
+from app.core.workspace.remote_provider import register_workspace_providers
 from app.core.workspace.service import (
     WorkspaceRegistry,
     bind_workspace_registry,
@@ -92,7 +92,6 @@ __all__ = [
     "bind_workspace_registry",
     "close_workspace",
     "current_workspace_registry",
-    "dispatch_invoke_claude_code",
     "get_provider",
     "get_workflow_context_provider",
     "get_workspace_claim_state",

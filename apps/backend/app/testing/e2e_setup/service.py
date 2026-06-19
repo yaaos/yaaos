@@ -109,15 +109,12 @@ async def seed_github_install(
 
 
 async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: str) -> None:
-    """Write `skill_name` for a connected repo via the public repos service.
+    """Write `skill_name` for a connected repo via the direct service-layer call.
 
-    Requires the org to exist and have a Claude Code install (seeded by
-    ``seed_github_install`` first). Used by e2e specs that trigger reviews
-    so ``build_review_invocation`` can resolve a non-null skill name.
-
-    Deliberate side-effect: calls ``claude_code.repos.set_repo_skill`` —
-    the same path the PUT route exercises — so the seed is a smoke test of
-    the public write API.
+    Used by e2e specs that render the Code Connect settings page and expect a
+    non-null skill_name for the repo. The reviewer dispatch flow does NOT consume
+    this — it hardcodes skill='pr_review'. The seed exists for SPA read-back
+    assertions, not review correctness.
     """
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
     from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415

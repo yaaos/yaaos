@@ -60,8 +60,8 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
   // Pin the install + settings rows to acme so the webhook-created ticket
   // lives on the same org the authenticated user belongs to.
   await seedGithubInstall({ targetOrgSlug: "acme" });
-  // Seed skill_name for every scenario repo so build_review_invocation can
-  // resolve the skill handle. "code-review" matches the SKILL.md in these repos.
+  // Seed skill_name for every scenario repo for SPA read-back assertions on
+  // the Code Connect settings page. "code-review" matches the SKILL.md in these repos.
   for (const repo of ["acme/review-happy", "acme/review-nonconforming", "acme/review-agentfail"]) {
     await seedRepoSkill({ orgSlug: "acme", repoExternalId: repo, skillName: "code-review" });
   }

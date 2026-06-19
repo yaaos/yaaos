@@ -62,13 +62,6 @@ class ReviewRow(Base):
     # Write-only: nothing reads it for control flow. Replay-on-completion is separate,
     # unbuilt machinery — do not consult this column to drive behavior.
     pending_replay: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    # FK → coding_agent_runs(id); nullable — reviews from non-review workflows
-    # (and rows created before this column existed) have no run.
-    run_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("coding_agent_runs.id"),
-        nullable=True,
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

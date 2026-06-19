@@ -1,4 +1,4 @@
-"""Claude Code CLI wrapper. Implements `domain/coding_agent.CodingAgentPlugin`.
+"""Claude Code CLI wrapper. Implements `core/coding_agent.CodingAgentPlugin`.
 
 Vendor-only: this module talks to Anthropic's Claude Code CLI and nothing else.
 
@@ -11,36 +11,31 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 import httpx
 import structlog
-from pydantic import SecretStr, ValidationError
-from sqlalchemy import select
+from pydantic import SecretStr
 
 from app.core import byok as _byok
-from app.core.auth import org_id_var
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
     CodingAgentError,
-    ExecSpec,
-    HealthStatus,
-    Invocation,
-    ReportedFinding,
-    ReviewContext,
+    InvokeCodingAgent,
+    RunResult,
     Usage,
-    ValidationResult,
     register_plugin,
 )
 from app.core.coding_agent import (
-    FindingDraftList as _FindingDraftList,
+    Invocation as _NewInvocation,
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.plugins.claude_code.models import ClaudeCodeSettingsRow
+from app.plugins.claude_code.settings_schema import validate_settings as _validate_settings
 
 log = structlog.get_logger("claude_code")
 
@@ -165,27 +160,33 @@ def _log_stream_event(event: dict[str, Any]) -> None:
         )
 
 
-def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
-    """Convert one Claude Code stream event into a user-facing `ActivityEvent`.
+def _render_activity(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert one Claude Code stream event into a user-facing activity dict.
 
     Returns `None` for events with no useful render (e.g. unknown types, empty
     assistant turns). The `message` is pre-rendered for direct UI display; raw
     event data lands in `detail` for the expanded view.
+
+    The returned dict matches the shape expected by `ActivityEvent`:
+    `{seq, ts, kind, message, detail}`. `seq` is assigned monotonically by
+    `_render_activity_log` after filtering null renders. `ts` is a `datetime`
+    object — `_render_activity_log` constructs the typed `ActivityEvent`.
     """
     et = event.get("type")
     ts = _utcnow()
     if et == "system" and event.get("subtype") == "init":
         model = event.get("model") or "?"
-        return ActivityEvent(
-            ts=ts,
-            kind="session_start",
-            message=f"Session started · model {model}",
-            detail={"model": model, "session_id": event.get("session_id")},
-        )
+        return {
+            "seq": 0,
+            "ts": ts,
+            "kind": "session_start",
+            "message": f"Session started · model {model}",
+            "detail": {"model": model, "session_id": event.get("session_id")},
+        }
     if et == "assistant":
         msg = event.get("message", {}) or {}
         # An assistant turn may contain a mix of text + tool_use blocks. Render
-        # them in order — emit the first block we can, since one ActivityEvent
+        # them in order — emit the first block we can, since one activity event
         # per stream event keeps the feed cardinality 1:1 with stream lines.
         for block in msg.get("content", []) or []:
             btype = block.get("type")
@@ -194,43 +195,46 @@ def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
                 inp = block.get("input") if isinstance(block.get("input"), dict) else {}
                 if tool == "Task":
                     subagent = inp.get("subagent_type") or "subagent"
-                    return ActivityEvent(
-                        ts=ts,
-                        kind="subagent_dispatched",
-                        message=f"Dispatching {subagent}",
-                        detail={
+                    return {
+                        "seq": 0,
+                        "ts": ts,
+                        "kind": "subagent_dispatched",
+                        "message": f"Dispatching {subagent}",
+                        "detail": {
                             "subagent": subagent,
                             "tool_use_id": block.get("id"),
                             "description": inp.get("description"),
                         },
-                    )
+                    }
                 # Other tool calls — Read, Bash, Grep, Glob, etc.
                 target = _summarize_tool_input(tool, inp)
-                return ActivityEvent(
-                    ts=ts,
-                    kind="tool_call_started",
-                    message=f"{tool}: {target}" if target else tool,
-                    # Trust-boundary: ActivityEvents cross from the customer's
+                return {
+                    "seq": 0,
+                    "ts": ts,
+                    "kind": "tool_call_started",
+                    "message": f"{tool}: {target}" if target else tool,
+                    # Trust-boundary: activity events cross from the customer's
                     # workspace to yaaos' control plane. `inp` for Edit / Write
                     # tools carries the full source content the agent is about
                     # to commit; we MUST NOT leak it across the boundary. Only
                     # metadata fields (paths, command summaries) are kept.
-                    detail={
+                    "detail": {
                         "tool": tool,
                         "tool_use_id": block.get("id"),
                         "input_summary": _safe_tool_input(tool, inp),
                     },
-                )
+                }
             if btype == "text":
                 text = (block.get("text") or "").strip()
                 if text:
                     excerpt = text if len(text) < 200 else text[:197] + "…"
-                    return ActivityEvent(
-                        ts=ts,
-                        kind="assistant_message",
-                        message=excerpt,
-                        detail={},
-                    )
+                    return {
+                        "seq": 0,
+                        "ts": ts,
+                        "kind": "assistant_message",
+                        "message": excerpt,
+                        "detail": {},
+                    }
         return None
     if et == "user":
         msg = event.get("message", {}) or {}
@@ -253,27 +257,29 @@ def _render_activity(event: dict[str, Any]) -> ActivityEvent | None:
                 message = "→ error"
             else:
                 message = f"→ ok ({size_bytes} bytes)" if size_bytes else "→ ok (empty)"
-            return ActivityEvent(
-                ts=ts,
-                kind="tool_call_finished",
-                message=message,
-                detail={
+            return {
+                "seq": 0,
+                "ts": ts,
+                "kind": "tool_call_finished",
+                "message": message,
+                "detail": {
                     "tool_use_id": block.get("tool_use_id"),
                     "is_error": is_error,
                     "size_bytes": size_bytes,
                 },
-            )
+            }
         return None
     if et == "result":
-        return ActivityEvent(
-            ts=ts,
-            kind="result",
-            message="Review complete",
-            detail={
+        return {
+            "seq": 0,
+            "ts": ts,
+            "kind": "result",
+            "message": "Review complete",
+            "detail": {
                 "duration_ms": event.get("duration_ms"),
                 "num_turns": event.get("num_turns"),
             },
-        )
+        }
     return None
 
 
@@ -343,16 +349,54 @@ def _summarize_tool_input(tool: str, inp: dict[str, Any]) -> str:
     return ""
 
 
-# ── Verdict ───────────────────────────────────────────────────────────────────
+# ── Parse helpers (used by build_invocation + parse_result) ──────────────────
 
 
-def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "CHANGES_REQUESTED", "COMMENT"]:
-    """Severity tiers — only `blocker` requests changes."""
-    if not findings:
-        return "APPROVED"
-    if any(f.severity == "blocker" for f in findings):
-        return "CHANGES_REQUESTED"
-    return "COMMENT"
+def _parse_usage(stdout: str) -> Usage:
+    """Extract token usage from the terminal `type=result` event.
+
+    Reads the last `type=result` event and pulls `usage.input_tokens`
+    and `usage.output_tokens`. Missing fields surface as `None`. A
+    stream with no terminal `result` event returns an empty `Usage()` —
+    never raises.
+    """
+    events = _parse_stream_events(stdout)
+    result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    if result_event is None:
+        return Usage()
+    usage_blob = result_event.get("usage") or {}
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    if isinstance(usage_blob, dict):
+        raw_in = usage_blob.get("input_tokens")
+        raw_out = usage_blob.get("output_tokens")
+        if isinstance(raw_in, int):
+            tokens_in = raw_in
+        if isinstance(raw_out, int):
+            tokens_out = raw_out
+    return Usage(tokens_in=tokens_in, tokens_out=tokens_out)
+
+
+def _render_activity_log(stdout: str) -> ActivityLog:
+    """Pre-render the full activity stream from terminal stdout.
+
+    Walks every parseable stream-json event, drops null renders (events
+    with no useful UI representation), and assigns monotonic `seq`
+    starting from 0. Returns an empty `ActivityLog` for stdout with
+    no parseable events.
+    """
+    events = _parse_stream_events(stdout)
+    rendered: list[ActivityEvent] = []
+    seq = 0
+    for raw_event in events:
+        ev = _render_activity(raw_event)
+        if ev is None:
+            continue
+        # `_render_activity` returns a dict with `seq=0` (placeholder);
+        # stamp the monotonic index and construct the typed ActivityEvent here.
+        rendered.append(ActivityEvent(**{**ev, "seq": seq}))
+        seq += 1
+    return ActivityLog(events=rendered)
 
 
 # ── Plugin ────────────────────────────────────────────────────────────────────
@@ -361,219 +405,123 @@ def _compute_state_v2(findings: list[ReportedFinding]) -> Literal["APPROVED", "C
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
 
-    def install_url(self, org_id: UUID) -> str | None:
-        """No out-of-band install — Claude Code settings are pure form. The
-        bespoke settings page handles it."""
-        del org_id
-        return None
+    def byok_requirement(self) -> str | None:
+        """Claude Code requires an Anthropic API key delivered via BYOK."""
+        return "anthropic"
 
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        """Pydantic validation: `{mcp_proxy_ids}` shape.
-        See `settings_schema.validate_settings`. Accepts an empty dict."""
-        from app.plugins.claude_code.settings_schema import (  # noqa: PLC0415
-            validate_settings as _validate,
+    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+        """Translate a high-level `Invocation` into a concrete exec block.
+
+        Delegates argv/stdin/env composition to a synthetic ReviewContext
+        from `invocation.context` for the `pr_review` skill. Raises
+        `CodingAgentError` for unknown skills or when the context dict lacks
+        required keys.
+        """
+        if invocation.skill != "pr_review":
+            raise CodingAgentError(
+                f"ClaudeCodePlugin does not support skill {invocation.skill!r}; only 'pr_review' is supported"
+            )
+        from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
+
+        # Build a ReviewContext-compatible object from the generic context dict.
+        # The invocation.context for pr_review carries the same keys as
+        # ReviewContext (org_id, repo_external_id, pr_external_id, head_sha,
+        # base_sha, output_schema). We validate required keys here.
+        ctx_dict = invocation.context
+        required = {"head_sha", "base_sha", "pr_external_id", "repo_external_id", "org_id"}
+        missing = required - set(ctx_dict)
+        if missing:
+            raise CodingAgentError(
+                f"build_invocation: context missing required keys for pr_review: {sorted(missing)}"
+            )
+        review_ctx = _ReviewContext(
+            org_id=ctx_dict["org_id"],
+            repo_external_id=ctx_dict["repo_external_id"],
+            pr_external_id=ctx_dict["pr_external_id"],
+            head_sha=ctx_dict["head_sha"],
+            base_sha=ctx_dict["base_sha"],
+            output_schema=ctx_dict.get("output_schema", {}),
         )
 
-        return _validate(settings)
-
-    async def _load_settings_for_invocation(self, org_id: UUID) -> tuple[SecretStr | None, str | None]:
-        """Returns (api_key, cli_path). API key read from byok_keys; cli_path from claude_code_settings."""
-        async with db_session() as s:
-            plaintext = await _byok.get(org_id, "anthropic", session=s)
-            row = (
-                await s.execute(select(ClaudeCodeSettingsRow).where(ClaudeCodeSettingsRow.org_id == org_id))
-            ).scalar_one_or_none()
-        api_key = SecretStr(plaintext) if plaintext else None
-        return api_key, row.cli_path if row else None
-
-    # ── Remote-dispatch methods ───────────────────────────────────────────
-
-    async def build_review_invocation(
-        self,
-        ctx: ReviewContext,
-        *,
-        session: Any,
-    ) -> Invocation:
-        """Build the `Invocation` for a remote PR review.
-
-        Resolves the per-repo skill name from `claude_code_repos`, reads
-        the Anthropic key from `byok_keys`, assembles the prompt
-        (review instructions + output schema appendix), and returns the
-        complete exec spec. The Anthropic key goes in `exec.env` — the
-        accepted carve-out for wire-bound exec.
-
-        Raises `CodingAgentError` when the skill name is unconfigured or the
-        Anthropic key is absent — the review step fails cleanly before dispatch.
-        """
-        from app.plugins.claude_code.repos import resolve_skill  # noqa: PLC0415
-
-        skill_name = await resolve_skill(ctx.org_id, ctx.repo_external_id, session=session)
-        if not skill_name:
-            raise CodingAgentError(
-                f"skill_name not configured for repo {ctx.repo_external_id!r} — "
-                "set it in Coding Agents settings before dispatching a review"
-            )
-
-        api_key, cli_path_setting = await self._load_settings_for_invocation(ctx.org_id)
-        if not api_key:
-            raise CodingAgentError("ANTHROPIC_API_KEY not set — add it in Org Settings → Coding Agents")
-        cli_path = cli_path_setting or "claude"
-
-        # Assemble the review prompt + the canonical output-schema appendix.
-        # `ctx.output_schema` is the snapshot frozen at dispatch; we pass it
-        # directly so the prompt matches what the caller will validate against.
+        # Build the review prompt from the context.
         import json as _json  # noqa: PLC0415
 
-        schema_str = _json.dumps(ctx.output_schema, indent=2)
+        schema_str = _json.dumps(review_ctx.output_schema, indent=2)
         prompt = (
-            f"Review the pull request. Base SHA: {ctx.base_sha}. Head SHA: {ctx.head_sha}.\n"
-            f"Run `git diff {ctx.base_sha}..HEAD` to inspect changes.\n\n"
+            f"Review the pull request. Base SHA: {review_ctx.base_sha}. Head SHA: {review_ctx.head_sha}.\n"
+            f"Run `git diff {review_ctx.base_sha}..HEAD` to inspect changes.\n\n"
             "## Output Format (STRICT)\n\n"
             "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
             "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
             f"{schema_str}\n"
         )
 
-        argv = (
-            cli_path,
+        argv = [
+            "claude",
             "--print",
             "--output-format=stream-json",
             "--verbose",
             "--permission-mode=bypassPermissions",
             "--model",
-            _MODEL,
+            invocation.model,
             "--effort",
-            _EFFORT,
+            invocation.effort,
             "--allowed-tools="
             "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
             "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
             "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
-        )
-        env = {"ANTHROPIC_API_KEY": api_key.get_secret_value()}
-        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
-
-        return Invocation(
-            kind=skill_name,
-            exec=ExecSpec(argv=argv, stdin=prompt, env=env),
-            limits=InvokeClaudeCodeLimits(wallclock_seconds=_DEFAULT_TIMEOUT_SECONDS),
-        )
-
-    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
-        """Parse the agent's stream-json stdout into `ReportedFinding` objects.
-
-        Finds the terminal `type=result` event, extracts the `result` field,
-        and parses the JSON payload against `FindingDraftList`. Raises
-        `ValueError` on any parse failure so `PostFindings` can gate on it.
-        """
-        events = _parse_stream_events(stdout)
-        result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-        if result_event is None:
-            raise ValueError("no 'type=result' event found in stdout")
-        raw_result = result_event.get("result", "")
-        if not isinstance(raw_result, str):
-            raise ValueError(f"result field is not a string: {type(raw_result)}")
-        try:
-            parsed_dict = json.loads(raw_result)
-            parsed = _FindingDraftList.model_validate(parsed_dict)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise ValueError(f"agent output did not match FindingDraftList: {exc}") from exc
-        return [
-            ReportedFinding(
-                file=d.file,
-                line=d.line,
-                category=d.category,
-                severity=d.severity,
-                confidence=d.confidence,
-                rationale=d.rationale,
-                rule_violated=d.rule_violated,
-                rule_source=d.rule_source,
-                suggested_fix=d.suggested_fix,
-            )
-            for d in parsed.findings
         ]
 
-    async def review_preflight_steps(
-        self,
-        ctx: ReviewContext,
-        *,
-        session: Any,
-    ) -> tuple[str, ...]:
-        """Return WorkflowCommand kinds to insert before the review step.
+        return InvokeCodingAgent(
+            argv=argv,
+            env={},
+            stdin=prompt,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
 
-        Returns `()` — the per-repo skill name model has no preflight steps.
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate and normalize a raw settings dict via `ClaudeCodeSettings`.
+
+        Delegates to `settings_schema.validate_settings`, which parses through
+        `ClaudeCodeSettings(extra="forbid")`. Unknown keys raise `ValueError`.
+        Returns the normalized dict suitable for persisting to
+        `org_coding_agents.settings`.
         """
-        del ctx, session
-        return ()
+        return _validate_settings(dict(settings))
 
-    def parse_usage(self, stdout: str) -> Usage:
-        """Extract token usage + duration from the terminal `type=result` event.
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Decode a terminal AgentEvent payload into a `RunResult`.
 
-        Reads the last `type=result` event and pulls `usage.input_tokens`,
-        `usage.output_tokens`, and `duration_ms`. Missing fields surface
-        as `None`. A stream with no terminal `result` event returns an
-        empty `Usage()` — never raises so callers can finalize a run row
-        even when the agent crashed mid-stream.
+        Reads `terminal_event_payload["stdout"]` / `["exit_code"]`, delegates
+        to `_parse_usage` and `_render_activity_log` to populate `usage` and
+        `activity`. Reads `duration_ms` directly from the terminal `result`
+        stream event. Sets `error_message = None` (the sink derives status
+        from the wire `event_kind`, not from the payload). Never raises on
+        missing keys — missing stdout is treated as an empty string; missing
+        exit_code and duration_ms are None.
         """
+        stdout: str = terminal_event_payload.get("stdout", "") or ""
+        exit_code_raw = terminal_event_payload.get("exit_code")
+        exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
+        usage = _parse_usage(stdout)
+        activity = _render_activity_log(stdout)
+        # Read duration_ms directly from the terminal result event — it lives
+        # on the result event itself, not inside the usage sub-object.
         events = _parse_stream_events(stdout)
         result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-        if result_event is None:
-            return Usage()
-        usage_blob = result_event.get("usage") or {}
-        tokens_in: int | None = None
-        tokens_out: int | None = None
-        if isinstance(usage_blob, dict):
-            raw_in = usage_blob.get("input_tokens")
-            raw_out = usage_blob.get("output_tokens")
-            if isinstance(raw_in, int):
-                tokens_in = raw_in
-            if isinstance(raw_out, int):
-                tokens_out = raw_out
-        duration_raw = result_event.get("duration_ms")
-        duration_ms: int | None = duration_raw if isinstance(duration_raw, int) else None
-        return Usage(tokens_in=tokens_in, tokens_out=tokens_out, duration_ms=duration_ms)
-
-    def render_activity(self, stdout: str) -> ActivityLog:
-        """Pre-render the full activity stream from terminal stdout.
-
-        Walks every parseable stream-json event, drops null renders (events
-        with no useful UI representation), and assigns monotonic `seq`
-        starting from 0. Returns an empty `ActivityLog` for stdout with
-        no parseable events.
-        """
-        events = _parse_stream_events(stdout)
-        rendered: list[ActivityEvent] = []
-        seq = 0
-        for raw_event in events:
-            ev = _render_activity(raw_event)
-            if ev is None:
-                continue
-            # `_render_activity` returns a new ActivityEvent with `seq=0`
-            # (the default); stamp the monotonic index here.
-            rendered.append(ev.model_copy(update={"seq": seq}))
-            seq += 1
-        return ActivityLog(events=tuple(rendered))
-
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        errors: list[str] = []
-        if "timeout_seconds" in agent_config:
-            v = agent_config["timeout_seconds"]
-            if not isinstance(v, int) or v <= 0:
-                errors.append("timeout_seconds must be a positive int")
-        unknown = set(agent_config) - {"timeout_seconds"}
-        errors.extend(f"unknown config key: {k}" for k in unknown)
-        return ValidationResult(valid=not errors, errors=errors)
-
-    async def health_check(self) -> HealthStatus:
-        org_id = org_id_var.get()
-        if org_id is None:
-            return HealthStatus(healthy=False, message="no org context", checked_at=_utcnow())
-        api_key, _ = await self._load_settings_for_invocation(org_id)
-        if not api_key:
-            return HealthStatus(healthy=False, message="anthropic api key not set", checked_at=_utcnow())
-        # Cached probe — verifies the key actually authenticates against Anthropic.
-        # Cache TTL keeps the cost low (~1 request per 5min per running process).
-        ok, message = await _probe_anthropic_auth(api_key)
-        return HealthStatus(healthy=ok, message=message, checked_at=_utcnow())
+        duration_ms: int | None = None
+        if result_event is not None:
+            duration_raw = result_event.get("duration_ms")
+            if isinstance(duration_raw, int):
+                duration_ms = duration_raw
+        return RunResult(
+            output=stdout,
+            error_message=None,
+            usage=usage,
+            duration_ms=duration_ms,
+            exit_code=exit_code,
+            activity=activity,
+        )
 
 
 _plugin = ClaudeCodePlugin()
@@ -600,8 +548,8 @@ async def _probe_anthropic_auth(api_key: SecretStr) -> tuple[bool, str]:
     In stub mode (`YAAOS_CODING_AGENT_STUB`), the e2e test stack has no
     outbound connectivity to `api.anthropic.com` — and shouldn't need it,
     since the stub agent never calls Anthropic anyway. Treat any non-empty
-    key as authenticating cleanly so onboarding and `/api/claude_code/health`
-    behave consistently with the rest of the stubbed pipeline.
+    key as authenticating cleanly so onboarding behaves consistently with
+    the rest of the stubbed pipeline.
     """
     if get_settings().yaaos_coding_agent_stub:
         return (True, "ok (stub)")

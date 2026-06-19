@@ -16,9 +16,11 @@
 //                            mid-flight.
 //   - RunClaude            — read `invocation.exec` from the wire
 //                            ({argv, stdin, env}), merge env
-//                            on top of `os.Environ()`, add TRACEPARENT
-//                            for span linkage, dispatch via the
-//                            configured `RunFunc` (production default:
+//                            on top of `os.Environ()`, inject BYOK
+//                            secrets from the last ConfigUpdate (e.g.
+//                            ANTHROPIC_API_KEY), add TRACEPARENT for
+//                            span linkage, dispatch via the configured
+//                            `RunFunc` (production default:
 //                            `RunStreaming`) with the workspace tempdir
 //                            as cwd. Captured stdout is returned in the
 //                            typed InvokeResult. Zero biz logic — the
@@ -57,6 +59,51 @@ import (
 // at package init since redaction runs on every git failure path.
 var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 
+// byokProviderEnvVars maps provider_id → environment variable name. When the
+// control plane delivers a BYOK secret for a known provider, RunClaude injects
+// it into the subprocess env under this variable. Unknown providers are ignored.
+//
+// Adding a new provider here requires no other change in the agent.
+var byokProviderEnvVars = map[string]string{
+	"anthropic": "ANTHROPIC_API_KEY",
+}
+
+// Excerpt caps for the `claude exit N` failure string. Stderr stays small;
+// stdout gets a larger tail because claude with `--output-format=stream-json`
+// emits its `{"type":"result","is_error":true,…}` event at the end of stdout,
+// not stderr.
+const (
+	claudeErrStderrCap     = 2048
+	claudeErrStdoutTailCap = 4096
+)
+
+// excerptHead returns the first `limit` bytes of `b`, suffixed with a
+// truncation marker when bytes were cut. Returns "<empty>" for an empty input
+// so the reader can distinguish "captured nothing" from "field missing".
+func excerptHead(b []byte, limit int) string {
+	if len(b) == 0 {
+		return "<empty>"
+	}
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "...[truncated tail]"
+}
+
+// excerptTail returns the last `limit` bytes of `b`, prefixed with a
+// truncation marker when bytes were cut. Used for stdout where the meaningful
+// diagnostic (claude's `result` stream-json event) lands at the end. Returns
+// "<empty>" for an empty input.
+func excerptTail(b []byte, limit int) string {
+	if len(b) == 0 {
+		return "<empty>"
+	}
+	if len(b) <= limit {
+		return string(b)
+	}
+	return "...[truncated head]" + string(b[len(b)-limit:])
+}
+
 // RealHandlerConfig customizes the production handler's behaviour. Zero
 // values pick safe defaults.
 type RealHandlerConfig struct {
@@ -86,6 +133,13 @@ type RealHandlerConfig struct {
 	// `RunStreaming`; production default is a real child process. Tests
 	// inject a fake so they don't spawn a real Claude binary.
 	RunFunc RunFunc
+
+	// ByokSecrets returns the current per-org BYOK secret map
+	// (provider_id → secret.Secret) as last delivered by the control
+	// plane via ConfigUpdateCommand. Nil return means no keys available.
+	// Production wires this to a closure over the supervisor's atomic
+	// config pointer. Tests inject a fixed map.
+	ByokSecrets func() map[string]secret.Secret
 }
 
 // CloneFunc clones `repo` into `dest`. `auth` carries the credential
@@ -304,13 +358,26 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// Env layering, low-to-high priority:
 	//   1. Parent process env (PATH, HOME, …) so claude can find its
 	//      binary + write to $HOME/.claude state.
-	//   2. exec.env from the wire (ANTHROPIC_API_KEY, etc.). Backend-
-	//      supplied secrets win over anything the parent inherited.
-	//   3. TRACEPARENT from the current ctx so the spawned subprocess
+	//   2. BYOK secrets from the last ConfigUpdate (e.g. ANTHROPIC_API_KEY
+	//      from byok_secrets["anthropic"]). These override anything inherited
+	//      from the parent — the control-plane key is authoritative.
+	//   3. exec.env from the wire. Reserved for non-secret overrides; in
+	//      practice the backend sends an empty map now that ANTHROPIC_API_KEY
+	//      is delivered via ConfigUpdate.
+	//   4. TRACEPARENT from the current ctx so the spawned subprocess
 	//      can link its spans into the supervisor's trace (the
 	//      supervisor → workspace hop links the same way; this hop
 	//      extends it one more step to the Claude Code grand-child).
 	env := os.Environ()
+	if h.cfg.ByokSecrets != nil {
+		if byok := h.cfg.ByokSecrets(); byok != nil {
+			for providerID, envVar := range byokProviderEnvVars {
+				if sec, ok := byok[providerID]; ok && !sec.IsZero() {
+					env = append(env, envVar+"="+sec.Value())
+				}
+			}
+		}
+	}
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
@@ -360,17 +427,21 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	}
 	if err != nil {
 		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
-		// res still populated; we surface stderr + exit code via the
-		// returned error so the supervisor's failure event carries
-		// actionable info. Context cancel / timeout → ctx.Err which the
-		// supervisor's pool already maps to a "timeout:" reason.
+		// res still populated; surface exit code + stderr + the tail of
+		// stdout so the supervisor's failure event carries actionable
+		// info. claude with `--output-format=stream-json` emits its
+		// `is_error:true` result event on stdout, so stderr alone is
+		// usually empty/uninformative. Context cancel / timeout →
+		// ctx.Err which the supervisor's pool already maps to a
+		// "timeout:" reason.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && res != nil {
-			stderrExcerpt := string(res.Stderr)
-			if len(stderrExcerpt) > 2048 {
-				stderrExcerpt = stderrExcerpt[:2048] + "...[truncated]"
-			}
-			return command.InvokeResult{}, fmt.Errorf("claude exit %d: %s", res.ExitCode, stderrExcerpt)
+			return command.InvokeResult{}, fmt.Errorf(
+				"claude exit %d: stderr=%s stdout_tail=%s",
+				res.ExitCode,
+				excerptHead(res.Stderr, claudeErrStderrCap),
+				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+			)
 		}
 		return command.InvokeResult{}, fmt.Errorf("claude subprocess: %w", err)
 	}

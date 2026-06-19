@@ -1,18 +1,20 @@
 """Wrapper plugin that fakes any `CodingAgentPlugin` for offline tests.
 
 The bootstrap (when `YAAOS_CODING_AGENT_STUB` is set) walks the
-`domain/coding_agent` registry and replaces each registered plugin with a
+`core/coding_agent` registry and replaces each registered plugin with a
 `StubCodingAgentPlugin` wrapping it. From every consumer's perspective, nothing
-changes — `coding_agent.review(...)` returns the same `ReviewResult` shape; it
-just never touches a real CLI or vendor API.
+changes — `dispatch_invocation` builds the exec block via `plugin.build_invocation`
+and calls `plugin.parse_result` on terminal events; it just never touches a real
+CLI or vendor API.
 
-The stub returns canned success results. It has zero knowledge of prompt
-content — that's the real plugin's responsibility. `validate_config` passes
-through; `health_check` reports stub mode.
+The stub returns canned success results for the two Protocol methods:
+`build_invocation` and `parse_result`. It has zero knowledge of prompt content —
+that's the real plugin's responsibility.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,244 +23,97 @@ import structlog
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
-    AnswerQuestionContext,
-    AnswerQuestionResult,
-    HealthStatus,
-    IncrementalReviewContext,
-    IncrementalReviewResult,
-    InvocationStatus,
-    InvocationTelemetry,
-    OnActivity,
-    ReportedFinding,
-    ReviewContext,
-    ReviewResult,
-    StaleCheckContext,
-    StaleCheckResult,
+    Invocation,
+    InvokeCodingAgent,
+    RunResult,
     Usage,
-    ValidationResult,
-    VerifyFixContext,
-    VerifyFixResult,
 )
-from app.core.workspace import Workspace
 
 log = structlog.get_logger("testing.stub_coding_agent")
 
 
-_STUB_TELEMETRY = InvocationTelemetry(
-    tokens_in=1000,
-    tokens_out=200,
-    latency_ms=10,
-    raw_output="",
-    raw_stderr="",
-    model="opus",
-)
-
-
-def _canned_activity() -> list[ActivityEvent]:
-    """Default sequence emitted by the stub — enough events to exercise the
-    persisted activity log + SSE path without inventing realistic content."""
+def _canned_activity_log() -> ActivityLog:
+    """Default activity log for the stub's `parse_result` path."""
     now = datetime.now(UTC)
-    return [
-        ActivityEvent(
-            ts=now,
-            kind="session_start",
-            message="Session started · model opus",
-            detail={"model": "opus", "session_id": "stub-session"},
-        ),
-        ActivityEvent(
-            ts=now,
-            kind="subagent_dispatched",
-            message="Dispatching yaaos-architecture",
-            detail={"subagent": "yaaos-architecture"},
-        ),
-        ActivityEvent(
-            ts=now,
-            kind="tool_call_started",
-            message="Read src/example.ts",
-            detail={"tool": "Read", "input": {"file_path": "src/example.ts"}},
-        ),
-        ActivityEvent(
-            ts=now,
-            kind="result",
-            message="Review complete",
-            detail={"num_turns": 1},
-        ),
-    ]
+    return ActivityLog(
+        events=[
+            ActivityEvent(
+                seq=0,
+                ts=now,
+                kind="session_start",
+                message="Session started · model opus",
+                detail={"model": "opus", "session_id": "stub-session"},
+            ),
+            ActivityEvent(
+                seq=1,
+                ts=now,
+                kind="subagent_dispatched",
+                message="Dispatching yaaos-architecture",
+                detail={"subagent": "yaaos-architecture"},
+            ),
+            ActivityEvent(
+                seq=2,
+                ts=now,
+                kind="tool_call_started",
+                message="Read src/example.ts",
+                detail={"tool": "Read", "input_summary": {"file_path": "src/example.ts"}},
+            ),
+            ActivityEvent(
+                seq=3,
+                ts=now,
+                kind="result",
+                message="Review complete",
+                detail={"num_turns": 1},
+            ),
+        ]
+    )
+
+
+_STUB_TOKENS_IN = 1000
+_STUB_TOKENS_OUT = 200
+_STUB_LATENCY_MS = 10
 
 
 class StubCodingAgentPlugin:
-    """Wraps a real `CodingAgentPlugin`; intercepts `review`."""
+    """Wraps a real `CodingAgentPlugin`; intercepts `build_invocation` and `parse_result`."""
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self.plugin_id = wrapped.plugin_id
 
-    async def review(
-        self,
-        workspace: Workspace,
-        context: ReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> ReviewResult:
-        del workspace
-        # Emit a canned event sequence so consumers exercise the activity-log
-        # path (persistence + SSE) the same way the real CLI would.
-        if on_activity is not None:
-            for event in _canned_activity():
-                try:
-                    await on_activity(event)
-                except Exception:
-                    log.exception("stub_coding_agent.on_activity_failed")
-        # Emit one synthetic ReportedFinding so e2e flows
-        # that depend on findings have something to act against.
-        finding = ReportedFinding(
-            file="src/example.ts",
-            line=1,
-            category="correctness",
-            severity="nit",
-            confidence="speculative",
-            rationale="Stub plugin: emitted for e2e coverage.",
-            rule_violated="stub/sample-suggestion",
-            rule_source="stub",
-            suggested_fix="No action needed — this is a stub finding.",
-        )
-        return ReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=[finding],
-            state="COMMENT",
-            summary_body="[stub] yaaos review",
-            telemetry=_STUB_TELEMETRY,
+    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+        """Return a minimal stub exec block — argv=["stub"], empty env."""
+        return InvokeCodingAgent(
+            argv=["stub"],
+            env={},
+            stdin=None,
+            wallclock_seconds=invocation.wallclock_seconds,
         )
 
-    async def incremental_review(
-        self,
-        workspace: Workspace,
-        context: IncrementalReviewContext,
-        on_activity: OnActivity | None = None,
-    ) -> IncrementalReviewResult:
-        del workspace, context, on_activity
-        return IncrementalReviewResult(
-            status=InvocationStatus.SUCCESS,
-            findings=[
-                ReportedFinding(
-                    file="src/example.ts",
-                    line=1,
-                    category="correctness",
-                    severity="nit",
-                    confidence="speculative",
-                    rationale="Stub plugin: emitted for e2e coverage.",
-                    rule_violated="stub/incremental",
-                    rule_source="stub",
-                    suggested_fix="No action needed — this is a stub finding.",
-                )
-            ],
-            telemetry=_STUB_TELEMETRY,
+    def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Stub implementation — always succeeds, returns settings unchanged."""
+        return dict(settings)
+
+    def byok_requirement(self) -> str | None:
+        """Stub — always stateless; no BYOK key needed."""
+        return None
+
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        """Return a minimal stub `RunResult` from the payload."""
+        stdout: str = terminal_event_payload.get("stdout", "") or ""
+        exit_code_raw = terminal_event_payload.get("exit_code")
+        exit_code: int | None = exit_code_raw if isinstance(exit_code_raw, int) else None
+        return RunResult(
+            output=stdout,
+            error_message=None,
+            usage=Usage(
+                tokens_in=_STUB_TOKENS_IN,
+                tokens_out=_STUB_TOKENS_OUT,
+            ),
+            duration_ms=_STUB_LATENCY_MS,
+            exit_code=exit_code,
+            activity=_canned_activity_log(),
         )
-
-    async def verify_fix(
-        self,
-        workspace: Workspace,
-        context: VerifyFixContext,
-        on_activity: OnActivity | None = None,
-    ) -> VerifyFixResult:
-        del workspace, context, on_activity
-        return VerifyFixResult(
-            status=InvocationStatus.SUCCESS,
-            still_present=False,
-            confidence=0.95,
-            reasoning="Stub plugin: always reports the issue as fixed.",
-            telemetry=_STUB_TELEMETRY,
-        )
-
-    async def stale_check(
-        self,
-        workspace: Workspace,
-        context: StaleCheckContext,
-        on_activity: OnActivity | None = None,
-    ) -> StaleCheckResult:
-        del workspace, context, on_activity
-        return StaleCheckResult(
-            status=InvocationStatus.SUCCESS,
-            still_applies=True,
-            confidence=0.95,
-            reasoning="Stub plugin: always reports the finding as still applying.",
-            telemetry=_STUB_TELEMETRY,
-        )
-
-    async def answer_question(
-        self,
-        workspace: Workspace,
-        context: AnswerQuestionContext,
-        on_activity: OnActivity | None = None,
-    ) -> AnswerQuestionResult:
-        del workspace, on_activity
-        # Echo the question into a deterministic canned answer so e2e flows
-        # exercising the question intent can assert on the body shape.
-        return AnswerQuestionResult(
-            status=InvocationStatus.SUCCESS,
-            answer=f"[stub] answering: {context.question[:120]}",
-            telemetry=_STUB_TELEMETRY,
-        )
-
-    async def build_review_invocation(self, ctx: ReviewContext, *, session: Any) -> Any:
-        """Returns a minimal stub `Invocation` so service tests that exercise
-        `CodeReview.dispatch` don't need a real API key or DB settings row.
-        """
-        from app.core.agent_gateway import InvokeClaudeCodeLimits  # noqa: PLC0415
-        from app.core.coding_agent import ExecSpec, Invocation  # noqa: PLC0415
-
-        del ctx, session
-        return Invocation(
-            kind="code-review",
-            exec=ExecSpec(argv=("claude", "--print"), stdin="stub prompt", env={}),
-            limits=InvokeClaudeCodeLimits(wallclock_seconds=60),
-        )
-
-    def parse_review_output(self, stdout: str) -> list[ReportedFinding]:
-        """Parse the stream-json stdout — delegates to the real plugin if available,
-        otherwise returns an empty list so tests that don't care about findings pass.
-        """
-        if hasattr(self._wrapped, "parse_review_output"):
-            return self._wrapped.parse_review_output(stdout)
-        return []
-
-    def parse_usage(self, stdout: str) -> Usage:
-        """Delegate to the wrapped plugin's `parse_usage` when present; otherwise
-        return a stub `Usage` matching `_STUB_TELEMETRY` so finalize_run still
-        writes deterministic token counts in offline tests.
-        """
-        if hasattr(self._wrapped, "parse_usage"):
-            return self._wrapped.parse_usage(stdout)
-        return Usage(
-            tokens_in=_STUB_TELEMETRY.tokens_in,
-            tokens_out=_STUB_TELEMETRY.tokens_out,
-            duration_ms=_STUB_TELEMETRY.latency_ms,
-        )
-
-    def render_activity(self, stdout: str) -> ActivityLog:
-        """Delegate to the wrapped plugin's `render_activity` when present;
-        otherwise emit the canned-activity sequence with monotonic `seq` so
-        finalize_run persists a non-empty blob in offline tests.
-        """
-        if hasattr(self._wrapped, "render_activity"):
-            return self._wrapped.render_activity(stdout)
-        events = tuple(ev.model_copy(update={"seq": i}) for i, ev in enumerate(_canned_activity()))
-        return ActivityLog(events=events)
-
-    async def review_preflight_steps(self, ctx: ReviewContext, *, session: Any) -> tuple[str, ...]:
-        del ctx, session
-        return ()
-
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        return await self._wrapped.validate_config(agent_config)
-
-    async def health_check(self) -> HealthStatus:
-        return HealthStatus(healthy=True, message="stub mode", checked_at=datetime.now(UTC))
-
-    def install_url(self, org_id: Any) -> str | None:
-        return self._wrapped.install_url(org_id)
-
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        return self._wrapped.validate_settings(settings)
 
 
 def wrap_all_registered_plugins() -> int:

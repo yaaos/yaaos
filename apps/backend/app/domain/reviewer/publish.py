@@ -17,9 +17,8 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.coding_agent import ReportedFinding
 from app.domain.reviewer.models import FindingRow, ReviewRow
-from app.domain.reviewer.types import Confidence, Finding, Review, ReviewScope, Severity
+from app.domain.reviewer.types import Confidence, Finding, ReportedFinding, Review, ReviewScope, Severity
 
 log = structlog.get_logger("reviewer.publish")
 
@@ -88,7 +87,6 @@ async def publish_findings(
     pr_external_id: str,
     vcs_plugin_id: str,
     findings: list[ReportedFinding],
-    run_id: uuid.UUID | None = None,
     session: AsyncSession,
 ) -> tuple[Review, list[Finding]]:
     """Convert + persist `ReportedFinding`s and post them to the VCS plugin.
@@ -101,6 +99,8 @@ async def publish_findings(
     Caller holds the per-PR advisory lock (`acquire_pr_lock`). Caller commits.
 
     Returns `(Review, list[Finding])` — the review and the admitted findings.
+    The link between a review and its coding-agent activity is implicit through
+    the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
     """
     from app.domain.reviewer.lock import acquire_pr_lock  # noqa: PLC0415
 
@@ -120,7 +120,6 @@ async def publish_findings(
         status="running",
         trigger_reason="pr_ready",
         scope_kind="full",
-        run_id=run_id,
     )
     session.add(review_row)
     await session.flush()

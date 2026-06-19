@@ -52,11 +52,16 @@ from app.domain.reviewer.trigger import (
 from app.domain.reviewer.types import (
     Confidence,
     Finding,
+    FindingDraftList,
+    ReportedFinding,
     Review,
+    ReviewContext,
     ReviewScope,
     ReviewScopeKind,
     ReviewTrigger,
     Severity,
+    finding_output_schema,
+    parse_review_output,
 )
 from app.domain.tickets import get_workspace_ticket_context as _get_workspace_ticket_context
 
@@ -65,11 +70,14 @@ __all__ = [
     "Debounce",
     "DomainEvent",
     "Finding",
+    "FindingDraftList",
     "FindingRaised",
     "FindingView",
     "PRReviewAggregate",
+    "ReportedFinding",
     "Review",
     "ReviewCompleted",
+    "ReviewContext",
     "ReviewFailed",
     "ReviewJob",
     "ReviewJobInput",
@@ -91,21 +99,20 @@ __all__ = [
     "category_prefix",
     "decide_trigger",
     "dispatch_events",
-    "find_pr_id_by_external_comment_id",
     "finding_handle",
+    "finding_output_schema",
     "get_review",
-    "handle_developer_reply",
     "humanize_skip",
     "is_off_topic_message",
     "is_yaaos_command",
     "list_findings_for_pr",
     "list_reviews_for_pr",
+    "parse_review_output",
     "prefix_broken_creds_warning",
     "publish_findings",
     "refresh_ticket_findings_summary",
     "register_reviewer_start_hooks",
     "register_reviewer_terminal_hooks",
-    "start_incremental_review",
     "start_pr_review",
 ]
 
@@ -160,28 +167,6 @@ async def start_pr_review(
         )
         await s.commit()
     return wfx_id
-
-
-async def find_pr_id_by_external_comment_id(external_comment_id: str) -> object:
-    """No-op stub. Thread-based comment routing is not wired."""
-    del external_comment_id
-    return None
-
-
-async def handle_developer_reply(**kwargs: object) -> None:
-    """No-op stub. Developer-reply routing is not wired."""
-    del kwargs
-
-
-async def start_incremental_review(
-    pr_id: object,
-    *,
-    new_head_sha: str,
-    prev_head_sha: str | None,
-    org_id: object,
-) -> None:
-    """No-op stub. Incremental review is not wired."""
-    del pr_id, new_head_sha, prev_head_sha, org_id
 
 
 def _register_workflows() -> None:

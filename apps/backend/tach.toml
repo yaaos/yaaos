@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.database", "app.core.tasks", "app.core.vcs", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workflow"]
 
 [[modules]]
 path = "app.core.config"
@@ -119,7 +119,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -127,7 +127,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "a
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.agent_gateway", "app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -155,7 +155,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.coding_agent", "app.core.workspace"]
+depends_on = ["app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -167,7 +167,7 @@ depends_on = []
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.coding_agent", "app.core.workspace"]
+depends_on = ["app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -183,6 +183,7 @@ expose = [
   "AgentCommandKind",
   "AgentConfig",
   "AgentEvent",
+  "AgentEventEnrichment",
   "AgentEventKind",
   "AgentMetadata",
   "AgentRef",
@@ -198,6 +199,7 @@ expose = [
   "IdentityExchangeRequest",
   "IdentityExchangeResponse",
   "InvokeClaudeCodeCommand",
+  "InvokeClaudeCodeFields",
   "InvokeClaudeCodeLimits",
   "OrgArnRef",
   "ProvisionWorkspaceCommand",
@@ -217,13 +219,17 @@ expose = [
   "acknowledge_command_received",
   "bind_subscriber_registry",
   "claim_next",
+  "clear_byok_secrets_provider",
   "clear_run_sink",
   "compute_agent_liveness_transitions",
   "connection_status_for_org",
   "delete_identity_exchange_rate_limits",
   "enqueue_command",
+  "enqueue_command_payload",
+  "enqueue_config_update_for_all_org_agents",
   "ensure_agent_row",
   "get_agent_info",
+  "get_byok_secrets_provider",
   "get_command_org_and_payload",
   "get_command_workflow_execution_id",
   "get_report_sink",
@@ -237,6 +243,7 @@ expose = [
   "record_agent_event",
   "record_heartbeat",
   "record_workspace_event",
+  "register_byok_secrets_provider",
   "register_org_arn_lookup",
   "register_report_sink",
   "register_run_sink",
@@ -330,6 +337,7 @@ expose = [
   "get_validator",
   "known_providers",
   "list_keys_for_org",
+  "register_on_change",
   "register_validator",
   "set",
   "validate",
@@ -338,67 +346,27 @@ from = ["app.core.byok"]
 
 [[interfaces]]
 expose = [
+  "ACTIVITY_EVENT_KINDS",
   "ActivityEvent",
   "ActivityLog",
-  "AnswerQuestionContext",
-  "AnswerQuestionDto",
-  "AnswerQuestionResult",
-  "CodingAgentCacheMiss",
   "CodingAgentError",
   "CodingAgentPlugin",
   "CodingAgentRegistry",
-  "CodingAgentRunSinkImpl",
-  "ExecSpec",
-  "FindingAnchor",
-  "FindingDraftList",
-  "HealthStatus",
-  "IncrementalReviewContext",
-  "IncrementalReviewResult",
+  "Effort",
   "Invocation",
-  "InvocationMode",
-  "InvocationStatus",
-  "InvocationTelemetry",
-  "OnActivity",
+  "InvokeCodingAgent",
   "PluginNotFoundError",
-  "PriorThreadMessage",
-  "ReportedFinding",
-  "ReviewContext",
-  "ReviewResult",
-  "Severity",
-  "StaleCheckContext",
-  "StaleCheckDto",
-  "StaleCheckResult",
+  "RunResult",
+  "RunStatus",
   "Usage",
-  "ValidationResult",
-  "VerifyFixContext",
-  "VerifyFixDto",
-  "VerifyFixResult",
-  "answer_question",
-  "assemble_answer_question_prompt",
-  "assemble_incremental_review_prompt",
-  "assemble_stale_check_prompt",
-  "assemble_verify_fix_prompt",
   "bind_coding_agent_registry",
-  "build_invocation",
+  "build_byok_secrets_for_org",
   "create_run",
   "current_coding_agent_registry",
-  "finalize_run",
-  "finding_output_schema",
+  "dispatch_invocation",
   "get_plugin",
-  "get_run_id_for_command",
-  "get_run_id_for_workflow_step",
   "get_step_activity",
-  "health_check_all",
-  "incremental_review",
-  "list_registered_plugins",
-  "register_coding_agent_plugin",
   "register_plugin",
-  "registered_plugin_ids",
-  "review",
-  "schema_appendix",
-  "stale_check",
-  "validate_config",
-  "verify_fix",
 ]
 from = ["app.core.coding_agent"]
 
@@ -794,7 +762,6 @@ expose = [
   "bind_workspace_registry",
   "close_workspace",
   "current_workspace_registry",
-  "dispatch_invoke_claude_code",
   "get_provider",
   "get_workflow_context_provider",
   "get_workspace_claim_state",
@@ -933,11 +900,14 @@ expose = [
   "Debounce",
   "DomainEvent",
   "Finding",
+  "FindingDraftList",
   "FindingRaised",
   "FindingView",
   "PRReviewAggregate",
+  "ReportedFinding",
   "Review",
   "ReviewCompleted",
+  "ReviewContext",
   "ReviewFailed",
   "ReviewJob",
   "ReviewJobInput",
@@ -959,21 +929,20 @@ expose = [
   "category_prefix",
   "decide_trigger",
   "dispatch_events",
-  "find_pr_id_by_external_comment_id",
   "finding_handle",
+  "finding_output_schema",
   "get_review",
-  "handle_developer_reply",
   "humanize_skip",
   "is_off_topic_message",
   "is_yaaos_command",
   "list_findings_for_pr",
   "list_reviews_for_pr",
+  "parse_review_output",
   "prefix_broken_creds_warning",
   "publish_findings",
   "refresh_ticket_findings_summary",
   "register_reviewer_start_hooks",
   "register_reviewer_terminal_hooks",
-  "start_incremental_review",
   "start_pr_review",
 ]
 from = ["app.domain.reviewer"]
@@ -1015,14 +984,7 @@ expose = [
 from = ["app.domain.tickets"]
 
 [[interfaces]]
-expose = [
-  "ClaudeCodePlugin",
-  "bootstrap",
-  "get_plugin",
-  "list_repos_with_skill",
-  "resolve_skill",
-  "set_repo_skill",
-]
+expose = ["ClaudeCodePlugin", "bootstrap", "set_repo_skill"]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]

@@ -32,8 +32,9 @@ class ClaudeCodeRepoRow(Base):
     """Per-(org, repo) identity row for the claude_code plugin.
 
     Tracks the mapping between an org and a repository. `skill_name` is the
-    customer-authored SKILL.md handle used by the review invocation — null
-    means unconfigured, and `build_review_invocation` will raise before dispatch.
+    customer-authored SKILL.md handle stored for the Code Connect settings UI's
+    round-trip; the review dispatch hardcodes `skill="pr_review"` and does not
+    read this column.
     """
 
     __tablename__ = "claude_code_repos"

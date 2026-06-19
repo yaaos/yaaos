@@ -156,3 +156,64 @@ async def test_configured_claim_returns_none_when_empty(db_session) -> None:
         session=db_session,
     )
     assert command is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_configured_claim_returns_pending_config_update(db_session) -> None:
+    """A ConfigUpdate enqueued after the agent is already configured (e.g. a
+    BYOK key rotation triggering enqueue_config_update_for_all_org_agents) must
+    be claimable in the configured lifecycle. Without this branch the row sits
+    pending forever and the agent never picks up the new credentials."""
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
+    command = await claim_next(
+        agent_id,
+        lifecycle="configured",
+        new_workspaces=4,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert command is not None
+    assert isinstance(command, ConfigUpdateCommand)
+    assert command.kind == AgentCommandKind.CONFIG_UPDATE
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_configured_claim_prefers_config_update_over_provision_workspace(db_session) -> None:
+    """When both a ConfigUpdate (pinned to this agent) and an unassigned
+    ProvisionWorkspace are pending, ConfigUpdate wins. Rationale: a BYOK key /
+    OTLP-token rotation must land before the next workspace spawn injects
+    per-process env (e.g. ANTHROPIC_API_KEY at ExecSpawn time, which lives for
+    the workspace's whole life)."""
+    org_id = uuid4()
+    agent_id = await _make_agent(db_session, org_id=org_id)
+    provision_cmd = _make_provision_cmd()
+    await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
+    command = await claim_next(
+        agent_id,
+        lifecycle="configured",
+        new_workspaces=4,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert command is not None
+    assert isinstance(command, ConfigUpdateCommand)
+
+    # The ProvisionWorkspace must remain pending.
+    row = (
+        await db_session.execute(
+            select(AgentCommandRow).where(AgentCommandRow.id == provision_cmd.command_id)
+        )
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.status == "pending"

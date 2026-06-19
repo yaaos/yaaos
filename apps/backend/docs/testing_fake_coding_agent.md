@@ -4,7 +4,7 @@
 
 ## Purpose
 
-`stub_coding_agent` wraps an already-registered real plugin (e2e stack). `fake_coding_agent` is the opposite: a self-contained `CodingAgentPlugin` impl that tests register on the fly under any `plugin_id`. Used by service tests driving workflows through reviewer Workspace commands (`CodeReview`, `IncrementalReview`, `VerifyFix`, `StaleCheck`, `AnswerQuestion`) when no real plugin is bootstrapped.
+`stub_coding_agent` wraps an already-registered real plugin (e2e stack). `fake_coding_agent` is the opposite: a self-contained `CodingAgentPlugin` impl that tests register on the fly under any `plugin_id`. Used by service tests driving workflows through reviewer Workspace commands (`CodeReview`) when no real plugin is bootstrapped.
 
 ## Public interface
 
@@ -13,13 +13,13 @@
 
 ## Module architecture
 
-Each agent method returns a deterministic, schema-valid result. Tests mutate public attributes (`review_findings`, `verify_fix_still_present`, `stale_still_applies`, `answer_text`, …). Each call captures its context in `last_*_context` for assertions.
+Implements the full `CodingAgentPlugin` Protocol surface: `build_invocation`, `parse_result`, and `validate_settings`. `build_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content so tests can drive the downstream `parse_review_output` validation path. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
 
-Telemetry is a zero constant — tests that need real telemetry use `stub_coding_agent`.
+No telemetry, no byok lookup, no DB reads.
 
 ## Why it exists separately from `stub_coding_agent`
 
-`stub_coding_agent` is production-shaped: preserves the real plugin's `meta` + `validate_config` so e2e flows exercise real config validation. `fake_coding_agent` is test-shaped: zero coupling to a real plugin; lets a unit test register a `claude_code` plugin into an otherwise empty registry. The two never both register the same id.
+`stub_coding_agent` wraps a real plugin so e2e flows exercise the real `build_invocation` shape. `fake_coding_agent` is test-shaped: zero coupling to a real plugin; lets a unit test register a `claude_code` plugin into an otherwise empty registry. The two never both register the same id.
 
 ## Data owned
 

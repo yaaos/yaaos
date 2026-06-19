@@ -1,46 +1,63 @@
 # plugins/claude_code
 
-> Wraps the Claude Code CLI as a `core/coding_agent.CodingAgentPlugin`. Owns output parsing and Anthropic credentials.
+> Wraps the Claude Code CLI as a `core/coding_agent.CodingAgentPlugin`. Owns exec-spec assembly and stdout parsing.
 
 ## Scope
 
-Implements `CodingAgentPlugin` — remote-dispatch methods (`build_review_invocation`, `parse_review_output`, `review_preflight_steps`, `parse_usage`, `render_activity`), plus `validate_config` and `health_check`. Returns `ReportedFinding`s (raw strings) — the reviewer's `publish_findings` validates and posts them via `vcs.post_finding`. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — four methods (`build_invocation`, `byok_requirement`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
+Does NOT own: `ReviewContext`, `FindingDraftList`, `parse_review_output`, or review output validation — those live in `domain/reviewer`.
+
 ## Module architecture
 
-Singleton holds no decrypted credentials — settings loaded per-invocation so key rotation takes effect immediately.
+Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — settings are loaded per-invocation so key rotation takes effect immediately. No per-call state; no locks.
 
-### `build_review_invocation` — remote-dispatch exec spec
+### `build_invocation`
 
-Takes a `ReviewContext{org_id, repo_external_id, pr_external_id, head_sha, base_sha, output_schema}`. Reads `skill_name` for the repo via `resolve_skill` — raises `CodingAgentError` if absent or empty. Decrypts the Anthropic key; assembles argv (`claude --print --output-format=stream-json …`), prompt (review instructions + `git diff base..head` directive + `output_schema` appendix), and env (`ANTHROPIC_API_KEY`). Returns `Invocation{kind=<skill_name>, exec: ExecSpec, limits: InvokeClaudeCodeLimits(1200s)}`. The exec spec is serialized into the `InvokeClaudeCodeCommand` the Go agent executes.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Supports only `skill="pr_review"`. Validates `context` carries required keys (`org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`). Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --allowed-tools=…`), and a review prompt (with base/head SHA + strict JSON output directive). Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time. Raises `CodingAgentError` on unknown skills or missing context keys.
 
-### `parse_review_output` — stream-json parse
+### `byok_requirement`
 
-Receives raw stdout from the agent's terminal event. Finds the terminal `type=result` event, extracts `result`, validates against `_FindingDraftList`. Raises `ValueError` on any failure — `PostFindings` gates on this and returns `schema_invalid` failure when it raises.
+Returns `"anthropic"` — the BYOK `provider_id` this plugin needs. Called by `core/coding_agent.build_byok_secrets_for_org` to look up the org's stored Anthropic key and include it in `AgentConfig.byok_secrets` on every ConfigUpdate.
 
-### `validate_config`
+### `parse_result`
 
-Schema-only. Allowed keys: `timeout_seconds` (positive int). Model + effort are hardcoded module constants.
+Takes a terminal AgentEvent `outputs` dict. Reads `stdout` and `exit_code`. Delegates to `_parse_usage(stdout)` and `_render_activity_log(stdout)` internally. Reads `duration_ms` from the terminal `type=result` stream event inside stdout. Returns `RunResult{output, error_message=None, usage, duration_ms, exit_code, activity}`. Never raises on missing keys.
 
-### `health_check`
+### `validate_settings`
 
-1. No API key → error. 2. Probe `GET https://api.anthropic.com/v1/models`. `200` → ok; `401`/`403` → invalid key. Cached 5 minutes keyed on `sha256(api_key)`; invalidated on key rotation. When `YAAOS_CODING_AGENT_STUB` is set, probe short-circuits to ok.
+Parses the raw settings dict through `ClaudeCodeSettings(extra="forbid")`. Unknown keys raise `ValueError` (Pydantic's `ValidationError` is a `ValueError` subclass, so `extra="forbid"` rejects foreign keys with a `ValueError`). Returns `model_dump(mode="python")` — a normalized dict with `mcp_proxy_ids: list[UUID]` (defaults to `[]`). Delegates to `settings_schema.validate_settings`; the plugin method is the Protocol entry point.
 
-### Concurrency
+### Stream-json parsing helpers
 
-Singleton; each invocation reads its own settings row. No per-call state; no locks.
+Three module-private functions, each operating on `stdout: str`:
+
+- `_parse_stream_events(stdout)` — newline-delimiter JSON parser; skips blank/unparseable lines silently.
+- `_parse_usage(stdout)` → `Usage` — finds the last `type=result` event, extracts `usage.input_tokens` and `usage.output_tokens`. Returns empty `Usage()` when absent.
+- `_render_activity_log(stdout)` → `ActivityLog` — walks every parseable event through `_render_activity`, drops nulls, stamps monotonic `seq`, constructs typed `ActivityEvent` instances. Returns `ActivityLog(events=[])` for empty stdout.
+
+`_render_activity` converts one stream event into a raw dict with `{seq, ts, kind, message, detail}` — `ts` is a `datetime` object. `_render_activity_log` wraps each non-null result in `ActivityEvent(...)` which validates `kind` against the canonical six-value `Literal`. Trust-boundary discipline: `tool_result` blocks (raw workspace file/Bash output) appear as size-and-error-flag only — never the body content. `Edit`/`Write`/`MultiEdit`/`NotebookEdit` input dicts keep `file_path` only. This redaction lives in `_safe_tool_input`.
+
+### Anthropic auth probe
+
+`_probe_anthropic_auth(api_key)` — calls `GET https://api.anthropic.com/v1/models`. `200` → ok; `401`/`403` → invalid key. Cached 5 minutes keyed by `sha256(api_key)`. When `YAAOS_CODING_AGENT_STUB` is set the probe short-circuits to `(True, "ok (stub)")` — no outbound network call.
+
+`_onboarding_anthropic_key_set(org_id)` — returns `True` iff a byok row exists AND the key probes ok. Registered as an onboarding contributor in `bootstrap()`.
+
+### `bootstrap()`
+
+Called once by `app/web.py` and `app/worker.py` at startup. Registers `_plugin` with `core/coding_agent.register_plugin`; registers `_onboarding_anthropic_key_set` as the `"anthropic_key_set"` onboarding contributor; registers `validate_anthropic_key` with `core/byok`.
 
 ### Test-mode wrapping
 
-Never branches on env vars. When `YAAOS_CODING_AGENT_STUB` is set, `app/web.py` calls `testing.stub_coding_agent.wrap_all_registered_plugins()` after `bootstrap()`. See [testing_stub_coding_agent.md](testing_stub_coding_agent.md).
+Never branches on `YAAOS_CODING_AGENT_STUB`. When that env var is set, `app/web.py` calls `testing.stub_coding_agent.wrap_all_registered_plugins()` after `bootstrap()`. See [testing_stub_coding_agent.md](testing_stub_coding_agent.md).
 
 ## Data owned
 
-`claude_code_settings` — one row per org: `cli_path` (optional, controls the binary name the remote agent resolves). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
-
-`claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — the SKILL.md identifier the agent should invoke), `created_at`, `updated_at`.
+- `claude_code_settings` — one row per org: `cli_path` (optional; controls the binary name the remote agent resolves). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
+- `claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — reserved for per-repo skill overrides in future; currently unused), `created_at`, `updated_at`.
 
 ## HTTP routes
 
@@ -48,17 +65,15 @@ All under `/api/claude_code/`:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/repos` | `CODING_AGENT_READ` | Live VCS repos joined with stored `skill_name`. Repo list comes from `core/vcs.list_installation_repos("github", org_id)` — never a direct github-plugin import. Returns `{repos: [{repo_external_id, skill_name}]}`. Repos in the live list but absent from DB included with `skill_name=null`; repos in DB but gone from the live list omitted. |
-| `GET` | `/repos/{repo_external_id:path}` | `CODING_AGENT_READ` | Read skill name for one repo. `:path` type handles `owner/repo` slash. |
-| `PUT` | `/repos/{repo_external_id:path}` | `CODING_AGENT_WRITE` | Write skill name for one repo; creates the row if absent. |
+| `GET` | `/repos` | `CODING_AGENT_READ` | Live VCS repos joined with stored `skill_name`. Repo list from `core/vcs.list_installation_repos("github", org_id)`. Returns `{repos: [{repo_external_id, skill_name}]}`. Repos absent from DB included with `skill_name=null`; DB rows for gone repos omitted. |
+| `GET` | `/repos/{repo_external_id:path}` | `CODING_AGENT_READ` | Skill name for one repo. `:path` type handles `owner/repo` slash. |
+| `PUT` | `/repos/{repo_external_id:path}` | `CODING_AGENT_WRITE` | Upsert skill name for one repo. |
 
 ## How it's tested
 
 Unit tests in `app/plugins/claude_code/test/`:
-- `test_prompt_and_state.py` — verdict computation.
-- `test_stream_parsing.py` — `_parse_stream_events` handles well-formed streams, garbage interleaved with valid JSON, and partial streams (timeout case).
+- `test_stream_parsing.py` — `_parse_stream_events` + `_parse_usage` + `_render_activity_log` private helpers: well-formed streams, garbage interleaved with valid JSON, partial streams (timeout case).
 - `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
 - `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
-- `test_repo_skill_service.py` — service tests (`@pytest.mark.service`): `resolve_skill`/`set_repo_skill` round-trips against real Postgres; unit tests: `build_review_invocation` raises when skill absent/empty, uses resolved skill name as `Invocation.kind`, returns a populated `ExecSpec` for remote-agent dispatch (never a local subprocess call).
 
-CLI subprocess + envelope parsing + Anthropic auth probe exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1`.
+CLI subprocess + output parsing + Anthropic auth probe exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1`.

@@ -1,14 +1,13 @@
 """Service tests for coding-agent run lifecycle.
 
 Covers:
-- `create_run` at dispatch writes a row with status=running.
-- `finalize_run` at terminal event writes status/exit_code/duration_ms.
+- `create_run` at dispatch writes a row with status=running; tokens default to 0.
+- `finalize_run` at terminal event writes status/exit_code/duration_ms/tokens.
 - The run-sink fires only for InvokeClaudeCode terminal events; all other
   command kinds are no-ops.
 - The run-sink resolves the plugin from the run row's `plugin_id` and skips
   (logs + returns, no raise, run stays unfinalised) when that plugin is
   unregistered.
-- `reviews.run_id` is populated when `PostFindings` runs after a CodeReview.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 import app.web  # noqa: F401 — registers all models so FK metadata resolves correctly
 from app.core.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
@@ -29,7 +28,7 @@ from app.core.coding_agent.run_service import (
     get_step_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
-from app.core.coding_agent.types import ActivityEvent, ActivityLog, Usage
+from app.core.coding_agent.types import ActivityLog, Usage
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -93,8 +92,8 @@ async def test_create_run_inserts_running_row(db_session) -> None:
     assert row.agent_command_id == cmd_id
     assert row.command_kind == "review"
     assert row.plugin_id == "claude_code"
-    assert row.tokens_in is None
-    assert row.tokens_out is None
+    assert row.tokens_in == 0  # NOT NULL DEFAULT 0; finalize_run writes the real value
+    assert row.tokens_out == 0
     assert row.exit_code is None
     assert row.duration_ms is None
     assert row.completed_at is None
@@ -112,7 +111,8 @@ async def test_finalize_run_writes_status_exit_code_duration(db_session) -> None
 
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=10, tokens_out=20, duration_ms=500),
+        usage=Usage(tokens_in=10, tokens_out=20),
+        duration_ms=500,
         activity=None,
         exit_code=0,
         status="success",
@@ -124,7 +124,7 @@ async def test_finalize_run_writes_status_exit_code_duration(db_session) -> None
     ).scalar_one()
     assert row.status == "success"
     assert row.exit_code == 0
-    # `usage.duration_ms` takes precedence over wallclock when present.
+    # caller-supplied duration_ms takes precedence over wallclock when present.
     assert row.duration_ms == 500
     assert row.completed_at is not None
     # Token usage written from the supplied `Usage`.
@@ -139,28 +139,30 @@ async def test_finalize_run_persists_activity_blob(db_session) -> None:
     org_id = uuid.uuid4()
     run_id, *_ = await _seed_run(db_session, org_id=org_id)
 
+    now_ts = datetime_now().isoformat()
     activity = ActivityLog(
-        events=(
-            ActivityEvent(
-                seq=0,
-                ts=datetime_now(),
-                kind="session_start",
-                message="Session started · model opus",
-                detail={"model": "opus"},
-            ),
-            ActivityEvent(
-                seq=1,
-                ts=datetime_now(),
-                kind="result",
-                message="Review complete",
-                detail={"num_turns": 1},
-            ),
-        )
+        events=[
+            {
+                "seq": 0,
+                "ts": now_ts,
+                "kind": "session_start",
+                "message": "Session started · model opus",
+                "detail": {"model": "opus"},
+            },
+            {
+                "seq": 1,
+                "ts": now_ts,
+                "kind": "result",
+                "message": "Review complete",
+                "detail": {"num_turns": 1},
+            },
+        ]
     )
 
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=100, tokens_out=50, duration_ms=1200),
+        usage=Usage(tokens_in=100, tokens_out=50),
+        duration_ms=1200,
         activity=activity,
         exit_code=0,
         status="success",
@@ -198,6 +200,7 @@ async def test_finalize_run_failure_status(db_session) -> None:
     await finalize_run(
         run_id,
         usage=Usage(),
+        duration_ms=None,
         activity=None,
         exit_code=1,
         status="failure",
@@ -341,73 +344,6 @@ async def test_run_sink_skips_when_plugin_unregistered(db_session) -> None:
     assert row.completed_at is None
 
 
-# ── reviews.run_id ─────────────────────────────────────────────────────────────
-
-
-@pytest.mark.service
-@pytest.mark.asyncio
-async def test_reviews_run_id_populated(db_session) -> None:
-    """reviews.run_id FK is set when publish_findings is called with a run_id.
-
-    Uses zero findings so the VCS post_finding path is not exercised (no
-    VCS plugin registration needed).
-    """
-    from app.domain.reviewer import publish_findings  # noqa: PLC0415
-
-    org_id = uuid.uuid4()
-    pr_id = uuid.uuid4()
-    run_id, *_ = await _seed_run(db_session, org_id=org_id, command_kind="review")
-
-    # Seed a minimal ticket row (required FK from pull_requests.ticket_id NOT NULL).
-    # Include every NOT NULL column without a server_default (Python defaults are
-    # app-side only and don't apply to raw SQL inserts).
-    ticket_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            "INSERT INTO tickets"
-            " (id, org_id, source, source_external_id, title, status)"
-            " VALUES (:id, :org_id, 'github_pr', 'pr:1', 'Test ticket', 'open')"
-        ),
-        {"id": ticket_id, "org_id": org_id},
-    )
-
-    # Seed a minimal pull_requests row so publish_findings can insert the review.
-    pr_ext = f"acme/repo#{uuid.uuid4().hex[:8]}"
-    await db_session.execute(
-        text(
-            "INSERT INTO pull_requests"
-            " (id, org_id, ticket_id, plugin_id, external_id, repo_external_id,"
-            "  number, title, body, author_login, author_type, base_branch,"
-            "  head_branch, base_sha, head_sha, is_draft, is_fork, state, html_url)"
-            " VALUES (:id, :org_id, :ticket_id, 'github', :pr_ext, 'acme/repo',"
-            "  1, 'Test PR', '', 'dev', 'user', 'main',"
-            "  'feat', 'base', 'head', false, false, 'open', 'https://x')"
-        ),
-        {"id": pr_id, "org_id": org_id, "ticket_id": ticket_id, "pr_ext": pr_ext},
-    )
-
-    # Zero findings — VCS post_finding is never called, no plugin required.
-    review, admitted = await publish_findings(
-        pr_id=pr_id,
-        org_id=org_id,
-        pr_external_id=pr_ext,
-        vcs_plugin_id="github",
-        findings=[],
-        run_id=run_id,
-        session=db_session,
-    )
-
-    assert admitted == []
-    # Verify the review row has run_id set.
-    result = await db_session.execute(
-        text("SELECT run_id FROM reviews WHERE id = :id"),
-        {"id": review.id},
-    )
-    row = result.one_or_none()
-    assert row is not None
-    assert row[0] == run_id
-
-
 # ── get_run_id_for_command / get_run_id_for_workflow_step ──────────────────────
 
 
@@ -478,20 +414,22 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
         session=db_session,
     )
 
+    now_ts = datetime_now().isoformat()
     activity = ActivityLog(
-        events=(
-            ActivityEvent(
-                seq=0,
-                ts=datetime_now(),
-                kind="session_start",
-                message="Session started",
-                detail={"model": "opus"},
-            ),
-        )
+        events=[
+            {
+                "seq": 0,
+                "ts": now_ts,
+                "kind": "session_start",
+                "message": "Session started",
+                "detail": {"model": "opus"},
+            },
+        ]
     )
     await finalize_run(
         run_id,
-        usage=Usage(tokens_in=1, tokens_out=2, duration_ms=10),
+        usage=Usage(tokens_in=1, tokens_out=2),
+        duration_ms=10,
         activity=activity,
         exit_code=0,
         status="success",
@@ -537,6 +475,7 @@ async def test_get_step_activity_returns_none_when_partition_aged_out(db_session
     await finalize_run(
         run_id,
         usage=Usage(),
+        duration_ms=None,
         activity=None,
         exit_code=0,
         status="success",

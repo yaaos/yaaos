@@ -629,6 +629,15 @@ components:
             from backend `Settings.environment` (required at boot). Stamped
             on every agent trace/metric/log so signals can be filtered by
             `local` / `staging` / `production` in Dash0.
+        byok_secrets:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Per-provider secrets (provider_id → token) the agent injects as
+            env vars at Claude exec time (e.g. "anthropic" → ANTHROPIC_API_KEY).
+            Treated as secrets; values are plaintext on the wire so the agent
+            receives the real token. Never log.
 
     ConfigUpdateCommand:
       type: object

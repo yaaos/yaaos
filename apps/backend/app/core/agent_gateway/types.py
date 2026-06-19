@@ -109,6 +109,28 @@ class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
 
 
+class InvokeClaudeCodeFields(BaseModel):
+    """Kind-specific payload fields for an `InvokeClaudeCode` command.
+
+    Carries only the command-kind-specific fields — no envelope keys
+    (`kind`, `command_id`, `workspace_id`, `traceparent`, `completion_token`,
+    `workflow_execution_id`). Those are owned and injected by
+    `enqueue_command_payload` after this model is serialised, ensuring
+    they cannot be overwritten by the caller.
+
+    `model_dump(mode="json")` yields the flat keys the Go agent expects and
+    that `_COMMAND_ADAPTER` deserialises back to `InvokeClaudeCodeCommand`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    # The `invocation` body is intentionally permissive at the wire layer;
+    # its shape is owned by `domain/coding_agent`.
+    invocation: dict[str, Any]
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+    limits: dict[str, Any]
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 
@@ -117,6 +139,11 @@ class AgentConfig(BaseModel):
     otlp_token is treated as a secret and must not be logged.
     environment is the OTel deployment.environment.name resource attribute,
     sourced from Settings.environment (required at backend boot).
+    byok_secrets carries per-provider API keys (provider_id → SecretStr) that
+    the agent injects as env vars at Claude exec time (e.g. anthropic →
+    ANTHROPIC_API_KEY). Values are treated as secrets: Python mode stays
+    redacted; wire JSON (model_dump mode="json") unwraps to plaintext so the
+    agent receives the real value. Never log.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -125,6 +152,7 @@ class AgentConfig(BaseModel):
     otlp_token: SecretStr | None = None
     otlp_dataset: str | None = None
     environment: str | None = None
+    byok_secrets: dict[str, SecretStr] = Field(default_factory=dict)
 
     @field_serializer("otlp_token", when_used="json")
     def _serialize_otlp_token(self, v: SecretStr | None) -> str | None:
@@ -136,6 +164,16 @@ class AgentConfig(BaseModel):
         str/repr/model_dump stay redacted.
         """
         return v.get_secret_value() if v is not None else None
+
+    @field_serializer("byok_secrets", when_used="json")
+    def _serialize_byok_secrets(self, v: dict[str, SecretStr]) -> dict[str, str]:
+        """Unwrap every per-provider secret at the JSON wire-encode boundary only.
+
+        Python mode (model_dump) keeps SecretStr wrappers so str/repr/logs
+        stay redacted. Wire JSON unwraps to plaintext so the agent receives
+        the actual values. Never called by model_dump() without mode='json'.
+        """
+        return {k: s.get_secret_value() for k, s in v.items()}
 
 
 class ConfigUpdateCommand(BaseModel):

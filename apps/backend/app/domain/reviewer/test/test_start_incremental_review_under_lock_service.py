@@ -38,7 +38,6 @@ from app.testing.stub_vcs import register_stub_vcs
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
 _REPO_EXTERNAL_ID = "owner/repo"
-_PR_EXTERNAL_ID = "owner/repo#99"
 _PREV_SHA = "aaaa1111"
 _HEAD_SHA = "bbbb2222"
 _PLUGIN_ID = "github"
@@ -99,10 +98,14 @@ async def _seed_pr_and_ticket(org_id: UUID, seeded: _Seeded) -> UUID:
     """Create a PR + linked ticket. Returns the PR id."""
     sessionmaker = get_sessionmaker()
     ext_id = f"ir-{uuid4().hex[:8]}"
+    # Unique per run so a previously crashed test cannot leave a stale row
+    # that matches on (plugin_id, external_id) and steals the upsert into
+    # an unrelated org_id (see pull_request.upsert dedup keys).
+    pr_external_id = f"owner/repo#{uuid4().hex[:8]}"
     now = datetime.now(UTC)
     vcs_pr = VCSPullRequest(
         plugin_id=_PLUGIN_ID,
-        external_id=_PR_EXTERNAL_ID,
+        external_id=pr_external_id,
         repo_external_id=_REPO_EXTERNAL_ID,
         number=99,
         title="concurrent push test PR",

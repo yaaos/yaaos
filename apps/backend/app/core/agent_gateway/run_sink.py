@@ -14,8 +14,23 @@ command kinds are silently no-ops at the implementation level.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, TypedDict
 from uuid import UUID
+
+
+class AgentEventEnrichment(TypedDict, total=False):
+    """Typed return value from `AgentRunSink.handle_terminal_event`.
+
+    Keys:
+    - `output` — the parsed skill stdout that replaces raw `stdout` downstream;
+      produced by `plugin.parse_result` and forwarded to the workflow as the
+      canonical agent output.
+    - `error_message` — structured error text from the run; `None` when the
+      agent completed without a reported error.
+    """
+
+    output: str
+    error_message: str | None
 
 
 class AgentRunSink(Protocol):
@@ -33,7 +48,7 @@ class AgentRunSink(Protocol):
         event_kind: str,
         outputs: dict,  # type: ignore[type-arg]
         session: object,  # AsyncSession
-    ) -> None:
+    ) -> AgentEventEnrichment | None:
         """Handle a terminal AgentEvent.
 
         `command_kind` is `agent_commands.command_kind` (e.g. `"InvokeClaudeCode"`).
@@ -41,6 +56,13 @@ class AgentRunSink(Protocol):
         `outputs` is `AgentEvent.outputs` — for `InvokeClaudeCode` carries
         `exit_code` (int) and `stdout` (str).
         `session` is an `AsyncSession`; caller commits.
+
+        Returns an `AgentEventEnrichment` whose keys are merged into `outputs`
+        before the `HANDLE_AGENT_EVENT` task is enqueued — sink keys override
+        same-key native values. Canonical keys: `output` (parsed skill stdout
+        that replaces raw `stdout` downstream) and `error_message` (structured
+        error text; `None` when none). Return `None` to leave `outputs`
+        unchanged.
         """
         ...
 
@@ -66,8 +88,9 @@ def register_run_sink(sink: AgentRunSink) -> None:
 def get_run_sink() -> AgentRunSink | None:
     """Return the registered sink, or None when not yet registered.
 
-    Callers treat None as "no run tracking" — graceful degradation when
-    `domain/coding_agent` is not loaded (minimal test configs).
+    In production, web.py and worker.py both assert the return value is not
+    None after `core/coding_agent` is imported. The None return is only
+    reachable in tests that explicitly clear the slot via `clear_run_sink`.
     """
     return _SINK
 

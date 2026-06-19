@@ -31,6 +31,7 @@ import (
 	"github.com/yaaos/agent/internal/identity"
 	"github.com/yaaos/agent/internal/observability"
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 	"github.com/yaaos/agent/internal/tracing"
 )
 
@@ -244,21 +245,18 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 	if cfg.ClaimWaitSeconds <= 0 {
 		cfg.ClaimWaitSeconds = 30
 	}
-	if cfg.Spawn == nil {
-		cfg.Spawn = ExecSpawn(os.Args[0], 5*time.Second, log)
-	}
+	needsDefaultSpawn := cfg.Spawn == nil
 	if cfg.ActivityBatchInterval <= 0 {
 		cfg.ActivityBatchInterval = 250 * time.Millisecond
 	}
 	// Parse the ops backoff env once; each surface gets its own schedule built
 	// from the shared step list (a malformed value WARNs once, not three times).
 	opsSteps, opsCustom := opsBackoffSteps()
-	return &Supervisor{
+	s := &Supervisor{
 		cfg:      cfg,
 		client:   client,
 		log:      log,
 		provider: prov,
-		pool:     NewPool(cfg.Spawn, log),
 		// stsBackoff: a fresh pod that has never successfully exchanged identity
 		// gives up after 1 hour so the container crashes and the orchestrator
 		// can restart it (a misconfigured ARN won't fix itself by retrying
@@ -274,6 +272,21 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		eventPostSteps:   defaultEventPostSteps,
 		dedup:            newDedupCache(dedupCacheSize),
 	}
+	if needsDefaultSpawn {
+		// ExecSpawn's byok getter is a closure over s.config — it reads the
+		// most recent AgentConfig atomically so keys reflect the latest
+		// ConfigUpdate at workspace spawn time. nil config (unconfigured) →
+		// getter returns nil → ExecSpawn skips injection.
+		s.cfg.Spawn = ExecSpawn(os.Args[0], 5*time.Second, log, func() map[string]secret.Secret {
+			cfg := s.config.Load()
+			if cfg == nil {
+				return nil
+			}
+			return cfg.ByokSecrets
+		})
+	}
+	s.pool = NewPool(s.cfg.Spawn, log)
+	return s
 }
 
 // Run exchanges identity and starts the claim + heartbeat goroutines.
@@ -450,7 +463,7 @@ func (s *Supervisor) dialAndStartWS(ctx context.Context, bearer string) bool {
 	// first transport error; we log and let the reconnect loop re-dial.
 	go func() {
 		defer close(s.wsReadLoopDone)
-		if err := activity.RunInbound(ctx, conn, s.conductor); err != nil && ctx.Err() == nil {
+		if err := activity.RunInbound(ctx, conn, s.conductor); ctx.Err() == nil {
 			s.log.Warn("supervisor.activity_ws_read_loop_exited", "err", err.Error())
 		}
 	}()
@@ -745,15 +758,28 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 		// 30-second stall before the goroutine's Pool.Dispatch registers the
 		// workspace.
 		s.pool.MarkDispatchPending()
-		// Spawn a dispatch goroutine for this command and re-arm the claim
-		// loop immediately. The dispatch goroutine owns postReceivedEvent +
-		// routeCommand + postTerminalEvent. It is NOT added to Run()'s
-		// WaitGroup — on shutdown the root ctx is cancelled, claim workers
-		// exit, pool.CloseAll SIGTERMs in-flight subprocesses (unblocking
+		// AgentCommands (e.g. ConfigUpdate) execute in the supervisor itself —
+		// they're supervisor-local, cheap, and their side effect (ApplyConfig
+		// storing the config pointer) must be visible to the next claim cycle.
+		// Running them inline blocks the claim worker briefly but guarantees
+		// the next buildClaimRequest sees the post-apply lifecycle. Without
+		// this, the claim loop re-arms before the dispatch goroutine has run
+		// ApplyConfig, so during boot multiple pinned ConfigUpdates get over-
+		// claimed under "unconfigured" lifecycle in rapid succession.
+		//
+		// WorkspaceCommands can run for minutes — they keep the goroutine
+		// model. The dispatch goroutine owns postReceivedEvent + routeCommand
+		// + postTerminalEvent. It is NOT added to Run()'s WaitGroup — on
+		// shutdown the root ctx is cancelled, claim workers exit,
+		// pool.CloseAll SIGTERMs in-flight subprocesses (unblocking
 		// Pool.Dispatch), and dispatch goroutines' terminal-event posts fail
 		// fast on the cancelled ctx. The backend failsafe synthesizes
 		// in-flight failures for abandoned commands.
-		go s.dispatch(ctx, cmd)
+		if _, isAgentCmd := cmd.(command.AgentCommand); isAgentCmd {
+			s.dispatch(ctx, cmd)
+		} else {
+			go s.dispatch(ctx, cmd)
+		}
 	}
 }
 

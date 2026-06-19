@@ -1,10 +1,10 @@
 """Service test: CodeReview.dispatch records exception + ERROR status on span
-when build_review_invocation raises.
+when build_invocation raises.
 
-Exercises the catch block at commands/__init__.py ~line 133 that was missing
-set_status(ERROR). Registers a minimal plugin stub whose build_review_invocation
-raises, seeds the DB rows dispatch needs, then asserts the surrounding span
-carries both an exception event and StatusCode.ERROR.
+Exercises the catch block in commands/__init__.py `CodeReview.dispatch`. Registers
+a minimal plugin stub whose `build_invocation` raises, seeds the DB rows dispatch
+needs, then asserts the surrounding span carries both an exception event and
+StatusCode.ERROR.
 """
 
 from __future__ import annotations
@@ -22,54 +22,15 @@ pytestmark = pytest.mark.service
 
 
 class _RaisingPlugin:
-    """Minimal CodingAgentPlugin stub whose build_review_invocation always raises."""
+    """Minimal CodingAgentPlugin stub whose build_invocation always raises."""
 
     plugin_id = "claude_code"
 
-    def install_url(self, org_id: UUID) -> str | None:
-        del org_id
-        return None
+    def build_invocation(self, invocation: Any) -> Any:
+        raise RuntimeError("simulated build_invocation failure")
 
-    def validate_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        return dict(settings)
-
-    async def build_review_invocation(self, ctx: Any, *, session: Any) -> Any:
-        raise RuntimeError("simulated build_review_invocation failure")
-
-    # The remaining Protocol methods are unreachable in this test path but are
-    # included so type-checkers don't complain if Protocol is @runtime_checkable.
-    async def review(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
+    def parse_result(self, terminal_event_payload: Any) -> Any:
         raise NotImplementedError
-
-    async def incremental_review(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def verify_fix(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def stale_check(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def answer_question(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def validate_config(self, agent_config: Any) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    async def health_check(self) -> Any:  # type: ignore[override]
-        raise NotImplementedError
-
-    def parse_review_output(self, stdout: str) -> list:
-        raise NotImplementedError
-
-    def parse_usage(self, stdout: str) -> Any:
-        raise NotImplementedError
-
-    def render_activity(self, stdout: str) -> Any:
-        raise NotImplementedError
-
-    async def review_preflight_steps(self, ctx: Any, *, session: Any) -> tuple:
-        return ()
 
 
 class _StaticTicketContextProvider:
@@ -87,7 +48,9 @@ class _StaticTicketContextProvider:
 async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
     db_session,
 ) -> None:
-    """build_review_invocation failure records exception event + ERROR on active span."""
+    """build_invocation failure records exception event + ERROR on active span."""
+    from app.core import byok  # noqa: PLC0415
+    from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.coding_agent import (  # noqa: PLC0415
         bind_coding_agent_registry,
         current_coding_agent_registry,
@@ -97,11 +60,14 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         WorkspaceTicketContext,
         register_workflow_context_provider,
     )
+    from app.domain.orgs import create_org  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
     from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
     from app.testing.seed import seed_workspace as _seed_workspace  # noqa: PLC0415
 
-    org_id = uuid4()
+    # Seed a real org so the byok key insert FK passes.
+    org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
+    org_id = org.id
 
     # Seed the DB rows dispatch needs to pass its workspace-owner guard.
     agent_row = await _seed_agent(org_id=org_id, session=db_session)
@@ -112,6 +78,8 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         agent_id=agent_row["id"],
         caller_session=db_session,
     )
+    # CodeReview.dispatch loads the Anthropic key before calling build_invocation.
+    await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
     # Install a context provider that returns a minimal valid WorkspaceTicketContext.
@@ -145,7 +113,7 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.start_step.CodeReview"):
-                with pytest.raises(RuntimeError, match="build_review_invocation failed"):
+                with pytest.raises(RuntimeError, match="build_invocation failed"):
                     await cmd.dispatch(inputs, ctx, session=db_session)
     finally:
         bind_coding_agent_registry(prior_registry)

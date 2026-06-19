@@ -1,151 +1,130 @@
 """core/coding_agent — Protocol + registry for coding-agent CLI plugins.
 
-The Protocol exposes five task modes — `review` (full-review),
-`incremental_review` (prev_sha..head only), `verify_fix` (is the finding still
-present at HEAD?), `stale_check` (does the finding still apply after the code
-changed?), and `answer_question` (developer asked a question on a finding;
-answer it from the workspace). Plugins own prompt assembly + parsing for each
-mode; consumers (today: `domain/reviewer`) hand over domain context and read
-domain results.
+The Protocol exposes two pure methods: `build_invocation` translates a
+high-level `Invocation` (skill, model, effort, context, wallclock cap) into
+a concrete `InvokeCodingAgent` exec block; `parse_result` decodes a terminal
+AgentEvent payload into a `RunResult`. Plugins own skill resolution, model
+mapping, and stdout parsing. `dispatch_invocation` enqueues the exec block
+as an `InvokeClaudeCode` AgentCommand, inserts a run row, and pins the
+command to the owning agent.
 """
 
-from app.core.agent_gateway import register_run_sink as _register_run_sink
+from __future__ import annotations
+
+from uuid import UUID
+
+from pydantic import SecretStr
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.agent_gateway import (
+    enqueue_config_update_for_all_org_agents as _enqueue_config_update_for_all_org_agents,
+)
+from app.core.agent_gateway import (
+    register_byok_secrets_provider as _register_byok_secrets_provider,
+)
+from app.core.agent_gateway import (
+    register_run_sink as _register_run_sink,
+)
 
 # Import the partition-maintenance module for its `@scheduled` side effect —
 # registers the daily `coding_agent_activity_partition_maintenance` task with
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
-from app.core.coding_agent.invocation import InvocationMode, build_invocation
-from app.core.coding_agent.prompts import (
-    AnswerQuestionDto,
-    FindingDraftList,
-    StaleCheckDto,
-    VerifyFixDto,
-    assemble_answer_question_prompt,
-    assemble_incremental_review_prompt,
-    assemble_stale_check_prompt,
-    assemble_verify_fix_prompt,
-    finding_output_schema,
-    schema_appendix,
-)
 from app.core.coding_agent.run_service import (
     create_run,
-    finalize_run,
-    get_run_id_for_command,
-    get_run_id_for_workflow_step,
     get_step_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.core.coding_agent.service import (
     CodingAgentRegistry,
-    answer_question,
     bind_coding_agent_registry,
     current_coding_agent_registry,
+    dispatch_invocation,
     get_plugin,
-    health_check_all,
-    incremental_review,
-    list_registered_plugins,
-    register_coding_agent_plugin,
     register_plugin,
-    registered_plugin_ids,
-    review,
-    stale_check,
-    validate_config,
-    verify_fix,
 )
 from app.core.coding_agent.types import (
+    ACTIVITY_EVENT_KINDS,
     ActivityEvent,
     ActivityLog,
-    AnswerQuestionContext,
-    AnswerQuestionResult,
-    CodingAgentCacheMiss,
     CodingAgentError,
     CodingAgentPlugin,
-    ExecSpec,
-    FindingAnchor,
-    HealthStatus,
-    IncrementalReviewContext,
-    IncrementalReviewResult,
+    Effort,
     Invocation,
-    InvocationStatus,
-    InvocationTelemetry,
-    OnActivity,
+    InvokeCodingAgent,
     PluginNotFoundError,
-    PriorThreadMessage,
-    ReportedFinding,
-    ReviewContext,
-    ReviewResult,
-    Severity,
-    StaleCheckContext,
-    StaleCheckResult,
+    RunResult,
+    RunStatus,
     Usage,
-    ValidationResult,
-    VerifyFixContext,
-    VerifyFixResult,
 )
 
 _register_run_sink(CodingAgentRunSinkImpl())
 
+
+async def build_byok_secrets_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> dict[str, SecretStr]:
+    """Return a dict of provider_id → SecretStr for every registered plugin
+    that has a byok_requirement and a stored key for the org.
+
+    Called by `core/agent_gateway._build_config_update_dto` via the registered
+    byok-secrets-provider IoC seam. Reads BYOK keys for all plugins that declare
+    a `byok_requirement()`. Wraps each plaintext in SecretStr immediately so it
+    never crosses module boundaries as a bare string.
+    """
+    import app.core.byok as _byok  # noqa: PLC0415
+
+    registry = current_coding_agent_registry()
+    result: dict[str, SecretStr] = {}
+    for plugin in registry.list():
+        req = plugin.byok_requirement()
+        if req is None:
+            continue
+        plaintext = await _byok.get(org_id, req, session=session)
+        if plaintext is not None:
+            result[req] = SecretStr(plaintext)
+    return result
+
+
+_register_byok_secrets_provider(build_byok_secrets_for_org)
+
+
+def _register_byok_on_change() -> None:
+    """Register the ConfigUpdate fan-out callback with byok at import time.
+
+    In-function import keeps the `core/byok` edge out of the top-level namespace
+    (tach `depends_on` lists top-level imports). The import is a module-level
+    side-effect, executed once at first import of `core/coding_agent`.
+    """
+    import app.core.byok as _byok  # noqa: PLC0415
+
+    _byok.register_on_change(_enqueue_config_update_for_all_org_agents)
+
+
+_register_byok_on_change()
+
 __all__ = [
+    "ACTIVITY_EVENT_KINDS",
     "ActivityEvent",
     "ActivityLog",
-    "AnswerQuestionContext",
-    "AnswerQuestionDto",
-    "AnswerQuestionResult",
-    "CodingAgentCacheMiss",
     "CodingAgentError",
     "CodingAgentPlugin",
     "CodingAgentRegistry",
-    "CodingAgentRunSinkImpl",
-    "ExecSpec",
-    "FindingAnchor",
-    "FindingDraftList",
-    "HealthStatus",
-    "IncrementalReviewContext",
-    "IncrementalReviewResult",
+    "Effort",
     "Invocation",
-    "InvocationMode",
-    "InvocationStatus",
-    "InvocationTelemetry",
-    "OnActivity",
+    "InvokeCodingAgent",
     "PluginNotFoundError",
-    "PriorThreadMessage",
-    "ReportedFinding",
-    "ReviewContext",
-    "ReviewResult",
-    "Severity",
-    "StaleCheckContext",
-    "StaleCheckDto",
-    "StaleCheckResult",
+    "RunResult",
+    "RunStatus",
     "Usage",
-    "ValidationResult",
-    "VerifyFixContext",
-    "VerifyFixDto",
-    "VerifyFixResult",
-    "answer_question",
-    "assemble_answer_question_prompt",
-    "assemble_incremental_review_prompt",
-    "assemble_stale_check_prompt",
-    "assemble_verify_fix_prompt",
     "bind_coding_agent_registry",
-    "build_invocation",
+    "build_byok_secrets_for_org",
     "create_run",
     "current_coding_agent_registry",
-    "finalize_run",
-    "finding_output_schema",
+    "dispatch_invocation",
     "get_plugin",
-    "get_run_id_for_command",
-    "get_run_id_for_workflow_step",
     "get_step_activity",
-    "health_check_all",
-    "incremental_review",
-    "list_registered_plugins",
-    "register_coding_agent_plugin",
     "register_plugin",
-    "registered_plugin_ids",
-    "review",
-    "schema_appendix",
-    "stale_check",
-    "validate_config",
-    "verify_fix",
 ]

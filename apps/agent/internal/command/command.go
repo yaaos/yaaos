@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 )
 
 // Command is the polymorphic root implemented by every command kind. It
@@ -131,6 +132,10 @@ func Decode(raw []byte) (Command, error) {
 				return nil, fmt.Errorf("command: ConfigUpdate otlp_endpoint must be a valid URL with scheme and host, got %q", v.Config.OTLPEndpoint)
 			}
 		}
+		byok := make(map[string]secret.Secret, len(v.Config.ByokSecrets))
+		for k, val := range v.Config.ByokSecrets {
+			byok[k] = secretFrom(val)
+		}
 		return &ConfigUpdateCommand{
 			CommandHeader: v.CommandHeader,
 			Config: AgentConfig{
@@ -139,6 +144,7 @@ func Decode(raw []byte) (Command, error) {
 				OTLPToken:     secretFrom(v.Config.OTLPToken),
 				OTLPDataset:   v.Config.OTLPDataset,
 				Environment:   v.Config.Environment,
+				ByokSecrets:   byok,
 			},
 		}, nil
 	default:

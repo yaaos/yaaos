@@ -289,23 +289,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude_code/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health */
-        get: operations["health_api_claude_code_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/claude_code/repos": {
         parameters: {
             query?: never;
@@ -1684,14 +1667,26 @@ export interface components {
         };
         /**
          * ActivityEvent
-         * @description One captured event from a coding-agent run.
+         * @description One rendered event in a coding-agent activity stream.
          *
-         *     Pre-rendered by the plugin so the FE doesn't have to interpret raw
-         *     Claude Code stream-json shapes — `message` is the user-facing string
-         *     shown in the UI; `detail` is the raw event data for the expanded view.
+         *     Produced by `plugins/claude_code._render_activity_log` from Claude Code
+         *     stream-json events. Persisted inside the `ActivityLog.events` JSONB array.
          *
-         *     `seq` is the monotonic 0-based index inside the run's `ActivityLog`,
-         *     assigned by `render_activity` after filtering null renders.
+         *     Fields:
+         *     - `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.
+         *     - `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).
+         *       Pydantic coerces ISO-8601 strings to `datetime` on construction.
+         *     - `kind` — one of the six canonical values in `ActivityEventKind`.
+         *     - `message` — pre-rendered one-liner for the SPA activity feed.
+         *     - `detail` — kind-specific metadata dict (safe for cross-boundary transport).
+         *
+         *     Per-kind `detail` shapes:
+         *     - `session_start`: `{model: str, session_id: str | None}`
+         *     - `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`
+         *     - `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`
+         *     - `assistant_message`: `{}` (message carries the text excerpt)
+         *     - `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`
+         *     - `result`: `{duration_ms: int | None, num_turns: int | None}`
          */
         ActivityEvent: {
             /**
@@ -1701,14 +1696,14 @@ export interface components {
             detail: {
                 [key: string]: unknown;
             };
-            /** Kind */
-            kind: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "session_start" | "subagent_dispatched" | "tool_call_started" | "assistant_message" | "tool_call_finished" | "result";
             /** Message */
             message: string;
-            /**
-             * Seq
-             * @default 0
-             */
+            /** Seq */
             seq: number;
             /**
              * Ts
@@ -1720,11 +1715,14 @@ export interface components {
          * ActivityLog
          * @description Pre-rendered activity stream for one coding-agent run.
          *
-         *     Produced once per run from the terminal stdout by
-         *     `CodingAgentPlugin.render_activity` — the same event sequence the
-         *     in-process path streams via `OnActivity`, captured durably for the
+         *     Produced by `CodingAgentPlugin.parse_result` — the same event sequence
+         *     the in-process path streams via `OnActivity`, captured durably for the
          *     Activity tab. Persisted as a JSONB blob in the partitioned
          *     `coding_agent_activity` table.
+         *
+         *     JSON wire shape `{"events": [{seq, ts, kind, message, detail}, ...]}` is
+         *     unchanged from the prior opaque-dict form; `model_dump(mode="json")` emits
+         *     the same structure with `ts` serialized as an ISO-8601 string.
          */
         ActivityLog: {
             /**
@@ -3070,28 +3068,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    health_api_claude_code_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };

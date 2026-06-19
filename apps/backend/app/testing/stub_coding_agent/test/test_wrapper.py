@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from typing import Any
-from uuid import UUID
-
-import pytest
 
 from app.core.coding_agent import (
+    ActivityLog,
     CodingAgentRegistry,
-    HealthStatus,
-    InvocationStatus,
-    ReviewContext,
-    ReviewResult,
-    ValidationResult,
+    Invocation,
+    InvokeCodingAgent,
+    RunResult,
+    Usage,
     bind_coding_agent_registry,
-    list_registered_plugins,
+    current_coding_agent_registry,
     register_plugin,
 )
 from app.testing.stub_coding_agent import (
@@ -28,61 +25,38 @@ from app.testing.stub_coding_agent import (
 class _DummyPlugin:
     plugin_id = "dummy"
 
-    async def review(self, *args, **kwargs) -> ReviewResult:
-        raise AssertionError("real review must not be called when wrapped")
+    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+        return InvokeCodingAgent(
+            argv=["real-claude"],
+            env={},
+            stdin=None,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
 
-    async def validate_config(self, agent_config: dict[str, Any]) -> ValidationResult:
-        return ValidationResult(valid=True, errors=[])
-
-    async def health_check(self) -> HealthStatus:
-        return HealthStatus(healthy=True, message="real ok", checked_at=datetime.now(UTC))
-
-
-class _FakeWorkspace:
-    id = "fake"
-
-    async def info(self):  # type: ignore[no-untyped-def]
-        raise NotImplementedError
-
-    async def run_coding_agent_cli(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise AssertionError("workspace must not be reached in stub mode")
+    def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
+        return RunResult(output="real", usage=Usage(), activity=ActivityLog())
 
 
-@pytest.mark.asyncio
-async def test_review_returns_canned_success() -> None:
+def test_build_invocation_returns_stub_argv() -> None:
+    """StubCodingAgentPlugin.build_invocation returns a minimal stub exec block."""
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    ctx = ReviewContext(
-        org_id=UUID(int=1),
-        repo_external_id="acme/web",
-        pr_external_id="acme/web#1",
-        head_sha="h",
-        base_sha="b",
-    )
-    result = await stub.review(_FakeWorkspace(), ctx)
-    assert result.status == InvocationStatus.SUCCESS
-    assert result.state == "COMMENT"
-    # One synthetic finding lets UI specs exercise the finding-expansion
-    # and Teach-yaaos flow without needing a real LLM. See service.review.
-    assert len(result.findings) == 1
-    # ReviewResult.findings carries canonical ReportedFinding shape.
-    assert result.findings[0].file == "src/example.ts"
-    assert result.findings[0].rule_violated == "stub/sample-suggestion"
-    assert result.telemetry.tokens_in == 1000
+    inv = Invocation(skill="pr_review", model="opus", effort="medium", context={}, wallclock_seconds=60)
+    result = stub.build_invocation(inv)
+    assert isinstance(result, InvokeCodingAgent)
+    assert result.argv == ["stub"]
+    assert result.wallclock_seconds == 60
 
 
-@pytest.mark.asyncio
-async def test_validate_config_passes_through() -> None:
+def test_parse_result_returns_run_result() -> None:
+    """StubCodingAgentPlugin.parse_result returns a RunResult with canned tokens."""
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    res = await stub.validate_config({})
-    assert res.valid is True
-
-
-@pytest.mark.asyncio
-async def test_health_check_always_healthy_in_stub_mode() -> None:
-    stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    h = await stub.health_check()
-    assert h.healthy is True
-    assert "stub" in h.message.lower()
+    result = stub.parse_result({"stdout": "some output", "exit_code": 0})
+    assert isinstance(result, RunResult)
+    assert result.output == "some output"
+    assert result.exit_code == 0
+    assert result.usage.tokens_in == 1000
+    assert result.usage.tokens_out == 200
+    assert result.error_message is None
 
 
 def test_plugin_id_mirrors_wrapped() -> None:
@@ -96,7 +70,7 @@ def test_wrap_all_is_idempotent() -> None:
     dummy = _DummyPlugin()
     register_plugin(dummy)
     assert wrap_all_registered_plugins() == 1
-    plugins = list_registered_plugins()
+    plugins = current_coding_agent_registry().list()
     assert len(plugins) == 1
     assert isinstance(plugins[0], StubCodingAgentPlugin)
     # second call is a no-op — already wrapped

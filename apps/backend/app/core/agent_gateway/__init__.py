@@ -20,6 +20,11 @@ Provides:
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
 from app.core.agent_gateway.bearers import revoke_all_for_agent, revoke_all_for_arn, revoke_all_for_org
+from app.core.agent_gateway.byok_provider import (
+    clear_byok_secrets_provider,
+    get_byok_secrets_provider,
+    register_byok_secrets_provider,
+)
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
     lookup_org_by_arn,
@@ -34,6 +39,7 @@ from app.core.agent_gateway.report_sink import (
     register_report_sink,
 )
 from app.core.agent_gateway.run_sink import (
+    AgentEventEnrichment,
     AgentRunSink,
     clear_run_sink,
     get_run_sink,
@@ -45,6 +51,8 @@ from app.core.agent_gateway.service import (
     compute_agent_liveness_transitions,
     connection_status_for_org,
     enqueue_command,
+    enqueue_command_payload,
+    enqueue_config_update_for_all_org_agents,
     ensure_agent_row,
     get_agent_info,
     get_command_org_and_payload,
@@ -88,6 +96,7 @@ from app.core.agent_gateway.types import (
     IdentityExchangeRequest,
     IdentityExchangeResponse,
     InvokeClaudeCodeCommand,
+    InvokeClaudeCodeFields,
     InvokeClaudeCodeLimits,
     ProvisionWorkspaceCommand,
     RefreshWorkspaceAuthCommand,
@@ -106,6 +115,7 @@ __all__ = [
     "AgentCommandKind",
     "AgentConfig",
     "AgentEvent",
+    "AgentEventEnrichment",
     "AgentEventKind",
     "AgentMetadata",
     "AgentRef",
@@ -121,6 +131,7 @@ __all__ = [
     "IdentityExchangeRequest",
     "IdentityExchangeResponse",
     "InvokeClaudeCodeCommand",
+    "InvokeClaudeCodeFields",
     "InvokeClaudeCodeLimits",
     "OrgArnRef",
     "ProvisionWorkspaceCommand",
@@ -139,13 +150,17 @@ __all__ = [
     "acknowledge_command_received",
     "bind_subscriber_registry",
     "claim_next",
+    "clear_byok_secrets_provider",
     "clear_run_sink",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
     "delete_identity_exchange_rate_limits",
     "enqueue_command",
+    "enqueue_command_payload",
+    "enqueue_config_update_for_all_org_agents",
     "ensure_agent_row",
     "get_agent_info",
+    "get_byok_secrets_provider",
     "get_command_org_and_payload",
     "get_command_workflow_execution_id",
     "get_report_sink",
@@ -159,6 +174,7 @@ __all__ = [
     "record_agent_event",
     "record_heartbeat",
     "record_workspace_event",
+    "register_byok_secrets_provider",
     "register_org_arn_lookup",
     "register_report_sink",
     "register_run_sink",

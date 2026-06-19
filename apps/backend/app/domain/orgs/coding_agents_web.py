@@ -80,6 +80,7 @@ async def install_endpoint(body: InstallRequest) -> CodingAgentView:
         plugin = get_coding_agent_plugin(body.plugin_id)
     except PluginNotFoundError as exc:
         raise _err(404, "plugin_not_found") from exc
+
     try:
         validated = plugin.validate_settings(body.settings)
     except ValueError as exc:
@@ -114,6 +115,7 @@ async def update_settings_endpoint(plugin_id: str, body: UpdateSettingsRequest) 
         plugin = get_coding_agent_plugin(plugin_id)
     except PluginNotFoundError as exc:
         raise _err(404, "plugin_not_found") from exc
+
     try:
         validated = plugin.validate_settings(body.settings)
     except ValueError as exc:

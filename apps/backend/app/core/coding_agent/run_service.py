@@ -77,6 +77,7 @@ async def finalize_run(
     run_id: UUID,
     *,
     usage: Usage,
+    duration_ms: int | None,
     activity: ActivityLog | None,
     exit_code: int | None,
     status: str,
@@ -86,12 +87,12 @@ async def finalize_run(
 
     Called by the coding-agent run sink on an `InvokeClaudeCode` terminal
     AgentEvent. Writes `status`, `exit_code`, `tokens_in`, `tokens_out`,
-    and `duration_ms` (preferring `usage.duration_ms` when the agent
-    reported it; falling back to the wallclock delta from `started_at`
-    → now). When `activity` is non-None, inserts one row into the
-    partitioned `coding_agent_activity` table with the JSON-serialised
-    `ActivityLog`. The run-row's `org_id` is read to tenant-stamp the
-    activity row.
+    and `duration_ms` (using the caller-supplied `duration_ms` from
+    `RunResult.duration_ms` when present; falling back to the wallclock
+    delta from `started_at` → now). When `activity` is non-None, inserts
+    one row into the partitioned `coding_agent_activity` table with the
+    JSON-serialised `ActivityLog`. The run-row's `org_id` is read to
+    tenant-stamp the activity row.
 
     Required `session`; caller commits.
     """
@@ -106,16 +107,16 @@ async def finalize_run(
         )
     ).one_or_none()
 
-    duration_ms: int | None = None
+    wallclock_ms: int | None = None
     org_id: UUID | None = None
     if row is not None:
         started_at, org_id = row[0], row[1]
         elapsed = now - started_at.replace(tzinfo=UTC) if started_at.tzinfo is None else now - started_at
-        duration_ms = max(0, int(elapsed.total_seconds() * 1000))
+        wallclock_ms = max(0, int(elapsed.total_seconds() * 1000))
 
-    # Prefer the agent-reported duration when present; fall back to wallclock.
-    if usage.duration_ms is not None:
-        duration_ms = usage.duration_ms
+    # Prefer the caller-supplied duration (from RunResult.duration_ms) when
+    # present; fall back to the wallclock delta.
+    effective_duration_ms: int | None = duration_ms if duration_ms is not None else wallclock_ms
 
     await session.execute(
         update(CodingAgentRunRow)
@@ -123,9 +124,9 @@ async def finalize_run(
         .values(
             status=status,
             exit_code=exit_code,
-            tokens_in=usage.tokens_in,
-            tokens_out=usage.tokens_out,
-            duration_ms=duration_ms,
+            tokens_in=usage.tokens_in if usage.tokens_in is not None else 0,
+            tokens_out=usage.tokens_out if usage.tokens_out is not None else 0,
+            duration_ms=effective_duration_ms,
             completed_at=now,
         )
     )
@@ -146,7 +147,7 @@ async def finalize_run(
         run_id=str(run_id),
         status=status,
         exit_code=exit_code,
-        duration_ms=duration_ms,
+        duration_ms=effective_duration_ms,
         tokens_in=usage.tokens_in,
         tokens_out=usage.tokens_out,
         activity_events=len(activity.events) if activity is not None else 0,
@@ -158,11 +159,7 @@ async def get_run_id_for_command(
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return the run id for an `agent_command_id`, or None if absent.
-
-    Used by `PostFindings.execute` to populate `reviews.run_id` when
-    linking the review to its run.
-    """
+    """Return the run id for an `agent_command_id`, or None if absent."""
     row = (
         await session.execute(
             select(CodingAgentRunRow.id).where(CodingAgentRunRow.agent_command_id == agent_command_id)
@@ -212,11 +209,7 @@ async def get_run_id_for_workflow_step(
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return the run id for a given `(workflow_execution_id, step_id)`, or None.
-
-    Used by `PostFindings.execute` to look up the run created by the
-    preceding `CodeReview` step so `reviews.run_id` can be populated.
-    """
+    """Return the run id for a given `(workflow_execution_id, step_id)`, or None."""
     row = (
         await session.execute(
             select(CodingAgentRunRow.id).where(

@@ -2,12 +2,12 @@
 
 Workspace commands:
 - `CodeReview` — full-PR review dispatched to the remote agent; the terminal
-  event's `stdout` is consumed by `PostFindings`.
+  event's `output` (from the run-sink) is consumed by `PostFindings`.
 
 Local commands:
 - `CheckShouldReview` — admission gate before workspace provisioning.
 - `SecretsScan` — pre-flight secrets detection.
-- `PostFindings` — parse agent `stdout` → `FindingRow` rows via `publish.py`.
+- `PostFindings` — parse agent `output` → `FindingRow` rows via `publish.py`.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from opentelemetry.trace import StatusCode
 from app.core.database import session as db_session
 from app.core.workflow import CommandCategory, CommandContext, Outcome
 from app.core.workspace import (
-    dispatch_invoke_claude_code,
     get_workflow_context_provider,
     get_workspace_owner,
     try_claim,
@@ -66,8 +65,9 @@ def _activity_publisher_for(ctx: CommandContext):  # type: ignore[no-untyped-def
 
 class CodeReview:
     """Full-PR review. Builds an `InvokeClaudeCode` AgentCommand via
-    `coding_agent.build_review_invocation`, claims the workspace, dispatches,
-    and parks. The terminal event's `stdout` is parsed by `PostFindings`.
+    `coding_agent.dispatch_invocation`, claims the workspace, dispatches,
+    and parks. The terminal event's `output` (contributed by the run-sink)
+    is parsed by `PostFindings`.
     """
 
     kind = "CodeReview"
@@ -92,11 +92,8 @@ class CodeReview:
         from uuid import UUID as _UUID  # noqa: PLC0415
 
         from app.core import coding_agent  # noqa: PLC0415
-        from app.core.coding_agent import (  # noqa: PLC0415
-            ReviewContext,
-            create_run,
-            finding_output_schema,
-        )
+        from app.core.coding_agent import Invocation  # noqa: PLC0415
+        from app.domain.reviewer.types import ReviewContext, finding_output_schema  # noqa: PLC0415
 
         ws_id_raw = inputs.get("workspace_id")
         if not ws_id_raw:
@@ -127,9 +124,37 @@ class CodeReview:
             output_schema=finding_output_schema(),
         )
 
+        # Load the Anthropic API key from byok at dispatch time. The plugin's
+        # build_invocation is sync and pure, so the key cannot be loaded inside
+        # it. Without this, the Go agent spawns the Claude Code CLI with an empty
+        # env and every real review fails authentication. If no key is configured
+        # for the org, surface a clear error here — the subprocess would fail
+        # anyway, but with a less useful message.
+        from app.core import byok  # noqa: PLC0415
+
+        anthropic_api_key = await byok.get(ticket_ctx.org_id, "anthropic", session=session)
+        if anthropic_api_key is None:
+            raise RuntimeError(
+                f"no anthropic api key configured for org {ticket_ctx.org_id}; "
+                "configure one in settings before dispatching a review"
+            )
+
+        invocation_context: dict[str, object] = {
+            **review_ctx.model_dump(mode="json"),
+            "anthropic_api_key": anthropic_api_key,
+        }
+
         plugin = coding_agent.get_plugin("claude_code")
         try:
-            invocation = await plugin.build_review_invocation(review_ctx, session=session)
+            invocation_data = plugin.build_invocation(
+                Invocation(
+                    skill="pr_review",
+                    model="opus",
+                    effort="medium",
+                    context=invocation_context,
+                    wallclock_seconds=1200,
+                )
+            )
         except Exception as exc:
             # inside-span failure: workflow.start_step outer span is active during dispatch
             span = trace.get_current_span()
@@ -140,38 +165,20 @@ class CodeReview:
                 workflow_execution_id=ctx.workflow_execution_id,
                 ticket_id=ctx.ticket_id,
             )
-            raise RuntimeError(f"build_review_invocation failed: {exc}") from exc
+            raise RuntimeError(f"build_invocation failed: {exc}") from exc
 
         # Enqueue the InvokeClaudeCode command pinned to the owning agent first,
         # then atomically claim the workspace with the returned command_id.
         # This ordering guarantees the AgentCommand row exists before claim.
-        command_id = await dispatch_invoke_claude_code(
-            ws_id,
+        command_id = await coding_agent.dispatch_invocation(
+            workspace_id=ws_id,
             org_id=owner.org_id,
             agent_id=owner.owning_agent_id,
-            invocation=invocation.model_dump(mode="json"),
-            traceparent="",
-            session=session,
             workflow_execution_id=_UUID(ctx.workflow_execution_id),
-        )
-
-        # Create the coding-agent run row in the same transaction so the row
-        # is durable iff the dispatch commits. Only InvokeClaudeCode commands
-        # get a run row; the `kind` from the invocation is the command_kind.
-        run_id = await create_run(
-            org_id=owner.org_id,
-            workflow_execution_id=_UUID(ctx.workflow_execution_id),
-            step_id=ctx.step_id,
-            agent_command_id=command_id,
-            command_kind=invocation.kind,
-            plugin_id=plugin.plugin_id,
+            plugin=plugin,
+            invocation_data=invocation_data,
+            ctx=ctx,
             session=session,
-        )
-        log.debug(
-            "code_review.run_created",
-            run_id=str(run_id),
-            command_id=str(command_id),
-            workflow_execution_id=ctx.workflow_execution_id,
         )
 
         claimed = await try_claim(
@@ -339,39 +346,40 @@ class SecretsScan:
 
 
 class PostFindings(_LocalReviewCommand):
-    """Parse the review step's stdout into `ReportedFinding`s and persist them.
+    """Parse the review step's output into `ReportedFinding`s and persist them.
 
     Inputs:
-    - `stdout`: raw stream-json stdout from the `InvokeClaudeCode` terminal event.
+    - `output`: parsed skill output string contributed by the run-sink from the
+      `InvokeClaudeCode` terminal event's stdout.
     - `workspace_id`: the workspace the review ran against (unused here; kept for
       step-graph symmetry).
 
-    Calls `coding_agent.parse_review_output(stdout)` → `list[ReportedFinding]`,
+    Calls `parse_review_output(output)` → `list[ReportedFinding]`,
     then `publish_findings` which validates severity/confidence, assigns
     `finding_display_id`, persists, and posts via VCS.
 
-    Non-conforming stdout (parse failure OR out-of-range enum values) →
+    Non-conforming output (parse failure OR out-of-range enum values) →
     `Outcome.failure(reason="schema_invalid")` → FAIL_WORKFLOW.
     """
 
     kind = "PostFindings"
 
     async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
-        stdout_raw = inputs.get("stdout") or ""
+        output_raw = inputs.get("output") or ""
 
-        from app.core import coding_agent  # noqa: PLC0415
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
         from app.domain.tickets import PullRequestNotFoundError, get_pull_request  # noqa: PLC0415
 
-        # Parse and validate stdout before touching any external state.
-        if not stdout_raw:
+        # Parse and validate output before touching any external state.
+        if not output_raw:
             # No output from the agent — zero findings, nothing to post.
             return Outcome.success(outputs={"admitted_count": 0})
         else:
-            plugin = coding_agent.get_plugin("claude_code")
+            from app.domain.reviewer.types import parse_review_output  # noqa: PLC0415
+
             try:
-                findings = plugin.parse_review_output(stdout_raw)
+                findings = parse_review_output(output_raw)
             except ValueError as exc:
                 log.warning(
                     "post_findings.parse_failed",
@@ -405,23 +413,13 @@ class PostFindings(_LocalReviewCommand):
             return Outcome.success(outputs={"admitted_count": 0})
 
         try:
-            from app.core.coding_agent import get_run_id_for_workflow_step  # noqa: PLC0415
-
             async with db_session() as s:
-                # Look up the run created by the preceding CodeReview step so
-                # the review row can be linked via reviews.run_id.
-                run_id = await get_run_id_for_workflow_step(
-                    UUID(ctx.workflow_execution_id),
-                    "review",
-                    session=s,
-                )
                 _review, admitted = await publish_findings(
                     pr_id=ticket_ctx.pr_id,
                     org_id=ticket_ctx.org_id,
                     pr_external_id=pr_row.external_id,
                     vcs_plugin_id=pr_row.plugin_id,
                     findings=findings,
-                    run_id=run_id,
                     session=s,
                 )
                 await refresh_ticket_findings_summary(

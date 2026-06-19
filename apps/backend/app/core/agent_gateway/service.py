@@ -21,13 +21,13 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from pydantic import Field, TypeAdapter
+from pydantic import BaseModel, Field, RootModel, TypeAdapter
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +88,111 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
 
 # ── Durable command queue ───────────────────────────────────────────────
 
+# Envelope keys that are gateway-owned and must never come from a caller's
+# payload_fields. Stripped from the full command dump in `enqueue_command`
+# so only kind-specific keys flow through `enqueue_command_payload`.
+_ENVELOPE_KEYS: frozenset[str] = frozenset(
+    {
+        "kind",
+        "command_id",
+        "workspace_id",
+        "traceparent",
+        "completion_token",
+        "workflow_execution_id",
+    }
+)
+
+
+async def enqueue_command_payload(
+    org_id: UUID,
+    *,
+    command_id: UUID,
+    kind: AgentCommandKind | str,
+    workspace_id: UUID | None,
+    payload_fields: BaseModel,
+    session: AsyncSession,
+    traceparent: str | None = None,
+    workflow_execution_id: UUID | None = None,
+) -> None:
+    """Insert an AgentCommand row in `pending` status from typed payload fields.
+
+    The typed-fields counterpart to `enqueue_command`. Callers that build
+    wire payloads from first principles (e.g. `core/coding_agent`) use this to
+    avoid importing any vendor-specific AgentCommand subclass.
+
+    `payload_fields` carries only the command-kind-specific fields — no envelope
+    keys. The envelope (`kind`, `command_id`, `workspace_id`, `traceparent`,
+    `completion_token`, `workflow_execution_id`) is built from the named parameters
+    and merged LAST, so identity fields can never be overwritten by the caller.
+
+    Merge order: `{**payload_fields.model_dump(mode="json"), **envelope}`.
+    The envelope's `traceparent` is unconditionally set to the dispatch span's
+    own traceparent (via `current_traceparent()`), making `enqueue_command_payload`
+    the sole owner of that field on the wire.
+
+    The caller-supplied `command_id` becomes the row PK and the FIFO sort key.
+    Producers must mint it with `uuid7()` so claim order matches enqueue order.
+
+    Opens an `agent_command.dispatch.{kind}` OTel span covering the full insert.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    kind_str = str(kind)
+    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind_str}") as span:
+        span.set_attribute("kind", kind_str)
+        span.set_attribute("command_id", str(command_id))
+        span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
+        span.set_attribute(
+            "workflow_id",
+            str(workflow_execution_id) if workflow_execution_id is not None else "",
+        )
+        try:
+            # Overwrite the caller-supplied traceparent with the dispatch span's
+            # own traceparent so the agent's supervisor.dispatch.<kind> span is
+            # parented to agent_command.dispatch.<kind>, not the outer caller's
+            # span. This function is the sole owner of this field on the wire.
+            dispatch_tp = current_traceparent()
+            effective_tp = dispatch_tp if dispatch_tp is not None else (traceparent or "")
+            # Build the envelope from named parameters. These are the gateway-owned
+            # identity fields — they must always win over anything the caller-supplied
+            # payload_fields could produce. completion_token is NULL at enqueue time;
+            # `claim_next` injects the raw token into the returned DTO without
+            # re-persisting, so it is never stored here.
+            # workspace_id is omitted when None (ConfigUpdateCommand has no workspace_id
+            # field in its discriminated-union shape).
+            envelope: dict[str, Any] = {
+                "kind": kind_str,
+                "command_id": str(command_id),
+                "traceparent": effective_tp,
+                "completion_token": None,
+                "workflow_execution_id": str(workflow_execution_id)
+                if workflow_execution_id is not None
+                else None,
+            }
+            if workspace_id is not None:
+                envelope["workspace_id"] = str(workspace_id)
+            # Merge: kind-specific fields first, envelope LAST — so identity fields
+            # (kind, command_id, traceparent, completion_token, workflow_execution_id,
+            # workspace_id) can never be overwritten by the caller's payload_fields.
+            final_payload = {**payload_fields.model_dump(mode="json"), **envelope}
+            # The caller-supplied command_id is the row PK and FIFO sort key.
+            # Producers mint it with uuid7() so it is time-ordered (see docstring).
+            row = AgentCommandRow(
+                id=command_id,
+                org_id=org_id,
+                workspace_id=workspace_id,
+                workflow_execution_id=workflow_execution_id,
+                command_kind=kind_str,
+                payload=final_payload,
+                status="pending",
+            )
+            session.add(row)
+            await session.flush()
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+
 
 async def enqueue_command(
     org_id: UUID,
@@ -119,48 +224,34 @@ async def enqueue_command(
     `org_id`/`actor_kind`/`workflow_id` are auto-stamped by the
     `YaaosDimensionsSpanProcessor`. `command_id` and `workspace_id` are set
     explicitly here since they are command-scoped (not process-wide dimensions).
-    """
-    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
+    Thin wrapper around `enqueue_command_payload` — unpacks the typed command
+    into primitives and delegates. Retained for the workspace-lifecycle callers
+    that already have typed `AgentCommand` instances.
+    """
     kind = str(command.kind)
     workspace_id: UUID | None = getattr(command, "workspace_id", None)
     if workspace_id is not None and str(workspace_id) == "00000000-0000-0000-0000-000000000000":
         workspace_id = None
-
-    with _tracer.start_as_current_span(f"agent_command.dispatch.{kind}") as span:
-        span.set_attribute("kind", kind)
-        span.set_attribute("command_id", str(command.command_id))
-        span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
-        span.set_attribute(
-            "workflow_id",
-            str(workflow_execution_id) if workflow_execution_id is not None else "",
-        )
-        try:
-            # Overwrite the command's traceparent with the dispatch span's own
-            # traceparent so the agent's supervisor.dispatch.<kind> span is
-            # parented to agent_command.dispatch.<kind>, not the outer caller's
-            # span. `enqueue_command` is the sole owner of this field on the
-            # wire; callers must not pre-fill it.
-            dispatch_tp = current_traceparent()
-            if dispatch_tp is not None:
-                command = command.model_copy(update={"traceparent": dispatch_tp})
-            # The caller-supplied command_id is the row PK and FIFO sort key.
-            # Producers mint it with uuid7() so it is time-ordered (see docstring).
-            row = AgentCommandRow(
-                id=command.command_id,
-                org_id=org_id,
-                workspace_id=workspace_id,
-                workflow_execution_id=workflow_execution_id,
-                command_kind=kind,
-                payload=command.model_dump(mode="json"),
-                status="pending",
-            )
-            session.add(row)
-            await session.flush()
-        except Exception as exc:
-            span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            raise
+    # Dump the full command and strip envelope keys so `enqueue_command_payload`
+    # receives only the kind-specific fields. The envelope fields (kind, command_id,
+    # workspace_id, traceparent, completion_token, workflow_execution_id) are
+    # re-injected by `enqueue_command_payload` from the named parameters —
+    # ensuring the gateway always owns those identity fields.
+    full_dump = command.model_dump(mode="json")
+    kind_fields = {k: v for k, v in full_dump.items() if k not in _ENVELOPE_KEYS}
+    payload_fields: BaseModel = RootModel[dict[str, Any]](kind_fields)
+    traceparent = getattr(command, "traceparent", "") or ""
+    await enqueue_command_payload(
+        org_id,
+        command_id=command.command_id,
+        kind=kind,
+        workspace_id=workspace_id,
+        payload_fields=payload_fields,
+        traceparent=traceparent,
+        session=session,
+        workflow_execution_id=workflow_execution_id,
+    )
 
 
 async def pin_command_to_agent(
@@ -235,18 +326,28 @@ async def get_command_workflow_execution_id(
     return row[0]
 
 
-def _build_config_update_dto() -> ConfigUpdateCommand:
-    """Construct a ConfigUpdateCommand DTO from current Settings.
+async def _build_config_update_dto(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> ConfigUpdateCommand:
+    """Construct a ConfigUpdateCommand DTO from current Settings + per-org BYOK secrets.
 
-    No DB side effect. Used by `enqueue_config_update_for_agent` and by tests
+    No DB side effect of its own — the byok provider may read from the DB via the
+    supplied session. Used by `enqueue_config_update_for_agent` and by tests
     that need to inspect the settings → AgentConfig mapping without going
     through the claim channel.
     """
     from uuid import uuid7  # noqa: PLC0415
 
+    from app.core.agent_gateway.byok_provider import get_byok_secrets_provider  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
 
     settings = get_settings()
+    byok_secrets: dict = {}
+    provider = get_byok_secrets_provider()
+    if provider is not None:
+        byok_secrets = await provider(org_id, session=session)
     return ConfigUpdateCommand(
         command_id=uuid7(),
         traceparent="",
@@ -256,6 +357,7 @@ def _build_config_update_dto() -> ConfigUpdateCommand:
             otlp_token=settings.yaaos_agent_dash0_bearer_token,
             otlp_dataset=settings.yaaos_dash0_dataset,
             environment=settings.environment,
+            byok_secrets=byok_secrets,
         ),
     )
 
@@ -281,7 +383,7 @@ async def enqueue_config_update_for_agent(
 
     Caller commits.
     """
-    cmd = _build_config_update_dto()
+    cmd = await _build_config_update_dto(org_id, session=session)
     # Pre-stamp the agent_id so the unconfigured claim SELECT finds it without
     # a workspace_ids sweep. `enqueue_command` leaves agent_id NULL; we patch it
     # immediately after — also setting a placeholder `completion_token_hash`
@@ -296,6 +398,30 @@ async def enqueue_config_update_for_agent(
         .values(agent_id=agent_id, completion_token_hash=placeholder_hash)
     )
     await session.flush()
+
+
+async def enqueue_config_update_for_all_org_agents(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Insert a ConfigUpdate command row for every reachable agent in the org.
+
+    Used to fan-out a BYOK key change (set or clear) to all currently-registered
+    agents so each agent's next claim picks up the updated byok_secrets. Agents
+    that are not yet configured (no prior ConfigUpdate) are also notified.
+
+    Caller commits. No-op when the org has no agents.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
+    rows = (
+        (await session.execute(select(WorkspaceAgentRow.id).where(WorkspaceAgentRow.org_id == org_id)))
+        .scalars()
+        .all()
+    )
+    for agent_id in rows:
+        await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=session)
 
 
 def _row_to_command(row: object) -> AgentCommand:
@@ -329,13 +455,17 @@ async def claim_next(
       of the queue is untouched so non-ConfigUpdate commands accumulate while
       the agent bootstraps.
     - `configured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across the
-      eligible set (FIFO by UUIDv7 id):
+      eligible set, evaluated in priority order (FIFO by UUIDv7 id within each):
+        * A pending ConfigUpdate pinned to this agent — runs FIRST so credential
+          and endpoint rotations (BYOK keys, OTLP token) land before any
+          ProvisionWorkspace injects per-workspace env that lives for the
+          workspace's whole life.
         * A pending unassigned ProvisionWorkspace (status=pending, agent_id NULL,
           kind=ProvisionWorkspace), when `new_workspaces > 0`.
         * A pending command pinned to this agent for a workspace in
           `workspace_ids` (status=pending, agent_id=this agent, workspace_id ∈
           workspace_ids).
-      The two sets are evaluated with a single UNION-like approach: we query
+      The three sets are evaluated with a single UNION-like approach: we query
       each eligible set in priority order and take the first result, so the
       caller receives exactly one command per call. Stamps `agent_id`,
       `status=claimed`, `claimed_at=now`.
@@ -400,8 +530,30 @@ async def claim_next(
             if row is None:
                 return None
     else:
-        # Try unassigned ProvisionWorkspace first (capacity for new workspaces).
-        if new_workspaces > 0:
+        # ConfigUpdate first: a pinned ConfigUpdate carries credential / endpoint
+        # rotations (BYOK keys, OTLP token) that must land before the next
+        # ProvisionWorkspace injects per-workspace env (e.g. ANTHROPIC_API_KEY at
+        # ExecSpawn time, which lives for the workspace's whole life).
+        row = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                        AgentCommandRow.agent_id == agent_id,
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+        # Then unassigned ProvisionWorkspace (capacity for new workspaces).
+        if row is None and new_workspaces > 0:
             row = (
                 (
                     await session.execute(
@@ -455,7 +607,24 @@ async def claim_next(
                 if datetime.now(UTC) >= deadline:
                     break
                 # Re-run the same claim SELECTs without recursion.
-                if new_workspaces > 0:
+                row = (
+                    (
+                        await session.execute(
+                            select(AgentCommandRow)
+                            .where(
+                                AgentCommandRow.status == "pending",
+                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandRow.agent_id == agent_id,
+                            )
+                            .order_by(AgentCommandRow.id)
+                            .limit(1)
+                            .with_for_update(skip_locked=True)
+                        )
+                    )
+                    .scalars()
+                    .one_or_none()
+                )
+                if row is None and new_workspaces > 0:
                     row = (
                         (
                             await session.execute(
@@ -809,19 +978,29 @@ async def record_agent_event(
 
     # Fan out to the coding-agent run sink — only `InvokeClaudeCode` terminal
     # events need a run row finalized. The sink filters on command_kind and
-    # is a no-op for all other kinds. The sink is optional (None when
-    # domain/coding_agent is not loaded), so it degrades gracefully.
-    from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
+    # is a no-op for all other kinds. Presence is structurally guaranteed by
+    # the boot-time assert in web.py and worker.py.
+    from app.core.agent_gateway.run_sink import AgentEventEnrichment, get_run_sink  # noqa: PLC0415
 
-    _run_sink = get_run_sink()
-    if _run_sink is not None:
-        await _run_sink.handle_terminal_event(
-            command_id=event.command_id,
-            command_kind=cmd_row.command_kind,
-            event_kind=event.kind.value,
-            outputs=dict(event.outputs),
-            session=session,
-        )
+    outputs: dict = dict(event.outputs)  # type: ignore[type-arg]
+    sink = get_run_sink()
+    assert sink is not None, "run sink must be registered (asserted at boot)"
+    sink_extras: AgentEventEnrichment | None = await sink.handle_terminal_event(
+        command_id=event.command_id,
+        command_kind=cmd_row.command_kind,
+        event_kind=event.kind.value,
+        outputs=outputs,
+        session=session,
+    )
+    if sink_extras is not None:
+        outputs = {**outputs, **sink_extras}
+
+    # Strip raw agent `stdout` after the sink has processed it. The sink is
+    # the source of truth for what flows forward — it returns `{"output": ...}`
+    # (the parsed skill stdout) so workflow steps read the correct key.
+    # Leaving `stdout` in the forwarded dict would allow stale reads of the
+    # old key from any future step that accidentally used it.
+    outputs.pop("stdout", None)
 
     # Lean workspace row materialisation for ProvisionWorkspace.
     #
@@ -856,7 +1035,7 @@ async def record_agent_event(
             "agent_command_id": str(event.command_id),
             "outcome_label": event.outcome_label
             or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
-            "outputs": dict(event.outputs),
+            "outputs": outputs,
             "traceparent": event.traceparent,
         },
         session=session,
