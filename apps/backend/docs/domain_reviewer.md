@@ -6,7 +6,7 @@
 
 Owns review runs and the findings they produce: `Review`s and `Finding`s. Findings carry the canonical schema — `severity ∈ {blocker, should_fix, nit}`, `confidence ∈ {verified, plausible, speculative}`, `category`, `rationale`, `rule_violated`, `rule_source`, `suggested_fix`, optional `file`/`line`, persisted `finding_display_id`.
 
-Also owns the skill-output contract types: `ReviewContext` (the remote dispatch context), `ReportedFinding` (the raw, pre-validation skill output), `FindingDraftList` (the internal Pydantic model for stream-JSON parsing), `finding_output_schema()` (generates the JSON schema appended to the skill prompt and used to validate output), and `parse_review_output()` (finds the terminal `type=result` stream event, validates against `FindingDraftList`, returns `list[ReportedFinding]`, raises `ValueError` on any failure).
+Also owns the skill-output contract types: `ReviewContext` (the remote dispatch context), `ReportedFindingShape` (the strict-enum, per-finding shape validated by the engine before any DB write), and `CodeReviewResponse` (the expected JSON response shape for the `pr_review` skill — declared as `CodeReview.ExpectedResponse`, auto-injected as `output_schema` in the skill prompt by `CodingAgentCommand.@final dispatch`).
 
 Does NOT call an LLM for code review — `core/coding_agent` + `plugins/claude_code` do that. Reviewer is skill-agnostic: it dispatches the review and writes whatever findings the skill emits, validating against the canonical schema.
 
@@ -22,28 +22,27 @@ One workflow in `domain/reviewer/workflows/`, plus reused workspace lifecycle co
 
 For the top-level review arc see [`docs/system-architecture.md`](../../../docs/system-architecture.md). Reviewer-internal detail only:
 
-`CodeReview` dispatches the coding-agent invocation against the provisioned workspace via `coding_agent.dispatch_invocation` (which enqueues the `InvokeClaudeCode` AgentCommand, inserts a `coding_agent_runs` row, and pins the command to the owning agent). The agent runs the assigned skill and returns its output; the run-sink processes the terminal event, calls `plugin.parse_result`, and contributes `{"output": ...}` to the step's `Outputs` (via `CodeReviewOutputs.output`). `PostFindings` receives `output` via typed `PostFindingsInputs`, parses it into `list[ReportedFinding]` via `parse_review_output`, and hands them to `publish_findings`. **Non-conforming agent output (parse failure or out-of-range enum) → `Outcome.failure(reason="schema_invalid") → FAIL_WORKFLOW`** — the runtime gate; no findings are persisted or posted.
+`CodeReview` dispatches the coding-agent invocation against the provisioned workspace via `coding_agent.dispatch_invocation`. On `completed_success`, the engine calls `CodingAgentCommand.handle_response(output, ctx)` on the `CodeReview` command instance: validates the agent's JSON output against `CodeReviewResponse.model_validate_json`, and on success returns `Outcome.success(outputs=CodeReviewOutputs(response=<parsed>))`. The workflow lambda for `PostFindings` reads `review.outputs.response.findings` — a typed `list[ReportedFindingShape]` requiring no further parsing. `PostFindings` calls `publish_findings` directly. **Non-conforming agent output → `handle_response` returns `Outcome.failure(retryable=False)` → FAIL_WORKFLOW without retry** — the schema validation gate; no findings are persisted or posted.
 
 ## `publish_findings` — the canonical entry point
 
-`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFinding], session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). The link from a review to its coding-agent activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
+`publish_findings(*, pr_id, org_id, pr_external_id, vcs_plugin_id, findings: list[ReportedFindingShape], session)` lives in [`publish.py`](../app/domain/reviewer/publish.py). Receives pre-validated `ReportedFindingShape` objects — `severity`/`confidence` are already strict Literal types (validated upstream by `handle_response`). The link from a review to its coding-agent activity is implicit through the shared `(workflow_execution_id, step_id)` keys on `coding_agent_runs`.
 
 1. Open a `Review` row for this run.
-2. For each `ReportedFinding`: validate `severity`/`confidence` raw strings against the `Severity`/`Confidence` `Literal` aliases — out-of-range raises (caught by `PostFindings` as the runtime gate above).
-3. Assign each finding a `finding_display_id` — per-`pr_id` `max+1`, monotonic across categories. Rendered as `<category-prefix>-<id>` (`sec-3`). The category→prefix map is the single hardcoded dict at the top of `publish.py`; unknown category slugifies to a lowercase alnum string ≤8 chars.
-4. Persist each `Finding` row.
-5. Post each finding to the VCS plugin via `vcs.post_finding` with named primitive args — no value object crosses the `vcs` boundary.
+2. Assign each finding a `finding_display_id` — per-`pr_id` `max+1`, monotonic across categories. Rendered as `<category-prefix>-<id>` (`sec-3`). The category→prefix map is the single hardcoded dict at the top of `publish.py`; unknown category slugifies to a lowercase alnum string ≤8 chars.
+3. Persist each `Finding` row.
+4. Post each finding to the VCS plugin via `vcs.post_finding` with named primitive args — no value object crosses the `vcs` boundary.
 
 The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Canonical output schema
 
-`finding_output_schema() -> dict` (in `domain/reviewer.__all__`) is the single source of truth — generated from a Pydantic model's `model_json_schema()`. The skill-invocation prompt appends this schema as a strict output contract; `PostFindings` calls `parse_review_output` directly (no plugin lookup) to validate and parse the agent's stream-json stdout. `ReportedFinding` in `domain/reviewer/types.py` is the lenient raw-string parse twin; a unit test pins its field set to `finding_output_schema()`.
+`CodeReviewResponse.model_json_schema()` is the single source of truth — auto-injected by `CodingAgentCommand.@final dispatch` into `Invocation.context["output_schema"]` so the skill prompt carries the exact validated contract. No helper function needed. `ReportedFindingShape` in `domain/reviewer/types.py` is the strict-enum per-finding shape; its field set is pinned to the schema by a unit test.
 
 ## Invariants + why
 
 - **Skill owns all filtering.** No admission pipeline, no per-severity threshold, no per-PR nit cap, no fingerprint dedup. The skill decides what to surface; yaaos validates the schema and posts the result.
-- **Schema gate is authoritative + runtime.** Out-of-range severity/confidence fails the run cleanly — no findings persisted, no findings posted, workflow ends in `failed` with `failure_reason="schema_invalid"`.
+- **Schema gate is authoritative + runtime.** Non-conforming agent output fails the `handle_response` parse cleanly (returns `Outcome.failure(retryable=False)`) — no findings persisted, no findings posted, workflow ends in `failed` without consuming the retry budget.
 - **Advisory lock first.** `lock.acquire_pr_lock` issues `pg_advisory_xact_lock(hashtext('pr:<uuid>')::bigint)` inside the transaction before any reviewer write. Two concurrent webhooks for the same PR serialize; lock releases on commit/rollback. Read-only paths do NOT take the lock. The lock serializes both per-PR sequence-number monotonicity AND the at-most-one-in-flight-review invariant: `_create_incremental_review` re-checks the in-flight predicate inside the lock, so the loser of a two-push race stamps `pending_replay=True` on the winner's row and returns `skipped:in_flight` rather than launching a second review.
 - **`(pr_id, finding_display_id)` is unique.** Enforced at the table level; the assignment in `publish_findings` reads `max+1` and assigns inside the caller's transaction.
 - **`dispatch_events` and `dispatch_audits` run BEFORE `session.commit()`.** Domain events stash for post-commit SPA fan-out; audit rows are written in the same transaction as the state change. Rolled-back transactions silently discard both stashes — no phantom SPA events, no orphan audits.
@@ -55,11 +54,9 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Vocabulary
 
-- `ReviewContext` — remote dispatch context; its fields are serialised into `Invocation.context` by `CodeReview.dispatch` before calling `coding_agent.dispatch_invocation`. Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`. Lives in `domain/reviewer`.
-- `ReportedFinding` — raw skill output before schema validation; raw strings, no enums. Lives in `domain/reviewer`.
-- `FindingDraftList` — internal Pydantic model wrapping a `list[ReportedFinding]`; used by `parse_review_output` to validate the stream-json payload. Lives in `domain/reviewer`.
-- `finding_output_schema()` — returns the JSON schema for the skill's `findings` output; injected into the prompt appendix by `core/coding_agent/prompts.py`. Lives in `domain/reviewer`.
-- `parse_review_output(stdout)` — parses stream-json stdout into `list[ReportedFinding]`; raises `ValueError` on any parse failure. Lives in `domain/reviewer`.
+- `ReviewContext` — remote dispatch context; its fields are serialised into `Invocation.context` by `CodeReview.build_invocation`. Fields: `org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`. Lives in `domain/reviewer`.
+- `ReportedFindingShape` — the strict-enum per-finding type: `severity ∈ {blocker, should_fix, nit}`, `confidence ∈ {verified, plausible, speculative}`, and all text fields. Frozen + `extra="forbid"`. Validated by `CodingAgentCommand.handle_response` via `CodeReviewResponse.model_validate_json`. Also the type `PostFindings` receives from the workflow dataflow. Lives in `domain/reviewer`.
+- `CodeReviewResponse` — expected JSON response shape from the `pr_review` skill; declared as `CodeReview.ExpectedResponse`. `findings: list[ReportedFindingShape]`. Auto-injected as `output_schema` in the invocation context by `@final dispatch`. Lives in `domain/reviewer`.
 - `Finding` — validated, persisted finding. Lives in `domain/reviewer`.
 - `finding_display_id` — per-PR monotonic integer; rendered as `<category-prefix>-<id>` (`sec-3`, `arch-7`).
 - `Review` — one row per PR review run.
@@ -95,11 +92,11 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
 - **Service tests** (`@pytest.mark.service`):
   - `test_start_hook_service.py` — `on_start` callback flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
   - `test_terminal_hook_service.py` — 5 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution and workflow with no `on_terminal` are no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
-  - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
+  - `test_publish_findings_service.py` — strict-enum rejection at construction (`ReportedFindingShape` raises `ValidationError` for bad severity/confidence), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFindingShape`-vs-`CodeReviewResponse` schema pin, VCS `post_finding` transport.
   - `test_publish_findings_without_run_id_service.py` — `publish_findings` with the new signature (no `run_id` param) inserts a Review row; confirms `reviews.run_id` column is absent from the schema.
-  - `test_parse_review_output_owns_service.py` — unit tests for `domain/reviewer.parse_review_output`: valid stdout → `list[ReportedFinding]`, null-anchor accepted, no-result-event raises, empty stdout raises, invalid JSON raises, wrong schema raises, last result event wins.
-  - `test_post_findings_happy_path.py` — `ReportedFinding`s flow through `PostFindings` end-to-end and persist with canonical schema (via `inputs["output"]` key).
-  - `test_post_findings_reads_output_service.py` — `PostFindings` reads `inputs["output"]` (not `stdout`); empty/missing key → zero findings; valid stdout → finding persists without `run_id`.
+  - `test_post_findings_happy_path.py` — typed `ReportedFindingShape` list flows through `PostFindings` and persists with canonical schema.
+  - `test_post_findings_reads_output_service.py` — `PostFindings` reads `inputs.findings` list; empty list with no pr_id → zero findings; typed list → finding persists.
+  - `app/core/coding_agent/test/test_handle_response_service.py` — `handle_response` valid JSON → typed `Outcome.success`; schema violation → `Outcome.failure(retryable=False)`; empty string → `failure(retryable=False)`; schema auto-injected via `ExpectedResponse` ClassVar.
   - `test_code_review_dispatch_new_path_service.py` — `CodeReview.dispatch` via `coding_agent.dispatch_invocation`: asserts `agent_commands` row with `command_kind="InvokeClaudeCode"`, `coding_agent_runs` row with `plugin_id="claude_code"`, and workspace claim acquired.
   - `test_pr_review_v1_e2e_service.py` — full pipeline (stub VCS + coding-agent + workspace).
   - `test_findings_summary_service.py` — rollup written on review end.

@@ -7,7 +7,7 @@ Entry points:
   when a `@yaaos review` comment is parsed.
 - `cancel_workflows_for_ticket(ticket_id)` — cancel any non-terminal
   workflow_executions rows for the ticket.
-- `publish_findings(...)` — convert `ReportedFinding`s from the coding-agent
+- `publish_findings(...)` — convert `ReportedFindingShape`s from the coding-agent
   into persisted `Finding` rows via `domain/reviewer/publish.py`.
 """
 
@@ -48,10 +48,10 @@ from app.domain.reviewer.trigger import (
     humanize_skip,
 )
 from app.domain.reviewer.types import (
+    CodeReviewResponse,
     Confidence,
     Finding,
-    FindingDraftList,
-    ReportedFinding,
+    ReportedFindingShape,
     Review,
     ReviewContext,
     ReviewScope,
@@ -59,21 +59,19 @@ from app.domain.reviewer.types import (
     ReviewTrigger,
     Severity,
     TicketSnapshot,
-    finding_output_schema,
-    parse_review_output,
 )
 from app.domain.tickets import get_workspace_ticket_context as _get_workspace_ticket_context
 
 __all__ = [
+    "CodeReviewResponse",
     "Confidence",
     "Debounce",
     "DomainEvent",
     "Finding",
-    "FindingDraftList",
     "FindingRaised",
     "FindingView",
     "PRReviewAggregate",
-    "ReportedFinding",
+    "ReportedFindingShape",
     "Review",
     "ReviewCompleted",
     "ReviewContext",
@@ -100,14 +98,12 @@ __all__ = [
     "decide_trigger",
     "dispatch_events",
     "finding_handle",
-    "finding_output_schema",
     "get_review",
     "humanize_skip",
     "is_off_topic_message",
     "is_yaaos_command",
     "list_findings_for_pr",
     "list_reviews_for_pr",
-    "parse_review_output",
     "prefix_broken_creds_warning",
     "publish_findings",
     "refresh_ticket_findings_summary",

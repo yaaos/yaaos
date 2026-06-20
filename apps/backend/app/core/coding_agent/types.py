@@ -7,8 +7,8 @@ payload into a `RunResult`; `validate_settings` validates and normalizes a raw
 settings dict. Plugins own skill resolution, model mapping, stdout parsing, and
 settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
 
-`ReviewContext` and `ReportedFinding` live in `domain/reviewer` — they are
-reviewer-domain types, not generic coding-agent types.
+`ReviewContext`, `ReportedFindingShape`, and `CodeReviewResponse` live in
+`domain/reviewer` — they are reviewer-domain types, not generic coding-agent types.
 """
 
 from __future__ import annotations
@@ -153,10 +153,14 @@ class ActivityLog(BaseModel):
 class RunResult(BaseModel):
     """Result returned by `CodingAgentPlugin.parse_result`.
 
-    Carries the raw skill stdout, optional error message, token usage,
+    Carries the structured skill response, optional error message, token usage,
     wall-clock duration, exit code, and the pre-rendered activity log.
     Does NOT carry status — the sink derives status from the wire event_kind
     and stores it on the run row independently of the plugin's parse step.
+
+    `output` — the agent's structured response JSON (the `result` field from
+    the terminal stream-json event). This is what `CodingAgentCommand.handle_response`
+    validates against the command's `ExpectedResponse` schema.
     """
 
     output: str

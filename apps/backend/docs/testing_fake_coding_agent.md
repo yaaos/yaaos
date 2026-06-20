@@ -13,7 +13,7 @@
 
 ## Module architecture
 
-Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content so tests can drive the downstream `parse_review_output` validation path. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
+Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content — `output` should be the structured JSON response string (e.g. `'{"findings": []}'`) that `CodingAgentCommand.handle_response` will validate against `ExpectedResponse`. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
 
 No telemetry, no byok lookup, no DB reads.
 

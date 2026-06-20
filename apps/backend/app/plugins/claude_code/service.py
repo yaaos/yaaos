@@ -424,9 +424,9 @@ class ClaudeCodePlugin:
         from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
 
         # Build a ReviewContext-compatible object from the generic context dict.
-        # The invocation.context for pr_review carries the same keys as
-        # ReviewContext (org_id, repo_external_id, pr_external_id, head_sha,
-        # base_sha, output_schema). We validate required keys here.
+        # The invocation.context for pr_review carries ReviewContext keys plus
+        # `output_schema` auto-injected by CodingAgentCommand.@final dispatch.
+        # We validate the required ReviewContext keys here.
         ctx_dict = invocation.context
         required = {"head_sha", "base_sha", "pr_external_id", "repo_external_id", "org_id"}
         missing = required - set(ctx_dict)
@@ -440,13 +440,13 @@ class ClaudeCodePlugin:
             pr_external_id=ctx_dict["pr_external_id"],
             head_sha=ctx_dict["head_sha"],
             base_sha=ctx_dict["base_sha"],
-            output_schema=ctx_dict.get("output_schema", {}),
         )
 
         # Build the review prompt from the context.
+        # `output_schema` is auto-injected by CodingAgentCommand.@final dispatch.
         import json as _json  # noqa: PLC0415
 
-        schema_str = _json.dumps(review_ctx.output_schema, indent=2)
+        schema_str = _json.dumps(ctx_dict.get("output_schema", {}), indent=2)
         prompt = (
             f"Review the pull request. Base SHA: {review_ctx.base_sha}. Head SHA: {review_ctx.head_sha}.\n"
             f"Run `git diff {review_ctx.base_sha}..HEAD` to inspect changes.\n\n"
@@ -514,8 +514,19 @@ class ClaudeCodePlugin:
             duration_raw = result_event.get("duration_ms")
             if isinstance(duration_raw, int):
                 duration_ms = duration_raw
+        # Extract the structured response from the terminal result event.
+        # The agent emits its structured answer in result_event["result"] (the
+        # content of the `--output-format=stream-json` result line). Downstream
+        # `CodingAgentCommand.handle_response` validates this string directly
+        # via `model_validate_json`. An empty fallback produces a validation
+        # failure (retryable=False) rather than silent data loss.
+        output: str = ""
+        if result_event is not None:
+            raw_result = result_event.get("result")
+            if isinstance(raw_result, str):
+                output = raw_result
         return RunResult(
-            output=stdout,
+            output=output,
             error_message=None,
             usage=usage,
             duration_ms=duration_ms,

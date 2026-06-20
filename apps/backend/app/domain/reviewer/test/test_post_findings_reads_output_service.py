@@ -1,15 +1,13 @@
-"""Service test: PostFindings reads `output` field from typed `PostFindingsInputs`.
+"""Service test: PostFindings reads `findings` from typed `PostFindingsInputs`.
 
 Verifies:
-- `PostFindings.execute(PostFindingsInputs(output=<canned_stdout>, ...), ctx)` parses
-  and persists findings.
-- `PostFindingsInputs(output="")` returns zero findings — success.
-- `publish_findings` is NOT passed a `run_id` kwarg — the new path drops that lookup.
+- `PostFindings.execute(PostFindingsInputs(findings=[<shape>], ...), ctx)` persists
+  findings directly (no parsing step).
+- `PostFindingsInputs(findings=[])` with no pr_id returns zero findings — success.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -20,27 +18,11 @@ from app.core.vcs import VCSPullRequest
 from app.core.workflow import CommandContext
 from app.domain.reviewer.commands import PostFindings, PostFindingsInputs
 from app.domain.reviewer.models import FindingRow
+from app.domain.reviewer.types import ReportedFindingShape
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 pytestmark = pytest.mark.service
-
-
-def _canned_stdout(findings_payload: dict) -> str:  # type: ignore[type-arg]
-    """Encode a findings dict as stream-json stdout."""
-    return "\n".join(
-        [
-            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
-            json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": json.dumps(findings_payload),
-                    "is_error": False,
-                }
-            ),
-        ]
-    )
 
 
 def _ctx(ticket_id: str, wfx_id: str) -> CommandContext:
@@ -52,9 +34,23 @@ def _ctx(ticket_id: str, wfx_id: str) -> CommandContext:
     )
 
 
+def _shape(*, severity: str = "blocker", category: str = "security") -> ReportedFindingShape:
+    return ReportedFindingShape(
+        file="src/foo.py",
+        line=5,
+        category=category,
+        severity=severity,  # type: ignore[arg-type]
+        confidence="verified",
+        rationale="SQL injection risk.",
+        rule_violated="sql-injection",
+        rule_source="owasp",
+        suggested_fix="Use parameterized queries.",
+    )
+
+
 @pytest.mark.asyncio
-async def test_post_findings_reads_output_field(db_session) -> None:
-    """PostFindings parses the `output` field of PostFindingsInputs and persists findings."""
+async def test_post_findings_reads_findings_field(db_session) -> None:  # type: ignore[no-untyped-def]
+    """PostFindings persists the typed `findings` field from PostFindingsInputs."""
     org_id = uuid4()
     ext_id = f"pf-out-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
@@ -96,28 +92,10 @@ async def test_post_findings_reads_output_field(db_session) -> None:
     pr_id = pr.id
     await db_session.commit()
 
-    stdout = _canned_stdout(
-        {
-            "findings": [
-                {
-                    "file": "src/foo.py",
-                    "line": 5,
-                    "category": "security",
-                    "severity": "blocker",
-                    "confidence": "verified",
-                    "rationale": "SQL injection risk.",
-                    "rule_violated": "sql-injection",
-                    "rule_source": "owasp",
-                    "suggested_fix": "Use parameterized queries.",
-                }
-            ]
-        }
-    )
-
     wfx_id = str(uuid4())
     ctx = _ctx(str(ticket_id), wfx_id)
     inputs = PostFindingsInputs(
-        output=stdout,
+        findings=[_shape()],
         org_id=org_id,
         pr_id=pr_id,
         pr_external_id=f"pr-{ext_id}",
@@ -149,10 +127,10 @@ async def test_post_findings_reads_output_field(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_findings_empty_output_returns_zero(db_session) -> None:  # type: ignore[no-untyped-def]
-    """`output=""` in typed inputs → zero findings, success outcome."""
+async def test_post_findings_empty_findings_no_pr_returns_zero(db_session) -> None:  # type: ignore[no-untyped-def]
+    """`findings=[]` with no pr_id → zero findings, success outcome."""
     outcome = await PostFindings().execute(
-        PostFindingsInputs(output="", org_id=uuid4()),
+        PostFindingsInputs(findings=[], org_id=uuid4()),
         _ctx(str(uuid4()), str(uuid4())),
         session=db_session,
     )

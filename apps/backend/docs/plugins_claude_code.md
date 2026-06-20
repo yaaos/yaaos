@@ -8,7 +8,7 @@ Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `byok_req
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
-Does NOT own: `ReviewContext`, `FindingDraftList`, `parse_review_output`, or review output validation — those live in `domain/reviewer`.
+Does NOT own: `ReviewContext`, `ReportedFindingShape`, `CodeReviewResponse`, or review output validation — those live in `domain/reviewer`. `parse_result` extracts the structured response from stream-json; validation against `CodeReviewResponse` happens in `CodingAgentCommand.handle_response`.
 
 ## Module architecture
 

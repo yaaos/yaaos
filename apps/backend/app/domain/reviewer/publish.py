@@ -1,8 +1,9 @@
-"""Convert `ReportedFinding`s from the coding-agent into persisted `Finding` rows.
+"""Convert `ReportedFindingShape`s from the coding-agent into persisted `Finding` rows.
 
 `publish_findings` is the single entry point: open a `Review`, convert each
-`ReportedFinding → Finding` (validating severity/confidence strings), assign a
-per-PR `finding_display_id`, persist, and post each finding to the VCS plugin
+`ReportedFindingShape → Finding` (severity/confidence are already strict enums
+validated by `CodingAgentCommand.handle_response`), assign a per-PR
+`finding_display_id`, persist, and post each finding to the VCS plugin
 via `vcs.post_finding`. No value object crosses the `vcs` boundary — findings
 pass as named primitive args.
 """
@@ -18,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.reviewer.models import FindingRow, ReviewRow
-from app.domain.reviewer.types import Confidence, Finding, ReportedFinding, Review, ReviewScope, Severity
+from app.domain.reviewer.types import Confidence, Finding, ReportedFindingShape, Review, ReviewScope, Severity
 
 log = structlog.get_logger("reviewer.publish")
 
@@ -86,13 +87,13 @@ async def publish_findings(
     org_id: uuid.UUID,
     pr_external_id: str,
     vcs_plugin_id: str,
-    findings: list[ReportedFinding],
+    findings: list[ReportedFindingShape],
     session: AsyncSession,
 ) -> tuple[Review, list[Finding]]:
-    """Convert + persist `ReportedFinding`s and post them to the VCS plugin.
+    """Convert + persist `ReportedFindingShape`s and post them to the VCS plugin.
 
-    Opens a new `Review` row, converts each `ReportedFinding` to a `Finding`
-    (validating severity/confidence — out-of-range raises `ValueError`),
+    Opens a new `Review` row, converts each `ReportedFindingShape` to a `Finding`
+    (severity/confidence are already strict enums — no re-validation needed),
     assigns a per-PR monotonic `finding_display_id`, persists, and posts
     each finding via `vcs.post_finding` with named primitive args.
 
@@ -130,8 +131,10 @@ async def publish_findings(
     next_display_id = await _next_finding_display_id(pr_id, session)
 
     for rf in findings:
-        severity = _validate_severity(rf.severity)
-        confidence = _validate_confidence(rf.confidence)
+        # severity and confidence are already strict Literal types on
+        # ReportedFindingShape — validated upstream by handle_response.
+        severity = rf.severity  # type: ignore[assignment]
+        confidence = rf.confidence  # type: ignore[assignment]
         display_id = next_display_id
         next_display_id += 1
 

@@ -312,6 +312,7 @@ async def _start_step_impl(
                 "completed_step_id": step_id,
                 "outcome_label": outcome.label,
                 "outputs": _outcome_payload(outcome),
+                "retryable": outcome.retryable,
                 "traceparent": wfx.otel_trace_context,
             },
             session=s,
@@ -390,6 +391,33 @@ async def _handle_agent_event_impl(
         wfx.state = WorkflowState.RUNNING.value
         _publish_state_changed(s, wfx)
 
+        # For CodingAgentCommand steps on success, call handle_response to
+        # validate the agent's JSON output and produce a typed Outcome. The
+        # duck-type check avoids an import cycle (core.coding_agent →
+        # core.workflow but NOT the reverse).
+        retryable = True
+        if outcome_label == "success" and completed_step_id is not None:
+            engine = get_engine()
+            wf = engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
+            step = _resolve_step(wfx, wf, completed_step_id)
+            if step is not None:
+                try:
+                    command = engine.get_command(step.command_class.kind)
+                except CommandNotRegisteredError:
+                    command = None
+                if command is not None and callable(getattr(command, "handle_response", None)):
+                    cmd_ctx = CommandContext(
+                        workflow_execution_id=str(wfx.id),
+                        ticket_id=str(wfx.ticket_id),
+                        step_id=completed_step_id,
+                        attempt=_get_attempt(wfx, completed_step_id),
+                        traceparent=traceparent,
+                    )
+                    handle_outcome = await command.handle_response(outputs.get("output", ""), cmd_ctx)
+                    outcome_label = handle_outcome.label
+                    outputs = _outcome_payload(handle_outcome)
+                    retryable = handle_outcome.retryable
+
         await enqueue(
             ROUTE_WORKFLOW,
             args={
@@ -397,6 +425,7 @@ async def _handle_agent_event_impl(
                 "completed_step_id": completed_step_id,
                 "outcome_label": outcome_label,
                 "outputs": outputs,
+                "retryable": retryable,
                 "traceparent": wfx.otel_trace_context,
             },
             session=s,
@@ -411,6 +440,7 @@ async def route_workflow(
     completed_step_id: str | None,
     outcome_label: str | None,
     outputs: dict[str, Any],
+    retryable: bool = True,
     traceparent: str | None = None,
 ) -> None:
     """Persist the completed step's outcome, apply retry budget, evaluate
@@ -430,6 +460,7 @@ async def route_workflow(
             completed_step_id=completed_step_id,
             outcome_label=outcome_label,
             outputs=outputs,
+            retryable=retryable,
             traceparent=traceparent,
         )
     finally:
@@ -442,6 +473,7 @@ async def _route_workflow_impl(
     completed_step_id: str | None,
     outcome_label: str | None,
     outputs: dict[str, Any],
+    retryable: bool = True,
     traceparent: str | None,
 ) -> None:
     async with db_session() as s:
@@ -536,8 +568,10 @@ async def _route_workflow_impl(
                 await s.commit()
                 return
 
-        # Tier-2 retry on failure.
-        if outcome_label == "failure":
+        # Tier-2 retry on failure — skipped when `retryable=False` (e.g. a
+        # schema validation failure from CodingAgentCommand.handle_response:
+        # retrying would produce the same bad output).
+        if outcome_label == "failure" and retryable:
             attempts = _get_attempt(wfx, completed_step_id)
             if attempts < step.retry_policy.max_attempts - 1:
                 wfx.state = WorkflowState.RUNNING.value
@@ -1359,12 +1393,26 @@ class WorkflowEngine:
         #
         # `model_construct()` without kwargs leaves required fields unset —
         # accessing them raises AttributeError, the same signal we use to
-        # detect "typo'd field name". Passing `None` for every declared field
-        # pre-sets them so that valid field access succeeds; only truly absent
-        # attribute names then raise AttributeError, which is the right gate.
-        def _mock(cls: type) -> BaseModel:
+        # detect "typo'd field name". We set each field to `None` so that
+        # valid single-level access (`outputs.field`) succeeds; only truly
+        # absent attribute names raise AttributeError.
+        #
+        # For fields whose annotation is itself a BaseModel subclass we
+        # recursively call `_mock` so that nested access
+        # (`outputs.response.findings`) also succeeds — without this,
+        # `response=None` would make `None.findings` raise AttributeError
+        # and be mis-identified as a field-name typo.
+        def _mock(cls: type, _depth: int = 0) -> BaseModel:
+            if _depth > 5:  # guard against pathological recursion
+                return Empty()
             try:
-                fields = {name: None for name in cls.model_fields}  # type: ignore[attr-defined]
+                fields: dict[str, object] = {}
+                for name, finfo in cls.model_fields.items():  # type: ignore[attr-defined]
+                    ann = finfo.annotation
+                    if isinstance(ann, type) and issubclass(ann, BaseModel):
+                        fields[name] = _mock(ann, _depth + 1)
+                    else:
+                        fields[name] = None
                 return cls.model_construct(**fields)  # type: ignore[attr-defined]
             except Exception:
                 return Empty()

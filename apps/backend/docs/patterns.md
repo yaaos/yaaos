@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed by `plugin.parse_result(terminal_event_payload)` into `RunResult`; the run-sink writes this to `coding_agent_runs`. Post-processing of the agent's text output (`parse_review_output` → `list[ReportedFinding]`) is a `domain/reviewer` concern at the `PostFindings` workflow step.
+- Coding-agent CLI stdout parsed by `plugin.parse_result(terminal_event_payload)` into `RunResult`; the run-sink writes this to `coding_agent_runs`. `RunResult.output` is the structured response JSON from the stream-json `result` field; the engine calls `CodingAgentCommand.handle_response(output, ctx)` on `completed_success` to validate it against `ExpectedResponse` and produce a typed `Outcome`.
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 
@@ -276,7 +276,7 @@ When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(..
 
 Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three families:
 
-- **AgentDispatch** — subclasses of `AgentDispatchCommand` (ABC). `@final dispatch(inputs, ctx, *, session) -> UUID` is inherited; subclasses implement `build_command` (for `WorkspaceOpCommand`) or `build_invocation` (for `CodingAgentCommand`). `start_step` identifies them via `isinstance(cmd, AgentDispatchCommand)`, calls `dispatch`, parks in `awaiting_agent`, and stores the returned `command_id` as `pending_agent_command_id`. Worker never blocks on the agent.
+- **AgentDispatch** — subclasses of `AgentDispatchCommand` (ABC). `@final dispatch(inputs, ctx, *, session) -> UUID` is inherited; subclasses implement `build_command` (for `WorkspaceOpCommand`) or `build_invocation` (for `CodingAgentCommand`; the `@final dispatch` on `CodingAgentCommand` also auto-injects `ExpectedResponse.model_json_schema()` into the invocation context and on `completed_success` the engine duck-type calls `cmd.handle_response(output, ctx)` to validate the agent JSON output — schema violations produce `retryable=False`). `start_step` identifies them via `isinstance(cmd, AgentDispatchCommand)`, calls `dispatch`, parks in `awaiting_agent`, and stores the returned `command_id` as `pending_agent_command_id`. Worker never blocks on the agent.
 - **Local** — plain structural `LocalCommand` Protocol; `execute(inputs, ctx, *, session) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
 - **HITL** — subclasses of `HITLCommand` (ABC); `execute(inputs, ctx) -> Outcome` (no session). Must return `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 

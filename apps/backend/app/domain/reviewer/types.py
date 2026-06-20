@@ -5,12 +5,10 @@ Immutable. Pure data. No I/O.
 
 from __future__ import annotations
 
-import json
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -89,7 +87,7 @@ class Review:
     created_at: datetime
 
 
-# ── Reviewer-domain types (moved from core/coding_agent) ─────────────────────
+# ── Reviewer-domain types ───────────────────────────────────────────────────
 
 
 class ReviewContext(BaseModel):
@@ -98,11 +96,6 @@ class ReviewContext(BaseModel):
     Carries the identifiers the skill needs to run `git diff base..head` in
     the clone and emit structured findings. No diff blob crosses the wire —
     the skill computes it from the clone.
-
-    `output_schema` is an immutable snapshot of `finding_output_schema()`
-    frozen at dispatch, so the skill validates against the exact shape the
-    run launched with (no mid-run drift). `PostFindings` re-validates the
-    returned stdout against the same contract.
     """
 
     org_id: uuid.UUID
@@ -110,35 +103,20 @@ class ReviewContext(BaseModel):
     pr_external_id: str
     head_sha: str
     base_sha: str
-    output_schema: Mapping[str, Any] = {}
 
 
-class ReportedFinding(BaseModel):
-    """One raw finding produced by an agent task.
+class ReportedFindingShape(BaseModel):
+    """One finding produced by the agent.
 
-    Raw strings only — no enum validation. `domain/reviewer` validates
-    `severity` and `confidence` into typed values when converting to `Finding`.
-    `file` and `line` are optional — general (PR-wide) findings carry no anchor.
+    Strict enum strings for `severity` and `confidence` — the canonical
+    per-finding shape that `CodeReviewResponse.findings` carries. Validated
+    at parse time by `CodingAgentCommand.handle_response` via
+    `CodeReview.ExpectedResponse.model_validate_json`. Also the type
+    `PostFindings` receives from the workflow dataflow and passes directly
+    to `publish_findings`.
     """
 
-    file: str | None = None
-    line: int | None = None
-    category: str
-    severity: str
-    confidence: str
-    rationale: str
-    rule_violated: str
-    rule_source: str
-    suggested_fix: str
-
-
-class _ReportedFindingDto(BaseModel):
-    """The agent's per-finding output shape used for JSON schema generation.
-
-    `severity` and `confidence` are strict enum strings — the canonical contract
-    the agent must emit. `ReportedFinding` is the lenient raw-string parse twin
-    used after the fact.
-    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     file: str | None = None
     line: int | None = None
@@ -151,71 +129,20 @@ class _ReportedFindingDto(BaseModel):
     suggested_fix: str
 
 
-class FindingDraftList(BaseModel):
-    """Full-review + incremental-review response: a flat list of findings.
-    The agent is told to respond with `{"findings": [...]}`."""
+class CodeReviewResponse(BaseModel):
+    """Expected JSON response shape from the `pr_review` coding-agent skill.
 
-    findings: list[_ReportedFindingDto]
-
-
-def finding_output_schema() -> dict[str, Any]:
-    """The canonical finding output contract as a JSON schema dict.
-
-    Single source of truth: generated from `FindingDraftList.model_json_schema()`.
-    Consumers: the skill-invocation prompt (schema appendix) and the skills
-    popover endpoint. `ReportedFinding` is the lenient raw-string parse twin;
-    a unit test pins its field set to this schema.
+    Declared as `CodeReview.ExpectedResponse`. The `@final dispatch` on
+    `CodingAgentCommand` auto-injects `model_json_schema()` into the
+    `Invocation.context["output_schema"]` slot so the skill prompt carries
+    the exact contract. The engine calls `handle_response` on
+    `completed_success` events and validates the agent's output against
+    this model.
     """
-    return FindingDraftList.model_json_schema()  # type: ignore[return-value]
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-def parse_review_output(stdout: str) -> list[ReportedFinding]:
-    """Parse the agent's stream-json stdout into `ReportedFinding` objects.
-
-    Finds the terminal `type=result` event, extracts the `result` field,
-    and parses the JSON payload against `FindingDraftList`. Raises `ValueError`
-    on any parse failure or structurally non-conforming output so `PostFindings`
-    can gate on it.
-    """
-    from pydantic import ValidationError  # noqa: PLC0415
-
-    events: list[dict[str, Any]] = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                events.append(obj)
-        except json.JSONDecodeError:
-            continue
-
-    result_event = next((e for e in reversed(events) if e.get("type") == "result"), None)
-    if result_event is None:
-        raise ValueError("no 'type=result' event found in stdout")
-    raw_result = result_event.get("result", "")
-    if not isinstance(raw_result, str):
-        raise ValueError(f"result field is not a string: {type(raw_result)}")
-    try:
-        parsed_dict = json.loads(raw_result)
-        parsed = FindingDraftList.model_validate(parsed_dict)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise ValueError(f"agent output did not match FindingDraftList: {exc}") from exc
-    return [
-        ReportedFinding(
-            file=d.file,
-            line=d.line,
-            category=d.category,
-            severity=d.severity,
-            confidence=d.confidence,
-            rationale=d.rationale,
-            rule_violated=d.rule_violated,
-            rule_source=d.rule_source,
-            suggested_fix=d.suggested_fix,
-        )
-        for d in parsed.findings
-    ]
+    findings: list[ReportedFindingShape]
 
 
 # ── Workflow input snapshot ─────────────────────────────────────────────

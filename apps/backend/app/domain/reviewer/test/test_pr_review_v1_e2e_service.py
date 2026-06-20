@@ -142,7 +142,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
     All Workspace steps park at AWAITING_AGENT. Each is advanced by a
     simulated agent event:
     - ProvisionWorkspace: event returns the seeded workspace_id.
-    - CodeReview: event returns one canonical ReportedFinding via outputs.
+    - CodeReview: event returns a CodeReviewResponse JSON in outputs; handle_response validates it.
     - CleanupWorkspace: event returns empty outputs.
 
     PostFindings (LOCAL) runs inline, validates the canonical finding, and
@@ -236,7 +236,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
     )
     await db_session.commit()
 
-    # CodeReview agent event returns stream-json stdout; PostFindings (LOCAL) parses it.
+    # CodeReview agent event returns a JSON string matching CodeReviewResponse shape.
+    # `handle_response` calls `CodeReviewResponse.model_validate_json(output)` so the
+    # output must be direct JSON, not stream-json. The run-sink extracts the `result`
+    # field from stream-json in the real flow; the test simulates the already-extracted
+    # output by passing `json.dumps(spy_finding_payload)` directly.
     spy_finding_payload = {
         "findings": [
             {
@@ -252,19 +256,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
             }
         ]
     }
-    spy_stdout = "\n".join(
-        [
-            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
-            json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": json.dumps(spy_finding_payload),
-                    "is_error": False,
-                }
-            ),
-        ]
-    )
+    spy_output = json.dumps(spy_finding_payload)
 
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
@@ -297,11 +289,12 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
 
             # ProvisionWorkspace: return the pre-seeded workspace_id.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
-            # CodeReview: return the parsed output via outputs; PostFindings parses it.
+            # CodeReview: handle_response validates the JSON against CodeReviewResponse;
+            # PostFindings receives typed findings from the Outcome.
             await _advance_pending_agent_event(
                 db_session,
                 wfx_id,
-                outputs={"output": spy_stdout},
+                outputs={"output": spy_output},
             )
             # PostFindings (LOCAL) ran inline. CleanupWorkspace parks.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={})
@@ -402,14 +395,15 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         await db_session.commit()
         await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
-        # CodeReview parks. Simulate empty output (no findings path — PostFindings treats no output as zero findings).
+        # CodeReview parks. Simulate zero-findings response — handle_response validates
+        # the JSON against CodeReviewResponse; empty findings list → PostFindings no-op.
         await _advance_pending_agent_event(
             db_session,
             wfx_id,
-            outputs={"output": ""},
+            outputs={"output": '{"findings": []}'},
         )
 
-        # PostFindings (Local) ran inline with empty stdout → success-no-op;
+        # PostFindings (Local) ran inline with empty findings list → success-no-op;
         # CleanupWorkspace then parked. Simulate its terminal event.
         await _advance_pending_agent_event(db_session, wfx_id, outputs={})
 

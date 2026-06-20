@@ -1,12 +1,11 @@
 """Service tests for `publish_findings` — the canonical finding pipeline.
 
 Covers the behaviors the publish path guarantees:
-1. Out-of-range `severity`/`confidence` strings raise (the runtime gate).
-2. `finding_display_id` assignment is per-`pr_id` monotonic and unique under
+1. `finding_display_id` assignment is per-`pr_id` monotonic and unique under
    concurrent inserts.
-3. Each `ReportedFinding` results in one `vcs.post_finding` call; null-anchor
+2. Each `ReportedFindingShape` results in one `vcs.post_finding` call; null-anchor
    findings (no file/line) still produce a `post_finding` call.
-4. The `ReportedFinding` field set is pinned to `finding_output_schema()` —
+3. The `ReportedFindingShape` field set is pinned to `CodeReviewResponse` schema —
    the single source of truth for the agent's response contract.
 """
 
@@ -17,10 +16,11 @@ from datetime import UTC, datetime
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.core.vcs import VCSPullRequest
-from app.domain.reviewer import ReportedFinding, finding_output_schema, publish_findings
+from app.domain.reviewer import CodeReviewResponse, ReportedFindingShape, publish_findings
 from app.domain.reviewer.models import FindingRow
 from app.domain.reviewer.types import Confidence, Severity
 from app.domain.tickets import create_from_pr as create_ticket
@@ -28,12 +28,12 @@ from app.domain.tickets import upsert as upsert_pr
 from app.testing.stub_vcs import register_stub_vcs
 
 
-def _conforming(category: str = "security", severity: str = "blocker") -> ReportedFinding:
-    return ReportedFinding(
+def _conforming(category: str = "security", severity: str = "blocker") -> ReportedFindingShape:
+    return ReportedFindingShape(
         file="src/foo.py",
         line=10,
         category=category,
-        severity=severity,
+        severity=severity,  # type: ignore[arg-type]
         confidence="verified",
         rationale="reason",
         rule_violated="rule-x",
@@ -89,51 +89,40 @@ async def _seed_pr(db_session) -> tuple[uuid.UUID, uuid.UUID, str, str]:  # type
     return org_id, pr.id, f"pr-{ext_id}", "github"
 
 
-# ── Enum gate ──────────────────────────────────────────────────────────────
+# ── Schema strictness (at construction) ────────────────────────────────────
 
 
-@pytest.mark.service
-@pytest.mark.asyncio
-async def test_publish_findings_rejects_out_of_range_severity(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Conversion validates the raw severity string into `Severity`; an
-    out-of-range value raises (the runtime gate, surfaced as a clean review
-    failure by the caller).
+def test_reported_finding_shape_rejects_invalid_severity() -> None:
+    """ReportedFindingShape raises ValidationError on an out-of-range severity.
+
+    The strict Literal type enforces the contract at Pydantic construction
+    time — before any DB call. `publish_findings` callers always receive
+    fully-validated shapes from `handle_response`.
     """
-    org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
-
-    bad = _conforming()
-    bad = bad.model_copy(update={"severity": "major"})  # legacy 4-tier name, no longer valid
-
-    with register_stub_vcs(plugin_id="github"):
-        with pytest.raises(ValueError, match="severity"):
-            await publish_findings(
-                pr_id=pr_id,
-                org_id=org_id,
-                pr_external_id=pr_external_id,
-                vcs_plugin_id=vcs_plugin_id,
-                findings=[bad],
-                session=db_session,
-            )
+    with pytest.raises(ValidationError, match="severity"):
+        ReportedFindingShape(
+            category="security",
+            severity="major",  # type: ignore[arg-type]  — not a valid Literal
+            confidence="verified",
+            rationale="r",
+            rule_violated="r",
+            rule_source="s",
+            suggested_fix="f",
+        )
 
 
-@pytest.mark.service
-@pytest.mark.asyncio
-async def test_publish_findings_rejects_out_of_range_confidence(db_session) -> None:  # type: ignore[no-untyped-def]
-    org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
-
-    bad = _conforming()
-    bad = bad.model_copy(update={"confidence": "totally-sure"})
-
-    with register_stub_vcs(plugin_id="github"):
-        with pytest.raises(ValueError, match="confidence"):
-            await publish_findings(
-                pr_id=pr_id,
-                org_id=org_id,
-                pr_external_id=pr_external_id,
-                vcs_plugin_id=vcs_plugin_id,
-                findings=[bad],
-                session=db_session,
-            )
+def test_reported_finding_shape_rejects_invalid_confidence() -> None:
+    """ReportedFindingShape raises ValidationError on an out-of-range confidence."""
+    with pytest.raises(ValidationError, match="confidence"):
+        ReportedFindingShape(
+            category="security",
+            severity="blocker",
+            confidence="totally-sure",  # type: ignore[arg-type]
+            rationale="r",
+            rule_violated="r",
+            rule_source="s",
+            suggested_fix="f",
+        )
 
 
 @pytest.mark.service
@@ -200,9 +189,7 @@ async def test_finding_display_id_is_monotonic_per_pr(db_session) -> None:  # ty
 @pytest.mark.asyncio
 async def test_finding_display_id_unique_across_multi_finding_publish(db_session) -> None:  # type: ignore[no-untyped-def]
     """Multiple findings within a single publish call land on distinct
-    `finding_display_id` values — the assignment iterates `max+i`, not `max+1`
-    for every row. (Cross-transaction uniqueness is enforced by the
-    `(pr_id, finding_display_id)` unique constraint on the table.)
+    `finding_display_id` values.
     """
     org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
 
@@ -233,22 +220,40 @@ async def test_finding_display_id_unique_across_multi_finding_publish(db_session
 # ── Schema pin ──────────────────────────────────────────────────────────────
 
 
-def test_reported_finding_field_set_matches_finding_output_schema() -> None:
-    """`ReportedFinding`'s field set is the same as the canonical schema's
-    `findings[*]` items. This pin catches accidental drift between the
-    lenient raw twin (`ReportedFinding`) and the strict agent-emit schema
-    (`finding_output_schema()`).
+def test_reported_finding_shape_field_set_matches_code_review_response_schema() -> None:
+    """`ReportedFindingShape`'s field set matches the `CodeReviewResponse` JSON schema's
+    `findings[*]` item properties. This pin catches drift between the two.
     """
-    schema = finding_output_schema()
-    # FindingDraftList shape: {"findings": [{<item>}]}
+    schema = CodeReviewResponse.model_json_schema()
+    # CodeReviewResponse shape: {"findings": [{<item>}]}
     item_ref = schema["properties"]["findings"]["items"]
-    item_schema = schema["$defs"][item_ref["$ref"].rsplit("/", 1)[-1]]
+    ref_key = item_ref["$ref"].rsplit("/", 1)[-1]
+    item_schema = schema["$defs"][ref_key]
     schema_fields = set(item_schema["properties"].keys())
 
-    reported_fields = set(ReportedFinding.model_fields.keys())
-    assert reported_fields == schema_fields, (
-        f"drift: ReportedFinding has {reported_fields - schema_fields}, "
-        f"schema has {schema_fields - reported_fields}"
+    shape_fields = set(ReportedFindingShape.model_fields.keys())
+    assert shape_fields == schema_fields, (
+        f"drift: ReportedFindingShape has {shape_fields - schema_fields}, "
+        f"schema has {schema_fields - shape_fields}"
+    )
+
+
+def test_reported_finding_shape_severity_and_confidence_match_typed_aliases() -> None:
+    """The enum values in `CodeReviewResponse` schema must equal the `Severity`/`Confidence`
+    Literal tuples — any drift breaks publish at runtime.
+    """
+    schema = CodeReviewResponse.model_json_schema()
+    item_ref = schema["properties"]["findings"]["items"]
+    ref_key = item_ref["$ref"].rsplit("/", 1)[-1]
+    item_schema = schema["$defs"][ref_key]
+
+    schema_sev = set(item_schema["properties"]["severity"]["enum"])
+    schema_conf = set(item_schema["properties"]["confidence"]["enum"])
+    assert schema_sev == set(get_args(Severity)), (
+        f"severity: schema {schema_sev} vs typed {get_args(Severity)}"
+    )
+    assert schema_conf == set(get_args(Confidence)), (
+        f"confidence: schema {schema_conf} vs typed {get_args(Confidence)}"
     )
 
 
@@ -258,10 +263,7 @@ def test_reported_finding_field_set_matches_finding_output_schema() -> None:
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_publish_findings_calls_post_finding_once_per_finding(db_session) -> None:  # type: ignore[no-untyped-def]
-    """Each `ReportedFinding` maps to exactly one `vcs.post_finding` call.
-
-    Two conforming findings → two entries in `stub.posted_findings`.
-    """
+    """Each `ReportedFindingShape` maps to exactly one `vcs.post_finding` call."""
     org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
 
     findings = [
@@ -285,15 +287,10 @@ async def test_publish_findings_calls_post_finding_once_per_finding(db_session) 
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_publish_findings_null_anchor_calls_post_finding(db_session) -> None:  # type: ignore[no-untyped-def]
-    """A finding with no `file`/`line` (null anchor) still calls `post_finding`.
-
-    The stub records the call regardless of anchor; the GitHub plugin routes
-    null-anchor findings to the issue-comments endpoint — tested separately
-    in the plugin's own unit tests.
-    """
+    """A finding with no `file`/`line` (null anchor) still calls `post_finding`."""
     org_id, pr_id, pr_external_id, vcs_plugin_id = await _seed_pr(db_session)
 
-    null_anchor = ReportedFinding(
+    null_anchor = ReportedFindingShape(
         file=None,
         line=None,
         category="architecture",
@@ -319,23 +316,3 @@ async def test_publish_findings_null_anchor_calls_post_finding(db_session) -> No
     _org_id, _ext_id, kwargs = stub.posted_findings[0]
     assert kwargs["file"] is None
     assert kwargs["line_start"] is None
-
-
-def test_reported_finding_severity_and_confidence_match_typed_aliases() -> None:
-    """The wire enum values for `severity` and `confidence` in the schema must
-    equal the `Severity`/`Confidence` `Literal` tuples on the reviewer side.
-    Any drift between the agent-emit contract and the reviewer's validator
-    breaks publish at runtime.
-    """
-    schema = finding_output_schema()
-    item_ref = schema["properties"]["findings"]["items"]
-    item_schema = schema["$defs"][item_ref["$ref"].rsplit("/", 1)[-1]]
-
-    schema_sev = set(item_schema["properties"]["severity"]["enum"])
-    schema_conf = set(item_schema["properties"]["confidence"]["enum"])
-    assert schema_sev == set(get_args(Severity)), (
-        f"severity: schema {schema_sev} vs typed {get_args(Severity)}"
-    )
-    assert schema_conf == set(get_args(Confidence)), (
-        f"confidence: schema {schema_conf} vs typed {get_args(Confidence)}"
-    )

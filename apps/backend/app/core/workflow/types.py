@@ -302,12 +302,14 @@ class Outcome(BaseModel):
         reason: str,
         label: str = "failure",
         outputs: BaseModel | Mapping[str, Any] | None = None,
+        retryable: bool = True,
     ) -> Outcome:
         return cls(
             kind=OutcomeKind.FAILURE,
             label=label,
             outputs=outputs if outputs is not None else Empty(),
             failure_reason=reason,
+            retryable=retryable,
         )
 
     @classmethod

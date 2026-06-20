@@ -22,9 +22,9 @@ class AgentEventEnrichment(TypedDict, total=False):
     """Typed return value from `AgentRunSink.handle_terminal_event`.
 
     Keys:
-    - `output` — the parsed skill stdout that replaces raw `stdout` downstream;
-      produced by `plugin.parse_result` and forwarded to the workflow as the
-      canonical agent output.
+    - `output` — the structured skill response JSON extracted by `plugin.parse_result`
+      from the stream-json `result` field; forwarded to the workflow as `outputs["output"]`
+      and validated by `CodingAgentCommand.handle_response` against `ExpectedResponse`.
     - `error_message` — structured error text from the run; `None` when the
       agent completed without a reported error.
     """

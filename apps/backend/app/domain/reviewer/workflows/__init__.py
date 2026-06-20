@@ -106,7 +106,7 @@ def _cleanup_ws_id() -> CleanupWorkspaceInputs:
 post = step(
     PostFindings,
     inputs=lambda: PostFindingsInputs(
-        output=review.outputs.output,
+        findings=review.outputs.response.findings,
         org_id=ticket.outputs.org_id,
         pr_id=ticket.outputs.pr_id,
         pr_external_id=ticket.outputs.pr_external_id,

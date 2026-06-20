@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -268,34 +267,18 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     )
     await db_session.commit()
 
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
-            json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": json.dumps(
-                        {
-                            "findings": [
-                                {
-                                    "file": "src/foo.py",
-                                    "line": 1,
-                                    "category": "security",
-                                    "severity": "blocker",
-                                    "confidence": "verified",
-                                    "rationale": "r",
-                                    "rule_violated": "r",
-                                    "rule_source": "yaaos",
-                                    "suggested_fix": "Use parameterized queries.",
-                                }
-                            ]
-                        }
-                    ),
-                    "is_error": False,
-                }
-            ),
-        ]
+    from app.domain.reviewer.types import ReportedFindingShape  # noqa: PLC0415
+
+    finding = ReportedFindingShape(
+        file="src/foo.py",
+        line=1,
+        category="security",
+        severity="blocker",
+        confidence="verified",
+        rationale="r",
+        rule_violated="r",
+        rule_source="yaaos",
+        suggested_fix="Use parameterized queries.",
     )
 
     ctx = CommandContext(
@@ -306,7 +289,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     )
 
     inputs = PostFindingsInputs(
-        output=stdout,
+        findings=[finding],
         org_id=org_id,
         pr_id=pr.id,
         pr_external_id=f"pr-{ext_id}",

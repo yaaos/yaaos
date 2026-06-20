@@ -28,10 +28,32 @@ def test_returns_run_result_instance() -> None:
     assert isinstance(result, RunResult)
 
 
-def test_output_is_stdout() -> None:
-    stdout = "hello world"
+def test_output_is_extracted_result_json() -> None:
+    """output is the `result` field from the terminal stream event, not the full stdout.
+
+    This is the structured response JSON that `CodingAgentCommand.handle_response`
+    validates against the command's `ExpectedResponse` schema.
+    """
+    findings_json = '{"findings": []}'
+    stdout = _stream(
+        {"type": "system", "subtype": "init", "session_id": "s"},
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": findings_json,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "duration_ms": 100,
+        },
+    )
     result = _plugin().parse_result(_payload(stdout=stdout))
-    assert result.output == stdout
+    assert result.output == findings_json
+
+
+def test_output_empty_when_no_result_event() -> None:
+    """When stdout has no `type=result` event (e.g. timeout), output is empty string."""
+    stdout = _stream({"type": "system", "subtype": "init", "session_id": "s"})
+    result = _plugin().parse_result(_payload(stdout=stdout))
+    assert result.output == ""
 
 
 def test_exit_code_propagated() -> None:
