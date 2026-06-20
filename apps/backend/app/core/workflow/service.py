@@ -197,9 +197,6 @@ async def _start_step_impl(
             traceparent=current_traceparent(),
         )
 
-        wfx.current_step_id = step_id
-        _stamp_step_started(wfx, step_id)
-
         if isinstance(command, AgentDispatchCommand):
             # Agent-dispatch commands enqueue an AgentCommand durably inside this
             # transaction via the command's own `dispatch` method. The engine
@@ -209,6 +206,8 @@ async def _start_step_impl(
             # `_NullDispatch` is the signal from WorkspaceOpCommand.dispatch when
             # build_command returns None (e.g. CleanupWorkspace with no workspace_id)
             # — treat as a successful local outcome to skip the park.
+            wfx.current_step_id = step_id
+            _stamp_step_started(wfx, step_id)
             outer_span = trace.get_current_span()
             kind = command_kind
             with with_remote_parent_span(
@@ -247,40 +246,51 @@ async def _start_step_impl(
                     return
 
             if null_dispatch:
-                # build_command returned None — treat as success and route normally.
-                outcome = Outcome.success()
-            else:
-                wfx.pending_agent_command_id = command_id
-                wfx.state = WorkflowState.AWAITING_AGENT.value
-                _publish_state_changed(s, wfx)
-                log.debug(
-                    "workflow.start_step.agent_dispatched",
-                    workflow_execution_id=workflow_execution_id,
-                    command_kind=command_kind,
-                    command_id=str(command_id),
+                # build_command returned None — treat as a successful local step.
+                null_outcome = Outcome.success()
+                wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
+                await enqueue(
+                    ROUTE_WORKFLOW,
+                    args={
+                        "workflow_execution_id": workflow_execution_id,
+                        "completed_step_id": step_id,
+                        "outcome_label": null_outcome.label,
+                        "outputs": _outcome_payload(null_outcome),
+                        "retryable": null_outcome.retryable,
+                        "traceparent": wfx.otel_trace_context,
+                    },
+                    session=s,
                 )
                 await s.commit()
                 return
 
-        else:
-            # Local or HITL: run execute() inline.
-            # LocalCommand receives `session=s` so Phase 7 can wire transactional
-            # work; HITLCommand (ABC) does not take `session`.
-            is_hitl = isinstance(command, HITLCommand)
+            wfx.pending_agent_command_id = command_id
+            wfx.state = WorkflowState.AWAITING_AGENT.value
+            _publish_state_changed(s, wfx)
+            log.debug(
+                "workflow.start_step.agent_dispatched",
+                workflow_execution_id=workflow_execution_id,
+                command_kind=command_kind,
+                command_id=str(command_id),
+            )
+            await s.commit()
+            return
+
+        is_hitl = isinstance(command, HITLCommand)
+
+        if is_hitl:
+            # HITL: stamp the step and execute inline; no SAVEPOINT needed since
+            # HITLCommand has no DB writes and must return hitl_pending.
+            wfx.current_step_id = step_id
+            _stamp_step_started(wfx, step_id)
             outcome = await _safe_execute(
                 command,
                 typed_inputs,
                 cmd_ctx,
                 traceparent=wfx.otel_trace_context,
-                category="hitl" if is_hitl else "local",
-                session=None if is_hitl else s,
+                category="hitl",
+                session=None,
             )
-
-        # ── Post-execute routing ────────────────────────────────────────
-        # Reached for: null_dispatch (agent command that skipped the park),
-        # LocalCommand, or HITLCommand after execute().
-
-        if isinstance(command, HITLCommand):
             if outcome.kind is not OutcomeKind.HITL_PENDING:
                 log.error(
                     "workflow.start_step.hitl_command_returned_non_pending",
@@ -303,20 +313,54 @@ async def _start_step_impl(
             await s.commit()
             return
 
-        # Local command (or null_dispatch) — persist outcome + enqueue route_workflow.
-        wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
-        await enqueue(
-            ROUTE_WORKFLOW,
-            args={
-                "workflow_execution_id": workflow_execution_id,
-                "completed_step_id": step_id,
-                "outcome_label": outcome.label,
-                "outputs": _outcome_payload(outcome),
-                "retryable": outcome.retryable,
-                "traceparent": wfx.otel_trace_context,
-            },
-            session=s,
-        )
+        # LocalCommand: execute inside a SAVEPOINT so command writes,
+        # step_attempts, and the outbox enqueue are all-or-nothing.
+        # If the command raises, _safe_execute re-raises; the savepoint rolls
+        # back every write; the outer session then records a terminal FAILED
+        # state without enqueuing route_workflow.
+        local_exc: Exception | None = None
+        try:
+            async with s.begin_nested():
+                wfx.current_step_id = step_id
+                _stamp_step_started(wfx, step_id)
+                outcome = await _safe_execute(
+                    command,
+                    typed_inputs,
+                    cmd_ctx,
+                    traceparent=wfx.otel_trace_context,
+                    category="local",
+                    session=s,
+                )
+                wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
+                await enqueue(
+                    ROUTE_WORKFLOW,
+                    args={
+                        "workflow_execution_id": workflow_execution_id,
+                        "completed_step_id": step_id,
+                        "outcome_label": outcome.label,
+                        "outputs": _outcome_payload(outcome),
+                        "retryable": outcome.retryable,
+                        "traceparent": wfx.otel_trace_context,
+                    },
+                    session=s,
+                )
+        except Exception as exc:
+            local_exc = exc
+
+        if local_exc is not None:
+            # Savepoint rolled back: command writes + step_attempts + outbox all
+            # undone. Refresh wfx (expired by savepoint rollback) and enter FAILED.
+            await s.refresh(wfx)
+            log.warning(
+                "workflow.start_step.local_command_raised",
+                workflow_execution_id=workflow_execution_id,
+                step_id=step_id,
+                error=str(local_exc),
+            )
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
+            await s.commit()
+            return
+
         await s.commit()
 
 
@@ -1288,6 +1332,15 @@ async def _safe_execute(
     Typed `object` (not `AsyncSession | None`) so the semgrep session-discipline rule
     does not flag this private engine helper — callers are the sole source of truth on
     what gets passed.
+
+    When `session` is not None (Local command): exceptions are re-raised after recording
+    span error so the caller's SAVEPOINT handler can roll back the transaction.
+    When `session` is None (HITL): exceptions are caught and converted to Outcome.failure.
+
+    Runtime guard: asserts `session.in_transaction()` before and after execute() when
+    session is not None — catches a LocalCommand that commits the outer transaction.
+    Guard is best-effort: committing a nested SAVEPOINT is not detected (in_transaction
+    remains True while the outer transaction lives).
     """
     outer_span = trace.get_current_span()
     kind = command.kind  # type: ignore[attr-defined]
@@ -1298,7 +1351,14 @@ async def _safe_execute(
         child_span.set_attribute("workflow.attempt", ctx.attempt)
         try:
             if session is not None:
+                # LocalCommand: verify the session is in a transaction before and after.
+                if not session.in_transaction():  # type: ignore[attr-defined]
+                    raise RuntimeError(f"LocalCommand '{kind}' invoked outside a transaction — engine bug")
                 outcome = await command.execute(inputs, ctx, session=session)  # type: ignore[arg-type,call-arg]
+                if not session.in_transaction():  # type: ignore[attr-defined]
+                    raise RuntimeError(
+                        f"LocalCommand '{kind}' committed or closed the session — must never commit"
+                    )
             else:
                 outcome = await command.execute(inputs, ctx)  # type: ignore[arg-type]
         except Exception as exc:
@@ -1310,6 +1370,9 @@ async def _safe_execute(
                 workflow_execution_id=ctx.workflow_execution_id,
                 step_id=ctx.step_id,
             )
+            if session is not None:
+                # LocalCommand raised: re-raise so the caller's savepoint rolls back.
+                raise
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
         if outcome.kind is OutcomeKind.FAILURE:

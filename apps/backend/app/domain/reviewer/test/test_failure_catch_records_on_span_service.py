@@ -4,10 +4,11 @@ Covers:
 - SecretsScan: when `post_comment` raises after detecting a secret, the
   surrounding span receives an exception event + ERROR status (the outcome
   is still success/skip — the comment failure is logged but not fatal).
-- PostFindings: a VCS post_finding failure produces exactly ONE exception
-  event on the PostFindings span (not two — the inner _post_findings_via_vcs
-  catch must not call record_exception before re-raising into the outer
-  PostFindings.execute catch).
+- PostFindings: a VCS post_finding failure propagates from PostFindings
+  (the broad outer catch was removed; only ValueError is caught). The engine's
+  _safe_execute records exactly ONE exception event on the PostFindings span.
+  _post_findings_via_vcs must NOT call record_exception before re-raising —
+  that would produce two events when the engine records it.
 """
 
 from __future__ import annotations
@@ -306,22 +307,30 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     try:
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("workflow.command.PostFindings"):
-                outcome = await PostFindings().execute(inputs, ctx, session=db_session)
+            # OTel records the propagating exception automatically on the span
+            # (record_exception=True is the default) — this simulates what
+            # _safe_execute sees when PostFindings raises.
+            with pytest.raises(RuntimeError, match="simulated VCS post failure"):
+                with tracer.start_as_current_span("workflow.command.PostFindings"):
+                    await PostFindings().execute(inputs, ctx, session=db_session)
     finally:
         bind_vcs_registry(prior_registry)
 
-    assert outcome.label == "failure", f"expected failure outcome, got {outcome.label!r}"
-
+    # The exception propagated: PostFindings no longer catches non-ValueError
+    # exceptions. The engine's _safe_execute records it on the same span.
     spans = exporter.get_finished_spans()
     target = next((s for s in spans if "PostFindings" in s.name), None)
     assert target is not None, f"no PostFindings span; got: {[s.name for s in spans]}"
 
+    # OTel auto-records exactly ONE exception event (from the propagating exception
+    # through start_as_current_span). _post_findings_via_vcs must not call
+    # record_exception before re-raising — that would produce two events here.
     exception_events = [e for e in target.events if e.name == "exception"]
     assert len(exception_events) == 1, (
-        f"expected exactly 1 exception event on PostFindings span, got {len(exception_events)}: "
-        f"{[e.attributes for e in exception_events]}"
+        f"expected exactly 1 exception event (OTel auto-record); "
+        f"_post_findings_via_vcs must not double-record. "
+        f"Got {len(exception_events)}: {[e.attributes for e in exception_events]}"
     )
     assert target.status.status_code == StatusCode.ERROR, (
-        f"expected ERROR status, got {target.status.status_code}"
+        f"expected ERROR status from propagated exception, got {target.status.status_code}"
     )

@@ -11,11 +11,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ConfigDict
 
-from app.core.database import session as db_session
 from app.core.workflow import CommandContext, Outcome
 from app.domain.reviewer.types import ReportedFindingShape
 
@@ -54,6 +51,10 @@ class PostFindings:
     Reads fully-validated `PostFindingsInputs.findings` (already a
     `list[ReportedFindingShape]` — no parsing step). Calls `publish_findings`
     which assigns `finding_display_id`, persists, and posts via VCS.
+
+    The engine passes the outer session so finding rows + the outbox enqueue
+    for route_workflow commit atomically. PostFindings must never call
+    session.commit().
     """
 
     kind = "PostFindings"
@@ -68,11 +69,6 @@ class PostFindings:
         *,
         session: AsyncSession,
     ) -> Outcome:
-        # `session` accepted for LocalCommand Protocol contract; ignored until
-        # the transactional use is wired. PostFindings opens its own session
-        # for the publish + summary writes.
-        del session
-
         from app.domain.reviewer.publish import publish_findings  # noqa: PLC0415
         from app.domain.reviewer.service import refresh_ticket_findings_summary  # noqa: PLC0415
         from app.domain.tickets import PullRequestNotFoundError, get_pull_request  # noqa: PLC0415
@@ -98,35 +94,28 @@ class PostFindings:
             )
             return Outcome.success(outputs=PostFindingsOutputs(admitted_count=0))
 
+        # ValueError from publish_findings (invalid severity/confidence) is a
+        # graceful validation failure — return Outcome.failure without polluting
+        # the engine's SAVEPOINT rollback path. All other exceptions propagate
+        # so the SAVEPOINT rolls back atomically.
         try:
-            async with db_session() as s:
-                _review, admitted = await publish_findings(
-                    pr_id=inputs.pr_id,
-                    org_id=inputs.org_id,
-                    pr_external_id=inputs.pr_external_id or pr_row.external_id,
-                    vcs_plugin_id=inputs.vcs_plugin_id or pr_row.plugin_id,
-                    findings=inputs.findings,
-                    session=s,
-                )
-                await refresh_ticket_findings_summary(
-                    UUID(ctx.ticket_id),
-                    inputs.pr_id,
-                    org_id=inputs.org_id,
-                    session=s,
-                )
-                await s.commit()
+            _review, admitted = await publish_findings(
+                pr_id=inputs.pr_id,
+                org_id=inputs.org_id,
+                pr_external_id=inputs.pr_external_id or pr_row.external_id,
+                vcs_plugin_id=inputs.vcs_plugin_id or pr_row.plugin_id,
+                findings=inputs.findings,
+                session=session,
+            )
         except ValueError as exc:
             return Outcome.failure(reason=f"finding validation failed: {exc}")
-        except Exception as exc:
-            span = trace.get_current_span()
-            span.record_exception(exc)
-            span.set_status(StatusCode.ERROR, str(exc))
-            log.exception(
-                "post_findings.failed",
-                workflow_execution_id=ctx.workflow_execution_id,
-                pr_id=str(inputs.pr_id),
-            )
-            return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
+
+        await refresh_ticket_findings_summary(
+            UUID(ctx.ticket_id),
+            inputs.pr_id,
+            org_id=inputs.org_id,
+            session=session,
+        )
 
         log.info(
             "post_findings.done",
