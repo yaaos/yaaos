@@ -75,6 +75,15 @@ class WorkflowFailedPayload(BaseModel):
     failure_reason: str | None
 
 
+class WorkflowCancelledPayload(BaseModel):
+    """Audit payload for `workflow.cancelled` rows written by the engine on
+    terminal-cancel. Generic — owned by `core/workflow`, not domain-specific."""
+
+    workflow_execution_id: str
+    ticket_id: str
+    cancelled_step_id: str | None
+
+
 # ── The three taskiq task bodies ────────────────────────────────────────
 
 
@@ -128,14 +137,41 @@ async def _start_step_impl(
             log.warning("workflow.start_step.unknown_execution", workflow_execution_id=workflow_execution_id)
             return
 
-        # Cancellation check — set the row terminal and exit before dispatch.
+        # Cancellation check — route through the finalizer (one-shot) before
+        # entering CANCELLED, unless the finalizer is already in flight.
         if wfx.cancel_requested:
-            await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
-            log.debug(
-                "workflow.start_step.cancelled_pre_dispatch", workflow_execution_id=workflow_execution_id
-            )
-            await s.commit()
-            return
+            _ss_engine = get_engine()
+            try:
+                _ss_wf = _ss_engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
+            except WorkflowNotFoundError:
+                _ss_wf = None
+
+            # If this IS the finalizer step (cancel pathway dispatched it already),
+            # let it run — the cancel flag is the post-finalizer discriminator.
+            if _ss_wf is not None and _ss_wf.finalizer is not None and step_id == _ss_wf.finalizer.step_id:
+                pass  # fall through to normal dispatch
+            elif not wfx.finalizer_fired and _ss_wf is not None and _ss_wf.finalizer is not None:
+                # Cancel detected before the finalizer was fired — route through it.
+                wfx.finalizer_fired = True
+                wfx.state = WorkflowState.RUNNING.value
+                _publish_state_changed(s, wfx)
+                log.debug(
+                    "workflow.start_step.cancel_routes_to_finalizer",
+                    workflow_execution_id=workflow_execution_id,
+                    finalizer_step_id=_ss_wf.finalizer.step_id,
+                )
+                await _enqueue_start_step(s, wfx, _ss_wf, _ss_wf.finalizer.step_id, attempt=0)
+                await s.commit()
+                return
+            else:
+                # No finalizer, or finalizer already dispatched for a different step.
+                log.debug(
+                    "workflow.start_step.cancelled_pre_dispatch",
+                    workflow_execution_id=workflow_execution_id,
+                )
+                await _enter_cancelled_state(s, wfx, wfx.current_step_id)
+                await s.commit()
+                return
 
         # State guard. start_step is only valid while running.
         if wfx.state != WorkflowState.RUNNING.value:
@@ -537,12 +573,37 @@ async def _route_workflow_impl(
             )
             return
 
-        if wfx.cancel_requested:
-            await _enter_terminal_state(s, wfx, WorkflowState.CANCELLED)
+        # Early cancel check — fires only when the finalizer has NOT yet been
+        # dispatched. Post-finalizer discrimination happens in the COMPLETE_WORKFLOW
+        # and FAIL_WORKFLOW target branches further below (gated on
+        # `finalizer_fired AND completed_step_id == wf.finalizer.step_id`).
+        if wfx.cancel_requested and not wfx.finalizer_fired:
+            _rw_engine = get_engine()
+            try:
+                _rw_wf = _rw_engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
+            except WorkflowNotFoundError:
+                _rw_wf = None
+
+            if _rw_wf is not None and _rw_wf.finalizer is not None:
+                # Route through finalizer first (one-shot).
+                wfx.finalizer_fired = True
+                wfx.state = WorkflowState.RUNNING.value
+                _publish_state_changed(s, wfx)
+                log.debug(
+                    "workflow.route_workflow.cancel_routes_to_finalizer",
+                    workflow_execution_id=workflow_execution_id,
+                    finalizer_step_id=_rw_wf.finalizer.step_id,
+                )
+                await _enqueue_start_step(s, wfx, _rw_wf, _rw_wf.finalizer.step_id, attempt=0)
+                await s.commit()
+                return
+
+            # No finalizer: enter CANCELLED directly.
             log.debug(
                 "workflow.route_workflow.cancelled_at_route",
                 workflow_execution_id=workflow_execution_id,
             )
+            await _enter_cancelled_state(s, wfx, wfx.current_step_id)
             await s.commit()
             return
 
@@ -551,6 +612,17 @@ async def _route_workflow_impl(
 
         # Initial call from start(): no completed step. Bootstrap by
         # enqueueing the entry step.
+        # Guard: a proactive cancel enqueue arrives with completed_step_id=None
+        # while the finalizer is already in flight (finalizer_fired=TRUE). Discard
+        # this bootstrap call; the natural finalizer-completion route_workflow will
+        # discriminate via cancel_requested.
+        if completed_step_id is None and wfx.cancel_requested:
+            log.debug(
+                "workflow.route_workflow.discard_bootstrap_on_cancel",
+                workflow_execution_id=workflow_execution_id,
+            )
+            return
+
         if completed_step_id is None:
             wfx.state = WorkflowState.RUNNING.value
             _publish_state_changed(s, wfx)
@@ -630,6 +702,17 @@ async def _route_workflow_impl(
 
         if target is TerminalAction.COMPLETE_WORKFLOW:
             if wfx.finalizer_fired and wf.finalizer is not None and completed_step_id == wf.finalizer.step_id:
+                # Post-finalizer discrimination: cancel_requested is the sole
+                # discriminator between CANCELLED and FAILED.
+                if wfx.cancel_requested:
+                    await _enter_cancelled_state(s, wfx, completed_step_id)
+                    log.info(
+                        "workflow.route_workflow.cancelled_post_finalizer",
+                        workflow_execution_id=workflow_execution_id,
+                        finalizer_step_id=completed_step_id,
+                    )
+                    await s.commit()
+                    return
                 target = TerminalAction.FAIL_WORKFLOW
             else:
                 await _enter_terminal_state(s, wfx, WorkflowState.DONE)
@@ -650,6 +733,24 @@ async def _route_workflow_impl(
                     failed_step_id=completed_step_id,
                 )
                 await _enqueue_start_step(s, wfx, wf, wf.finalizer.step_id, attempt=0)
+                await s.commit()
+                return
+
+            # Post-finalizer discrimination when the finalizer's transition was
+            # FAIL_WORKFLOW (rather than COMPLETE_WORKFLOW). cancel_requested is
+            # the sole discriminator between CANCELLED and FAILED.
+            if (
+                wfx.cancel_requested
+                and wfx.finalizer_fired
+                and wf.finalizer is not None
+                and completed_step_id == wf.finalizer.step_id
+            ):
+                await _enter_cancelled_state(s, wfx, completed_step_id)
+                log.info(
+                    "workflow.route_workflow.cancelled_post_finalizer",
+                    workflow_execution_id=workflow_execution_id,
+                    finalizer_step_id=completed_step_id,
+                )
                 await s.commit()
                 return
 
@@ -701,12 +802,44 @@ ROUTE_WORKFLOW: TaskRef = route_workflow
 
 
 async def request_cancel(workflow_execution_id: str, *, session: AsyncSession) -> bool:
+    """Set `cancel_requested=TRUE` on the workflow execution and (for states
+    where no natural task tick will arrive soon) proactively enqueue
+    `route_workflow` so the cancel is processed promptly.
+
+    Returns True if the cancel flag was newly set; False if the workflow is
+    already in a terminal state or not found.
+
+    State branching:
+    - PENDING / RUNNING / AWAITING_HUMAN → set flag + enqueue route_workflow
+    - AWAITING_AGENT → set flag only; the agent's natural terminal event triggers
+      the next route_workflow tick
+    - terminal (DONE / FAILED / CANCELLED) → no-op, returns False
+    """
     wfx = await _load_execution(session, workflow_execution_id)
     if wfx is None:
         return False
-    if WorkflowState(wfx.state) in TERMINAL_STATES:
+    current_state = WorkflowState(wfx.state)
+    if current_state in TERMINAL_STATES:
         return False
     wfx.cancel_requested = True
+    # Proactively enqueue route_workflow for states where the engine won't
+    # receive a natural task tick soon. AWAITING_AGENT is excluded — in-flight
+    # agent commands are not aborted; the terminal event is the trigger.
+    _PROACTIVE_CANCEL_STATES = frozenset(
+        {WorkflowState.PENDING, WorkflowState.RUNNING, WorkflowState.AWAITING_HUMAN}
+    )
+    if current_state in _PROACTIVE_CANCEL_STATES:
+        await enqueue(
+            ROUTE_WORKFLOW,
+            args={
+                "workflow_execution_id": workflow_execution_id,
+                "completed_step_id": None,
+                "outcome_label": None,
+                "outputs": {},
+                "traceparent": wfx.otel_trace_context,
+            },
+            session=session,
+        )
     return True
 
 
@@ -1253,6 +1386,40 @@ async def _enter_terminal_state(
                 cb_span.record_exception(exc)
                 cb_span.set_status(StatusCode.ERROR, str(exc))
                 raise
+
+
+async def _enter_cancelled_state(
+    session: AsyncSession,
+    wfx: WorkflowExecutionRow,
+    cancelled_step_id: str | None,
+) -> None:
+    """Enter CANCELLED terminal state and write the `workflow.cancelled` audit row.
+
+    Always call `_enter_terminal_state` first (sets state + fires on_terminal callback
+    + publishes SSE), then write the audit row inside the same transaction. The caller
+    is responsible for committing.
+    """
+    await _enter_terminal_state(session, wfx, WorkflowState.CANCELLED)
+    from app.core.audit_log import Actor, audit  # noqa: PLC0415
+
+    await audit(
+        "workflow_execution",
+        wfx.id,
+        "workflow.cancelled",
+        WorkflowCancelledPayload(
+            workflow_execution_id=str(wfx.id),
+            ticket_id=str(wfx.ticket_id),
+            cancelled_step_id=cancelled_step_id,
+        ),
+        Actor.system(),
+        org_id=_workflow_org_id(wfx),
+        session=session,
+    )
+    log.info(
+        "workflow.cancelled",
+        workflow_execution_id=str(wfx.id),
+        cancelled_step_id=cancelled_step_id,
+    )
 
 
 def _outcome_payload(outcome: Outcome) -> dict[str, Any]:

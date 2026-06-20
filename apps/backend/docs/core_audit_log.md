@@ -21,6 +21,8 @@
 ## Notable audit row shapes
 
 - **`identity_exchange_failed`** — `entity_kind="org"`, `entity_id=org.id`. Only written for region-mismatch failures where the ARN matched a registered org (so `org_id` is known). Non-attributable failures (unregistered ARN, parse/replay/AWS errors) stay structlog-only. Payload: `{category, attempted_arn, source_ip}`. Actor: `SYSTEM`.
+- **`workflow.failed`** — `entity_kind="workflow_execution"`, `entity_id=wfx.id`. Written by the workflow engine on every terminal-fail. Payload: `{workflow_execution_id, ticket_id, failed_step_id, failure_reason}`. Actor: `SYSTEM`.
+- **`workflow.cancelled`** — `entity_kind="workflow_execution"`, `entity_id=wfx.id`. Written by the workflow engine on every terminal-cancel (parallel to `workflow.failed`). Payload: `{workflow_execution_id, ticket_id, cancelled_step_id}` where `cancelled_step_id` is the step the workflow was on when cancel fired (`wfx.current_step_id`). Actor: `SYSTEM`.
 
 ## Gotchas
 
