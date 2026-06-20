@@ -133,9 +133,6 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
     agent-request span instead of the workflow.run.* trace."""
     _MinimalWs.dispatched_id = None
 
-    ws_cmd = _MinimalWs()
-    terminal_cmd = _TerminalLocal()
-
     ws_step = step(_MinimalWs)
     terminal_step = step(_TerminalLocal)
     wf = Workflow(
@@ -156,8 +153,6 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(ws_cmd)
-                eng.register_command(terminal_cmd)
                 eng.register_workflow(wf)
 
                 wfx_id = await eng.start(
@@ -304,10 +299,6 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
     """
     _MinimalWs.dispatched_id = None
 
-    ws_cmd = _MinimalWs()
-    terminal_cmd = _TerminalLocal()
-    noop_cmd = _NoopLocal()
-
     # ── Sub-test 1: Local-only workflow ───────────────────────────────
     noop_s = step(_NoopLocal)
     wf_local = Workflow(
@@ -326,7 +317,6 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(noop_cmd)
                 eng.register_workflow(wf_local)
 
                 await eng.start(
@@ -380,8 +370,6 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             upstream_ws_tp = current_traceparent()
 
             with scoped_engine() as eng2:
-                eng2.register_command(ws_cmd)
-                eng2.register_command(terminal_cmd)
                 eng2.register_workflow(wf_ws)
 
                 wfx_id = await eng2.start(
@@ -454,8 +442,6 @@ async def test_workflow_task_spans_in_workflow_trace(db_session) -> None:  # typ
     """
     from app.core.tasks import TaskMetadata  # noqa: PLC0415
 
-    noop = _NoopLocal()
-
     pipe_step = step(_NoopLocal)
     wf = Workflow(
         name="layer-b-trace-pipe",
@@ -472,7 +458,6 @@ async def test_workflow_task_spans_in_workflow_trace(db_session) -> None:  # typ
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(noop)
                 eng.register_workflow(wf)
 
                 await eng.start(

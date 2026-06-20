@@ -1,7 +1,8 @@
-"""Service tests for the reviewer start hook.
+"""Service tests for the reviewer workflow start callback.
 
 Verifies that the `pending → running` ticket transition fires atomically with
-the workflow bootstrap commit when `pr_review_v1` starts.
+the workflow bootstrap commit when `pr_review_v1` starts. The callback is
+attached to `pr_review_v1.on_start` — no separate registration call needed.
 
 Covers:
 - After engine.start + drain, ticket status is `running`.
@@ -17,7 +18,6 @@ import pytest
 
 from app.core.audit_log import list_for_entity
 from app.core.tasks import drain_once, get_pending_task_names
-from app.domain.reviewer.start_hook import register_reviewer_start_hooks
 from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr, set_workflow_execution
@@ -50,15 +50,12 @@ async def _drain(db_session, *, max_iters: int = 20) -> None:
 @pytest.mark.asyncio
 async def test_workflow_start_flips_ticket_to_running(
     db_session,
-    start_hooks_isolation,
     workspace_providers_isolation,
 ) -> None:
     """Bootstrap: ticket is pending at create_from_pr, running after route_workflow
-    drains and the start hook fires."""
+    drains and the on_start callback fires."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-
-    register_reviewer_start_hooks()
 
     org_id = uuid4()
 
@@ -100,7 +97,7 @@ async def test_workflow_start_flips_ticket_to_running(
                 workflow_input=snapshot,
                 session=db_session,
             )
-            # Stamp the ticket so the hook can find the right execution.
+            # Stamp the ticket so the callback can find the right execution.
             await set_workflow_execution(
                 ticket_id,
                 workflow_execution_id=UUID(wfx_id_str),
@@ -109,7 +106,7 @@ async def test_workflow_start_flips_ticket_to_running(
             await db_session.commit()
 
             # Drain exactly one route_workflow task — which triggers the
-            # bootstrap branch and fires the start hook.
+            # bootstrap branch and fires the on_start callback.
             await _drain(db_session, max_iters=2)
 
     ticket = await get_ticket(ticket_id, org_id=org_id)
@@ -119,15 +116,12 @@ async def test_workflow_start_flips_ticket_to_running(
 @pytest.mark.asyncio
 async def test_two_status_changed_audit_rows_no_duplicates(
     db_session,
-    start_hooks_isolation,
     workspace_providers_isolation,
 ) -> None:
-    """Exactly one ticket.status_changed audit row (pending→running from start hook).
+    """Exactly one ticket.status_changed audit row (pending→running from on_start callback).
     create_from_pr writes ticket.created only — no duplicate status_changed at creation."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-
-    register_reviewer_start_hooks()
 
     org_id = uuid4()
 
@@ -174,8 +168,8 @@ async def test_two_status_changed_audit_rows_no_duplicates(
             await _drain(db_session, max_iters=2)
 
     entries = await list_for_entity("ticket", ticket_id, org_id=org_id, kinds=["ticket.status_changed"])
-    # Exactly one: pending→running (start hook). create_from_pr writes ticket.created, not
-    # ticket.status_changed, so there's no duplicate event from creation.
+    # Exactly one: pending→running (on_start callback). create_from_pr writes
+    # ticket.created only — no duplicate status_changed at creation.
     assert len(entries) == 1, (
         f"Expected 1 ticket.status_changed audit row; got {len(entries)}: {[e.payload for e in entries]}"
     )

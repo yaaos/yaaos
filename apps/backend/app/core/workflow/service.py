@@ -38,9 +38,6 @@ from app.core.observability import current_traceparent, with_remote_parent_span
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workflow.recovery import get_recovery_policy
-from app.core.workflow.start_hooks import get_start_hooks
-from app.core.workflow.terminal_hooks import get_terminal_hooks
 from app.core.workflow.types import (
     TERMINAL_STATES,
     AgentDispatchCommand,
@@ -482,14 +479,22 @@ async def _route_workflow_impl(
             wfx.state = WorkflowState.RUNNING.value
             _publish_state_changed(s, wfx)
             org_id = _workflow_org_id(wfx)
-            for hook in get_start_hooks():
-                await hook(
-                    workflow_execution_id=wfx.id,
-                    workflow_name=wfx.workflow_name,
-                    ticket_id=wfx.ticket_id,
-                    org_id=org_id,
-                    session=s,
-                )
+            if wf.on_start is not None:
+                with with_remote_parent_span(
+                    _tracer, "workflow.callback.on_start", wfx.otel_trace_context
+                ) as cb_span:
+                    try:
+                        await wf.on_start(
+                            workflow_execution_id=wfx.id,
+                            workflow_name=wfx.workflow_name,
+                            ticket_id=wfx.ticket_id,
+                            org_id=org_id,
+                            session=s,
+                        )
+                    except Exception as exc:
+                        cb_span.record_exception(exc)
+                        cb_span.set_status(StatusCode.ERROR, str(exc))
+                        raise
             await _enqueue_start_step(s, wfx, wf, wf.entry.step_id, attempt=0)
             await s.commit()
             return
@@ -508,13 +513,13 @@ async def _route_workflow_impl(
             await s.commit()
             return
 
-        # Tier-1 recovery: if the failure label has a registered recovery
-        # policy (e.g. `auth_expired → RefreshWorkspaceAuth`), insert the
+        # Tier-1 recovery: if the failure label maps to a recovery command on
+        # this workflow (e.g. `auth_expired → RefreshWorkspaceAuth`), insert the
         # recovery command as a synthetic step that runs BEFORE the original
         # step retries. Recovery fires at most once per step instance.
         if outcome_label and outcome_label != "success":
-            recovery_kind = get_recovery_policy(outcome_label)
-            if recovery_kind is not None and not _has_recovered(wfx, completed_step_id):
+            recovery_class = engine._get_recovery_class(wf.name, wf.version, outcome_label)
+            if recovery_class is not None and not _has_recovered(wfx, completed_step_id):
                 _mark_recovered(wfx, completed_step_id, outcome_label)
                 wfx.step_attempts = {**wfx.step_attempts, completed_step_id: 0}
                 recovery_step_id = f"_recover_{completed_step_id}"
@@ -525,7 +530,7 @@ async def _route_workflow_impl(
                     workflow_execution_id=workflow_execution_id,
                     failed_step_id=completed_step_id,
                     failure_label=outcome_label,
-                    recovery_kind=recovery_kind,
+                    recovery_kind=recovery_class.kind,
                 )
                 await _enqueue_start_step(s, wfx, wf, recovery_step_id, attempt=0)
                 await s.commit()
@@ -961,16 +966,12 @@ def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> Step
         failure_label = (wfx.recovered_steps or {}).get(original_step_id)
         if failure_label is None:
             return None
-        recovery_kind = get_recovery_policy(failure_label)
-        if recovery_kind is None:
-            return None
-        # Look up the recovery command from the engine registry and create a synthetic StepRef.
-        try:
-            recovery_cmd = get_engine().get_command(recovery_kind)
-        except CommandNotRegisteredError:
+        # Look up the per-workflow recovery command class from the engine.
+        recovery_class = get_engine()._get_recovery_class(wf.name, wf.version, failure_label)
+        if recovery_class is None:
             return None
         return StepRef(
-            command_class=type(recovery_cmd),
+            command_class=recovery_class,
             step_id=step_id,
             inputs_factory=None,
             retry_policy=RetryPolicy(),
@@ -1152,16 +1153,28 @@ async def _enter_terminal_state(
     wfx.state = new_state.value
     _publish_state_changed(session, wfx)
     org_id = _workflow_org_id(wfx)
-    for hook in get_terminal_hooks():
-        await hook(
-            workflow_execution_id=wfx.id,
-            workflow_name=wfx.workflow_name,
-            ticket_id=wfx.ticket_id,
-            org_id=org_id,
-            terminal_state=new_state,
-            failure_reason=wfx.failure_reason,
-            session=session,
-        )
+    try:
+        wf = get_engine().get_workflow(wfx.workflow_name, version=wfx.workflow_version)
+    except WorkflowNotFoundError:
+        wf = None
+    if wf is not None and wf.on_terminal is not None:
+        with with_remote_parent_span(
+            _tracer, "workflow.callback.on_terminal", wfx.otel_trace_context
+        ) as cb_span:
+            try:
+                await wf.on_terminal(
+                    workflow_execution_id=wfx.id,
+                    workflow_name=wfx.workflow_name,
+                    ticket_id=wfx.ticket_id,
+                    org_id=org_id,
+                    terminal_state=new_state,
+                    failure_reason=wfx.failure_reason,
+                    session=session,
+                )
+            except Exception as exc:
+                cb_span.record_exception(exc)
+                cb_span.set_status(StatusCode.ERROR, str(exc))
+                raise
 
 
 def _outcome_payload(outcome: Outcome) -> dict[str, Any]:
@@ -1284,10 +1297,6 @@ class WorkflowEngine:
     registry entry), and runs lambda validation for steps that have
     `inputs_factory`.
 
-    `register_command(command)` is available for recovery commands that are
-    not part of any workflow's step list (e.g. `RefreshWorkspaceAuth` which
-    is only triggered by the recovery policy machinery).
-
     `start(workflow_name, ticket_id, *, workflow_input, session)` opens a
     workflow execution and enqueues the initial routing task.
     """
@@ -1295,6 +1304,9 @@ class WorkflowEngine:
     def __init__(self) -> None:
         self._workflows: dict[tuple[str, int], Workflow] = {}
         self._commands: dict[str, WorkflowCommand] = {}
+        # Per-workflow recovery map: (name, version) → {failure_label → command_class}.
+        # Built at register_workflow time from wf.recovery_commands.
+        self._recovery_maps: dict[tuple[str, int], dict[str, type]] = {}
 
     def register_workflow(self, wf: Workflow) -> None:
         key = (wf.name, wf.version)
@@ -1325,9 +1337,6 @@ class WorkflowEngine:
                         )
 
         # Auto-discover command classes from steps and register instances.
-        # Read `kind` from the class attribute first so pre-registered commands
-        # (e.g. test commands with constructor args registered via `register_command`)
-        # are not re-instantiated — only register when the kind is absent.
         for s in wf.steps:
             cmd_class = s.command_class
             kind = getattr(cmd_class, "kind", None)  # type: ignore[attr-defined]
@@ -1390,25 +1399,46 @@ class WorkflowEngine:
             finally:
                 _step_outputs_var.reset(token)
 
+        # Walk recovery_commands: build the per-workflow failure-label → class map
+        # and auto-register each recovery command instance.
+        recovery_map: dict[str, type] = {}
+        for rc_class in wf.recovery_commands:
+            label = getattr(rc_class, "recovers_failure_label", None)
+            if label is None:
+                raise WorkflowError(
+                    f"workflow '{wf.name}' recovery command '{rc_class.__name__}' "
+                    f"is missing a `recovers_failure_label` class attribute"
+                )
+            if label in recovery_map:
+                raise WorkflowError(
+                    f"workflow '{wf.name}' has duplicate recovery label '{label}' "
+                    f"(from '{rc_class.__name__}' and '{recovery_map[label].__name__}')"
+                )
+            recovery_map[label] = rc_class
+            # Auto-register the command instance so the engine can dispatch it.
+            rc_kind = getattr(rc_class, "kind", None)
+            if rc_kind is None:
+                raise WorkflowError(
+                    f"workflow '{wf.name}' recovery command '{rc_class.__name__}' "
+                    f"is missing a `kind` class attribute"
+                )
+            if rc_kind not in self._commands:
+                try:
+                    instance = rc_class()
+                except Exception as exc:
+                    raise WorkflowError(
+                        f"workflow '{wf.name}' recovery command '{rc_class.__name__}': "
+                        f"could not instantiate: {exc}"
+                    ) from exc
+                self._commands[rc_kind] = instance  # type: ignore[assignment]
+
+        self._recovery_maps[key] = recovery_map
         self._workflows[key] = wf
 
-    def register_command(self, command: WorkflowCommand) -> None:
-        """Register a command that is not auto-discoverable from any workflow step.
-
-        Used for recovery commands (e.g. `RefreshWorkspaceAuth`) that are only
-        dispatched by the recovery policy machinery, not listed in any step.
-        Raises `WorkflowError` if the kind is already registered with a different
-        instance class.
-        """
-        kind = command.kind  # type: ignore[attr-defined]
-        if kind in self._commands:
-            existing = self._commands[kind]
-            if type(existing) is not type(command):
-                raise WorkflowError(
-                    f"WorkflowCommand kind '{kind}' already registered with class {type(existing).__name__}"
-                )
-            return  # Same class — idempotent, allow.
-        self._commands[kind] = command
+    def _get_recovery_class(self, name: str, version: int, failure_label: str) -> type | None:
+        """Return the recovery command class for `failure_label` in the given workflow,
+        or None when no recovery policy is declared."""
+        return self._recovery_maps.get((name, version), {}).get(failure_label)
 
     def get_workflow(self, name: str, version: int | None = None) -> Workflow:
         if version is not None:
@@ -1536,4 +1566,6 @@ def register_workflow(wf: Workflow) -> None:
 def unregister_workflow(workflow_name: str, version: int) -> None:
     """Remove a workflow from the process-singleton engine by name + version."""
     key = (workflow_name, version)
-    get_engine()._workflows.pop(key, None)
+    engine = get_engine()
+    engine._workflows.pop(key, None)
+    engine._recovery_maps.pop(key, None)

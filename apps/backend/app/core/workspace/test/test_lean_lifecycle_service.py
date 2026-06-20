@@ -79,17 +79,20 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:
 
 class _DispatchingWs(AgentDispatchCommand):
     """AgentDispatchCommand that enqueues a real `agent_commands` row and
-    records the returned command_id for inspection by the test."""
+    records the returned command_id for inspection by the test.
+
+    Uses class attributes for org_id and workspace_id so the engine can
+    auto-instantiate via `_DispatchingWs()`. Tests set these class attributes
+    before calling register_workflow.
+    """
 
     kind = "LeanLifecycleDispatch"
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
-
-    def __init__(self, *, org_id: UUID, workspace_id: UUID) -> None:
-        self._org_id = org_id
-        self._workspace_id = workspace_id
-        self.dispatched_command_id: UUID | None = None
+    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel; tests override
+    _workspace_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel
+    dispatched_command_id: UUID | None = None  # set on dispatch
 
     async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
@@ -100,31 +103,34 @@ class _DispatchingWs(AgentDispatchCommand):
         command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
-            workspace_id=self._workspace_id,
+            workspace_id=type(self)._workspace_id,
             traceparent=ctx.traceparent or "",
         )
         await enqueue_command(
-            org_id=self._org_id,
+            org_id=type(self)._org_id,
             command=cmd,
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
-        self.dispatched_command_id = command_id
+        type(self).dispatched_command_id = command_id
         return command_id
 
 
 class _FailingWs(AgentDispatchCommand):
-    """AgentDispatchCommand that always signals failure via terminal event."""
+    """AgentDispatchCommand that always signals failure via terminal event.
+
+    Uses class attributes for org_id and workspace_id so the engine can
+    auto-instantiate via `_FailingWs()`. Tests set these class attributes
+    before calling register_workflow.
+    """
 
     kind = "LeanLifecycleFail"
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
-
-    def __init__(self, *, org_id: UUID, workspace_id: UUID) -> None:
-        self._org_id = org_id
-        self._workspace_id = workspace_id
-        self.dispatched_command_id: UUID | None = None
+    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel; tests override
+    _workspace_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel
+    dispatched_command_id: UUID | None = None  # set on dispatch
 
     async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
@@ -135,16 +141,16 @@ class _FailingWs(AgentDispatchCommand):
         command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
             command_id=command_id,
-            workspace_id=self._workspace_id,
+            workspace_id=type(self)._workspace_id,
             traceparent=ctx.traceparent or "",
         )
         await enqueue_command(
-            org_id=self._org_id,
+            org_id=type(self)._org_id,
             command=cmd,
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
-        self.dispatched_command_id = command_id
+        type(self).dispatched_command_id = command_id
         return command_id
 
 
@@ -573,7 +579,9 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
 
     org_id = uuid4()
     workspace_id = uuid7()
-    fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
+    _FailingWs._org_id = org_id
+    _FailingWs._workspace_id = workspace_id
+    _FailingWs.dispatched_command_id = None
 
     workflow = Workflow(
         name="finalizer-once-test",
@@ -591,7 +599,6 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-once-test",
@@ -608,9 +615,9 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
 
         # Send a failure event for the main step.
-        assert fail_cmd.dispatched_command_id is not None
+        assert _FailingWs.dispatched_command_id is not None
         fail_event = AgentEvent(
-            command_id=fail_cmd.dispatched_command_id,
+            command_id=_FailingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_FAILURE,
             outcome_label="failure",
             outputs={"__failure_reason__": "provision_failed"},
@@ -640,8 +647,9 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
 
     org_id = uuid4()
     workspace_id = uuid7()
-    # Use a Workspace command that succeeds.
-    ws_cmd = _DispatchingWs(org_id=org_id, workspace_id=workspace_id)
+    _DispatchingWs._org_id = org_id
+    _DispatchingWs._workspace_id = workspace_id
+    _DispatchingWs.dispatched_command_id = None
 
     # finalizer is set — but the success transition goes to
     # TerminalAction.COMPLETE_WORKFLOW, bypassing the finalizer path.
@@ -661,7 +669,6 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
     )
 
     with scoped_engine() as eng:
-        eng.register_command(ws_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-no-refire-test",
@@ -678,9 +685,9 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
 
         # Success event.
-        assert ws_cmd.dispatched_command_id is not None
+        assert _DispatchingWs.dispatched_command_id is not None
         success_event = AgentEvent(
-            command_id=ws_cmd.dispatched_command_id,
+            command_id=_DispatchingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_SUCCESS,
             outcome_label="success",
             outputs={},
@@ -709,7 +716,9 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
     `workflow.failed` audit row is written with the correct payload."""
     org_id = uuid4()
     workspace_id = uuid7()
-    fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
+    _FailingWs._org_id = org_id
+    _FailingWs._workspace_id = workspace_id
+    _FailingWs.dispatched_command_id = None
 
     workflow = Workflow(
         name="failure-record-test",
@@ -726,7 +735,6 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
 
     ticket_id = str(uuid4())
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-record-test",
@@ -741,9 +749,9 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
         assert wfx is not None
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
 
-        assert fail_cmd.dispatched_command_id is not None
+        assert _FailingWs.dispatched_command_id is not None
         fail_event = AgentEvent(
-            command_id=fail_cmd.dispatched_command_id,
+            command_id=_FailingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_FAILURE,
             outcome_label="failure",
             outputs={"__failure_reason__": "provision_failed"},
@@ -783,7 +791,9 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
     falls back to the outcome label."""
     org_id = uuid4()
     workspace_id = uuid7()
-    fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
+    _FailingWs._org_id = org_id
+    _FailingWs._workspace_id = workspace_id
+    _FailingWs.dispatched_command_id = None
 
     workflow = Workflow(
         name="failure-label-fallback-test",
@@ -799,7 +809,6 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-label-fallback-test",
@@ -810,10 +819,10 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
 
         await _drain(db_session)
 
-        assert fail_cmd.dispatched_command_id is not None
+        assert _FailingWs.dispatched_command_id is not None
         # No __failure_reason__ key in outputs.
         fail_event = AgentEvent(
-            command_id=fail_cmd.dispatched_command_id,
+            command_id=_FailingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_FAILURE,
             outcome_label="agent_failure",
             outputs={},
@@ -844,7 +853,9 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
 
     org_id = uuid4()
     workspace_id = uuid7()
-    fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
+    _FailingWs._org_id = org_id
+    _FailingWs._workspace_id = workspace_id
+    _FailingWs.dispatched_command_id = None
 
     workflow = Workflow(
         name="finalizer-failure-context-test",
@@ -862,7 +873,6 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-failure-context-test",
@@ -873,9 +883,9 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
 
         await _drain(db_session)
 
-        assert fail_cmd.dispatched_command_id is not None
+        assert _FailingWs.dispatched_command_id is not None
         fail_event = AgentEvent(
-            command_id=fail_cmd.dispatched_command_id,
+            command_id=_FailingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_FAILURE,
             outcome_label="failure",
             outputs={"__failure_reason__": "provision_failed"},

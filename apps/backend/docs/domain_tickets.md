@@ -18,7 +18,7 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 - **`attach_pr_to_ticket` owns the `ticket.pr_bound` audit row.** The `WHERE pr_id IS NULL` guard makes it idempotent: concurrent calls produce at most one audit row.
 - **Terminal states have no outbound transitions** for the unconditional helpers. `complete`/`fail`/`abandon` go through `_transition`, which raises `InvalidTicketTransition`. The guarded `transition_on_workflow_terminal` returns `False` instead of raising — safe inside a caller's transaction.
 - **`_apply_transition` is the shared side-effect kernel.** `_transition` (Shape-b), `transition_on_workflow_terminal` (Shape-a), and `transition_on_workflow_start` (Shape-a) all delegate to it. It delegates SSE + notification outbox to `notify_ticket_status_change` so the broadcast seam is used consistently.
-- **`transition_on_workflow_start` flips `pending → running` atomically with the workflow bootstrap commit.** Called from the reviewer start hook (`domain/reviewer/start_hook.py`) inside the engine's bootstrap-commit transaction. Shape-a (caller's session, never commits). Guards: ticket not found, wrong org, different `current_workflow_execution_id`, or already past `pending` → returns `False` silently. Returns `True` when flipped.
+- **`transition_on_workflow_start` flips `pending → running` atomically with the workflow bootstrap commit.** Called via `transition_ticket_on_start` (in `workflow_callbacks.py`) which is wired into `pr_review_v1.on_start` — the engine awaits it inside the bootstrap-commit transaction. Shape-a (caller's session, never commits). Guards: ticket not found, wrong org, different `current_workflow_execution_id`, or already past `pending` → returns `False` silently. Returns `True` when flipped.
 - **Workspace ≠ ticket.** The reviewer opens one workspace per coordinator call; it is anonymous from the ticket's perspective — no FK, no column.
 - **`findings_count` + `max_severity` are denormalized, not live-aggregated.** Reviewer writes them via `update_findings_summary` after each review run and on ack/push-back. `list_tickets` reads them directly from the row — no cross-module import from tickets → reviewer.
 - **All ticket reads are org-scoped.** Use `get(ticket_id, org_id=...)` — the unscoped `get_by_id` helper has been removed.
@@ -30,13 +30,13 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 | From → To | Trigger |
 |---|---|
 | (none) → `pending` | `create_from_pr` (GitHub PR intake) |
-| `pending` → `running` | `transition_on_workflow_start(...)` — workflow start hook, atomic with bootstrap RUNNING write |
+| `pending` → `running` | `transition_on_workflow_start(...)` — via `pr_review_v1.on_start` callback, atomic with bootstrap RUNNING write |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
 | `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
-| `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — workflow terminal hook (primary path off `running`) |
+| `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — via `pr_review_v1.on_terminal` callback (primary path off `running`) |
 
-`complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` and `transition_on_workflow_start` are Shape-a (caller's session, never commits) and are used by workflow hooks.
+`complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` and `transition_on_workflow_start` are Shape-a (caller's session, never commits) and are called from `workflow_callbacks.py`.
 
 ## Data owned
 

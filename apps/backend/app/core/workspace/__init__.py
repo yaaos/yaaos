@@ -20,7 +20,6 @@ from app.core.workspace.commands import (
 from app.core.workspace.commands_base import WorkspaceOpCommand
 from app.core.workspace.dispatch import (
     dispatch_via_workspace,
-    register_workspace_recovery_policies,
     release_claim,
     try_claim,
 )
@@ -117,7 +116,6 @@ __all__ = [
     "list_workspace_providers",
     "register_workspace_provider",
     "register_workspace_providers",
-    "register_workspace_recovery_policies",
     "release_claim",
     "try_claim",
     "update_workspace_status",

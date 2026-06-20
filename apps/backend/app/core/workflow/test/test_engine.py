@@ -159,30 +159,6 @@ def test_register_workflow_rejects_transition_to_unknown_step() -> None:
         WorkflowEngine().register_workflow(wf)
 
 
-def test_register_command_same_class_idempotent() -> None:
-    """Calling register_command twice with the same class is a no-op."""
-    eng = WorkflowEngine()
-    eng.register_command(_NoopCommand())
-    eng.register_command(_NoopCommand())  # must not raise
-
-
-def test_register_command_different_class_same_kind_raises() -> None:
-    """Registering a different class with an already-used kind raises WorkflowError."""
-
-    class _ImpostorNoop:
-        kind = "Noop"  # same kind as _NoopCommand
-        Inputs = Empty
-        Outputs = Empty
-
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-            return Outcome.success()
-
-    eng = WorkflowEngine()
-    eng.register_command(_NoopCommand())
-    with pytest.raises(WorkflowError):
-        eng.register_command(_ImpostorNoop())
-
-
 def test_get_workflow_picks_latest_version_when_unspecified() -> None:
     eng = WorkflowEngine()
     noop_step = step(_NoopCommand)

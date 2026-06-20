@@ -133,7 +133,6 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
     _RecordingWs.received_ctx = None
     _RecordingWs.received_traceparent = None
 
-    ws_cmd = _RecordingWs()
     ws_step = step(_RecordingWs)
     wf = Workflow(
         name="ws-span-test",
@@ -149,7 +148,6 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(ws_cmd)
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="ws-span-test",
@@ -192,7 +190,6 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
 async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> None:  # type: ignore[no-untyped-def]
     """dispatch() raises → `workflow.command.ProvisionWsRaises` span is
     `StatusCode.ERROR` with an `exception` event."""
-    ws_cmd = _RaisingWs()
     ws_raise_step = step(_RaisingWs)
     wf = Workflow(
         name="ws-span-raise-test",
@@ -204,7 +201,6 @@ async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> Non
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(ws_cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="ws-span-raise-test",

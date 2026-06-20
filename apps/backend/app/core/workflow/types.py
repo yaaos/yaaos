@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
@@ -35,6 +35,29 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# ── Workflow callback type aliases ──────────────────────────────────────
+
+WorkflowStartCallback = Callable[..., Awaitable[None]]
+"""Async callable the engine invokes on workflow bootstrap.
+
+Called inside the engine's bootstrap-commit transaction with keyword args:
+  workflow_execution_id: UUID, workflow_name: str, ticket_id: UUID,
+  org_id: UUID, session: AsyncSession.
+Must NEVER commit (engine commits after callback returns). Raising rolls back
+the entire bootstrap write.
+"""
+
+WorkflowTerminalCallback = Callable[..., Awaitable[None]]
+"""Async callable the engine invokes on every terminal workflow transition.
+
+Called inside the engine's terminal-commit transaction with keyword args:
+  workflow_execution_id: UUID, workflow_name: str, ticket_id: UUID,
+  org_id: UUID, terminal_state: WorkflowState, failure_reason: str | None,
+  session: AsyncSession.
+Same commit / raise rules as WorkflowStartCallback.
+"""
 
 
 # ── Zero-field sentinel ─────────────────────────────────────────────────
@@ -194,6 +217,24 @@ class Workflow(BaseModel):
     transitions: Any = Field(default_factory=dict)
     finalizer: StepRef | None = None
     workflow_input: WorkflowInputRef | None = None
+
+    recovery_commands: tuple[type, ...] = ()
+    """Command classes that handle failure-label recovery, not listed in `steps`.
+
+    The engine reads each class's `recovers_failure_label: ClassVar[str]` at
+    `register_workflow` time and builds the failure-label → command-class map.
+    The engine also auto-registers each class as a command (no separate
+    `register_command` call needed). May be any command kind (Local or
+    AgentDispatch).
+    """
+    on_start: WorkflowStartCallback | None = None
+    """Async callback fired inside the bootstrap-commit transaction when the
+    workflow first transitions to RUNNING. Set to None for workflows that
+    don't need start-time side effects."""
+    on_terminal: WorkflowTerminalCallback | None = None
+    """Async callback fired inside the terminal-commit transaction on every
+    done / failed / cancelled transition. Set to None for workflows that
+    don't need terminal side effects."""
 
     def step_by_step_id(self, step_id: str) -> StepRef | None:
         for s in self.steps:

@@ -38,14 +38,12 @@ from app.core.workflow import (
     Workflow,
     WorkflowEngine,
     WorkflowState,
-    register_recovery_policy,
     request_cancel,
     resume_hitl,
     step,
     workflow_input,
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workflow.recovery import _clear_recovery_policies_for_tests
 from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 
 # ── Command factory helpers ──────────────────────────────────────────────
@@ -229,11 +227,9 @@ def _with_stub_workspace_provider():
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:
-    """Build an engine, pre-registering each command instance so auto-discovery
-    uses the provided instance rather than auto-instantiating the class."""
+    """Build an engine and register the workflow (auto-discovers step + recovery commands)."""
+    del commands  # auto-discovery via register_workflow; passed for historical call-site compat
     eng = WorkflowEngine()
-    for c in commands:
-        eng.register_command(c)
     eng.register_workflow(workflow)
     # Install as the process singleton so task bodies pick it up.
     import app.core.workflow.service as svc  # noqa: PLC0415
@@ -742,13 +738,9 @@ async def test_route_workflow_skips_when_terminal(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) -> None:
-    """When a Local command fails with a label that has a registered
-    recovery policy, the engine inserts the recovery command as an
-    appended step that runs BEFORE the failed step retries. Recovery
-    fires at most once per step instance."""
-    _clear_recovery_policies_for_tests()
-    register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
-
+    """When a Workflow declares a recovery command for a failure label, the engine
+    inserts it as an appended step that runs BEFORE the failed step retries.
+    Recovery fires at most once per step instance."""
     review_calls: list[str] = []
     refresh_calls: list[str] = []
 
@@ -766,6 +758,7 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 
     class _RefreshCommand:
         kind = "DoRefresh"
+        recovers_failure_label = "auth_expired"
         Inputs = Empty
         Outputs = Empty
 
@@ -781,8 +774,9 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
         steps=(review_step,),
         entry=review_step,
         transitions={review_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
+        recovery_commands=(_RefreshCommand,),
     )
-    eng = _engine_with(_FailOnceCommand(), _RefreshCommand(), workflow=wf)
+    eng = _engine_with(workflow=wf)
     exec_id = await eng.start(workflow_name="recovery-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
@@ -798,9 +792,6 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
     """Second failure with the same recovery-eligible label after recovery
     has already run falls through to Tier-3 fail — no infinite loop."""
-    _clear_recovery_policies_for_tests()
-    register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
-
     review_calls: list[str] = []
     refresh_calls: list[str] = []
 
@@ -816,6 +807,7 @@ async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
 
     class _RefreshOk:
         kind = "DoRefresh"
+        recovers_failure_label = "auth_expired"
         Inputs = Empty
         Outputs = Empty
 
@@ -830,8 +822,9 @@ async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
         version=1,
         steps=(review_step,),
         entry=review_step,
+        recovery_commands=(_RefreshOk,),
     )
-    eng = _engine_with(_AlwaysFail(), _RefreshOk(), workflow=wf)
+    eng = _engine_with(workflow=wf)
     exec_id = await eng.start(workflow_name="recovery-2", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)

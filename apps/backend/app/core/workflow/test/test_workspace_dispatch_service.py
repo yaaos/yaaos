@@ -51,15 +51,17 @@ pytestmark = pytest.mark.service
 class _DispatchingWs(AgentDispatchCommand):
     """AgentDispatchCommand whose `dispatch` enqueues a real agent_commands row
     pre-stamped with the workflow_execution_id. `execute()` is unused — the
-    engine's AgentDispatch branch never calls it."""
+    engine's AgentDispatch branch never calls it.
+
+    Uses class attributes so the engine can auto-instantiate via `_DispatchingWs()`.
+    Tests set `_DispatchingWs._org_id` before calling register_workflow.
+    """
 
     kind = "DispatchingWs"
     Inputs = Empty
     Outputs = Empty
-
-    def __init__(self, *, org_id: UUID) -> None:
-        self._org_id = org_id
-        self.dispatched_command_id: UUID | None = None
+    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel; tests override
+    dispatched_command_id: UUID | None = None  # set on dispatch
 
     async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
@@ -74,12 +76,12 @@ class _DispatchingWs(AgentDispatchCommand):
             traceparent=ctx.traceparent or "",
         )
         await enqueue_command(
-            org_id=self._org_id,
+            org_id=type(self)._org_id,
             command=cmd,
             session=session,
             workflow_execution_id=UUID(ctx.workflow_execution_id),
         )
-        self.dispatched_command_id = command_id
+        type(self).dispatched_command_id = command_id
         return command_id
 
 
@@ -128,8 +130,8 @@ async def test_workspace_dispatch_parks_on_returned_command_id_and_resumes(
     # enqueues with an org_id that is just stored on the agent_commands row.
     # A synthesized UUID is sufficient — agent_commands.org_id is not FK-bound.
     org_id = uuid4()
-    ws_cmd = _DispatchingWs(org_id=org_id)
-    local_cmd = _NoopLocal()
+    _DispatchingWs._org_id = org_id
+    _DispatchingWs.dispatched_command_id = None
 
     dispatch_step = step(_DispatchingWs)
     terminal_step = step(_NoopLocal)
@@ -145,9 +147,6 @@ async def test_workspace_dispatch_parks_on_returned_command_id_and_resumes(
     )
 
     with scoped_engine() as eng:
-        # Pre-register ws_cmd (needs org_id constructor arg) before auto-discovery.
-        eng.register_command(ws_cmd)
-        eng.register_command(local_cmd)
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="workspace-dispatch-service-test",
@@ -164,14 +163,14 @@ async def test_workspace_dispatch_parks_on_returned_command_id_and_resumes(
         assert wfx is not None
         assert wfx.state == WorkflowState.AWAITING_AGENT.value
         assert wfx.pending_agent_command_id is not None
-        assert ws_cmd.dispatched_command_id is not None
-        assert wfx.pending_agent_command_id == ws_cmd.dispatched_command_id
+        assert _DispatchingWs.dispatched_command_id is not None
+        assert wfx.pending_agent_command_id == _DispatchingWs.dispatched_command_id
 
         # Simulate the agent's terminal event via the real ingestion path.
         # The gateway resolves the workflow purely via the agent_commands.workflow_execution_id
         # column — no workspace row is involved.
         terminal_event = AgentEvent(
-            command_id=ws_cmd.dispatched_command_id,
+            command_id=_DispatchingWs.dispatched_command_id,
             kind=AgentEventKind.COMPLETED_SUCCESS,
             outcome_label="success",
             outputs={},

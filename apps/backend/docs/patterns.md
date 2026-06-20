@@ -300,9 +300,9 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 `release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow after the workspace has been torn down.
 
-### Recovery policy registry
+### Recovery commands — per-workflow declaration
 
-AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workflow.register_recovery_policy` (`app/core/workflow/recovery.py`). The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original. Producers (e.g. `core/workspace`) register their policies via an explicit startup call (`register_workspace_recovery_policies()`) in `web.py` / `worker.py` — not at import time.
+Failure-label → recovery command mappings are declared directly on the `Workflow` dataclass via `recovery_commands: tuple[type, ...]`. Each class must declare `recovers_failure_label: ClassVar[str]`. `WorkflowEngine.register_workflow` builds the per-workflow map and auto-registers each class — no separate startup call needed. Duplicate labels within one workflow raise `WorkflowError` at registration time.
 
 ## WorkspaceProvider contract
 

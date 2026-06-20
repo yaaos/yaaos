@@ -1,9 +1,10 @@
 """RefreshWorkspaceAuth — auth-refresh AgentDispatchCommand.
 
-Recovery command bound to `auth_expired` failures via
-`core/workspace.register_recovery_policy`. The engine inserts this command
-before re-dispatching the originally-failing AgentCommand so the Go agent
-can rotate its checkout's auth header before the retry.
+Recovery command declared in `pr_review_v1.recovery_commands`. Bound to
+`auth_expired` failure labels via its `recovers_failure_label` class attribute.
+The engine inserts this command before re-dispatching the originally-failing
+AgentCommand so the Go agent can rotate its checkout's auth header before
+the retry.
 
 `build_command` returns a placeholder `CleanupWorkspaceCommand` — a real
 `RefreshWorkspaceAuth` AgentCommand wire type is deferred.
@@ -45,8 +46,9 @@ class RefreshWorkspaceAuth(WorkspaceOpCommand):
 
     Dispatches a placeholder `CleanupWorkspaceCommand` as the wire payload
     (a real `RefreshWorkspaceAuth` AgentCommand type is a future addition).
-    `recovers_failure_label` binds this command to `auth_expired` in the
-    recovery-policy registry via `register_workspace_recovery_policies()`.
+    `recovers_failure_label = "auth_expired"` is the key the engine uses to
+    match this command to failing steps. Registered automatically by
+    `WorkflowEngine.register_workflow` via `pr_review_v1.recovery_commands`.
     """
 
     kind = "RefreshWorkspaceAuth"

@@ -201,7 +201,7 @@ def register_workspace_providers() -> None:
 
     Called explicitly from the web + worker composition roots after the
     workspace module is loaded — not at import time, so the process controls
-    when registration happens (mirrors `register_workspace_recovery_policies`).
+    when registration happens.
     `RemoteAgentWorkspaceProvider` is the only shipped implementation: it
     dispatches every workspace operation to a customer-deployed WorkspaceAgent
     via `core/agent_gateway`. `ProvisionWorkspace.dispatch` requires at least

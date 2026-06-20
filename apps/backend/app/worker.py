@@ -36,21 +36,10 @@ def main() -> int:
     import app.core.workflow  # noqa: PLC0415
     import app.domain.reviewer  # noqa: PLC0415
 
-    # Startup registration — must run after domain/reviewer import so that
-    # recovery policies are registered by the domain module's own bootstrap.
-    from app.core.workspace import (  # noqa: PLC0415
-        register_workspace_providers,
-        register_workspace_recovery_policies,
-    )
-    from app.domain.reviewer import (  # noqa: PLC0415
-        register_reviewer_start_hooks,
-        register_reviewer_terminal_hooks,
-    )
+    # Workspace providers registration.
+    from app.core.workspace import register_workspace_providers  # noqa: PLC0415
 
     register_workspace_providers()
-    register_workspace_recovery_policies()
-    register_reviewer_start_hooks()
-    register_reviewer_terminal_hooks()
 
     # Structural run-sink assertion — `app.core.coding_agent` (imported above)
     # registers the sink at import time. Crash loud here rather than silently

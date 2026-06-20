@@ -158,55 +158,6 @@ async def workspace_providers_isolation():
     yield
 
 
-@pytest_asyncio.fixture
-async def recovery_policies_isolation():
-    """Clear all recovery policies before and after the test.
-
-    Non-autouse: tests that register custom recovery policies must
-    request this fixture. Tests that rely on the default
-    `auth_expired → RefreshWorkspaceAuth` policy should call
-    `register_workspace_recovery_policies()` after requesting this
-    fixture to explicitly install it.
-    """
-    from app.core.workflow.recovery import _clear_recovery_policies_for_tests  # noqa: PLC0415
-
-    _clear_recovery_policies_for_tests()
-    yield
-    _clear_recovery_policies_for_tests()
-
-
-@pytest_asyncio.fixture
-async def terminal_hooks_isolation():
-    """Clear all terminal hooks before and after the test.
-
-    Non-autouse: tests that register terminal hooks (e.g. the reviewer hook)
-    must request this fixture. Production registration is NOT active in tests —
-    the test is responsible for registering whatever hooks it needs after
-    requesting this fixture.
-    """
-    from app.core.workflow.terminal_hooks import _clear_terminal_hooks_for_tests  # noqa: PLC0415
-
-    _clear_terminal_hooks_for_tests()
-    yield
-    _clear_terminal_hooks_for_tests()
-
-
-@pytest_asyncio.fixture
-async def start_hooks_isolation():
-    """Clear all start hooks before and after the test.
-
-    Non-autouse: tests that register start hooks (e.g. the reviewer start hook)
-    must request this fixture. Production registration is NOT active in tests —
-    the test is responsible for registering whatever hooks it needs after
-    requesting this fixture.
-    """
-    from app.core.workflow.start_hooks import _clear_start_hooks_for_tests  # noqa: PLC0415
-
-    _clear_start_hooks_for_tests()
-    yield
-    _clear_start_hooks_for_tests()
-
-
 @contextmanager
 def scoped_vcs_plugin(plugin) -> Iterator:  # type: ignore[type-arg]
     """Context manager: install *plugin* for the duration of the block, then
@@ -229,12 +180,9 @@ __all__ = [
     "email_inbox_isolation",
     "plugin_registries_isolation",
     "pubsub_isolation",
-    "recovery_policies_isolation",
     "scheduler_registry_isolation",
     "scoped_vcs_plugin",
     "sse_shutdown_event_isolation",
-    "start_hooks_isolation",
     "subscriber_registry_isolation",
-    "terminal_hooks_isolation",
     "workspace_providers_isolation",
 ]

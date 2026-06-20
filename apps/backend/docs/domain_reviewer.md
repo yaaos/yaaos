@@ -66,29 +66,23 @@ The skill never emits `finding_display_id`; yaaos assigns + persists it.
 
 ## Ticket status — atomic flips on workflow bootstrap and terminal
 
-### Start hook (`start_hook.py`)
+`pr_review_v1` declares `on_start=transition_ticket_on_start` and `on_terminal=transition_ticket_on_terminal` (from [`domain/tickets/workflow_callbacks.py`](domain_tickets.md)) directly on the `Workflow` dataclass. No global start-hook or terminal-hook registry; no startup registration call needed.
 
-`register_reviewer_start_hooks()` (in `start_hook.py`) registers `_on_workflow_start` into [`core/workflow`](core_workflow.md)'s start-hook registry. Called once from both `web.py` and `worker.py` at startup.
-
-On `pr_review_v1` bootstrap (when `route_workflow` first transitions to RUNNING) the hook calls [`tickets.transition_on_workflow_start`](domain_tickets.md) inside the engine's bootstrap-commit transaction:
+**On `pr_review_v1` bootstrap** (`route_workflow` first transitions to RUNNING) the engine awaits `on_start`, which calls [`tickets.transition_on_workflow_start`](domain_tickets.md) inside the bootstrap-commit transaction:
 
 - `pending → running` (atomically with the workflow RUNNING write)
 
-Guard misses (ticket not found, ownership mismatch, ticket not in `pending`) return `False` silently — never raises.
+Guard misses (ticket not found, ownership mismatch, ticket not in `pending`) return `False` silently — callback never raises.
 
-### Terminal hook (`terminal_hook.py`)
-
-`register_reviewer_terminal_hooks()` (in `terminal_hook.py`) registers `_on_workflow_terminal` into [`core/workflow`](core_workflow.md)'s terminal-hook registry. Called once from both `web.py` and `worker.py` at startup.
-
-On every `pr_review_v1` terminal transition the hook calls [`tickets.transition_on_workflow_terminal`](domain_tickets.md) inside the engine's terminal-commit transaction:
+**On every `pr_review_v1` terminal transition** the engine awaits `on_terminal`, which calls [`tickets.transition_on_workflow_terminal`](domain_tickets.md) inside the terminal-commit transaction:
 
 - `DONE → ticket "done"` (reason omitted)
 - `FAILED → ticket "failed"` (failure_reason threaded into the `ticket.status_changed` audit payload)
 - `CANCELLED → ticket "cancelled"` (reason omitted)
 
-Guard misses (ticket not found, ownership mismatch, already terminal) return silently — the hook never raises, so a guard miss never rolls back the workflow terminal write.
+Guard misses (ticket not found, ownership mismatch, already terminal) return silently — the callback never raises, so a guard miss never rolls back the workflow terminal write.
 
-The orphan sweep (`orphan_sweep.py`) is a safety net only — it handles never-dispatched tickets that slipped through before a workflow started. It does NOT handle normal workflow termination; the terminal hook covers that path atomically. Runs as a `@scheduled` worker task (`ticket_orphan_sweep`, cron `* * * * *`) — exactly one worker pod enqueues each minute slot.
+The orphan sweep (`orphan_sweep.py`) is a safety net only — it handles never-dispatched tickets that slipped through before a workflow started. It does NOT handle normal workflow termination; `on_terminal` covers that path atomically. Runs as a `@scheduled` worker task (`ticket_orphan_sweep`, cron `* * * * *`) — exactly one worker pod enqueues each minute slot.
 
 ## Findings rollup
 
@@ -99,8 +93,8 @@ After each review run (`PostFindings`), reviewer calls `refresh_ticket_findings_
 ## How it's tested
 
 - **Service tests** (`@pytest.mark.service`):
-  - `test_start_hook_service.py` — bootstrap hook flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
-  - `test_terminal_hook_service.py` — 6 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution, wrong workflow name, and redelivered terminal are all no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
+  - `test_start_hook_service.py` — `on_start` callback flips ticket pending→running; exactly one `ticket.status_changed` audit row (pending→running; `create_from_pr` writes `ticket.created`, not `ticket.status_changed`).
+  - `test_terminal_hook_service.py` — 5 scenarios: DONE/FAILED/CANCELLED each flip the ticket; non-owning execution and workflow with no `on_terminal` are no-ops. **Coverage-scrutiny flag: primary gate for the atomic ticket-flip contract.**
   - `test_publish_findings_service.py` — enum gate (rejects out-of-range `severity`/`confidence`), `finding_display_id` per-`pr_id` monotonicity + uniqueness, `ReportedFinding`-vs-`finding_output_schema()` schema pin.
   - `test_publish_findings_without_run_id_service.py` — `publish_findings` with the new signature (no `run_id` param) inserts a Review row; confirms `reviews.run_id` column is absent from the schema.
   - `test_parse_review_output_owns_service.py` — unit tests for `domain/reviewer.parse_review_output`: valid stdout → `list[ReportedFinding]`, null-anchor accepted, no-result-event raises, empty stdout raises, invalid JSON raises, wrong schema raises, last result event wins.

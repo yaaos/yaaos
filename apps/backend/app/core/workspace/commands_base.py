@@ -36,7 +36,7 @@ class WorkspaceOpCommand(AgentDispatchCommand):
     `needs_claim` controls whether `try_claim` is called atomically during
     dispatch — workspace provisioning uses the claim; cleanup does not.
     `recovers_failure_label` binds this command as the recovery step for a
-    given failure label (registered via `register_recovery_policy`).
+    given failure label (declared in `Workflow.recovery_commands`).
     """
 
     needs_claim: ClassVar[bool] = False

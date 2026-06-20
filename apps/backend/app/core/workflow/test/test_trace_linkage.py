@@ -218,7 +218,6 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
             return uuid4()
 
     ws_step = step(_NoopWs)
-    eng.register_command(_NoopWs())
     workflow = Workflow(
         name="trace-linkage-ws",
         version=1,

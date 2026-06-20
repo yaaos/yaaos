@@ -37,8 +37,6 @@ from app.domain.reviewer.service import (
     list_reviews_for_pr,
     refresh_ticket_findings_summary,
 )
-from app.domain.reviewer.start_hook import register_reviewer_start_hooks
-from app.domain.reviewer.terminal_hook import register_reviewer_terminal_hooks
 from app.domain.reviewer.trigger import (
     Debounce,
     Run,
@@ -113,8 +111,6 @@ __all__ = [
     "prefix_broken_creds_warning",
     "publish_findings",
     "refresh_ticket_findings_summary",
-    "register_reviewer_start_hooks",
-    "register_reviewer_terminal_hooks",
     "start_pr_review",
 ]
 
@@ -189,22 +185,17 @@ async def start_pr_review(
 
 def _register_workflows() -> None:
     from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
-    from app.core.workspace import RefreshWorkspaceAuth  # noqa: PLC0415
     from app.domain.reviewer.workflows import ALL_WORKFLOWS  # noqa: PLC0415
 
     engine = get_engine()
     # Auto-discovery via register_workflow populates all regular commands from
-    # the workflow's steps tuple. RefreshWorkspaceAuth is a recovery command —
-    # never in any step list — so it must be registered explicitly.
+    # the workflow's steps tuple, and all recovery commands from
+    # wf.recovery_commands (including RefreshWorkspaceAuth for pr_review_v1).
     for wf in ALL_WORKFLOWS:
         try:
             engine.register_workflow(wf)
         except WorkflowError:
             pass
-    try:
-        engine.register_command(RefreshWorkspaceAuth())
-    except WorkflowError:
-        pass
 
 
 _register_workflows()

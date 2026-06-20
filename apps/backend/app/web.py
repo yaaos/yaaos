@@ -68,19 +68,10 @@ from app.domain import lessons  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 
-# 5a. Startup registration — must run after domain/reviewer import so that
-# recovery policies are registered by the domain module's own bootstrap.
-from app.core.workspace import (  # noqa: E402
-    register_workspace_providers,
-    register_workspace_recovery_policies,
-)
-from app.domain.reviewer import register_reviewer_start_hooks  # noqa: E402
-from app.domain.reviewer import register_reviewer_terminal_hooks  # noqa: E402
+# 5a. Workspace providers registration.
+from app.core.workspace import register_workspace_providers  # noqa: E402
 
 register_workspace_providers()
-register_workspace_recovery_policies()
-register_reviewer_start_hooks()
-register_reviewer_terminal_hooks()
 
 # 5b. Structural run-sink assertion — `core/coding_agent` registers the sink
 # at import time (step 4 above). Crash loud here rather than silently dropping

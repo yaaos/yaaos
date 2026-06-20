@@ -136,7 +136,6 @@ async def test_local_command_span_carries_step_id_and_attempt(db_session) -> Non
 async def test_workspace_command_span_carries_step_id_and_attempt(db_session) -> None:  # type: ignore[no-untyped-def]
     """workflow.command.<Kind> span on the Workspace branch carries workflow.step_id
     and workflow.attempt attributes."""
-    cmd = _SimpleWs()
     ws_step = step(_SimpleWs)
     wf = Workflow(
         name="step-attr-ws-test",
@@ -148,7 +147,6 @@ async def test_workspace_command_span_carries_step_id_and_attempt(db_session) ->
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="step-attr-ws-test",

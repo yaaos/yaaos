@@ -191,7 +191,6 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
 
     _noop_ws = step(_NoopWs)
     with scoped_engine() as eng:
-        eng.register_command(_NoopWs())  # pre-register so dispatch closure captures test_org_id
         eng.register_workflow(
             Workflow(
                 name="gw-terminal-test",
@@ -311,7 +310,6 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
 
     _noop_ws2 = step(_NoopWs2)
     with scoped_engine() as eng:
-        eng.register_command(_NoopWs2())  # pre-register so dispatch closure captures ws_org_id
         eng.register_workflow(
             Workflow(
                 name="gw-progress-test",

@@ -1,21 +1,16 @@
-"""Service test: reviewer terminal hook flips the owning ticket atomically.
+"""Service test: reviewer workflow on_terminal callback flips the owning ticket atomically.
 
-Covers 6 scenarios (all inside the same workflow engine + session transaction):
+The callback is attached directly to `Workflow.on_terminal` — no separate
+registration call needed. Tests verify:
+
   1. DONE  → ticket status becomes "done"
   2. FAILED → ticket status becomes "failed"; failure_reason threads into the audit
   3. CANCELLED → ticket status becomes "cancelled"
   4. Non-owning execution → ticket untouched (different current_workflow_execution_id)
-  5. workflow_name ≠ "pr_review_v1" → ticket untouched (hook is a no-op)
+  5. workflow with no on_terminal → ticket untouched
   6. Redelivered terminal (ticket already terminal) → no-op, no raise
 
-Does NOT invoke the orphan sweep — the atomic hook is the tested path here.
-
-The reviewer terminal hook is NOT registered automatically in tests; this file
-registers it explicitly via `register_reviewer_terminal_hooks()` after requesting
-`terminal_hooks_isolation`.
-
-Flag: this test file is marked for coverage scrutiny — it is the primary gate
-ensuring the atomic ticket-flip contract holds across all three terminal states.
+Does NOT invoke the orphan sweep — the atomic callback is the tested path here.
 """
 
 from __future__ import annotations
@@ -35,10 +30,9 @@ from app.core.workflow import (
     Workflow,
     step,
 )
-from app.domain.reviewer import register_reviewer_terminal_hooks
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import get as get_ticket
-from app.domain.tickets import set_workflow_execution
+from app.domain.tickets import set_workflow_execution, transition_ticket_on_terminal
 from app.testing.workflow_harness import scoped_engine
 
 pytestmark = pytest.mark.service
@@ -50,7 +44,6 @@ class _LocalSuccess:
     """A LOCAL command that always returns success."""
 
     kind = "TermHookSuccessCmd"
-    restart_safe = True
     Inputs = Empty
     Outputs = Empty
 
@@ -60,26 +53,35 @@ class _LocalSuccess:
 
 
 class _LocalFail:
-    """A LOCAL command that always returns failure with a given reason."""
+    """A LOCAL command that always returns failure (default reason)."""
 
     kind = "TermHookFailCmd"
-    restart_safe = True
     Inputs = Empty
     Outputs = Empty
 
-    def __init__(self, reason: str = "test_failure") -> None:
-        self._reason = reason
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
+        return Outcome.failure(reason="test_failure")
+
+
+class _LocalFailWithReason:
+    """A LOCAL command that fails with a specific reason threaded into the audit."""
+
+    kind = "TermHookFailWithReasonCmd"
+    Inputs = Empty
+    Outputs = Empty
 
     async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
         del inputs, ctx, session
-        return Outcome.failure(reason=self._reason)
+        return Outcome.failure(reason="schema_invalid")
 
 
 _success_step = step(_LocalSuccess)
 _fail_step = step(_LocalFail)
+_fail_reason_step = step(_LocalFailWithReason)
 
 
-# ── Minimal workflow_input with org_id so the hook can find it ────────────────
+# ── Minimal workflow_input with org_id so the callback can find it ────────────
 
 
 class _OrgInput(BaseModel):
@@ -136,30 +138,36 @@ async def _seed_running_ticket(db_session: object, *, org_id: UUID) -> UUID:
     return ticket_id
 
 
+def _pr_review_wf(*steps, transitions) -> Workflow:  # type: ignore[no-untyped-def]
+    """Build a minimal pr_review_v1 workflow with on_terminal attached."""
+    entry = steps[0]
+    return Workflow(
+        name="pr_review_v1",
+        version=1,
+        steps=steps,
+        entry=entry,
+        transitions=transitions,
+        on_terminal=transition_ticket_on_terminal,
+    )
+
+
 # ── Scenarios ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_done_workflow_flips_ticket_to_done(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
+async def test_done_workflow_flips_ticket_to_done(db_session) -> None:
     """DONE workflow → owning ticket becomes "done" in the same transaction."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
         eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_success_step,),
-                entry=_success_step,
+            _pr_review_wf(
+                _success_step,
                 transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
@@ -185,28 +193,20 @@ async def test_done_workflow_flips_ticket_to_done(
 
 
 @pytest.mark.asyncio
-async def test_failed_workflow_flips_ticket_to_failed_with_reason(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
+async def test_failed_workflow_flips_ticket_to_failed_with_reason(db_session) -> None:
     """FAILED workflow → ticket becomes "failed"; failure_reason threads into audit."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
-        eng.register_command(_LocalFail(reason="schema_invalid"))
         eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_fail_step,),
-                entry=_fail_step,
-                transitions={_fail_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
+            _pr_review_wf(
+                _fail_reason_step,
+                transitions={_fail_reason_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
             )
         )
 
@@ -238,27 +238,20 @@ async def test_failed_workflow_flips_ticket_to_failed_with_reason(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_workflow_flips_ticket_to_cancelled(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
+async def test_cancelled_workflow_flips_ticket_to_cancelled(db_session) -> None:
     """CANCELLED workflow (cancel_requested=True) → ticket becomes "cancelled"."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
     from app.core.workflow import request_cancel  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
         eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_success_step,),
-                entry=_success_step,
+            _pr_review_wf(
+                _success_step,
                 transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
@@ -289,10 +282,7 @@ async def test_cancelled_workflow_flips_ticket_to_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_non_owning_execution_leaves_ticket_untouched(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
+async def test_non_owning_execution_leaves_ticket_untouched(db_session) -> None:
     """A terminal event from a superseded execution must not flip the ticket.
 
     The ticket's current_workflow_execution_id is deliberately set to a
@@ -302,7 +292,6 @@ async def test_non_owning_execution_leaves_ticket_untouched(
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
@@ -311,11 +300,8 @@ async def test_non_owning_execution_leaves_ticket_untouched(
 
     with scoped_engine() as eng:
         eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_success_step,),
-                entry=_success_step,
+            _pr_review_wf(
+                _success_step,
                 transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
@@ -338,25 +324,21 @@ async def test_non_owning_execution_leaves_ticket_untouched(
 
             await _drain(db_session)
 
-    # Ticket still non-terminal ("pending") — the non-owning execution's hook was a no-op.
+    # Ticket still non-terminal ("pending") — the non-owning execution's callback was a no-op.
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status not in ("done", "failed", "cancelled")
 
 
 @pytest.mark.asyncio
-async def test_non_pr_review_workflow_leaves_ticket_untouched(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
-    """A terminal event from a non-pr_review_v1 workflow must not flip the ticket.
+async def test_no_on_terminal_leaves_ticket_untouched(db_session) -> None:
+    """A workflow with no on_terminal callback must not flip the ticket.
 
-    The hook guards on `workflow_name == "pr_review_v1"` and returns early
-    for any other workflow name.
+    A workflow without on_terminal (default None) running to completion
+    leaves the ticket in whatever status it was in before.
     """
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
@@ -364,11 +346,12 @@ async def test_non_pr_review_workflow_leaves_ticket_untouched(
     with scoped_engine() as eng:
         eng.register_workflow(
             Workflow(
-                name="other_workflow_v1",  # NOT pr_review_v1
+                name="other_workflow_v1",
                 version=1,
                 steps=(_success_step,),
                 entry=_success_step,
                 transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
+                # no on_terminal
             )
         )
 
@@ -388,37 +371,30 @@ async def test_non_pr_review_workflow_leaves_ticket_untouched(
 
             await _drain(db_session)
 
-    # Ticket still non-terminal — wrong workflow name, hook was a no-op.
+    # Ticket still non-terminal — no on_terminal, no flip.
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status not in ("done", "failed", "cancelled")
 
 
 @pytest.mark.asyncio
-async def test_redelivered_terminal_is_noop_no_raise(
-    db_session,
-    terminal_hooks_isolation,
-) -> None:
-    """A terminal hook called on an already-terminal ticket must not raise.
+async def test_redelivered_terminal_is_noop_no_raise(db_session) -> None:
+    """A terminal callback called on an already-terminal ticket must not raise.
 
     Simulates a redelivery scenario: ticket is already "done" before the
-    engine fires (or fires a second time). The hook must return False
-    without raising, preserving the engine's transaction.
+    engine fires (or fires a second time). The callback must return without
+    raising, preserving the engine's transaction.
     """
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
 
-    register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
         eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_success_step,),
-                entry=_success_step,
+            _pr_review_wf(
+                _success_step,
                 transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )

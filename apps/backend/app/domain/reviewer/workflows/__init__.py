@@ -19,6 +19,7 @@ from app.core.workspace import (
     CleanupWorkspaceInputs,
     ProvisionWorkspace,
     ProvisionWorkspaceInputs,
+    RefreshWorkspaceAuth,
 )
 from app.domain.reviewer.commands import (
     CheckShouldReview,
@@ -31,6 +32,7 @@ from app.domain.reviewer.commands import (
     SecretsScanInputs,
 )
 from app.domain.reviewer.types import TicketSnapshot
+from app.domain.tickets import transition_ticket_on_start, transition_ticket_on_terminal
 
 # ── pr_review_v1 ────────────────────────────────────────────────────────────
 #
@@ -140,6 +142,9 @@ pr_review_v1 = Workflow(
     },
     finalizer=cleanup,
     workflow_input=ticket,
+    recovery_commands=(RefreshWorkspaceAuth,),
+    on_start=transition_ticket_on_start,
+    on_terminal=transition_ticket_on_terminal,
 )
 
 

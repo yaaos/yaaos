@@ -151,13 +151,3 @@ async def dispatch_via_workspace(
             raise WorkspaceClaimFailed(f"workspace {workspace_id} is busy or inactive")
 
     return command.command_id
-
-
-def register_workspace_recovery_policies() -> None:
-    """Register workspace-level recovery policies into the workflow engine's
-    recovery registry. Called explicitly from web.py / worker.py after the
-    workspace module is loaded — not at import time, so the process controls
-    when registration happens."""
-    from app.core.workflow import register_recovery_policy  # noqa: PLC0415
-
-    register_recovery_policy(failure_label="auth_expired", command_kind="RefreshWorkspaceAuth")

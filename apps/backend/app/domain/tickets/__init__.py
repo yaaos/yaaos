@@ -39,6 +39,10 @@ from app.domain.tickets.service import (
     transition_on_workflow_terminal,
     update_findings_summary,
 )
+from app.domain.tickets.workflow_callbacks import (
+    transition_ticket_on_start,
+    transition_ticket_on_terminal,
+)
 
 __all__ = [
     "InvalidTicketTransition",
@@ -70,6 +74,8 @@ __all__ = [
     "set_workflow_execution",
     "transition_on_workflow_start",
     "transition_on_workflow_terminal",
+    "transition_ticket_on_start",
+    "transition_ticket_on_terminal",
     "update_findings_summary",
     "update_state",
     "upsert",

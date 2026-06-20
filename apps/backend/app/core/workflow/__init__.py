@@ -4,11 +4,6 @@ See `apps/backend/docs/core_workflow.md`.
 """
 
 from app.core.workflow.factories import step, workflow_input
-from app.core.workflow.recovery import (
-    get_recovery_policy,
-    register_recovery_policy,
-    registered_recovery_labels,
-)
 from app.core.workflow.service import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
@@ -35,14 +30,6 @@ from app.core.workflow.service import (
     start_step,
     unregister_workflow,
 )
-from app.core.workflow.start_hooks import (
-    get_start_hooks,
-    register_start_hook,
-)
-from app.core.workflow.terminal_hooks import (
-    get_terminal_hooks,
-    register_terminal_hook,
-)
 from app.core.workflow.types import (
     TERMINAL_STATES,
     AgentDispatchCommand,
@@ -62,7 +49,9 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowInputRef,
     WorkflowNotFoundError,
+    WorkflowStartCallback,
     WorkflowState,
+    WorkflowTerminalCallback,
     WorkflowValidationError,
     _NullDispatch,
     get_step_output,
@@ -94,29 +83,24 @@ __all__ = [
     "WorkflowInputRef",
     "WorkflowNotFoundError",
     "WorkflowRunView",
+    "WorkflowStartCallback",
     "WorkflowState",
     "WorkflowStepSummary",
+    "WorkflowTerminalCallback",
     "WorkflowValidationError",
     "_NullDispatch",
     "bind_engine",
     "get_awaiting_human_execution",
     "get_engine",
     "get_execution_summary",
-    "get_recovery_policy",
-    "get_start_hooks",
     "get_step_output",
-    "get_terminal_hooks",
     "handle_agent_event",
     "list_active_execution_ids",
     "list_all_execution_states",
     "list_executions_for_ticket",
     "list_hitl_history",
     "list_run_views_for_ticket",
-    "register_recovery_policy",
-    "register_start_hook",
-    "register_terminal_hook",
     "register_workflow",
-    "registered_recovery_labels",
     "request_cancel",
     "resume_hitl",
     "route_workflow",
