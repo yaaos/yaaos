@@ -123,11 +123,11 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.co
 
 [[modules]]
 path = "app.domain.tickets"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.domain.orgs", "app.domain.reviewer"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -687,6 +687,7 @@ expose = [
   "CommandCategory",
   "CommandContext",
   "CommandNotRegisteredError",
+  "Empty",
   "HANDLE_AGENT_EVENT",
   "HitlHistoryEntry",
   "Outcome",
@@ -694,7 +695,7 @@ expose = [
   "ROUTE_WORKFLOW",
   "RetryPolicy",
   "START_STEP",
-  "Step",
+  "StepRef",
   "TERMINAL_STATES",
   "TerminalAction",
   "Workflow",
@@ -703,10 +704,12 @@ expose = [
   "WorkflowError",
   "WorkflowExecutionNotFoundError",
   "WorkflowExecutionSummary",
+  "WorkflowInputRef",
   "WorkflowNotFoundError",
   "WorkflowRunView",
   "WorkflowState",
   "WorkflowStepSummary",
+  "WorkflowValidationError",
   "WorkspaceWorkflowCommand",
   "bind_engine",
   "get_awaiting_human_execution",
@@ -714,6 +717,7 @@ expose = [
   "get_execution_summary",
   "get_recovery_policy",
   "get_start_hooks",
+  "get_step_output",
   "get_terminal_hooks",
   "handle_agent_event",
   "list_active_execution_ids",
@@ -730,20 +734,29 @@ expose = [
   "resume_hitl",
   "route_workflow",
   "start_step",
+  "step",
   "unregister_workflow",
+  "workflow_input",
 ]
 from = ["app.core.workflow"]
 
 [[interfaces]]
 expose = [
-  "ALL_LIFECYCLE_COMMANDS",
+  "CleanupWorkspace",
+  "CleanupWorkspaceInputs",
+  "CleanupWorkspaceOutputs",
   "CodingAgentCliResult",
   "HealthStatus",
   "NetworkPolicy",
   "OnStreamLine",
+  "ProvisionWorkspace",
+  "ProvisionWorkspaceInputs",
+  "ProvisionWorkspaceOutputs",
+  "RefreshWorkspaceAuth",
+  "RefreshWorkspaceAuthInputs",
+  "RefreshWorkspaceAuthOutputs",
   "RepoRefForSpec",
   "ResourceCaps",
-  "WorkflowContextProvider",
   "Workspace",
   "WorkspaceAgentReportSinkImpl",
   "WorkspaceClaimFailed",
@@ -761,14 +774,11 @@ expose = [
   "WorkspaceRegistry",
   "WorkspaceSpec",
   "WorkspaceStatus",
-  "WorkspaceTicketContext",
-  "assert_workflow_context_provider",
   "bind_workspace_registry",
   "close_workspace",
   "current_workspace_registry",
   "dispatch_via_workspace",
   "get_provider",
-  "get_workflow_context_provider",
   "get_workspace_claim_state",
   "get_workspace_command_state",
   "get_workspace_info",
@@ -777,7 +787,6 @@ expose = [
   "health_check_all",
   "is_workspace_provider_registered",
   "list_workspace_providers",
-  "register_workflow_context_provider",
   "register_workspace_provider",
   "register_workspace_providers",
   "register_workspace_recovery_policies",
@@ -926,6 +935,7 @@ expose = [
   "Skip",
   "SkipReason",
   "SqlAlchemyAggregateRepository",
+  "TicketSnapshot",
   "TriggerDecision",
   "TriggerInputs",
   "acquire_pr_lock",
@@ -962,6 +972,7 @@ expose = [
   "TicketFilter",
   "TicketNotFoundError",
   "TicketStatus",
+  "TicketWorkflowContext",
   "abandon",
   "attach_pr_to_ticket",
   "attach_workflow_execution",

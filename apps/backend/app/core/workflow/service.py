@@ -46,9 +46,11 @@ from app.core.workflow.types import (
     CommandCategory,
     CommandContext,
     CommandNotRegisteredError,
+    Empty,
     Outcome,
     OutcomeKind,
-    Step,
+    RetryPolicy,
+    StepRef,
     TerminalAction,
     Workflow,
     WorkflowCommand,
@@ -56,7 +58,9 @@ from app.core.workflow.types import (
     WorkflowExecutionNotFoundError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkflowValidationError,
     WorkspaceWorkflowCommand,
+    _step_outputs_var,
 )
 
 log = structlog.get_logger("core.workflow")
@@ -85,24 +89,21 @@ async def start_step(
     inputs: dict[str, Any],
     traceparent: str | None = None,
 ) -> None:
-    """Dispatch the step. Branches on the WorkflowCommand category:
+    """Dispatch the step. Branches on the WorkflowCommand type:
 
-    - **Workspace** — calls `command.dispatch(inputs, ctx, session=s)` to
-      enqueue an AgentCommand row, parks the workflow in `awaiting_agent`,
-      and sets `pending_agent_command_id` to the returned `command_id`.
+    - **Workspace** (`isinstance(cmd, WorkspaceWorkflowCommand)`) — calls
+      `command.dispatch(typed_inputs, ctx, session=s)` to enqueue an
+      AgentCommand row, parks the workflow in `awaiting_agent`, and sets
+      `pending_agent_command_id` to the returned `command_id`.
     - **Local** — runs the command inline, persists its outcome, enqueues
       `route_workflow` via the outbox in the same transaction.
     - **HITL** — runs the command (which must return `Outcome.hitl_pending`),
       writes the `pending_human_decisions` row, sets `state = awaiting_human`.
 
     Span: taskiq's auto-instrumented `task:workflow.start_step` span is the
-    task boundary.  The engine does not open a redundant custom span here —
-    the inner `workflow.command.<Kind>` span (opened by `_safe_execute` for
-    Local/HITL and by `_start_step_impl` for Workspace) is a direct child
-    of the taskiq task span.  `workflow.step_id` and `workflow.attempt` are
-    stamped on the command span.  `yaaos.workflow_id` is stamped on every
-    span and log record in this scope via the span processor +
-    `_YaaosLogDimsFilter`.
+    task boundary.  The inner `workflow.command.<Kind>` span (opened by
+    `_safe_execute` for Local/HITL and by `_start_step_impl` for Workspace)
+    is a direct child of the taskiq task span.
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     try:
@@ -160,13 +161,28 @@ async def _start_step_impl(
             await s.commit()
             return
 
+        command_kind = step.command_class.kind
         try:
-            command = engine.get_command(step.command_kind)
+            command = engine.get_command(command_kind)
         except CommandNotRegisteredError:
             log.error(
                 "workflow.start_step.command_not_registered",
                 workflow_execution_id=workflow_execution_id,
-                command_kind=step.command_kind,
+                command_kind=command_kind,
+            )
+            await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
+            await s.commit()
+            return
+
+        # Reconstruct typed inputs from the serialised dict stored in the task args.
+        try:
+            typed_inputs: BaseModel = command.Inputs.model_validate(inputs)  # type: ignore[attr-defined]
+        except Exception as exc:
+            log.error(
+                "workflow.start_step.inputs_validation_failed",
+                workflow_execution_id=workflow_execution_id,
+                step_id=step_id,
+                error=str(exc),
             )
             await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
             await s.commit()
@@ -186,22 +202,14 @@ async def _start_step_impl(
         wfx.current_step_id = step_id
         _stamp_step_started(wfx, step_id)
 
-        if command.category == CommandCategory.WORKSPACE:
+        if isinstance(command, WorkspaceWorkflowCommand):
             # Workspace commands enqueue an AgentCommand durably inside this
             # transaction via the command's own `dispatch` method. The engine
             # parks the execution in `awaiting_agent` and stores the returned
             # `command_id` as `pending_agent_command_id`. The terminal
             # AgentEvent arrives via `handle_agent_event` to resume routing.
-            # The engine remains ignorant of workspace internals — the command
-            # owns the enqueue + repository wiring; the engine only handles
-            # the state transition.
-            if not isinstance(command, WorkspaceWorkflowCommand):
-                raise WorkflowError(
-                    f"WorkflowCommand kind '{step.command_kind}' has category=workspace "
-                    f"but does not implement WorkspaceWorkflowCommand.dispatch"
-                )
             outer_span = trace.get_current_span()
-            kind = command.kind  # type: ignore[attr-defined]
+            kind = command_kind
             with with_remote_parent_span(
                 _tracer, f"workflow.command.{kind}", wfx.otel_trace_context
             ) as cmd_span:
@@ -219,7 +227,7 @@ async def _start_step_impl(
                     traceparent=current_traceparent(),
                 )
                 try:
-                    command_id = await command.dispatch(inputs, ws_cmd_ctx, session=s)
+                    command_id = await command.dispatch(typed_inputs, ws_cmd_ctx, session=s)
                 except Exception as exc:
                     cmd_span.record_exception(exc)
                     cmd_span.set_status(StatusCode.ERROR, str(exc))
@@ -238,19 +246,17 @@ async def _start_step_impl(
             log.debug(
                 "workflow.start_step.workspace_dispatched",
                 workflow_execution_id=workflow_execution_id,
-                command_kind=step.command_kind,
+                command_kind=command_kind,
                 command_id=str(command_id),
             )
             await s.commit()
             return
 
         # Local + HITL: run execute() inline.
-        outcome = await _safe_execute(command, inputs, cmd_ctx, traceparent=wfx.otel_trace_context)
+        outcome = await _safe_execute(command, typed_inputs, cmd_ctx, traceparent=wfx.otel_trace_context)
 
-        if command.category == CommandCategory.HITL:
+        if getattr(command, "category", CommandCategory.LOCAL) == CommandCategory.HITL:
             if outcome.kind is not OutcomeKind.HITL_PENDING:
-                # A HITL-category command must return hitl_pending. Treat
-                # any other outcome as a programming bug and fail loud.
                 log.error(
                     "workflow.start_step.hitl_command_returned_non_pending",
                     workflow_execution_id=workflow_execution_id,
@@ -262,7 +268,9 @@ async def _start_step_impl(
             s.add(
                 PendingHumanDecisionRow(
                     workflow_execution_id=wfx.id,
-                    question_payload=dict(outcome.hitl_question or {}),
+                    question_payload=dict(
+                        outcome.hitl_question.model_dump() if outcome.hitl_question else {}
+                    ),
                 )
             )
             wfx.state = WorkflowState.AWAITING_HUMAN.value
@@ -271,8 +279,6 @@ async def _start_step_impl(
             return
 
         # Local command — persist outcome + enqueue route_workflow.
-        # Use wfx.otel_trace_context as the traceparent so downstream hops
-        # always parent to workflow.run.*, not to the caller's context.
         wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
         await enqueue(
             ROUTE_WORKFLOW,
@@ -302,11 +308,6 @@ async def handle_agent_event(
     (race guard), clears it, transitions back to `running`, enqueues
     `route_workflow`. Idempotent: a duplicate event for a workflow that
     has already advanced exits cleanly.
-
-    Span: nests under the upstream span from `traceparent` so the agent's
-    work and the control-plane's resumption are one trace. `yaaos.workflow_id`
-    and `yaaos.command_id` are stamped on every span and log record in this
-    scope via the span processor + `_YaaosLogDimsFilter`.
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     cmd_token = command_id_var.set(agent_command_id)
@@ -364,12 +365,6 @@ async def _handle_agent_event_impl(
         wfx.state = WorkflowState.RUNNING.value
         _publish_state_changed(s, wfx)
 
-        # Use wfx.otel_trace_context — NOT the caller-supplied traceparent.
-        # The caller's traceparent is the agent's HTTP POST request span, which
-        # belongs to a different trace. The DB row is the single source of truth
-        # for the workflow.run.* span's traceparent so all subsequent start_step
-        # spans nest under workflow.run.*, not the agent's request.
-        # This is the canonical pattern that resume_hitl also follows.
         await enqueue(
             ROUTE_WORKFLOW,
             args={
@@ -397,17 +392,9 @@ async def route_workflow(
     the step's transitions, and either enqueue the next `start_step` or
     mark the workflow terminal. Atomic transition + outbox enqueue in a
     single transaction.
-
-    Span: nests under the upstream span from `traceparent`. `yaaos.workflow_id`
-    is stamped on every span and log record in this scope via the span
-    processor + `_YaaosLogDimsFilter`; step/outcome are kept as explicit attrs.
     """
     wf_token = workflow_execution_id_var.set(workflow_execution_id)
     try:
-        # Stamp attributes onto the taskiq-emitted task span rather than
-        # opening a redundant custom span.  Taskiq's auto-instrumentation
-        # already emits `task:workflow.route_workflow`; a second custom span
-        # adds noise without adding signal.
         _task_span = trace.get_current_span()
         if completed_step_id is not None:
             _task_span.set_attribute("workflow.completed_step_id", completed_step_id)
@@ -475,7 +462,7 @@ async def _route_workflow_impl(
                     org_id=org_id,
                     session=s,
                 )
-            await _enqueue_start_step(s, wfx, wf, wf.entry_step_id, attempt=0)
+            await _enqueue_start_step(s, wfx, wf, wf.entry.step_id, attempt=0)
             await s.commit()
             return
 
@@ -496,18 +483,11 @@ async def _route_workflow_impl(
         # Tier-1 recovery: if the failure label has a registered recovery
         # policy (e.g. `auth_expired → RefreshWorkspaceAuth`), insert the
         # recovery command as a synthetic step that runs BEFORE the original
-        # step retries. Recovery fires at most once per step instance — the
-        # second hit falls through to Tier-2 retry / Tier-3 transition.
-        # Recovery steps use a deterministic id `_recover_{original_step_id}`
-        # so _resolve_step can synthesise the Step from recovered_steps without
-        # a persistent pool, and _resolve_transition can return the original
-        # step id on success.
+        # step retries. Recovery fires at most once per step instance.
         if outcome_label and outcome_label != "success":
             recovery_kind = get_recovery_policy(outcome_label)
             if recovery_kind is not None and not _has_recovered(wfx, completed_step_id):
                 _mark_recovered(wfx, completed_step_id, outcome_label)
-                # Reset the failed step's attempt counter so the post-recovery
-                # retry isn't already eating into the Tier-2 budget.
                 wfx.step_attempts = {**wfx.step_attempts, completed_step_id: 0}
                 recovery_step_id = f"_recover_{completed_step_id}"
                 wfx.state = WorkflowState.RUNNING.value
@@ -523,9 +503,7 @@ async def _route_workflow_impl(
                 await s.commit()
                 return
 
-        # Tier-2 retry on failure: bump attempt; re-enqueue start_step if
-        # the budget allows. On exhaustion, fall through to the transition
-        # map (Tier-3).
+        # Tier-2 retry on failure.
         if outcome_label == "failure":
             attempts = _get_attempt(wfx, completed_step_id)
             if attempts < step.retry_policy.max_attempts - 1:
@@ -540,28 +518,16 @@ async def _route_workflow_impl(
         target = _resolve_transition(wf, step, outcome_label or "success")
 
         if target is TerminalAction.COMPLETE_WORKFLOW:
-            # If the finalizer step already ran (i.e. we're completing the
-            # cleanup step that ran after a prior failure), the workflow must
-            # end as FAILED, not DONE.  The cleanup step's own transition
-            # "success → COMPLETE_WORKFLOW" is the *normal-path* contract;
-            # during the failure path the finalizer's completion is just the
-            # resource-release gate before recording failure.
-            if wfx.finalizer_fired and completed_step_id == wf.finalizer_step_id:
+            if wfx.finalizer_fired and wf.finalizer is not None and completed_step_id == wf.finalizer.step_id:
                 target = TerminalAction.FAIL_WORKFLOW
             else:
                 await _enter_terminal_state(s, wfx, WorkflowState.DONE)
                 await s.commit()
                 return
+
         if target is TerminalAction.FAIL_WORKFLOW:
-            # Run the declared finalizer (one-shot) before recording failure.
-            # The finalizer step runs cleanup (e.g. CleanupWorkspace) so it
-            # has a chance to release resources even on the failure path.
-            # Guard: fires only once per execution; if the finalizer itself
-            # fails, it arrives here again with the fired flag set → skip.
-            if wf.finalizer_step_id is not None and not wfx.finalizer_fired:
+            if wf.finalizer is not None and not wfx.finalizer_fired:
                 wfx.finalizer_fired = True
-                # Capture the failure context before routing to the finalizer;
-                # the failure reason comes from the *original* failing step.
                 failure_reason = _extract_failure_reason(outputs, outcome_label)
                 _store_pending_failure(wfx, completed_step_id, failure_reason)
                 wfx.state = WorkflowState.RUNNING.value
@@ -569,21 +535,19 @@ async def _route_workflow_impl(
                 log.debug(
                     "workflow.route_workflow.finalizer_dispatched",
                     workflow_execution_id=workflow_execution_id,
-                    finalizer_step_id=wf.finalizer_step_id,
+                    finalizer_step_id=wf.finalizer.step_id,
                     failed_step_id=completed_step_id,
                 )
-                await _enqueue_start_step(s, wfx, wf, wf.finalizer_step_id, attempt=0)
+                await _enqueue_start_step(s, wfx, wf, wf.finalizer.step_id, attempt=0)
                 await s.commit()
                 return
 
-            # Finalizer already fired (or not declared) — record terminal failure.
             failure_reason = _pop_pending_failure_reason(wfx) or _extract_failure_reason(
                 outputs, outcome_label
             )
             failed_step_id = _pop_pending_failure_step(wfx) or completed_step_id
             wfx.failure_reason = failure_reason
             await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
-            # Write the durable cross-cutting audit row.
             from app.core.audit_log import Actor, audit  # noqa: PLC0415
 
             await audit(
@@ -626,11 +590,6 @@ ROUTE_WORKFLOW: TaskRef = route_workflow
 
 
 async def request_cancel(workflow_execution_id: str, *, session: AsyncSession) -> bool:
-    """Set the `cancel_requested` flag. The next `start_step` / `route_workflow`
-    fire transitions the workflow to `cancelled`. If the workflow is
-    `awaiting_agent`, the cancel takes effect after the terminal event
-    arrives (per architecture.md § Cancellation interaction). Returns
-    True if a row was updated."""
     wfx = await _load_execution(session, workflow_execution_id)
     if wfx is None:
         return False
@@ -646,9 +605,6 @@ async def resume_hitl(
     response: dict[str, Any],
     session: AsyncSession,
 ) -> bool:
-    """Resolve the open HITL decision for this workflow and enqueue the next
-    routing step with `response` as the outcome's outputs. Caller commits.
-    Returns True if a pending decision was resolved."""
     wfx = await _load_execution(session, workflow_execution_id)
     if wfx is None:
         raise WorkflowExecutionNotFoundError(workflow_execution_id)
@@ -676,11 +632,6 @@ async def resume_hitl(
     wfx.state = WorkflowState.RUNNING.value
     _publish_state_changed(session, wfx)
 
-    # wfx.otel_trace_context is the canonical pattern: the DB row is the single
-    # source of truth for the workflow.run.* span's traceparent. All task-body
-    # enqueues (handle_agent_event, _start_step_impl Local branch, _enqueue_start_step)
-    # follow this same rule so downstream start_step spans always parent to
-    # workflow.run.*, not to the caller's request context.
     await enqueue(
         ROUTE_WORKFLOW,
         args={
@@ -700,10 +651,6 @@ async def resume_hitl(
 
 @dataclass(frozen=True)
 class WorkflowExecutionSummary:
-    """Narrow read projection of a `workflow_executions` row. Consumers that
-    need execution state for display or routing use this; they never receive
-    the SQLAlchemy row directly."""
-
     id: UUID
     ticket_id: UUID
     workflow_name: str
@@ -711,25 +658,14 @@ class WorkflowExecutionSummary:
     current_step_id: str | None
     created_at: datetime
     updated_at: datetime
-    # Set while the execution waits for an agent event (AWAITING_AGENT state).
-    # Tests that need to seed a WorkspaceRow with the matching command_id read
-    # this field rather than reaching into workflow_executions directly.
     pending_agent_command_id: UUID | None = None
     cancel_requested: bool = False
-    # The OTel traceparent stored at engine.start() time. Exposed so callers
-    # that simulate agent events (tests, agent_gateway) can propagate trace
-    # context into handle_agent_event without reaching into the row directly.
     otel_trace_context: str | None = None
-    # Short failure label written when the engine records terminal-fail.
-    # None while the workflow is running or when it terminates with DONE.
     failure_reason: str | None = None
 
 
 @dataclass(frozen=True)
 class HitlHistoryEntry:
-    """One HITL exchange (question + optional resolution). Projected from
-    `pending_human_decisions` without exposing the SQLAlchemy row."""
-
     id: UUID
     workflow_execution_id: UUID
     question_payload: dict[str, Any]
@@ -740,14 +676,6 @@ class HitlHistoryEntry:
 
 @dataclass(frozen=True)
 class WorkflowStepSummary:
-    """One step within a workflow run, projected for the Ticket page UI.
-
-    `state` is a five-valued projection — pending (not yet run) /
-    running (current_step_id matches) / done / failed / skipped — derived
-    from the workflow definition merged with `step_state[step_id]`. Pure
-    workflow vocabulary — never references AgentCommands.
-    """
-
     step_id: str
     command_kind: str
     state: str
@@ -757,12 +685,6 @@ class WorkflowStepSummary:
 
 @dataclass(frozen=True)
 class WorkflowRunView:
-    """One workflow execution rendered for the ticket page (steps + timing).
-
-    The SPA renders one card per run plus a stage band built from `steps`.
-    Steps are ordered by the workflow definition's `steps` tuple.
-    """
-
     id: UUID
     workflow_name: str
     workflow_version: int
@@ -793,7 +715,6 @@ def _project_execution(row: WorkflowExecutionRow) -> WorkflowExecutionSummary:
 async def list_executions_for_ticket(
     ticket_id: UUID, *, session: AsyncSession
 ) -> list[WorkflowExecutionSummary]:
-    """Return all workflow executions for one ticket, newest first."""
     from sqlalchemy import desc  # noqa: PLC0415
 
     rows = (
@@ -813,7 +734,6 @@ async def list_executions_for_ticket(
 async def get_execution_summary(
     execution_id: UUID, *, session: AsyncSession
 ) -> WorkflowExecutionSummary | None:
-    """Look up a single execution by id. Returns None when not found."""
     row = await session.get(WorkflowExecutionRow, execution_id)
     if row is None:
         return None
@@ -823,8 +743,6 @@ async def get_execution_summary(
 async def get_awaiting_human_execution(
     ticket_id: UUID, *, session: AsyncSession
 ) -> WorkflowExecutionSummary | None:
-    """Return the most recent `awaiting_human` execution for a ticket, or
-    None if no execution is currently paused for HITL input."""
     from sqlalchemy import desc  # noqa: PLC0415
 
     row = (
@@ -844,9 +762,6 @@ async def get_awaiting_human_execution(
 
 
 async def list_active_execution_ids(ticket_id: UUID, *, session: AsyncSession) -> list[UUID]:
-    """Return ids of all non-terminal executions for a ticket.
-
-    Non-terminal: any state not in `TERMINAL_STATES`."""
     rows = (
         (
             await session.execute(
@@ -863,7 +778,6 @@ async def list_active_execution_ids(ticket_id: UUID, *, session: AsyncSession) -
 
 
 async def list_hitl_history(ticket_id: UUID, *, session: AsyncSession) -> list[HitlHistoryEntry]:
-    """All HITL exchanges for a ticket's executions, newest first."""
     from sqlalchemy import desc  # noqa: PLC0415
 
     wfx_ids = (
@@ -902,8 +816,6 @@ async def list_hitl_history(ticket_id: UUID, *, session: AsyncSession) -> list[H
 
 
 def _parse_iso(value: Any) -> datetime | None:
-    """Parse an ISO-8601 string out of step_state. Returns None on any
-    shape problem so a malformed stamp can't break the projection."""
     if not isinstance(value, str):
         return None
     try:
@@ -913,19 +825,12 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def _step_summary(
-    step: Step,
+    step: StepRef,
     *,
     is_current: bool,
     entry: dict[str, Any] | None,
     execution_state: str,
 ) -> WorkflowStepSummary:
-    """Derive the projected step state from workflow def + stored entry.
-
-    Branches: stored outcome_label (`success` → done, otherwise failed —
-    `_skipped` is the conventional label for explicit skip); else current
-    step → running; else default pending. On terminal `failed` / `cancelled`
-    execution state, an entry-less step stays `pending` (never executed).
-    """
     started = _parse_iso(entry.get("started_at")) if isinstance(entry, dict) else None
     completed = _parse_iso(entry.get("completed_at")) if isinstance(entry, dict) else None
     outcome_label: str | None = entry.get("outcome_label") if isinstance(entry, dict) else None
@@ -933,8 +838,6 @@ def _step_summary(
     if outcome_label == "success":
         state = "done"
     elif outcome_label is not None:
-        # `_skipped` is the conventional label for an explicit skip outcome;
-        # any other non-success label is a failure of the step itself.
         state = "skipped" if outcome_label == "_skipped" else "failed"
     elif is_current and execution_state in {
         WorkflowState.RUNNING.value,
@@ -946,8 +849,8 @@ def _step_summary(
         state = "pending"
 
     return WorkflowStepSummary(
-        step_id=step.id,
-        command_kind=step.command_kind,
+        step_id=step.step_id,
+        command_kind=step.command_class.kind,
         state=state,
         started_at=started,
         completed_at=completed,
@@ -955,12 +858,6 @@ def _step_summary(
 
 
 def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
-    """Merge workflow definition + execution row into a `WorkflowRunView`.
-
-    Step order follows the workflow's declared `steps` tuple. Unknown workflow
-    names produce an empty step list rather than raising; the SPA still renders
-    the run.
-    """
     engine = get_engine()
     try:
         wf = engine.get_workflow(row.workflow_name, version=row.workflow_version)
@@ -969,13 +866,13 @@ def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
     else:
         summaries: list[WorkflowStepSummary] = []
         for step in wf.steps:
-            entry = row.step_state.get(step.id)
+            entry = row.step_state.get(step.step_id)
             if not isinstance(entry, dict):
                 entry = None
             summaries.append(
                 _step_summary(
                     step,
-                    is_current=(row.current_step_id == step.id),
+                    is_current=(row.current_step_id == step.step_id),
                     entry=entry,
                     execution_state=row.state,
                 )
@@ -995,13 +892,6 @@ def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
 
 
 async def list_run_views_for_ticket(ticket_id: UUID, *, session: AsyncSession) -> list[WorkflowRunView]:
-    """All workflow runs for a ticket, newest first, fully projected.
-
-    Each `WorkflowRunView` carries its step list (state + per-step timing)
-    so the SPA can render the workflow-run card + stage band without a
-    follow-up call. Ordering is `created_at DESC` (latest run first), matching
-    the sibling `list_executions_for_ticket`.
-    """
     from sqlalchemy import desc  # noqa: PLC0415
 
     rows = (
@@ -1019,8 +909,6 @@ async def list_run_views_for_ticket(ticket_id: UUID, *, session: AsyncSession) -
 
 
 async def list_all_execution_states(*, session: AsyncSession) -> list[str]:
-    """Return the `state` value for every execution row. Used for org-scoped
-    metrics aggregation — callers group and count by state value."""
     return list((await session.execute(select(WorkflowExecutionRow.state))).scalars().all())
 
 
@@ -1035,13 +923,12 @@ async def _load_execution(session: AsyncSession, workflow_execution_id: str) -> 
     return await session.get(WorkflowExecutionRow, wid)
 
 
-def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> Step | None:
+def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> StepRef | None:
     """Look up a step by id. Synthetic recovery steps (id prefix `_recover_`)
     are reconstructed from the recovered_steps column; all other step ids are
     resolved from the static workflow definition."""
     if step_id.startswith("_recover_"):
         # Recovery steps carry a deterministic id `_recover_{original_step_id}`.
-        # Reconstruct the Step from the recorded failure label → command_kind.
         original_step_id = step_id[len("_recover_") :]
         failure_label = (wfx.recovered_steps or {}).get(original_step_id)
         if failure_label is None:
@@ -1049,35 +936,80 @@ def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> Step
         recovery_kind = get_recovery_policy(failure_label)
         if recovery_kind is None:
             return None
-        return Step(id=step_id, command_kind=recovery_kind)
-    return wf.step_by_id(step_id)
+        # Look up the recovery command from the engine registry and create a synthetic StepRef.
+        try:
+            recovery_cmd = get_engine().get_command(recovery_kind)
+        except CommandNotRegisteredError:
+            return None
+        return StepRef(
+            command_class=type(recovery_cmd),
+            step_id=step_id,
+            inputs_factory=None,
+            retry_policy=RetryPolicy(),
+        )
+    return wf.step_by_step_id(step_id)
 
 
-def _resolve_transition(wf: Workflow, step: Step, outcome_label: str) -> str | TerminalAction:
-    """Resolve the next target from the step's transition map. Defaults:
-    success → next listed step (or `complete_workflow` if step is last);
+def _resolve_transition(wf: Workflow, step: StepRef, outcome_label: str) -> str | TerminalAction:
+    """Resolve the next target from the workflow's transitions map.
+
+    Defaults: success → next listed step (or `complete_workflow` if step is last);
     failure → `fail_workflow`.
 
     Synthetic recovery steps (`_recover_{original_step_id}`) receive special
-    routing: success returns control to the original step for a fresh attempt;
-    any failure immediately fails the workflow (no further recovery loop)."""
-    if step.id.startswith("_recover_"):
+    routing: success returns control to the original step; any failure immediately
+    fails the workflow."""
+    if step.step_id.startswith("_recover_"):
         if outcome_label == "success":
-            # Return to the step that triggered recovery.
-            return step.id[len("_recover_") :]
+            return step.step_id[len("_recover_") :]
         return TerminalAction.FAIL_WORKFLOW
-    explicit = step.transitions.get(outcome_label)
+
+    transitions: dict = wf.transitions or {}
+    step_transitions: dict = transitions.get(step, {})
+    explicit = step_transitions.get(outcome_label)
     if explicit is not None:
+        # Explicit can be a StepRef or TerminalAction.
+        if isinstance(explicit, StepRef):
+            return explicit.step_id
         return explicit
+
     if outcome_label == "success":
-        # Next-in-list within the static workflow definition.
-        ids = [s.id for s in wf.steps]
-        if step.id in ids:
-            idx = ids.index(step.id)
-            if idx + 1 < len(ids):
-                return ids[idx + 1]
+        step_ids = [s.step_id for s in wf.steps]
+        if step.step_id in step_ids:
+            idx = step_ids.index(step.step_id)
+            if idx + 1 < len(step_ids):
+                return wf.steps[idx + 1].step_id
         return TerminalAction.COMPLETE_WORKFLOW
     return TerminalAction.FAIL_WORKFLOW
+
+
+def _build_outputs_map(wfx: WorkflowExecutionRow, wf: Workflow) -> dict[str, BaseModel]:
+    """Build the ContextVar map from step_state + workflow_input.
+
+    For each workflow step that has an entry in step_state["step_id"]["outputs"],
+    validate via `step.command_class.Outputs.model_validate(...)`.
+    For the workflow_input, validate via `wf.workflow_input.snapshot_type.model_validate(...)`.
+    """
+    outputs_map: dict[str, BaseModel] = {}
+    for s in wf.steps:
+        entry = wfx.step_state.get(s.step_id)
+        if isinstance(entry, dict) and "outputs" in entry:
+            raw_outputs = entry["outputs"]
+            if isinstance(raw_outputs, dict):
+                try:
+                    outputs_cls = s.command_class.Outputs  # type: ignore[attr-defined]
+                    typed_out = outputs_cls.model_validate(raw_outputs)
+                    outputs_map[s.step_id] = typed_out
+                except Exception:
+                    # Non-fatal: lambda may handle None gracefully via outputs_or_none.
+                    pass
+    if wf.workflow_input is not None and isinstance(wfx.workflow_input, dict):
+        try:
+            typed_wi = wf.workflow_input.snapshot_type.model_validate(wfx.workflow_input)
+            outputs_map["__workflow_input__"] = typed_wi
+        except Exception:
+            pass
+    return outputs_map
 
 
 async def _enqueue_start_step(
@@ -1088,19 +1020,29 @@ async def _enqueue_start_step(
     *,
     attempt: int,
 ) -> None:
-    """Resolve the step's `inputs` map against workflow_input + prior step
-    outputs, then enqueue `workflow.start_step`.
-
-    The `traceparent` in the enqueued args always comes from
-    `wfx.otel_trace_context` — the single source of truth for the
-    `workflow.run.*` span's traceparent. `start_step` reads the DB row
-    directly and ignores the arg, but we populate it for in-flight row
-    backwards-compatibility."""
+    """Evaluate the step's `inputs_factory` lambda (if any) against prior step
+    outputs populated into `_step_outputs_var`, then enqueue `workflow.start_step`.
+    """
     step = _resolve_step(wfx, wf, step_id)
     resolved_inputs: dict[str, Any] = {}
-    if step is not None:
-        for input_name, source_expr in step.inputs.items():
-            resolved_inputs[input_name] = _resolve_input_expression(wfx, source_expr)
+
+    if step is not None and step.inputs_factory is not None:
+        outputs_map = _build_outputs_map(wfx, wf)
+        token = _step_outputs_var.set(outputs_map)
+        try:
+            typed_inputs = step.inputs_factory()
+            resolved_inputs = typed_inputs.model_dump(mode="json")
+        except Exception as exc:
+            log.warning(
+                "workflow.enqueue_start_step.inputs_factory_failed",
+                workflow_execution_id=str(wfx.id),
+                step_id=step_id,
+                error=str(exc),
+            )
+            # Proceed with empty inputs; the command's Inputs.model_validate({})
+            # will fail at dispatch time if required fields are missing.
+        finally:
+            _step_outputs_var.reset(token)
 
     wfx.current_step_id = step_id
 
@@ -1117,46 +1059,11 @@ async def _enqueue_start_step(
     )
 
 
-def _resolve_input_expression(wfx: WorkflowExecutionRow, expr: Any) -> Any:
-    """Resolve workflow-input references. Anything not a `$`-prefixed string
-    passes through verbatim.
-
-    Supported shapes:
-    - `$<step_id>.<field>` — resolves from prior step's `outputs`. Returns
-      None if the step hasn't completed or the field isn't in outputs.
-    - `$ticket.<field>` — resolves from the workflow_input column stashed at
-      `engine.start()` time (passed via the `ticket_payload` parameter,
-      typically by the intake layer that already has it in hand). Returns
-      None if `ticket_payload` wasn't supplied at start time or the field
-      isn't in the payload.
-    """
-    if not isinstance(expr, str) or not expr.startswith("$"):
-        return expr
-    body = expr[1:]
-    if "." not in body:
-        return None
-    head, tail = body.split(".", 1)
-    if head == "ticket":
-        payload = wfx.workflow_input
-        if not isinstance(payload, dict):
-            return None
-        return payload.get(tail)
-    bucket = wfx.step_state.get(head)
-    if not isinstance(bucket, dict):
-        return None
-    return bucket.get("outputs", {}).get(tail)
-
-
 def _has_recovered(wfx: WorkflowExecutionRow, step_id: str) -> bool:
-    """Has recovery already been inserted for this step instance? One-shot
-    per step to prevent infinite auth-refresh loops."""
     return step_id in (wfx.recovered_steps or {})
 
 
 def _mark_recovered(wfx: WorkflowExecutionRow, step_id: str, failure_label: str) -> None:
-    """Mark this step as having had recovery applied (with the triggering
-    label) so a second attempt at recovery falls through to Tier-2 retry.
-    Assigns a new dict so SQLAlchemy detects the JSONB column change."""
     wfx.recovered_steps = {**wfx.recovered_steps, step_id: failure_label}
 
 
@@ -1171,11 +1078,8 @@ def _persist_outputs(
     outputs: dict[str, Any],
 ) -> None:
     bucket = dict(wfx.step_state)
-    # Preserve `started_at` if already stamped by `_stamp_step_started`.
     prior = bucket.get(step_id) if isinstance(bucket.get(step_id), dict) else None
     started_at = prior.get("started_at") if isinstance(prior, dict) else None
-    # Strip control keys before persisting per-step entries — those control
-    # keys live alongside step entries with their own '__' prefixes.
     step_entry: dict[str, Any] = {
         "outcome_label": outcome_label,
         "outputs": {k: v for k, v in outputs.items() if not k.startswith("__")},
@@ -1188,12 +1092,6 @@ def _persist_outputs(
 
 
 def _stamp_step_started(wfx: WorkflowExecutionRow, step_id: str) -> None:
-    """Stamp `started_at` on the step's entry if not already present.
-
-    Called at dispatch time so a still-running step has `started_at` but a
-    null `completed_at` for the run-view UI. `_persist_outputs` later
-    preserves the stamp when writing the terminal outcome.
-    """
     bucket = dict(wfx.step_state)
     existing = bucket.get(step_id) if isinstance(bucket.get(step_id), dict) else None
     if isinstance(existing, dict) and "started_at" in existing:
@@ -1205,13 +1103,6 @@ def _stamp_step_started(wfx: WorkflowExecutionRow, step_id: str) -> None:
 
 
 def _publish_state_changed(session: AsyncSession, wfx: WorkflowExecutionRow) -> None:
-    """Emit `workflow_state_changed` on the org's general SSE channel.
-
-    Called at every `wfx.state = …` assignment site so the SPA can keep the
-    stage band + Activity tab live. Stashed after-commit so a rolled-back
-    transition never reaches subscribers. core→core only — the engine
-    never imports `domain/*`.
-    """
     org_id = _workflow_org_id(wfx)
     publish_general_after_commit(
         session,
@@ -1230,14 +1121,6 @@ async def _enter_terminal_state(
     wfx: WorkflowExecutionRow,
     new_state: WorkflowState,
 ) -> None:
-    """Set the execution to a terminal state, publish the SSE event, and
-    await all registered terminal hooks inside the current transaction.
-
-    All terminal transitions in the engine funnel through here so hooks
-    are guaranteed to fire exactly once per terminal write. Hooks run in
-    registration order. A raising hook rolls back the transaction — the
-    caller must not commit before this returns.
-    """
     wfx.state = new_state.value
     _publish_state_changed(session, wfx)
     org_id = _workflow_org_id(wfx)
@@ -1255,16 +1138,13 @@ async def _enter_terminal_state(
 
 def _outcome_payload(outcome: Outcome) -> dict[str, Any]:
     """Pack an Outcome's outputs into the routing task's `outputs` argument."""
-    payload: dict[str, Any] = dict(outcome.outputs)
+    payload: dict[str, Any] = outcome.outputs.model_dump(mode="json")
     if outcome.failure_reason is not None:
         payload["__failure_reason__"] = outcome.failure_reason
     return payload
 
 
 # ── Finalizer helpers ────────────────────────────────────────────────────
-# The finalizer is a one-shot per execution: once dispatched it is never
-# re-dispatched even if it itself fails. The fired-flag and pending-failure
-# context live in typed columns on workflow_executions.
 
 
 def _store_pending_failure(
@@ -1272,8 +1152,6 @@ def _store_pending_failure(
     failed_step_id: str | None,
     failure_reason: str | None,
 ) -> None:
-    """Stash the failure context so it survives the finalizer step's round-trip
-    and can be read when the finalizer itself completes (or fails)."""
     if failed_step_id is not None:
         wfx.pending_failure_step_id = failed_step_id
     if failure_reason is not None:
@@ -1293,9 +1171,6 @@ def _pop_pending_failure_reason(wfx: WorkflowExecutionRow) -> str | None:
 
 
 def _extract_failure_reason(outputs: dict[str, Any], outcome_label: str | None) -> str | None:
-    """Best-effort failure-reason extraction. Prefers the structured
-    `__failure_reason__` output key set by `Outcome.failure(reason=...)`;
-    falls back to the outcome label string."""
     reason = outputs.get("__failure_reason__")
     if reason:
         return str(reason)
@@ -1305,26 +1180,16 @@ def _extract_failure_reason(outputs: dict[str, Any], outcome_label: str | None) 
 
 
 def _workflow_org_id(wfx: WorkflowExecutionRow) -> UUID:
-    """Return the org_id for the audit call.
-
-    Route-workflow task bodies run inside `OrgContextMiddleware` which sets
-    the `org_id` contextvar from the task metadata. Use that when available;
-    fall back to the workflow_input column for test cases that bypass the
-    middleware.
-    """
     from app.core.auth import current_org_id  # noqa: PLC0415
 
     org_id = current_org_id()
     if org_id is not None:
         return org_id
-    # Fallback: workflow_input may carry org_id for tests that bypass middleware.
     payload = wfx.workflow_input
     if isinstance(payload, dict):
         raw = payload.get("org_id")
         if raw is not None:
             return UUID(str(raw))
-    # Last resort — mint a nil UUID so the audit row still lands rather than
-    # crashing the failure path; the engine logs the issue.
     log.warning(
         "workflow.route_workflow.no_org_id_for_audit",
         workflow_execution_id=str(wfx.id),
@@ -1334,41 +1199,21 @@ def _workflow_org_id(wfx: WorkflowExecutionRow) -> UUID:
 
 async def _safe_execute(
     command: WorkflowCommand,
-    inputs: dict[str, Any],
+    inputs: BaseModel,
     ctx: CommandContext,
     traceparent: str | None = None,
 ) -> Outcome:
-    """Call command.execute(inputs, ctx) inside a `workflow.command.{kind}`
-    child span.
-
-    `traceparent`: W3C traceparent string of the target parent span. When
-    provided, the command span opens as a direct child of that span via
-    `with_remote_parent_span`, staying in the caller's trace regardless of
-    the current dequeue context. When None, opens a root span.
-
-    On exception: records the exception on the child span + marks it ERROR,
-    then propagates ERROR to the caller's active span (the taskiq task span)
-    and returns a failure outcome. Does NOT re-raise — the engine keeps
-    state consistent.
-
-    On failure outcome: marks the child span ERROR with the reason as the
-    status description, then propagates ERROR to the caller's active span.
-    No exception event is added (none was raised).
-
-    On success: returns the outcome with spans left at default (UNSET) status.
-
-    Mirrors the span-error-recording pattern in `core/observability/spawn.py`.
-    """
+    """Call command.execute(inputs, ctx) inside a `workflow.command.{kind}` child span."""
     outer_span = trace.get_current_span()
     kind = command.kind  # type: ignore[attr-defined]
+    cat = getattr(command, "category", CommandCategory.LOCAL)
+    cat_value = cat.value if isinstance(cat, CommandCategory) else str(cat)
     with with_remote_parent_span(_tracer, f"workflow.command.{kind}", traceparent) as child_span:
         child_span.set_attribute("command.kind", kind)
-        child_span.set_attribute("command.category", command.category.value)  # type: ignore[attr-defined]
+        child_span.set_attribute("command.category", cat_value)
         child_span.set_attribute("workflow.step_id", ctx.step_id)
         child_span.set_attribute("workflow.attempt", ctx.attempt)
         try:
-            # Pass raw inputs through; commands are responsible for parsing
-            # their typed inputs from the raw dict via Pydantic if they care.
             outcome = await command.execute(inputs, ctx)  # type: ignore[arg-type]
         except Exception as exc:
             child_span.record_exception(exc)
@@ -1393,13 +1238,19 @@ async def _safe_execute(
 
 
 class WorkflowEngine:
-    """Workflow + WorkflowCommand registry. Process-singleton via
-    `get_engine()`. Domain modules call `register_workflow(...)` and
-    `register_command(...)` once at import time.
+    """Workflow + WorkflowCommand registry. Process-singleton via `get_engine()`.
 
-    `start(workflow_name, ticket_id, *, session)` opens a workflow execution
-    and enqueues the initial routing task. Required `session` — the caller
-    commits and the outbox drain delivers the task post-commit.
+    `register_workflow(wf)` validates the workflow definition, auto-discovers
+    all command classes from the steps tuple (instantiating each to build the
+    registry entry), and runs lambda validation for steps that have
+    `inputs_factory`.
+
+    `register_command(command)` is available for recovery commands that are
+    not part of any workflow's step list (e.g. `RefreshWorkspaceAuth` which
+    is only triggered by the recovery policy machinery).
+
+    `start(workflow_name, ticket_id, *, workflow_input, session)` opens a
+    workflow execution and enqueues the initial routing task.
     """
 
     def __init__(self) -> None:
@@ -1410,24 +1261,115 @@ class WorkflowEngine:
         key = (wf.name, wf.version)
         if key in self._workflows:
             raise WorkflowError(f"workflow '{wf.name}' v{wf.version} already registered")
-        if wf.step_by_id(wf.entry_step_id) is None:
-            raise WorkflowError(f"workflow '{wf.name}' entry_step_id '{wf.entry_step_id}' not in steps")
-        for step in wf.steps:
-            for label, target in step.transitions.items():
-                # TerminalAction subclasses str — exclude before resolving as step id.
+
+        # Validate entry step exists in steps tuple.
+        if wf.step_by_step_id(wf.entry.step_id) is None:
+            raise WorkflowError(f"workflow '{wf.name}' entry step '{wf.entry.step_id}' not in steps")
+
+        # Validate explicit transition targets.
+        transitions: dict = wf.transitions or {}
+        for _src_step, label_map in transitions.items():
+            for label, target in label_map.items():
                 if isinstance(target, TerminalAction):
                     continue
-                if isinstance(target, str) and wf.step_by_id(target) is None:
+                if isinstance(target, StepRef):
+                    if wf.step_by_step_id(target.step_id) is None:
+                        raise WorkflowError(
+                            f"workflow '{wf.name}' transition target '{target.step_id}' "
+                            f"for label '{label}' not in steps"
+                        )
+                elif isinstance(target, str):
+                    if wf.step_by_step_id(target) is None:
+                        raise WorkflowError(
+                            f"workflow '{wf.name}' transition target '{target}' "
+                            f"for label '{label}' not in steps"
+                        )
+
+        # Auto-discover command classes from steps and register instances.
+        # Read `kind` from the class attribute first so pre-registered commands
+        # (e.g. test commands with constructor args registered via `register_command`)
+        # are not re-instantiated — only register when the kind is absent.
+        for s in wf.steps:
+            cmd_class = s.command_class
+            kind = getattr(cmd_class, "kind", None)  # type: ignore[attr-defined]
+            if kind is None:
+                raise WorkflowError(
+                    f"workflow '{wf.name}' step '{s.step_id}': command class "
+                    f"'{cmd_class.__name__}' is missing a `kind` class attribute"
+                )
+            if kind not in self._commands:
+                try:
+                    instance = cmd_class()
+                except Exception as exc:
                     raise WorkflowError(
-                        f"workflow '{wf.name}' step '{step.id}' transitions['{label}'] points to "
-                        f"unknown step '{target}'"
-                    )
+                        f"workflow '{wf.name}' step '{s.step_id}': could not instantiate "
+                        f"command class '{cmd_class.__name__}': {exc}"
+                    ) from exc
+                self._commands[kind] = instance
+
+        # Validate inputs_factory lambdas catch field-name typos.
+        #
+        # `model_construct()` without kwargs leaves required fields unset —
+        # accessing them raises AttributeError, the same signal we use to
+        # detect "typo'd field name". Passing `None` for every declared field
+        # pre-sets them so that valid field access succeeds; only truly absent
+        # attribute names then raise AttributeError, which is the right gate.
+        def _mock(cls: type) -> BaseModel:
+            try:
+                fields = {name: None for name in cls.model_fields}  # type: ignore[attr-defined]
+                return cls.model_construct(**fields)  # type: ignore[attr-defined]
+            except Exception:
+                return Empty()
+
+        mock_outputs: dict[str, BaseModel] = {}
+        for s in wf.steps:
+            try:
+                outputs_cls = s.command_class.Outputs  # type: ignore[attr-defined]
+                mock_outputs[s.step_id] = _mock(outputs_cls)
+            except Exception:
+                mock_outputs[s.step_id] = Empty()
+        if wf.workflow_input is not None:
+            try:
+                mock_outputs["__workflow_input__"] = _mock(wf.workflow_input.snapshot_type)
+            except Exception:
+                mock_outputs["__workflow_input__"] = Empty()
+
+        for s in wf.steps:
+            if s.inputs_factory is None:
+                continue
+            token = _step_outputs_var.set(mock_outputs)
+            try:
+                s.inputs_factory()
+            except AttributeError as exc:
+                raise WorkflowValidationError(
+                    f"workflow '{wf.name}' step '{s.step_id}' inputs lambda references unknown field: {exc}"
+                ) from exc
+            except Exception:
+                # KeyError (step not in map yet), ValidationError, etc. are runtime
+                # concerns — not lambda typos. Let them pass registration.
+                pass
+            finally:
+                _step_outputs_var.reset(token)
+
         self._workflows[key] = wf
 
     def register_command(self, command: WorkflowCommand) -> None:
-        if command.kind in self._commands:
-            raise WorkflowError(f"WorkflowCommand kind '{command.kind}' already registered")
-        self._commands[command.kind] = command
+        """Register a command that is not auto-discoverable from any workflow step.
+
+        Used for recovery commands (e.g. `RefreshWorkspaceAuth`) that are only
+        dispatched by the recovery policy machinery, not listed in any step.
+        Raises `WorkflowError` if the kind is already registered with a different
+        instance class.
+        """
+        kind = command.kind  # type: ignore[attr-defined]
+        if kind in self._commands:
+            existing = self._commands[kind]
+            if type(existing) is not type(command):
+                raise WorkflowError(
+                    f"WorkflowCommand kind '{kind}' already registered with class {type(existing).__name__}"
+                )
+            return  # Same class — idempotent, allow.
+        self._commands[kind] = command
 
     def get_workflow(self, name: str, version: int | None = None) -> Workflow:
         if version is not None:
@@ -1459,34 +1401,35 @@ class WorkflowEngine:
         ticket_id: str,
         version: int | None = None,
         traceparent: str | None = None,
-        ticket_payload: dict[str, Any] | None = None,
+        workflow_input: BaseModel | None = None,
         session: AsyncSession,
     ) -> str:
-        """Create a `workflow_executions` row in `pending` state, enqueue
-        the initial `route_workflow` task (which decides the first step),
-        and return the new execution id. Required `session` — the caller
-        commits and the outbox drain delivers the task post-commit.
+        """Create a `workflow_executions` row in `pending` state, enqueue the
+        initial `route_workflow` task, and return the new execution id.
 
-        `ticket_payload`: the ticket's intake payload dict. Stashed on the
-        execution row so workflow input expressions can reference
-        `$ticket.<field>` (e.g. `$ticket.head_sha`) without each step
-        re-fetching from the DB. Callers that have it in hand (intake
-        layer) pass it; callers without can omit — the resolver returns
-        None for missing fields.
+        `workflow_input`: typed BaseModel snapshot for the workflow. If the
+        registered workflow declares `workflow_input: WorkflowInputRef`, the
+        snapshot is serialised via `model_dump(mode='json')` and stored on the row;
+        the engine validates that the supplied type matches the declared type.
 
-        Workspace commands always dispatch over the wire to the registered
-        WorkspaceProvider and park in `awaiting_agent`. Provider resolution
-        and errors surface in the workspace module's actual dispatch, not
-        here."""
+        Raises `WorkflowError` when `workflow_input` type doesn't match the
+        workflow's declared `workflow_input.snapshot_type`.
+        """
         wf = self.get_workflow(workflow_name, version=version)
-        for step in wf.steps:
-            self.get_command(step.command_kind)
+
+        # Validate workflow_input type if the workflow declares one.
+        if wf.workflow_input is not None and workflow_input is not None:
+            if not isinstance(workflow_input, wf.workflow_input.snapshot_type):
+                raise WorkflowError(
+                    f"workflow '{workflow_name}' expects workflow_input of type "
+                    f"'{wf.workflow_input.snapshot_type.__name__}', "
+                    f"got '{type(workflow_input).__name__}'"
+                )
 
         with with_remote_parent_span(_tracer, f"workflow.run.{wf.name}", traceparent) as run_span:
-            # Capture the run span's own traceparent — task bodies and the stored
-            # otel_trace_context use this so they parent to the run span, not to
-            # the caller's (intake request) span.
             run_traceparent = current_traceparent()
+
+            wi_dict = workflow_input.model_dump(mode="json") if workflow_input is not None else None
 
             row = WorkflowExecutionRow(
                 ticket_id=ticket_id,
@@ -1498,7 +1441,7 @@ class WorkflowEngine:
                 step_state={},
                 cancel_requested=False,
                 otel_trace_context=run_traceparent,
-                workflow_input=dict(ticket_payload) if ticket_payload is not None else None,
+                workflow_input=wi_dict,
             )
             session.add(row)
             await session.flush()
@@ -1540,12 +1483,6 @@ def get_engine() -> WorkflowEngine:
 
 
 def bind_engine(instance: WorkflowEngine | None) -> WorkflowEngine | None:
-    """Swap the process-singleton engine and return the prior instance.
-
-    The test harness (`app.testing.workflow_harness.scoped_engine`) is the
-    intended caller. Production code reads the engine via `get_engine()` and
-    never calls this function.
-    """
     global _engine
     prior = _engine
     _engine = instance

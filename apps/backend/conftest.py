@@ -48,7 +48,6 @@ from app.testing.isolation import (  # noqa: F401
     start_hooks_isolation,
     subscriber_registry_isolation,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
     workspace_providers_isolation,
 )
 

@@ -10,29 +10,29 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.core.workflow import CommandContext
-from app.domain.reviewer.commands import PostFindings
+from app.domain.reviewer.commands import PostFindings, PostFindingsInputs
 
 
 def _ctx() -> CommandContext:
     return CommandContext(
         workflow_execution_id=str(uuid4()),
         ticket_id=str(uuid4()),
-        step_id="post",
+        step_id="PostFindings",
         attempt=0,
     )
 
 
-async def test_empty_stdout_returns_success_zero_count(workflow_context_provider_isolation) -> None:  # type: ignore[no-untyped-def]
+async def test_empty_stdout_returns_success_zero_count() -> None:
     """No stdout → zero findings, success without calling the DB."""
-    outcome = await PostFindings().execute({}, _ctx())
+    outcome = await PostFindings().execute(PostFindingsInputs(output="", org_id=uuid4()), _ctx())
     assert outcome.label == "success"
-    assert outcome.outputs.get("admitted_count") == 0
+    assert outcome.outputs.admitted_count == 0
 
 
 async def test_nonconforming_output_returns_schema_invalid_failure() -> None:
     """output that contains no terminal result event → schema_invalid failure."""
     outcome = await PostFindings().execute(
-        {"output": "not valid json stream output"},
+        PostFindingsInputs(output="not valid json stream output", org_id=uuid4()),
         _ctx(),
     )
     assert outcome.label == "failure"

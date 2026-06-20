@@ -143,24 +143,6 @@ async def plugin_registries_isolation(_canonical_registries) -> None:
 
 
 @pytest_asyncio.fixture
-async def workflow_context_provider_isolation():
-    """Reset the workflow-context provider before and after the test.
-
-    Non-autouse: tests that need to control the registered provider (or
-    assert on its absence) must request this fixture explicitly. Tests
-    that just need a working provider should register one via
-    `register_workflow_context_provider` after requesting this fixture.
-    """
-    from app.core.workspace.workflow_context import (  # noqa: PLC0415
-        _clear_workflow_context_provider_for_tests,
-    )
-
-    _clear_workflow_context_provider_for_tests()
-    yield
-    _clear_workflow_context_provider_for_tests()
-
-
-@pytest_asyncio.fixture
 async def workspace_providers_isolation():
     """Bind an empty workspace-provider registry before the test, then
     restore the canonical binding on exit.
@@ -254,6 +236,5 @@ __all__ = [
     "start_hooks_isolation",
     "subscriber_registry_isolation",
     "terminal_hooks_isolation",
-    "workflow_context_provider_isolation",
     "workspace_providers_isolation",
 ]

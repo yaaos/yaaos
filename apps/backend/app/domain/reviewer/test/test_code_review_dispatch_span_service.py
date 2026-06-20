@@ -10,7 +10,7 @@ StatusCode.ERROR.
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from opentelemetry import trace
@@ -33,17 +33,6 @@ class _RaisingPlugin:
         raise NotImplementedError
 
 
-class _StaticTicketContextProvider:
-    """WorkflowContextProvider stub that returns a fixed WorkspaceTicketContext."""
-
-    def __init__(self, ctx: Any) -> None:
-        self._ctx = ctx
-
-    async def get_workspace_ticket_context(self, ticket_id: UUID) -> Any:
-        del ticket_id
-        return self._ctx
-
-
 @pytest.mark.asyncio
 async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
     db_session,
@@ -56,12 +45,8 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
         current_coding_agent_registry,
     )
     from app.core.workflow import CommandContext  # noqa: PLC0415
-    from app.core.workspace import (  # noqa: PLC0415
-        WorkspaceTicketContext,
-        register_workflow_context_provider,
-    )
     from app.domain.orgs import create_org  # noqa: PLC0415
-    from app.domain.reviewer.commands import CodeReview  # noqa: PLC0415
+    from app.domain.reviewer.commands import CodeReview, CodeReviewInputs  # noqa: PLC0415
     from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
     from app.testing.seed import seed_workspace as _seed_workspace  # noqa: PLC0415
 
@@ -82,18 +67,6 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
     await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
-    # Install a context provider that returns a minimal valid WorkspaceTicketContext.
-    register_workflow_context_provider(
-        _StaticTicketContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="claude_code",
-                repo_external_id="owner/repo",
-                payload={"head_sha": "deadbeef", "base_sha": "babecafe"},
-            )
-        )
-    )
-
     # Swap the coding-agent registry so the raising stub is under "claude_code".
     prior_registry = current_coding_agent_registry()
     fresh_registry = prior_registry.copy()
@@ -108,7 +81,14 @@ async def test_code_review_dispatch_build_invocation_failure_sets_span_error(
             step_id="code_review",
             attempt=0,
         )
-        inputs = {"workspace_id": ws_id}
+        inputs = CodeReviewInputs(
+            workspace_id=ws_id,
+            org_id=org_id,
+            repo_external_id="owner/repo",
+            pr_external_id="42",
+            head_sha="deadbeef",
+            base_sha="babecafe",
+        )
 
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)

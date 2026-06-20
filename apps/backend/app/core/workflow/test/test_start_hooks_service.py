@@ -20,12 +20,13 @@ from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     get_start_hooks,
     register_start_hook,
+    step,
 )
 from app.core.workflow.start_hooks import _clear_start_hooks_for_tests
 from app.testing.workflow_harness import scoped_engine
@@ -38,24 +39,21 @@ class _NoopLocal:
 
     kind = "StartHookNoopLocal"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs: Any, ctx: Any) -> Any:
+    async def execute(self, inputs: Empty, ctx: Any) -> Outcome:
         del inputs, ctx
         return Outcome.success()
 
 
+_noop_step = step(_NoopLocal)
 _TEST_WORKFLOW = Workflow(
     name="start-hook-test-workflow",
     version=1,
-    steps=(
-        Step(
-            id="only_step",
-            command_kind="StartHookNoopLocal",
-            transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-        ),
-    ),
-    entry_step_id="only_step",
+    steps=(_noop_step,),
+    entry=_noop_step,
+    transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
 )
 
 
@@ -101,14 +99,12 @@ async def test_start_hook_invoked_with_expected_kwargs(db_session) -> None:  # t
     assert get_start_hooks() == [_probe_hook]
 
     with scoped_engine() as engine:
-        engine.register_command(_NoopLocal())
         engine.register_workflow(_TEST_WORKFLOW)
 
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await engine.start(
                 workflow_name="start-hook-test-workflow",
                 ticket_id=str(uuid4()),
-                ticket_payload={},
                 session=db_session,
             )
             await db_session.commit()
@@ -132,14 +128,12 @@ async def test_no_start_hooks_bootstrap_succeeds(db_session) -> None:  # type: i
     assert get_start_hooks() == []
 
     with scoped_engine() as engine:
-        engine.register_command(_NoopLocal())
         engine.register_workflow(_TEST_WORKFLOW)
 
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await engine.start(
                 workflow_name="start-hook-test-workflow",
                 ticket_id=str(uuid4()),
-                ticket_payload={},
                 session=db_session,
             )
             await db_session.commit()

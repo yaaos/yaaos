@@ -9,36 +9,95 @@ that want to exercise the body in isolation.
 
 `ProvisionWorkspace` is the workspace-create step; the engine dispatches a
 `ProvisionWorkspace` AgentCommand and the agent returns the `workspace_id`.
-`CleanupWorkspace` closes the workspace by id (from prior step outputs).
+`CleanupWorkspace` closes the workspace by id (from typed `CleanupWorkspaceInputs`).
 `RefreshWorkspaceAuth` is the recovery command bound to `auth_expired`
 failures; it issues a `RefreshWorkspaceAuth` AgentCommand so the Go agent
 can rotate its checkout's auth header before the retry.
+
+All inputs flow through typed Pydantic models populated by the workflow's
+`inputs_factory` lambdas and stored by the engine in the task queue. No
+context-provider lookups at dispatch time.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid7
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
+from pydantic import BaseModel, ConfigDict
 
 from app.core.agent_gateway import (
     AuthBlock,
     CleanupWorkspaceCommand,
     RepoRef,
 )
-from app.core.workflow import CommandCategory, CommandContext, Outcome
+from app.core.workflow import CommandCategory, CommandContext, Empty, Outcome
 from app.core.workspace.dispatch import dispatch_via_workspace
 from app.core.workspace.remote_provider import dispatch_provision_workspace
 from app.core.workspace.service import close_workspace, list_workspace_providers
-from app.core.workspace.workflow_context import get_workflow_context_provider
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger("core.workspace.commands")
+
+
+# ── Input / Output types ────────────────────────────────────────────────
+
+
+class ProvisionWorkspaceInputs(BaseModel):
+    """Typed inputs for the ProvisionWorkspace step.
+
+    Supplied by the workflow's inputs_factory lambda, which reads fields from
+    the workflow-input snapshot (TicketSnapshot or equivalent).
+    """
+
+    model_config = ConfigDict(frozen=True)
+    org_id: UUID
+    plugin_id: str
+    repo_external_id: str
+    head_sha: str
+    base_sha: str | None = None
+
+
+class ProvisionWorkspaceOutputs(BaseModel):
+    """Typed outputs written to step_state when the ProvisionWorkspace
+    AgentCommand completes. `workspace_id` is the agent's lifecycle handle."""
+
+    model_config = ConfigDict(frozen=True)
+    workspace_id: UUID
+
+
+class CleanupWorkspaceInputs(BaseModel):
+    """Typed inputs for the CleanupWorkspace step.
+
+    `workspace_id` is None when provision failed before creating a workspace —
+    the command treats None as a no-op (idempotent cleanup).
+    """
+
+    model_config = ConfigDict(frozen=True)
+    workspace_id: UUID | None = None
+
+
+class CleanupWorkspaceOutputs(Empty):
+    """No outputs from CleanupWorkspace."""
+
+
+class RefreshWorkspaceAuthInputs(BaseModel):
+    """Typed inputs for the RefreshWorkspaceAuth recovery command."""
+
+    model_config = ConfigDict(frozen=True)
+    workspace_id: UUID
+
+
+class RefreshWorkspaceAuthOutputs(Empty):
+    """No outputs from RefreshWorkspaceAuth."""
+
+
+# ── Command implementations ─────────────────────────────────────────────
 
 
 class _LifecycleCommand:
@@ -48,10 +107,6 @@ class _LifecycleCommand:
 
     category = CommandCategory.WORKSPACE
     restart_safe = True
-
-    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        return Outcome.success()
 
 
 class ProvisionWorkspace(_LifecycleCommand):
@@ -66,8 +121,10 @@ class ProvisionWorkspace(_LifecycleCommand):
     """
 
     kind = "ProvisionWorkspace"
+    Inputs = ProvisionWorkspaceInputs
+    Outputs = ProvisionWorkspaceOutputs
 
-    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: ProvisionWorkspaceInputs, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.failure(
             reason="ProvisionWorkspace.execute is not the dispatch path for remote provisioning"
@@ -75,7 +132,7 @@ class ProvisionWorkspace(_LifecycleCommand):
 
     async def dispatch(
         self,
-        inputs: dict[str, Any],
+        inputs: ProvisionWorkspaceInputs,
         ctx: CommandContext,
         *,
         session: AsyncSession,
@@ -87,50 +144,36 @@ class ProvisionWorkspace(_LifecycleCommand):
         sink in `agent_report.py`.
 
         `clone_url` and `installation_token` come from `core/vcs.get_install_credentials`
-        rather than the workflow-context provider, so credentials are fetched
-        at dispatch time and the provider no longer needs to carry them.
+        so credentials are fetched at dispatch time.
         Raises `VcsInstallNotFound` when the org has no active VCS App installation.
         """
         from app.core import vcs as _vcs  # noqa: PLC0415
 
-        del inputs
         providers = list_workspace_providers()
         if not providers:
             raise RuntimeError("no workspace provider registered")
 
-        workflow_ctx_provider = get_workflow_context_provider()
-        ticket_ctx = await workflow_ctx_provider.get_workspace_ticket_context(UUID(ctx.ticket_id))
-        if ticket_ctx is None:
-            raise RuntimeError(f"ticket {ctx.ticket_id} not found")
-
-        head_sha = str(ticket_ctx.payload.get("head_sha") or "HEAD")
-        base_sha = ticket_ctx.payload.get("base_sha")
-
-        # Mint the workspace_id up front — the row is created lean on the agent's
-        # first workspace event, not here. The UUID is the agent's lifecycle handle
-        # and the WorkspaceEvent key.
         ws_id = uuid7()
 
-        # Fetch credentials at dispatch time — fresh token, no stale data in ctx.
         creds = await _vcs.get_install_credentials(
-            ticket_ctx.plugin_id,
-            ticket_ctx.org_id,
-            ticket_ctx.repo_external_id,
+            inputs.plugin_id,
+            inputs.org_id,
+            inputs.repo_external_id,
         )
 
         repo = RepoRef(
-            plugin_id=ticket_ctx.plugin_id,
-            external_id=ticket_ctx.repo_external_id,
+            plugin_id=inputs.plugin_id,
+            external_id=inputs.repo_external_id,
             clone_url=creds.clone_url,
-            head_sha=head_sha,
-            base_sha=str(base_sha) if base_sha else None,
+            head_sha=inputs.head_sha,
+            base_sha=inputs.base_sha,
         )
         auth = AuthBlock(
             kind="github_installation",
             token=creds.installation_token.get_secret_value(),
         )
         result = await dispatch_provision_workspace(
-            ticket_ctx.org_id,
+            inputs.org_id,
             ws_id,
             repo=repo,
             auth=auth,
@@ -148,45 +191,40 @@ class ProvisionWorkspace(_LifecycleCommand):
 
 
 class CleanupWorkspace(_LifecycleCommand):
-    """Tear down a workspace. Reads `workspace_id` from inputs (typically
-    sourced from the prior `ProvisionWorkspace` step via the workflow
-    `$provision.workspace_id` input expression). Idempotent: a missing or
-    already-closed workspace is treated as success so workflow cleanup
-    after partial failures still drains cleanly.
+    """Tear down a workspace. Reads `workspace_id` from typed `CleanupWorkspaceInputs`.
+    Idempotent: a None or already-closed workspace is treated as success so
+    workflow cleanup after partial failures still drains cleanly.
 
     Must only run after every claim against the workspace has been
     released — see failure-report-precedes-disposal in core_workspace.md.
     """
 
     kind = "CleanupWorkspace"
+    Inputs = CleanupWorkspaceInputs
+    Outputs = CleanupWorkspaceOutputs
 
-    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: CleanupWorkspaceInputs, ctx: CommandContext) -> Outcome:
         del ctx
-        ws_id_raw = inputs.get("workspace_id")
-        if not ws_id_raw:
+        if inputs.workspace_id is None:
             # No workspace to clean up (e.g. provision step failed before
             # creating one). Treat as success — there's nothing to do.
             return Outcome.success()
-        try:
-            ws_id = UUID(str(ws_id_raw))
-        except TypeError, ValueError:
-            return Outcome.failure(reason=f"invalid workspace_id: {ws_id_raw!r}")
 
         try:
-            await close_workspace(ws_id)
+            await close_workspace(inputs.workspace_id)
         except Exception as exc:
             # inside-span failure: workflow.command.CleanupWorkspace span is active
             span = trace.get_current_span()
             span.record_exception(exc)
             span.set_status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}")
-            log.exception("cleanup_workspace.failed", workspace_id=str(ws_id))
+            log.exception("cleanup_workspace.failed", workspace_id=str(inputs.workspace_id))
             return Outcome.failure(reason=f"{type(exc).__name__}: {exc}")
 
         return Outcome.success()
 
     async def dispatch(
         self,
-        inputs: dict[str, Any],
+        inputs: CleanupWorkspaceInputs,
         ctx: CommandContext,
         *,
         session: AsyncSession,
@@ -195,19 +233,17 @@ class CleanupWorkspace(_LifecycleCommand):
         (Layer 2) and return its command_id. Layer 2 looks up the workspace row,
         calls enqueue_command, and pins to the owning agent when one is set.
         """
-        ws_id_raw = inputs.get("workspace_id")
-        if not ws_id_raw:
-            raise RuntimeError("CleanupWorkspace.dispatch missing workspace_id input")
-        ws_id = UUID(str(ws_id_raw))
+        if inputs.workspace_id is None:
+            raise RuntimeError("CleanupWorkspace.dispatch: workspace_id is None")
 
         cmd = CleanupWorkspaceCommand(
             command_id=uuid7(),
-            workspace_id=ws_id,
+            workspace_id=inputs.workspace_id,
             traceparent="",
         )
         return await dispatch_via_workspace(
             command=cmd,
-            workspace_id=ws_id,
+            workspace_id=inputs.workspace_id,
             ctx=ctx,
             session=session,
             claim_workspace=False,
@@ -226,8 +262,10 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
     """
 
     kind = "RefreshWorkspaceAuth"
+    Inputs = RefreshWorkspaceAuthInputs
+    Outputs = RefreshWorkspaceAuthOutputs
 
-    async def execute(self, inputs: dict[str, Any], ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: RefreshWorkspaceAuthInputs, ctx: CommandContext) -> Outcome:
         del inputs
         log.debug(
             "refresh_workspace_auth.inline",
@@ -238,46 +276,36 @@ class RefreshWorkspaceAuth(_LifecycleCommand):
 
     async def dispatch(
         self,
-        inputs: dict[str, Any],
+        inputs: RefreshWorkspaceAuthInputs,
         ctx: CommandContext,
         *,
         session: AsyncSession,
     ) -> UUID:
         """Enqueue a placeholder AgentCommand for auth refresh via
         `dispatch_via_workspace` (Layer 2) and return the new command_id.
-        The real `RefreshWorkspaceAuth` AgentCommand kind is not yet wired
-        over the wire; this enqueues a `CleanupWorkspace`-shaped no-op against
-        the recovering workspace so the correlation path is exercised.
         """
-        ws_id_raw = inputs.get("workspace_id")
-        if not ws_id_raw:
-            raise RuntimeError("RefreshWorkspaceAuth.dispatch missing workspace_id input")
-        ws_id = UUID(str(ws_id_raw))
-
         cmd = CleanupWorkspaceCommand(
             command_id=uuid7(),
-            workspace_id=ws_id,
+            workspace_id=inputs.workspace_id,
             traceparent="",
         )
         return await dispatch_via_workspace(
             command=cmd,
-            workspace_id=ws_id,
+            workspace_id=inputs.workspace_id,
             ctx=ctx,
             session=session,
             claim_workspace=False,
         )
 
 
-ALL_LIFECYCLE_COMMANDS: tuple[_LifecycleCommand, ...] = (
-    ProvisionWorkspace(),
-    CleanupWorkspace(),
-    RefreshWorkspaceAuth(),
-)
-
-
 __all__ = [
-    "ALL_LIFECYCLE_COMMANDS",
     "CleanupWorkspace",
+    "CleanupWorkspaceInputs",
+    "CleanupWorkspaceOutputs",
     "ProvisionWorkspace",
+    "ProvisionWorkspaceInputs",
+    "ProvisionWorkspaceOutputs",
     "RefreshWorkspaceAuth",
+    "RefreshWorkspaceAuthInputs",
+    "RefreshWorkspaceAuthOutputs",
 ]

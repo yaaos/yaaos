@@ -14,9 +14,8 @@ from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
-    CommandNotRegisteredError,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowCommand,
@@ -24,20 +23,20 @@ from app.core.workflow import (
     WorkflowError,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkflowValidationError,
+    step,
+    workflow_input,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 
-# ── A throwaway WorkflowCommand for registration tests ──────────────────
-
-
-class _NoopInputs(BaseModel):
-    pass
+# ── Throwaway WorkflowCommands for registration tests ────────────────────
 
 
 class _NoopCommand:
     kind = "Noop"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
         del inputs, ctx
@@ -49,74 +48,153 @@ assert isinstance(_NoopCommand(), WorkflowCommand)
 
 
 def _engine_with_workflow(name: str = "demo") -> WorkflowEngine:
+    """Build an engine with a single-step no-op workflow. Commands are
+    auto-discovered from the workflow's steps — no `register_command` needed."""
     eng = WorkflowEngine()
-    eng.register_command(_NoopCommand())
+    noop_step = step(_NoopCommand)
     wf = Workflow(
         name=name,
         version=1,
-        steps=(
-            Step(
-                id="only",
-                command_kind="Noop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="only",
+        steps=(noop_step,),
+        entry=noop_step,
+        transitions={noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
     eng.register_workflow(wf)
     return eng
 
 
-def test_register_workflow_with_unregistered_command_kind_ok_until_start() -> None:
-    """Forward references are allowed at register time; start() validates."""
-    eng = WorkflowEngine()
-    wf = Workflow(
-        name="x",
-        version=1,
-        steps=(Step(id="s", command_kind="Missing"),),
-        entry_step_id="s",
-    )
-    eng.register_workflow(wf)  # no raise
+# ── Registration tests ────────────────────────────────────────────────────
+
+
+def test_register_workflow_validates_lambda_at_register_time() -> None:
+    """Bad lambda references (typo in field name) are caught at register time
+    and raise WorkflowValidationError — not at start() or execute() time."""
+
+    class _Out(BaseModel):
+        workspace_id: str
+
+    class _Src:
+        kind = "Src"
+        Inputs = Empty
+        Outputs = _Out
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    class _Dst:
+        kind = "Dst"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    src = step(_Src)
+    _ = step(_Dst)  # dst ref not needed in this test; only used to build bad_dst below
+
+    class _BadInputs(BaseModel):
+        wrong: str
+
+    def _bad_lambda() -> BaseModel:
+        return _BadInputs(wrong=src.outputs.workspaze_id)  # type: ignore[attr-defined]
+
+    bad_dst = step(_Dst, inputs=_bad_lambda)
+    with pytest.raises(WorkflowValidationError):
+        WorkflowEngine().register_workflow(Workflow(name="x", version=1, steps=(src, bad_dst), entry=src))
 
 
 def test_register_workflow_rejects_unknown_entry_step() -> None:
-    eng = WorkflowEngine()
+    """Entry step must be present in the steps tuple."""
+
+    class _ACmd:
+        kind = "A"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    class _BCmd:
+        kind = "B"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    a = step(_ACmd)
+    b = step(_BCmd)
+    # b is not in steps — entry must be in steps
     with pytest.raises(WorkflowError):
-        eng.register_workflow(
-            Workflow(name="x", version=1, steps=(Step(id="s", command_kind="K"),), entry_step_id="not-s")
-        )
+        WorkflowEngine().register_workflow(Workflow(name="x", version=1, steps=(a,), entry=b))
 
 
 def test_register_workflow_rejects_transition_to_unknown_step() -> None:
-    eng = WorkflowEngine()
+    """Transitions may only target StepRefs that appear in the steps tuple."""
+
+    class _ACmd:
+        kind = "A2"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    class _GhostCmd:
+        kind = "Ghost"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    a = step(_ACmd)
+    ghost = step(_GhostCmd)
+    wf = Workflow(
+        name="x",
+        version=1,
+        steps=(a,),
+        entry=a,
+        transitions={a: {"success": ghost}},  # ghost not in steps
+    )
     with pytest.raises(WorkflowError):
-        eng.register_workflow(
-            Workflow(
-                name="x",
-                version=1,
-                steps=(Step(id="a", command_kind="K", transitions={"success": "ghost"}),),
-                entry_step_id="a",
-            )
-        )
+        WorkflowEngine().register_workflow(wf)
 
 
-def test_double_register_command_raises() -> None:
+def test_register_command_same_class_idempotent() -> None:
+    """Calling register_command twice with the same class is a no-op."""
+    eng = WorkflowEngine()
+    eng.register_command(_NoopCommand())
+    eng.register_command(_NoopCommand())  # must not raise
+
+
+def test_register_command_different_class_same_kind_raises() -> None:
+    """Registering a different class with an already-used kind raises WorkflowError."""
+
+    class _ImpostorNoop:
+        kind = "Noop"  # same kind as _NoopCommand
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
     eng = WorkflowEngine()
     eng.register_command(_NoopCommand())
     with pytest.raises(WorkflowError):
-        eng.register_command(_NoopCommand())
+        eng.register_command(_ImpostorNoop())
 
 
 def test_get_workflow_picks_latest_version_when_unspecified() -> None:
     eng = WorkflowEngine()
-    eng.register_command(_NoopCommand())
+    noop_step = step(_NoopCommand)
     for v in (1, 2, 3):
         eng.register_workflow(
             Workflow(
                 name="multi",
                 version=v,
-                steps=(Step(id="s", command_kind="Noop"),),
-                entry_step_id="s",
+                steps=(noop_step,),
+                entry=noop_step,
             )
         )
     assert eng.get_workflow("multi").version == 3
@@ -129,7 +207,10 @@ def test_get_workflow_unknown_raises() -> None:
         eng.get_workflow("ghost")
 
 
-async def _drain_via_broker(db_session) -> None:
+# ── Service tests — DB required ───────────────────────────────────────────
+
+
+async def _drain_via_broker(db_session) -> None:  # type: ignore[no-untyped-def]
     """Drive outbox rows through their registered task bodies via the broker,
     without reaching into outbox internals beyond the private submodule."""
     from app.core.tasks import get_broker  # noqa: PLC0415
@@ -199,21 +280,44 @@ async def test_start_creates_execution_row_and_routes_to_done(db_session) -> Non
 
 
 @pytest.mark.asyncio
-async def test_start_unknown_command_kind_raises_before_writing(db_session) -> None:
-    """If a workflow step references an unregistered command, start()
-    must fail loud — and must NOT leave a workflow_executions row."""
-    eng = WorkflowEngine()
-    eng.register_workflow(
-        Workflow(
-            name="bad",
-            version=1,
-            steps=(Step(id="s", command_kind="Missing"),),
-            entry_step_id="s",
-        )
-    )
+async def test_start_wrong_workflow_input_type_raises_before_writing(db_session) -> None:
+    """If workflow expects a typed workflow_input but the caller passes the
+    wrong type, start() must fail before writing a row."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
 
-    with pytest.raises(CommandNotRegisteredError):
-        await eng.start(workflow_name="bad", ticket_id=str(uuid4()), session=db_session)
+    class _Expected(BaseModel):
+        repo: str
+
+    class _Wrong(BaseModel):
+        other: str
+
+    class _NW:
+        kind = "NoopWi"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+            return Outcome.success()
+
+    ns = step(_NW)
+    wf = Workflow(
+        name="typed-input",
+        version=1,
+        steps=(ns,),
+        entry=ns,
+        workflow_input=workflow_input(_Expected),
+    )
+    eng = WorkflowEngine()
+    eng.register_workflow(wf)
+    svc._engine = eng
+
+    with pytest.raises(WorkflowError):
+        await eng.start(
+            workflow_name="typed-input",
+            ticket_id=str(uuid4()),
+            session=db_session,
+            workflow_input=_Wrong(other="x"),
+        )
 
     rows = (await db_session.execute(select(WorkflowExecutionRow))).scalars().all()
     assert rows == []
@@ -222,16 +326,13 @@ async def test_start_unknown_command_kind_raises_before_writing(db_session) -> N
 # ── New typed-column service tests ────────────────────────────────────────
 
 
-class _FailOnceInputs(BaseModel):
-    pass
-
-
 class _FailOnce:
-    """Fails the first call; succeeds all subsequent calls."""
+    """Fails the first call; succeeds all subsequent calls (class-level latch)."""
 
     kind = "FailOnce"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
     _fired: bool = False
 
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
@@ -247,11 +348,19 @@ class _CleanupCommand:
 
     kind = "Cleanup"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.success()
+
+
+class _TestSnapshot(BaseModel):
+    """Minimal workflow-input snapshot for column persistence tests."""
+
+    repo: str
+    org_id: str
 
 
 @pytest.mark.asyncio
@@ -262,42 +371,37 @@ async def test_engine_state_persists_to_columns_service(db_session) -> None:
     contains NO engine-internal __ keys (only step-output buckets)."""
     import app.core.workflow.service as svc  # noqa: PLC0415
 
-    fail_once = _FailOnce()
-    cleanup = _CleanupCommand()
+    fail_once_step = step(
+        _FailOnce,
+        retry_policy=__import__("app.core.workflow.types", fromlist=["RetryPolicy"]).RetryPolicy(
+            max_attempts=2
+        ),
+    )
+    cleanup_step = step(_CleanupCommand)
+    ticket_wf_input = workflow_input(_TestSnapshot)
 
     wf = Workflow(
         name="columns-test",
         version=1,
-        steps=(
-            Step(
-                id="work",
-                command_kind="FailOnce",
-                retry_policy=__import__("app.core.workflow.types", fromlist=["RetryPolicy"]).RetryPolicy(
-                    max_attempts=2
-                ),
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-            Step(
-                id="cleanup",
-                command_kind="Cleanup",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="work",
-        finalizer_step_id="cleanup",
+        steps=(fail_once_step, cleanup_step),
+        entry=fail_once_step,
+        finalizer=cleanup_step,
+        workflow_input=ticket_wf_input,
+        transitions={
+            fail_once_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
 
     eng = WorkflowEngine()
-    eng.register_command(fail_once)
-    eng.register_command(cleanup)
     eng.register_workflow(wf)
     svc._engine = eng
 
+    snapshot = _TestSnapshot(repo="owner/repo", org_id=str(uuid4()))
     exec_id = await eng.start(
         workflow_name="columns-test",
         ticket_id=str(uuid4()),
         session=db_session,
-        ticket_payload={"org_id": str(uuid4()), "repo": "owner/repo"},
+        workflow_input=snapshot,
     )
     await db_session.commit()
     await _drain_via_broker(db_session)
@@ -311,9 +415,9 @@ async def test_engine_state_persists_to_columns_service(db_session) -> None:
     assert row.state == WorkflowState.DONE.value
 
     # step_attempts column: work step attempt was incremented from 0 to 1 before retry.
-    assert row.step_attempts.get("work") is not None
+    assert row.step_attempts.get("FailOnce") is not None
 
-    # workflow_input column carries the ticket_payload dict.
+    # workflow_input column carries the typed snapshot serialised as JSON.
     assert isinstance(row.workflow_input, dict)
     assert row.workflow_input.get("repo") == "owner/repo"
 

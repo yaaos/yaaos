@@ -28,12 +28,13 @@ from app.core.agent_gateway import (
 from app.core.tasks import drain_once
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
     get_execution_summary,
+    step,
 )
 from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
@@ -170,13 +171,15 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
     class _NoopWs:
         kind = "NoopWs"
         category = CommandCategory.WORKSPACE
+        Inputs = Empty
+        Outputs = Empty
         restart_safe = True
 
-        async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+        async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
             del inputs, ctx
             return Outcome.success()
 
-        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+        async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
             del inputs
             cmd = _make_provision_command()
             await enqueue_command(
@@ -187,20 +190,16 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             )
             return cmd.command_id
 
+    _noop_ws = step(_NoopWs)
     with scoped_engine() as eng:
-        eng.register_command(_NoopWs())
+        eng.register_command(_NoopWs())  # pre-register so dispatch closure captures test_org_id
         eng.register_workflow(
             Workflow(
                 name="gw-terminal-test",
                 version=1,
-                steps=(
-                    Step(
-                        id="ws",
-                        command_kind="NoopWs",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="ws",
+                steps=(_noop_ws,),
+                entry=_noop_ws,
+                transitions={_noop_ws: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
@@ -293,13 +292,15 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
     class _NoopWs2:
         kind = "NoopWs2"
         category = CommandCategory.WORKSPACE
+        Inputs = Empty
+        Outputs = Empty
         restart_safe = True
 
-        async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+        async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
             del inputs, ctx
             return Outcome.success()
 
-        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+        async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
             del inputs
             cmd = _make_provision_command()
             await enqueue_command(
@@ -310,20 +311,16 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             )
             return cmd.command_id
 
+    _noop_ws2 = step(_NoopWs2)
     with scoped_engine() as eng:
-        eng.register_command(_NoopWs2())
+        eng.register_command(_NoopWs2())  # pre-register so dispatch closure captures ws_org_id
         eng.register_workflow(
             Workflow(
                 name="gw-progress-test",
                 version=1,
-                steps=(
-                    Step(
-                        id="ws",
-                        command_kind="NoopWs2",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="ws",
+                steps=(_noop_ws2,),
+                entry=_noop_ws2,
+                transitions={_noop_ws2: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 

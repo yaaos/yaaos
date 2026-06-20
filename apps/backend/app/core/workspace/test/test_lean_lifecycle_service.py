@@ -38,12 +38,13 @@ from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
     get_execution_summary,
+    step,
 )
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceStatus
@@ -82,6 +83,8 @@ class _DispatchingWs:
 
     kind = "LeanLifecycleDispatch"
     category = CommandCategory.WORKSPACE
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
     def __init__(self, *, org_id: UUID, workspace_id: UUID) -> None:
@@ -89,11 +92,11 @@ class _DispatchingWs:
         self._workspace_id = workspace_id
         self.dispatched_command_id: UUID | None = None
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
         del inputs
         command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
@@ -116,6 +119,8 @@ class _FailingWs:
 
     kind = "LeanLifecycleFail"
     category = CommandCategory.WORKSPACE
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
     def __init__(self, *, org_id: UUID, workspace_id: UUID) -> None:
@@ -123,11 +128,11 @@ class _FailingWs:
         self._workspace_id = workspace_id
         self.dispatched_command_id: UUID | None = None
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
         del inputs
         command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
@@ -150,9 +155,11 @@ class _NoopLocal:
 
     kind = "LeanLifecycleTerminal"
     category = CommandCategory.LOCAL
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
@@ -162,14 +169,23 @@ class _FinalizerLocal:
 
     kind = "LeanLifecycleFinalizer"
     category = CommandCategory.LOCAL
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
     call_count: int = 0
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
         del inputs, ctx
         _FinalizerLocal.call_count += 1
         return Outcome.success()
+
+
+# Module-level StepRef objects — step_id equals the command kind.
+_dispatch_step = step(_DispatchingWs)
+_fail_step = step(_FailingWs)
+_noop_step = step(_NoopLocal)
+_finalizer_step = step(_FinalizerLocal)
 
 
 # ── Lean row creation ────────────────────────────────────────────────────
@@ -562,35 +578,24 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
     org_id = uuid4()
     workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
-    local_cmd = _NoopLocal()
-    finalizer_cmd = _FinalizerLocal()
 
     workflow = Workflow(
         name="finalizer-once-test",
         version=1,
-        steps=(
-            Step(
-                id="main",
-                command_kind="LeanLifecycleFail",
-                transitions={
-                    "success": TerminalAction.COMPLETE_WORKFLOW,
-                    "failure": TerminalAction.FAIL_WORKFLOW,
-                },
-            ),
-            Step(
-                id="cleanup",
-                command_kind="LeanLifecycleFinalizer",
-                transitions={"success": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="main",
-        finalizer_step_id="cleanup",
+        steps=(_fail_step, _finalizer_step),
+        entry=_fail_step,
+        finalizer=_finalizer_step,
+        transitions={
+            _fail_step: {
+                "success": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
+        },
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)
-        eng.register_command(local_cmd)
-        eng.register_command(finalizer_cmd)
+        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-once-test",
@@ -641,35 +646,26 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
     workspace_id = uuid7()
     # Use a Workspace command that succeeds.
     ws_cmd = _DispatchingWs(org_id=org_id, workspace_id=workspace_id)
-    finalizer_cmd = _FinalizerLocal()
 
-    # finalizer_step_id is "cleanup" — but the success transition goes to
+    # finalizer is set — but the success transition goes to
     # TerminalAction.COMPLETE_WORKFLOW, bypassing the finalizer path.
     workflow = Workflow(
         name="finalizer-no-refire-test",
         version=1,
-        steps=(
-            Step(
-                id="main",
-                command_kind="LeanLifecycleDispatch",
-                transitions={
-                    "success": TerminalAction.COMPLETE_WORKFLOW,
-                    "failure": TerminalAction.FAIL_WORKFLOW,
-                },
-            ),
-            Step(
-                id="cleanup",
-                command_kind="LeanLifecycleFinalizer",
-                transitions={"success": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="main",
-        finalizer_step_id="cleanup",
+        steps=(_dispatch_step, _finalizer_step),
+        entry=_dispatch_step,
+        finalizer=_finalizer_step,
+        transitions={
+            _dispatch_step: {
+                "success": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
+        },
     )
 
     with scoped_engine() as eng:
-        eng.register_command(ws_cmd)
-        eng.register_command(finalizer_cmd)
+        eng.register_command(ws_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-no-refire-test",
@@ -722,23 +718,19 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
     workflow = Workflow(
         name="failure-record-test",
         version=1,
-        steps=(
-            Step(
-                id="main",
-                command_kind="LeanLifecycleFail",
-                transitions={
-                    "success": TerminalAction.COMPLETE_WORKFLOW,
-                    "failure": TerminalAction.FAIL_WORKFLOW,
-                },
-            ),
-        ),
-        entry_step_id="main",
+        steps=(_fail_step,),
+        entry=_fail_step,
+        transitions={
+            _fail_step: {
+                "success": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+        },
     )
 
     ticket_id = str(uuid4())
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)
-        eng.register_command(_NoopLocal())
+        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-record-test",
@@ -800,22 +792,18 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
     workflow = Workflow(
         name="failure-label-fallback-test",
         version=1,
-        steps=(
-            Step(
-                id="main",
-                command_kind="LeanLifecycleFail",
-                transitions={
-                    "success": TerminalAction.COMPLETE_WORKFLOW,
-                    "failure": TerminalAction.FAIL_WORKFLOW,
-                },
-            ),
-        ),
-        entry_step_id="main",
+        steps=(_fail_step,),
+        entry=_fail_step,
+        transitions={
+            _fail_step: {
+                "success": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+        },
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)
-        eng.register_command(_NoopLocal())
+        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-label-fallback-test",
@@ -861,33 +849,24 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
     org_id = uuid4()
     workspace_id = uuid7()
     fail_cmd = _FailingWs(org_id=org_id, workspace_id=workspace_id)
-    finalizer_cmd = _FinalizerLocal()
 
     workflow = Workflow(
         name="finalizer-failure-context-test",
         version=1,
-        steps=(
-            Step(
-                id="main",
-                command_kind="LeanLifecycleFail",
-                transitions={
-                    "success": TerminalAction.COMPLETE_WORKFLOW,
-                    "failure": TerminalAction.FAIL_WORKFLOW,
-                },
-            ),
-            Step(
-                id="cleanup",
-                command_kind="LeanLifecycleFinalizer",
-                transitions={"success": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="main",
-        finalizer_step_id="cleanup",
+        steps=(_fail_step, _finalizer_step),
+        entry=_fail_step,
+        finalizer=_finalizer_step,
+        transitions={
+            _fail_step: {
+                "success": TerminalAction.COMPLETE_WORKFLOW,
+                "failure": TerminalAction.FAIL_WORKFLOW,
+            },
+            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
+        },
     )
 
     with scoped_engine() as eng:
-        eng.register_command(fail_cmd)
-        eng.register_command(finalizer_cmd)
+        eng.register_command(fail_cmd)  # pre-register: needs constructor args
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-failure-context-test",

@@ -1,7 +1,7 @@
 """Reviewer workflows + commands register against `core/workflow.get_engine()`
 at `domain/reviewer` import.
 
-These tests assert the registry shape so a typo in a step's `command_kind`
+These tests assert the registry shape so a typo in a step's `command_class.kind`
 is caught at the seam.
 """
 
@@ -12,10 +12,6 @@ import importlib
 import pytest
 
 from app.core.workflow import get_engine
-from app.domain.reviewer.commands import (
-    ALL_LOCAL_COMMANDS,
-    ALL_WORKSPACE_COMMANDS,
-)
 from app.domain.reviewer.workflows import ALL_WORKFLOWS
 
 
@@ -44,16 +40,16 @@ def test_no_deleted_workflows_registered() -> None:
 
 
 def test_each_workflow_step_resolves_to_a_registered_command() -> None:
-    """If a workflow references a `command_kind` no command registered, the
-    engine's `start()` would fail at runtime. Catch that at import-time
+    """If a workflow references a command kind that has no command registered,
+    the engine's `start()` would fail at runtime. Catch that at import-time
     coherence here."""
     engine = get_engine()
     for wf in ALL_WORKFLOWS:
-        for step in wf.steps:
-            cmd = engine.get_command(step.command_kind)
+        for s in wf.steps:
+            kind = s.command_class.kind
+            cmd = engine.get_command(kind)
             assert cmd is not None, (
-                f"workflow {wf.name!r} step {step.id!r} references unregistered "
-                f"command_kind {step.command_kind!r}"
+                f"workflow {wf.name!r} step {s.step_id!r} references unregistered command_kind {kind!r}"
             )
 
 
@@ -67,13 +63,8 @@ def test_lifecycle_commands_registered() -> None:
         assert engine.get_command(kind) is not None, f"{kind!r} not registered"
 
 
-def test_workspace_review_commands_registered() -> None:
+def test_reviewer_command_kinds_registered() -> None:
+    """All reviewer-defined command kinds must be present in the engine."""
     engine = get_engine()
-    for cmd in ALL_WORKSPACE_COMMANDS:
-        assert engine.get_command(cmd.kind) is cmd
-
-
-def test_local_review_commands_registered() -> None:
-    engine = get_engine()
-    for cmd in ALL_LOCAL_COMMANDS:
-        assert engine.get_command(cmd.kind) is cmd
+    for kind in ("CheckShouldReview", "SecretsScan", "CodeReview", "PostFindings"):
+        assert engine.get_command(kind) is not None, f"reviewer command {kind!r} not registered"

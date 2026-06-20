@@ -3,6 +3,7 @@
 See `apps/backend/docs/core_workflow.md`.
 """
 
+from app.core.workflow.factories import step, workflow_input
 from app.core.workflow.recovery import (
     get_recovery_policy,
     register_recovery_policy,
@@ -47,18 +48,22 @@ from app.core.workflow.types import (
     CommandCategory,
     CommandContext,
     CommandNotRegisteredError,
+    Empty,
     Outcome,
     OutcomeKind,
     RetryPolicy,
-    Step,
+    StepRef,
     TerminalAction,
     Workflow,
     WorkflowCommand,
     WorkflowError,
     WorkflowExecutionNotFoundError,
+    WorkflowInputRef,
     WorkflowNotFoundError,
     WorkflowState,
+    WorkflowValidationError,
     WorkspaceWorkflowCommand,
+    get_step_output,
 )
 
 __all__ = [
@@ -69,11 +74,12 @@ __all__ = [
     "CommandCategory",
     "CommandContext",
     "CommandNotRegisteredError",
+    "Empty",
     "HitlHistoryEntry",
     "Outcome",
     "OutcomeKind",
     "RetryPolicy",
-    "Step",
+    "StepRef",
     "TerminalAction",
     "Workflow",
     "WorkflowCommand",
@@ -81,10 +87,12 @@ __all__ = [
     "WorkflowError",
     "WorkflowExecutionNotFoundError",
     "WorkflowExecutionSummary",
+    "WorkflowInputRef",
     "WorkflowNotFoundError",
     "WorkflowRunView",
     "WorkflowState",
     "WorkflowStepSummary",
+    "WorkflowValidationError",
     "WorkspaceWorkflowCommand",
     "bind_engine",
     "get_awaiting_human_execution",
@@ -92,6 +100,7 @@ __all__ = [
     "get_execution_summary",
     "get_recovery_policy",
     "get_start_hooks",
+    "get_step_output",
     "get_terminal_hooks",
     "handle_agent_event",
     "list_active_execution_ids",
@@ -108,5 +117,7 @@ __all__ = [
     "resume_hitl",
     "route_workflow",
     "start_step",
+    "step",
     "unregister_workflow",
+    "workflow_input",
 ]

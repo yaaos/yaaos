@@ -35,11 +35,12 @@ from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.workflow_harness import scoped_engine
@@ -54,17 +55,18 @@ class _DispatchingWs:
 
     kind = "DispatchingWs"
     category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
     def __init__(self, *, org_id: UUID) -> None:
         self._org_id = org_id
         self.dispatched_command_id: UUID | None = None
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
         del inputs
         command_id = uuid7()
         cmd = CleanupWorkspaceCommand(
@@ -88,9 +90,10 @@ class _NoopLocal:
 
     kind = "DispatchingWsTerminal"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
@@ -130,25 +133,21 @@ async def test_workspace_dispatch_parks_on_returned_command_id_and_resumes(
     ws_cmd = _DispatchingWs(org_id=org_id)
     local_cmd = _NoopLocal()
 
+    dispatch_step = step(_DispatchingWs)
+    terminal_step = step(_NoopLocal)
     workflow = Workflow(
         name="workspace-dispatch-service-test",
         version=1,
-        steps=(
-            Step(
-                id="dispatch",
-                command_kind="DispatchingWs",
-                transitions={"success": "terminal"},
-            ),
-            Step(
-                id="terminal",
-                command_kind="DispatchingWsTerminal",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="dispatch",
+        steps=(dispatch_step, terminal_step),
+        entry=dispatch_step,
+        transitions={
+            dispatch_step: {"success": terminal_step},
+            terminal_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
 
     with scoped_engine() as eng:
+        # Pre-register ws_cmd (needs org_id constructor arg) before auto-discovery.
         eng.register_command(ws_cmd)
         eng.register_command(local_cmd)
         eng.register_workflow(workflow)

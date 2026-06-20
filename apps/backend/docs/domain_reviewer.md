@@ -14,15 +14,15 @@ Does NOT call an LLM for code review — `core/coding_agent` + `plugins/claude_c
 
 One workflow in `domain/reviewer/workflows/`, plus reused workspace lifecycle commands from [`core/workspace`](core_workspace.md):
 
-- `pr_review_v1` — `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`, `finalizer_step_id="cleanup"`.
+- `pr_review_v1` — `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace`, `finalizer=cleanup`. All step data flows through typed `Inputs`/`Outputs` Pydantic models; the workflow declares a `TicketSnapshot` as its `workflow_input`, and each step's `inputs_factory` lambda reads fields from prior steps' `StepRef.outputs`.
 
-`CheckShouldReview` returns `skip` on draft, fork, `yaaos-skip`/`no-review`/`wip` labels (case-insensitive), `*[bot]`/`*-bot` author. `CleanupWorkspace` runs as the workflow's `finalizer` step on any terminal-fail, exactly once.
+`CheckShouldReview` reads `is_draft`, `is_fork`, `labels`, `author_login` from its typed `CheckShouldReviewInputs` and returns `skip` on draft, fork, `yaaos-skip`/`no-review`/`wip` labels (case-insensitive), or `*[bot]`/`*-bot` author. `CleanupWorkspace` runs as the workflow's `finalizer` `StepRef` on any terminal-fail, exactly once.
 
 ## Core flow
 
 For the top-level review arc see [`docs/system-architecture.md`](../../../docs/system-architecture.md). Reviewer-internal detail only:
 
-`CodeReview` dispatches the coding-agent invocation against the provisioned workspace via `coding_agent.dispatch_invocation` (which enqueues the `InvokeClaudeCode` AgentCommand, inserts a `coding_agent_runs` row, and pins the command to the owning agent). The agent runs the assigned skill and returns its output; the run-sink processes the terminal event, calls `plugin.parse_result`, and contributes `{"output": ...}` to the workflow step outputs. `PostFindings` reads `inputs["output"]` (not `stdout`), parses it into `list[ReportedFinding]` via `parse_review_output`, and hands them to `publish_findings`. **Non-conforming agent output (parse failure or out-of-range enum) → `Outcome.failure(reason="schema_invalid") → FAIL_WORKFLOW`** — the runtime gate; no findings are persisted or posted.
+`CodeReview` dispatches the coding-agent invocation against the provisioned workspace via `coding_agent.dispatch_invocation` (which enqueues the `InvokeClaudeCode` AgentCommand, inserts a `coding_agent_runs` row, and pins the command to the owning agent). The agent runs the assigned skill and returns its output; the run-sink processes the terminal event, calls `plugin.parse_result`, and contributes `{"output": ...}` to the step's `Outputs` (via `CodeReviewOutputs.output`). `PostFindings` receives `output` via typed `PostFindingsInputs`, parses it into `list[ReportedFinding]` via `parse_review_output`, and hands them to `publish_findings`. **Non-conforming agent output (parse failure or out-of-range enum) → `Outcome.failure(reason="schema_invalid") → FAIL_WORKFLOW`** — the runtime gate; no findings are persisted or posted.
 
 ## `publish_findings` — the canonical entry point
 

@@ -22,12 +22,14 @@ from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
+    CommandContext,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
     get_execution_summary,
+    step,
 )
 from app.testing.observability import span_capture
 from app.testing.workflow_harness import scoped_engine
@@ -60,29 +62,28 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 class _QuickLocal:
     kind = "SpawnSpanTestCmd"
     category = CommandCategory.LOCAL
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.success()
+
+
+_quick_step = step(_QuickLocal)
 
 
 async def test_sse_publish_emits_spawn_span_in_workflow_trace(db_session) -> None:  # type: ignore[no-untyped-def]
     """A workflow state transition triggers an SSE publish routed through
     spawn().  The resulting `spawn:sse.publish_general` span must share the
     trace_id of the outer span that started the workflow."""
-    cmd = _QuickLocal()
     wf = Workflow(
         name="sse-spawn-span-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="SpawnSpanTestCmd",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(_quick_step,),
+        entry=_quick_step,
+        transitions={_quick_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     tracer = trace.get_tracer("test.sse.spawn")
@@ -92,7 +93,6 @@ async def test_sse_publish_emits_spawn_span_in_workflow_trace(db_session) -> Non
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(cmd)
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="sse-spawn-span-test",

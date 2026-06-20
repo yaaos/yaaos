@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from app.core.workflow import (
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowNotFoundError,
     get_engine,
+    step,
 )
 from app.core.workflow.types import CommandCategory
 from app.testing.workflow_harness import scoped_workflow
@@ -19,33 +20,22 @@ from app.testing.workflow_harness import scoped_workflow
 class _NoopLocal:
     kind = "ScopedTestNoop"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx) -> Outcome:  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
 
+_noop_step = step(_NoopLocal)
 _TEMP_WORKFLOW = Workflow(
     name="scoped-temp-test",
     version=1,
-    steps=(
-        Step(
-            id="only",
-            command_kind="ScopedTestNoop",
-            transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-        ),
-    ),
-    entry_step_id="only",
+    steps=(_noop_step,),
+    entry=_noop_step,
+    transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
 )
-
-
-@pytest.fixture(autouse=True)
-def _register_noop_command() -> None:
-    """Register the test command once; idempotent across tests in this file."""
-    eng = get_engine()
-    if "ScopedTestNoop" not in eng.registered_command_kinds():
-        eng.register_command(_NoopLocal())
 
 
 def test_scoped_workflow_registers_while_inside() -> None:

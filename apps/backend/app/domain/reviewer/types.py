@@ -11,8 +11,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 Severity = Literal["blocker", "should_fix", "nit"]
 Confidence = Literal["verified", "plausible", "speculative"]
@@ -215,3 +216,34 @@ def parse_review_output(stdout: str) -> list[ReportedFinding]:
         )
         for d in parsed.findings
     ]
+
+
+# ── Workflow input snapshot ─────────────────────────────────────────────
+
+
+class TicketSnapshot(BaseModel):
+    """Immutable snapshot of a ticket + PR at workflow-start time.
+
+    Passed as `workflow_input` to `engine.start` for the `pr_review_v1`
+    workflow. The engine stores it (via `model_dump(mode='json')`) on the
+    `workflow_executions.workflow_input` column and makes it accessible
+    inside step `inputs_factory` lambdas via `WorkflowInputRef.outputs`.
+
+    All 12 fields are read once at `start_pr_review` time from the ticket
+    and its associated PR row — commands never query the DB for this data.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    ticket_id: UUID
+    org_id: UUID
+    plugin_id: str
+    repo_external_id: str
+    pr_id: UUID | None = None
+    pr_external_id: str | None = None
+    head_sha: str
+    base_sha: str | None = None
+    is_draft: bool = False
+    is_fork: bool = False
+    labels: tuple[str, ...] = ()
+    author_login: str | None = None

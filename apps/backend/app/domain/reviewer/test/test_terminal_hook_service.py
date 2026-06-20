@@ -23,16 +23,18 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from app.core.audit_log import list_for_entity
 from app.core.tasks import drain_once, get_broker, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
+    step,
 )
 from app.domain.reviewer import register_reviewer_terminal_hooks
 from app.domain.tickets import create_from_pr as create_ticket
@@ -42,18 +44,19 @@ from app.testing.workflow_harness import scoped_engine
 
 pytestmark = pytest.mark.service
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Stub commands ─────────────────────────────────────────────────────────────
 
 
 class _LocalSuccess:
     """A LOCAL command that always returns success."""
 
-    def __init__(self, kind: str) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
+    kind = "TermHookSuccessCmd"
+    category = CommandCategory.LOCAL
+    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs: object, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.success()
 
@@ -61,16 +64,33 @@ class _LocalSuccess:
 class _LocalFail:
     """A LOCAL command that always returns failure with a given reason."""
 
-    kind = "FailCmd"
+    kind = "TermHookFailCmd"
     category = CommandCategory.LOCAL
     restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
     def __init__(self, reason: str = "test_failure") -> None:
         self._reason = reason
 
-    async def execute(self, inputs: object, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.failure(reason=self._reason)
+
+
+_success_step = step(_LocalSuccess)
+_fail_step = step(_LocalFail)
+
+
+# ── Minimal workflow_input with org_id so the hook can find it ────────────────
+
+
+class _OrgInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    org_id: UUID
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 async def _drain(db_session: object, *, max_iterations: int = 50) -> int:
@@ -119,52 +139,49 @@ async def _seed_running_ticket(db_session: object, *, org_id: UUID) -> UUID:
     return ticket_id
 
 
-# ── Scenarios ────────────────────────────────────────────────────────────────
+# ── Scenarios ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_done_workflow_flips_ticket_to_done(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """DONE workflow → owning ticket becomes "done" in the same transaction."""
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
-        eng.register_command(_LocalSuccess("SuccessCmd"))
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(
-                    Step(
-                        id="step1",
-                        command_kind="SuccessCmd",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="step1",
+                steps=(_success_step,),
+                entry=_success_step,
+                transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
-        wfx_id_str = await eng.start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=UUID(wfx_id_str),
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            wfx_id_str = await eng.start(
+                workflow_name="pr_review_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=UUID(wfx_id_str),
+                session=db_session,
+            )
+            await db_session.commit()
 
-        await _drain(db_session)
+            await _drain(db_session)
 
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status == "done"
@@ -174,9 +191,11 @@ async def test_done_workflow_flips_ticket_to_done(
 async def test_failed_workflow_flips_ticket_to_failed_with_reason(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """FAILED workflow → ticket becomes "failed"; failure_reason threads into audit."""
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
@@ -188,25 +207,27 @@ async def test_failed_workflow_flips_ticket_to_failed_with_reason(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(Step(id="step1", command_kind="FailCmd"),),
-                entry_step_id="step1",
+                steps=(_fail_step,),
+                entry=_fail_step,
+                transitions={_fail_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
             )
         )
 
-        wfx_id_str = await eng.start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=UUID(wfx_id_str),
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            wfx_id_str = await eng.start(
+                workflow_name="pr_review_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=UUID(wfx_id_str),
+                session=db_session,
+            )
+            await db_session.commit()
 
-        await _drain(db_session)
+            await _drain(db_session)
 
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status == "failed"
@@ -223,52 +244,48 @@ async def test_failed_workflow_flips_ticket_to_failed_with_reason(
 async def test_cancelled_workflow_flips_ticket_to_cancelled(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """CANCELLED workflow (cancel_requested=True) → ticket becomes "cancelled"."""
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+    from app.core.workflow import request_cancel  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    from app.core.workflow import request_cancel  # noqa: PLC0415
-
     with scoped_engine() as eng:
-        eng.register_command(_LocalSuccess("SuccessCmd"))
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(
-                    Step(
-                        id="step1",
-                        command_kind="SuccessCmd",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="step1",
+                steps=(_success_step,),
+                entry=_success_step,
+                transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
-        wfx_id_str = await eng.start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=UUID(wfx_id_str),
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            wfx_id_str = await eng.start(
+                workflow_name="pr_review_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=UUID(wfx_id_str),
+                session=db_session,
+            )
+            await db_session.commit()
 
-        # Mark cancel_requested before the engine drains the outbox so
-        # route_workflow picks it up and routes to CANCELLED.
-        await request_cancel(wfx_id_str, session=db_session)
-        await db_session.commit()
+            # Mark cancel_requested before the engine drains the outbox so
+            # route_workflow picks it up and routes to CANCELLED.
+            await request_cancel(wfx_id_str, session=db_session)
+            await db_session.commit()
 
-        await _drain(db_session)
+            await _drain(db_session)
 
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status == "cancelled"
@@ -278,7 +295,6 @@ async def test_cancelled_workflow_flips_ticket_to_cancelled(
 async def test_non_owning_execution_leaves_ticket_untouched(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """A terminal event from a superseded execution must not flip the ticket.
 
@@ -286,6 +302,9 @@ async def test_non_owning_execution_leaves_ticket_untouched(
     different UUID than the one reaching terminal state, simulating a newer
     execution that has taken ownership.
     """
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
@@ -294,38 +313,33 @@ async def test_non_owning_execution_leaves_ticket_untouched(
     other_wfx_id = uuid4()
 
     with scoped_engine() as eng:
-        eng.register_command(_LocalSuccess("SuccessCmd"))
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(
-                    Step(
-                        id="step1",
-                        command_kind="SuccessCmd",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="step1",
+                steps=(_success_step,),
+                entry=_success_step,
+                transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
-        await eng.start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        # Set the ticket to point at a *different* execution — not the one
-        # we just started.
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=other_wfx_id,
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            await eng.start(
+                workflow_name="pr_review_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            # Set the ticket to point at a *different* execution — not the one
+            # we just started.
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=other_wfx_id,
+                session=db_session,
+            )
+            await db_session.commit()
 
-        await _drain(db_session)
+            await _drain(db_session)
 
     # Ticket still non-terminal ("pending") — the non-owning execution's hook was a no-op.
     ticket = await get_ticket(ticket_id, org_id=org_id)
@@ -336,49 +350,46 @@ async def test_non_owning_execution_leaves_ticket_untouched(
 async def test_non_pr_review_workflow_leaves_ticket_untouched(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """A terminal event from a non-pr_review_v1 workflow must not flip the ticket.
 
     The hook guards on `workflow_name == "pr_review_v1"` and returns early
     for any other workflow name.
     """
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
-        eng.register_command(_LocalSuccess("SuccessCmd"))
         eng.register_workflow(
             Workflow(
                 name="other_workflow_v1",  # NOT pr_review_v1
                 version=1,
-                steps=(
-                    Step(
-                        id="step1",
-                        command_kind="SuccessCmd",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="step1",
+                steps=(_success_step,),
+                entry=_success_step,
+                transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
-        wfx_id_str = await eng.start(
-            workflow_name="other_workflow_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=UUID(wfx_id_str),
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            wfx_id_str = await eng.start(
+                workflow_name="other_workflow_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=UUID(wfx_id_str),
+                session=db_session,
+            )
+            await db_session.commit()
 
-        await _drain(db_session)
+            await _drain(db_session)
 
     # Ticket still non-terminal — wrong workflow name, hook was a no-op.
     ticket = await get_ticket(ticket_id, org_id=org_id)
@@ -389,7 +400,6 @@ async def test_non_pr_review_workflow_leaves_ticket_untouched(
 async def test_redelivered_terminal_is_noop_no_raise(
     db_session,
     terminal_hooks_isolation,
-    workflow_context_provider_isolation,
 ) -> None:
     """A terminal hook called on an already-terminal ticket must not raise.
 
@@ -397,50 +407,48 @@ async def test_redelivered_terminal_is_noop_no_raise(
     engine fires (or fires a second time). The hook must return False
     without raising, preserving the engine's transaction.
     """
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
     register_reviewer_terminal_hooks()
     org_id = uuid4()
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
     with scoped_engine() as eng:
-        eng.register_command(_LocalSuccess("SuccessCmd"))
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(
-                    Step(
-                        id="step1",
-                        command_kind="SuccessCmd",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="step1",
+                steps=(_success_step,),
+                entry=_success_step,
+                transitions={_success_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
 
-        wfx_id_str = await eng.start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            ticket_payload={"org_id": str(org_id)},
-            session=db_session,
-        )
-        await set_workflow_execution(
-            ticket_id,
-            workflow_execution_id=UUID(wfx_id_str),
-            session=db_session,
-        )
-        await db_session.commit()
+        async with org_context(org_id, ActorKind.SYSTEM):
+            wfx_id_str = await eng.start(
+                workflow_name="pr_review_v1",
+                ticket_id=str(ticket_id),
+                workflow_input=_OrgInput(org_id=org_id),
+                session=db_session,
+            )
+            await set_workflow_execution(
+                ticket_id,
+                workflow_execution_id=UUID(wfx_id_str),
+                session=db_session,
+            )
+            await db_session.commit()
 
-        # Drive the workflow to terminal once — ticket flips to "done".
-        await _drain(db_session)
+            # Drive the workflow to terminal once — ticket flips to "done".
+            await _drain(db_session)
 
-        ticket_after_first = await get_ticket(ticket_id, org_id=org_id)
-        assert ticket_after_first.status == "done"
+            ticket_after_first = await get_ticket(ticket_id, org_id=org_id)
+            assert ticket_after_first.status == "done"
 
-        # Second drain: workflow is already terminal; route_workflow exits
-        # early (skip_terminal). No new outbox rows, no raise.
-        await _drain(db_session)
+            # Second drain: workflow is already terminal; route_workflow exits
+            # early (skip_terminal). No new outbox rows, no raise.
+            await _drain(db_session)
 
     # Still "done" — no exception, no double-write.
     ticket_after_second = await get_ticket(ticket_id, org_id=org_id)

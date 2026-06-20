@@ -321,12 +321,27 @@ class GithubIntakeType:
         # Start the workflow on the endpoint's session — outbox row enqueued
         # atomically with the ticket insert.
         from app.core.observability import current_traceparent  # noqa: PLC0415
+        from app.domain.reviewer import TicketSnapshot  # noqa: PLC0415
 
+        snapshot = TicketSnapshot(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            plugin_id=vcs_pr.plugin_id,
+            repo_external_id=repo_full,
+            pr_id=upserted_pr.id,
+            pr_external_id=vcs_pr.external_id,
+            head_sha=vcs_pr.head_sha,
+            base_sha=vcs_pr.base_sha,
+            is_draft=vcs_pr.is_draft,
+            is_fork=vcs_pr.is_fork,
+            labels=tuple(ticket_payload["labels"]),
+            author_login=vcs_pr.author_login,
+        )
         workflow_execution_id = await get_engine().start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_id),
             traceparent=current_traceparent(),
-            ticket_payload=dict(ticket_payload),
+            workflow_input=snapshot,
             session=session,
         )
         await set_workflow_execution(

@@ -4,8 +4,8 @@ All Workspace-category steps dispatch over the wire (awaiting_agent). Tests
 simulate each agent terminal event via `_advance_pending_agent_event`.
 
 Asserts:
-- CheckShouldReview (real body) reads admission signals from ticket
-  payload; non-draft non-fork PR advances past the skip gate.
+- CheckShouldReview (real body) reads admission signals from TicketSnapshot;
+  non-draft non-fork PR advances past the skip gate.
 - Workspace steps (ProvisionWorkspace, CodeReview, CleanupWorkspace) park in
   awaiting_agent; simulated agent events advance each one.
 - PostFindings (real body, LOCAL) runs inline and persists FindingRows.
@@ -25,16 +25,9 @@ from app.core import byok
 from app.core.audit_log import Actor
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary
-from app.core.workspace import (
-    WorkspaceTicketContext,
-    register_workflow_context_provider,
-    register_workspace_provider,
-)
+from app.core.workspace import register_workspace_provider
 from app.domain.orgs import create_org
-from app.domain.reviewer.commands import (
-    ALL_LOCAL_COMMANDS,
-    ALL_WORKSPACE_COMMANDS,
-)
+from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.seed import seed_agent as _seed_agent_for_tests
@@ -73,27 +66,10 @@ class _StubWorkspaceProvider:
         return None
 
 
-class _StaticWorkflowContextProvider:
-    """Returns a fixed WorkspaceTicketContext regardless of ticket_id —
-    matches the single-ticket scope of this test."""
-
-    def __init__(self, context: WorkspaceTicketContext) -> None:
-        self._context = context
-
-    async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        del ticket_id
-        return self._context
-
-
 @pytest.fixture
-def _registered_engine(workspace_providers_isolation, workflow_context_provider_isolation):  # type: ignore[no-untyped-def]
-    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
-
+def _registered_engine(workspace_providers_isolation):  # type: ignore[no-untyped-def]
     register_workspace_provider(_StubWorkspaceProvider())
-    # Register lifecycle + reviewer commands (mirrors domain/reviewer bootstrap).
     with scoped_engine() as eng:
-        for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            eng.register_command(cmd)
         eng.register_workflow(pr_review_v1)
         yield eng
 
@@ -160,9 +136,7 @@ async def _advance_pending_agent_event(  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.service
-async def test_pr_review_v1_with_findings_persists_to_db(
-    db_session, workspace_providers_isolation, workflow_context_provider_isolation
-) -> None:  # type: ignore[no-untyped-def]
+async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_providers_isolation) -> None:  # type: ignore[no-untyped-def]
     """Full workflow walk verifying PostFindings (LOCAL) persists FindingRows.
 
     All Workspace steps park at AWAITING_AGENT. Each is advanced by a
@@ -262,18 +236,6 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     )
     await db_session.commit()
 
-    register_workflow_context_provider(
-        _StaticWorkflowContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeef", "base_sha": "babecafe"},
-                pr_id=pr_id,
-            )
-        )
-    )
-
     # CodeReview agent event returns stream-json stdout; PostFindings (LOCAL) parses it.
     spy_finding_payload = {
         "findings": [
@@ -304,26 +266,29 @@ async def test_pr_review_v1_with_findings_persists_to_db(
         ]
     )
 
-    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        pr_id=pr_id,
+        pr_external_id=f"pr-{ext_id}",
+        head_sha="deadbeef",
+        base_sha="babecafe",
+        is_draft=False,
+        is_fork=False,
+    )
+
     with scoped_engine() as eng:
-        for cmd in ALL_LIFECYCLE_COMMANDS:
-            eng.register_command(cmd)
-        for cmd in (*ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            eng.register_command(cmd)
         eng.register_workflow(pr_review_v1)
 
         with register_stub_vcs(plugin_id="github"):
             wfx_id = await eng.start(
                 workflow_name="pr_review_v1",
                 ticket_id=str(ticket_id),
-                ticket_payload={
-                    "head_sha": "deadbeef",
-                    "base_sha": "babecafe",
-                    "is_draft": False,
-                    "is_fork": False,
-                },
+                workflow_input=snapshot,
                 session=db_session,
             )
             await db_session.commit()
@@ -395,21 +360,26 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         },
         session=db_session,
     )
-    register_workflow_context_provider(
-        _StaticWorkflowContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeefcafef00d", "base_sha": "babecafe"},
-            )
-        )
+
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        pr_external_id="42",
+        head_sha="deadbeefcafef00d",
+        base_sha="babecafe",
+        is_draft=False,
+        is_fork=False,
+        labels=("enhancement",),
+        author_login="alice",
     )
 
     with register_stub_vcs(plugin_id="github"):
         wfx_id = await _registered_engine.start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_id),
+            workflow_input=snapshot,
             session=db_session,
         )
         await db_session.commit()

@@ -6,7 +6,17 @@
 # registers its sink here).
 from app.core.agent_gateway import register_report_sink as _register_report_sink
 from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
-from app.core.workspace.commands import ALL_LIFECYCLE_COMMANDS
+from app.core.workspace.commands import (
+    CleanupWorkspace,
+    CleanupWorkspaceInputs,
+    CleanupWorkspaceOutputs,
+    ProvisionWorkspace,
+    ProvisionWorkspaceInputs,
+    ProvisionWorkspaceOutputs,
+    RefreshWorkspaceAuth,
+    RefreshWorkspaceAuthInputs,
+    RefreshWorkspaceAuthOutputs,
+)
 from app.core.workspace.dispatch import (
     dispatch_via_workspace,
     register_workspace_recovery_policies,
@@ -54,25 +64,25 @@ from app.core.workspace.types import (
     WorkspaceSpec,
     WorkspaceStatus,
 )
-from app.core.workspace.workflow_context import (
-    WorkflowContextProvider,
-    WorkspaceTicketContext,
-    assert_workflow_context_provider,
-    get_workflow_context_provider,
-    register_workflow_context_provider,
-)
 
 _register_report_sink(WorkspaceAgentReportSinkImpl())
 
 __all__ = [
-    "ALL_LIFECYCLE_COMMANDS",
+    "CleanupWorkspace",
+    "CleanupWorkspaceInputs",
+    "CleanupWorkspaceOutputs",
     "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",
     "OnStreamLine",
+    "ProvisionWorkspace",
+    "ProvisionWorkspaceInputs",
+    "ProvisionWorkspaceOutputs",
+    "RefreshWorkspaceAuth",
+    "RefreshWorkspaceAuthInputs",
+    "RefreshWorkspaceAuthOutputs",
     "RepoRefForSpec",
     "ResourceCaps",
-    "WorkflowContextProvider",
     "Workspace",
     "WorkspaceAgentReportSinkImpl",
     "WorkspaceClaimFailed",
@@ -90,14 +100,11 @@ __all__ = [
     "WorkspaceRegistry",
     "WorkspaceSpec",
     "WorkspaceStatus",
-    "WorkspaceTicketContext",
-    "assert_workflow_context_provider",
     "bind_workspace_registry",
     "close_workspace",
     "current_workspace_registry",
     "dispatch_via_workspace",
     "get_provider",
-    "get_workflow_context_provider",
     "get_workspace_claim_state",
     "get_workspace_command_state",
     "get_workspace_info",
@@ -106,7 +113,6 @@ __all__ = [
     "health_check_all",
     "is_workspace_provider_registered",
     "list_workspace_providers",
-    "register_workflow_context_provider",
     "register_workspace_provider",
     "register_workspace_providers",
     "register_workspace_recovery_policies",

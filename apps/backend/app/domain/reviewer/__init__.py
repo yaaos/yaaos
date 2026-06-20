@@ -60,6 +60,7 @@ from app.domain.reviewer.types import (
     ReviewScopeKind,
     ReviewTrigger,
     Severity,
+    TicketSnapshot,
     finding_output_schema,
     parse_review_output,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "Skip",
     "SkipReason",
     "SqlAlchemyAggregateRepository",
+    "TicketSnapshot",
     "TriggerDecision",
     "TriggerInputs",
     "acquire_pr_lock",
@@ -117,11 +119,6 @@ __all__ = [
 ]
 
 
-class _TicketWorkflowContextProvider:
-    async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        return await _get_workspace_ticket_context(ticket_id)
-
-
 async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]
     """Cancel any non-terminal `workflow_executions` rows for this ticket."""
     from app.core.database import session as db_session  # noqa: PLC0415
@@ -144,25 +141,46 @@ async def start_pr_review(
     org_id,
     trigger_reason: str = "pr_ready",
 ) -> object:
-    """Start a `pr_review_v1` workflow for a ticket."""
+    """Start a `pr_review_v1` workflow for a ticket.
+
+    Builds a `TicketSnapshot` from the ticket + PR rows and passes it as
+    `workflow_input` to the engine — commands receive their data from typed
+    inputs populated by the workflow's `inputs_factory` lambdas, not from
+    any context-provider lookup.
+    """
     from uuid import UUID  # noqa: PLC0415
 
     from app.core.database import session as db_session  # noqa: PLC0415
     from app.core.workflow import get_engine  # noqa: PLC0415
-    from app.core.workspace import get_workflow_context_provider  # noqa: PLC0415
 
     del trigger_reason
-    provider = get_workflow_context_provider()
     ticket_uuid = ticket_id if isinstance(ticket_id, UUID) else UUID(str(ticket_id))
-    ctx = await provider.get_workspace_ticket_context(ticket_uuid)
+    ctx = await _get_workspace_ticket_context(ticket_uuid)
     if ctx is None:
         raise RuntimeError(f"ticket {ticket_id} not found")
-    del org_id
+
+    # Extract PR fields from the ticket context payload.
+    payload = ctx.payload or {}
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_uuid,
+        org_id=ctx.org_id,
+        plugin_id=ctx.plugin_id,
+        repo_external_id=ctx.repo_external_id,
+        pr_id=ctx.pr_id,
+        pr_external_id=str(payload.get("pr_external_id") or "") or None,
+        head_sha=str(payload.get("head_sha") or "HEAD"),
+        base_sha=str(payload.get("base_sha") or "") or None,
+        is_draft=bool(payload.get("is_draft", False)),
+        is_fork=bool(payload.get("is_fork", False)),
+        labels=tuple(str(l) for l in (payload.get("labels") or [])),
+        author_login=str(payload.get("author_login") or "") or None,
+    )
+
     async with db_session() as s:
         wfx_id = await get_engine().start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_uuid),
-            ticket_payload=dict(ctx.payload),
+            workflow_input=snapshot,
             session=s,
         )
         await s.commit()
@@ -171,29 +189,22 @@ async def start_pr_review(
 
 def _register_workflows() -> None:
     from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
-    from app.core.workspace import (  # noqa: PLC0415
-        ALL_LIFECYCLE_COMMANDS,
-        register_workflow_context_provider,
-    )
-    from app.domain.reviewer.commands import (  # noqa: PLC0415
-        ALL_LOCAL_COMMANDS,
-        ALL_WORKSPACE_COMMANDS,
-    )
+    from app.core.workspace import RefreshWorkspaceAuth  # noqa: PLC0415
     from app.domain.reviewer.workflows import ALL_WORKFLOWS  # noqa: PLC0415
 
     engine = get_engine()
-    for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-        try:
-            engine.register_command(cmd)
-        except WorkflowError:
-            pass
+    # Auto-discovery via register_workflow populates all regular commands from
+    # the workflow's steps tuple. RefreshWorkspaceAuth is a recovery command —
+    # never in any step list — so it must be registered explicitly.
     for wf in ALL_WORKFLOWS:
         try:
             engine.register_workflow(wf)
         except WorkflowError:
             pass
-
-    register_workflow_context_provider(_TicketWorkflowContextProvider())
+    try:
+        engine.register_command(RefreshWorkspaceAuth())
+    except WorkflowError:
+        pass
 
 
 _register_workflows()

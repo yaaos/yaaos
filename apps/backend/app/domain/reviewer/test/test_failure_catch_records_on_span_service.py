@@ -1,13 +1,13 @@
 """Service test: failure-shaped catches in domain/reviewer record exception events on spans.
 
-Samples the SecretsScan.context_fetch_failed path as a representative
-failure catch: forces the workflow context provider to raise, then asserts
-the surrounding span carries an `exception` event with ERROR status.
-
-Also covers the PostFindings VCS-post failure path to assert that a single
-VCS error produces exactly ONE exception event on the PostFindings span
-(not two — the inner _post_findings_via_vcs catch must not call
-record_exception before re-raising into the outer PostFindings.execute catch).
+Covers:
+- SecretsScan: when `post_comment` raises after detecting a secret, the
+  surrounding span receives an exception event + ERROR status (the outcome
+  is still success/skip — the comment failure is logged but not fatal).
+- PostFindings: a VCS post_finding failure produces exactly ONE exception
+  event on the PostFindings span (not two — the inner _post_findings_via_vcs
+  catch must not call record_exception before re-raising into the outer
+  PostFindings.execute catch).
 """
 
 from __future__ import annotations
@@ -25,28 +25,83 @@ from app.testing.observability import span_capture
 pytestmark = pytest.mark.service
 
 
-class _RaisingProvider:
-    """WorkflowContextProvider stub that always raises."""
-
-    async def get_workspace_ticket_context(self, ticket_id: UUID):  # type: ignore[no-untyped-def]
-        raise RuntimeError("simulated context fetch failure")
+# ── SecretsScan.post_warning_failed path ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_reviewer_failure_catch_records_on_span() -> None:
-    """SecretsScan.context_fetch_failed records exception event + ERROR on the active span."""
-    from app.core.workspace import register_workflow_context_provider  # noqa: PLC0415
-    from app.domain.reviewer.commands import SecretsScan  # noqa: PLC0415
-
-    # Install the raising stub (isolation fixture resets to None after the test).
-    register_workflow_context_provider(_RaisingProvider())
-
-    cmd = SecretsScan()
+async def test_secrets_scan_post_comment_failure_sets_span_error() -> None:
+    """When post_comment raises after detecting a secret, SecretsScan records
+    exception + ERROR on the active span but still returns success(label='skip')."""
+    from app.core.vcs import Diff  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
+    from app.domain.reviewer.commands import SecretsScan, SecretsScanInputs  # noqa: PLC0415
+    from app.testing.isolation import scoped_vcs_plugin  # noqa: PLC0415
 
+    class _RaisingOnComment:
+        """VCS plugin that returns a diff with a secret but raises on post_comment."""
+
+        plugin_id = "github"
+
+        async def fetch_diff(self, org_id: UUID, external_id: str) -> Diff:
+            del org_id, external_id
+            return Diff(raw="+AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n", files=[])
+
+        async def post_comment(self, org_id: UUID, external_id: str, *, body: str) -> str:
+            raise RuntimeError("simulated post_comment failure")
+
+        # Remaining protocol stubs — not exercised by this test.
+        def install_url(self, org_id: UUID) -> str | None:
+            return None
+
+        def validate_settings(self, settings: dict) -> dict:  # type: ignore[type-arg]
+            return dict(settings)
+
+        async def fetch_pr(self, org_id: UUID, external_id: str):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+        async def fetch_diff_stub(self, org_id: UUID, external_id: str):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+        async def list_yaaos_comments(self, org_id: UUID, external_id: str) -> list:  # type: ignore[type-arg]
+            return []
+
+        async def is_repo_accessible(self, org_id: UUID, repo_external_id: str) -> bool:
+            return True
+
+        async def detect_force_push(
+            self, org_id: UUID, repo_external_id: str, before_sha: str, after_sha: str
+        ) -> bool:
+            return False
+
+        async def list_commit_messages(
+            self, org_id: UUID, repo_external_id: str, prev_sha: str, head_sha: str
+        ) -> list:  # type: ignore[type-arg]
+            return []
+
+        async def post_comment_reply(self, org_id: UUID, external_id: str, parent: str, body: str) -> str:
+            return "stub-reply"
+
+        async def mark_comments_outdated(
+            self,
+            org_id: UUID,
+            external_id: str,
+            ids: list,  # type: ignore[type-arg]
+        ) -> None:
+            pass
+
+        async def get_installation_token(self, org_id: UUID) -> str:
+            return "stub-token"
+
+        async def list_installation_repos(self, org_id: UUID) -> list:  # type: ignore[type-arg]
+            return []
+
+        async def post_finding(self, *args: object, **kwargs: object) -> str:
+            return "stub-comment"
+
+    inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id="pr-1")
     ctx = CommandContext(
-        ticket_id="00000000-0000-0000-0000-000000000001",
-        workflow_execution_id="00000000-0000-0000-0000-000000000002",
+        ticket_id=str(uuid4()),
+        workflow_execution_id=str(uuid4()),
         step_id="secrets_scan",
         attempt=0,
     )
@@ -54,24 +109,26 @@ async def test_reviewer_failure_catch_records_on_span() -> None:
     with span_capture() as exporter:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("workflow.command.SecretsScan"):
-            outcome = await cmd.execute({}, ctx)
+            with scoped_vcs_plugin(_RaisingOnComment()):  # type: ignore[arg-type]
+                outcome = await SecretsScan().execute(inputs, ctx)
 
-    assert outcome.kind.name == "FAILURE", f"expected FAILURE outcome, got {outcome.kind}"
+    # Outcome is still success/skip — the post_comment failure is non-fatal.
+    assert outcome.label == "skip", f"expected skip, got {outcome.label!r}"
 
     spans = exporter.get_finished_spans()
     target = next((s for s in spans if "SecretsScan" in s.name), None)
     assert target is not None, f"no SecretsScan span; got: {[s.name for s in spans]}"
 
     exception_events = [e for e in target.events if e.name == "exception"]
-    assert exception_events, f"expected exception event on span, got: {[e.name for e in target.events]}"
+    assert exception_events, (
+        f"expected exception event on SecretsScan span, got: {[e.name for e in target.events]}"
+    )
     assert target.status.status_code == StatusCode.ERROR, (
-        f"expected ERROR status, got {target.status.status_code}"
+        f"expected ERROR status on SecretsScan span, got {target.status.status_code}"
     )
 
 
-# ---------------------------------------------------------------------------
-# PostFindings VCS-post failure — exactly ONE exception event on the span
-# ---------------------------------------------------------------------------
+# ── PostFindings VCS-post failure — exactly ONE exception event on the span ───
 
 
 class _RaisingVCSPlugin:
@@ -155,7 +212,7 @@ class _RaisingVCSPlugin:
 
 @pytest.mark.asyncio
 async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
-    db_session, workflow_context_provider_isolation
+    db_session,
 ) -> None:
     """A VCS post_finding failure must produce exactly ONE exception event on the
     workflow.command.PostFindings span.
@@ -166,8 +223,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     """
     from app.core.vcs import VCSPullRequest, bind_vcs_registry, current_vcs_registry  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
-    from app.core.workspace import WorkspaceTicketContext, register_workflow_context_provider  # noqa: PLC0415
-    from app.domain.reviewer.commands import PostFindings  # noqa: PLC0415
+    from app.domain.reviewer.commands import PostFindings, PostFindingsInputs  # noqa: PLC0415
     from app.domain.tickets import create_from_pr as create_ticket  # noqa: PLC0415
     from app.domain.tickets import upsert as upsert_pr  # noqa: PLC0415
 
@@ -212,24 +268,6 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     )
     await db_session.commit()
 
-    register_workflow_context_provider(
-        type(
-            "_Ctx",
-            (),
-            {
-                "get_workspace_ticket_context": lambda self, tid: _make_coro(
-                    WorkspaceTicketContext(
-                        org_id=org_id,
-                        plugin_id="github",
-                        repo_external_id="owner/repo",
-                        payload={"head_sha": "deadbeef"},
-                        pr_id=pr.id,
-                    )
-                )
-            },
-        )()
-    )
-
     stdout = "\n".join(
         [
             json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
@@ -267,6 +305,14 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
         attempt=0,
     )
 
+    inputs = PostFindingsInputs(
+        output=stdout,
+        org_id=org_id,
+        pr_id=pr.id,
+        pr_external_id=f"pr-{ext_id}",
+        vcs_plugin_id="github",
+    )
+
     # Swap in the raising VCS plugin.
     raising_plugin = _RaisingVCSPlugin()
     prior_registry = current_vcs_registry()
@@ -278,7 +324,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.command.PostFindings"):
-                outcome = await PostFindings().execute({"output": stdout}, ctx)
+                outcome = await PostFindings().execute(inputs, ctx)
     finally:
         bind_vcs_registry(prior_registry)
 
@@ -296,7 +342,3 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     assert target.status.status_code == StatusCode.ERROR, (
         f"expected ERROR status, got {target.status.status_code}"
     )
-
-
-async def _make_coro(value: object) -> object:
-    return value

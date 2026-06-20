@@ -36,11 +36,9 @@ def main() -> int:
     import app.core.workflow  # noqa: PLC0415
     import app.domain.reviewer  # noqa: PLC0415
 
-    # Startup assertions — crash loud at boot if wiring is wrong rather
-    # than surfacing mid-flow. Must run after domain/reviewer import so
-    # the workflow-context provider is already installed.
+    # Startup registration — must run after domain/reviewer import so that
+    # recovery policies are registered by the domain module's own bootstrap.
     from app.core.workspace import (  # noqa: PLC0415
-        assert_workflow_context_provider,
         register_workspace_providers,
         register_workspace_recovery_policies,
     )
@@ -53,7 +51,6 @@ def main() -> int:
     register_workspace_recovery_policies()
     register_reviewer_start_hooks()
     register_reviewer_terminal_hooks()
-    assert_workflow_context_provider()
 
     # Structural run-sink assertion — `app.core.coding_agent` (imported above)
     # registers the sink at import time. Crash loud here rather than silently

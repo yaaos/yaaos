@@ -33,11 +33,12 @@ from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
@@ -79,15 +80,16 @@ class _RecordingWs:
 
     kind = "ProvisionWs"
     category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
     received_ctx = None  # populated by dispatch()
     received_traceparent: str | None = None  # traceparent active inside dispatch()
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
         del inputs, session
         _RecordingWs.received_ctx = ctx
         # Also snapshot the currently-active OTel span traceparent so the test
@@ -101,13 +103,14 @@ class _RaisingWs:
 
     kind = "ProvisionWsRaises"
     category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
         del inputs, ctx, session
         raise RuntimeError("workspace-boom")
 
@@ -115,9 +118,10 @@ class _RaisingWs:
 class _SucceedingLocal:
     kind = "SpanCategoryLocalCmd"
     category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
@@ -133,17 +137,13 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
     _RecordingWs.received_traceparent = None
 
     ws_cmd = _RecordingWs()
+    ws_step = step(_RecordingWs)
     wf = Workflow(
         name="ws-span-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="ProvisionWs",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     outer_tracer = trace.get_tracer("test.ws_span")
@@ -196,17 +196,13 @@ async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> Non
     """dispatch() raises → `workflow.command.ProvisionWsRaises` span is
     `StatusCode.ERROR` with an `exception` event."""
     ws_cmd = _RaisingWs()
+    ws_raise_step = step(_RaisingWs)
     wf = Workflow(
         name="ws-span-raise-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="ProvisionWsRaises",
-                transitions={"failure": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(ws_raise_step,),
+        entry=ws_raise_step,
+        transitions={ws_raise_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
     )
 
     with span_capture() as exporter:
@@ -247,23 +243,17 @@ async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> Non
 async def test_local_command_span_category_attribute(db_session) -> None:  # type: ignore[no-untyped-def]
     """Regression guard: Local path still emits `workflow.command.<Kind>` and
     the span carries `command.category="local"` attribute."""
-    cmd = _SucceedingLocal()
+    local_step = step(_SucceedingLocal)
     wf = Workflow(
         name="local-category-attr-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="SpanCategoryLocalCmd",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(local_step,),
+        entry=local_step,
+        transitions={local_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             await eng.start(
                 workflow_name="local-category-attr-test",

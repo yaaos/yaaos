@@ -23,10 +23,11 @@ from app.core.tasks import get_pending_outbox_payloads
 from app.core.workflow import (
     CommandCategory,
     CommandContext,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
+    step,
 )
 from app.plugins.github.intake_type import GithubIntakeType
 from app.testing.workflow_harness import scoped_engine
@@ -35,11 +36,16 @@ from app.testing.workflow_harness import scoped_engine
 class _NoopLocal:
     kind: Literal["Noop"] = "Noop"
     category = CommandCategory.LOCAL
+    Inputs = Empty
+    Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
         del inputs, ctx
         return Outcome.success()
+
+
+_noop_step = step(_NoopLocal)
 
 
 @pytest.fixture
@@ -48,19 +54,13 @@ def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
     `engine.start(workflow_name="pr_review_v1", ...)` resolves without
     pulling in the full reviewer command set."""
     with scoped_engine() as eng:
-        eng.register_command(_NoopLocal())
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",
                 version=1,
-                steps=(
-                    Step(
-                        id="only",
-                        command_kind="Noop",
-                        transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-                    ),
-                ),
-                entry_step_id="only",
+                steps=(_noop_step,),
+                entry=_noop_step,
+                transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
             )
         )
         yield eng

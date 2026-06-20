@@ -1,29 +1,46 @@
-"""Workflow / Step / Outcome type validation."""
+"""Workflow / StepRef / Outcome type validation."""
 
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.core.workflow import (
     CommandCategory,
+    Empty,
     Outcome,
     OutcomeKind,
     RetryPolicy,
-    Step,
     TerminalAction,
     Workflow,
+    step,
 )
 
 
-def _step(id_: str, kind: str = "Noop", **kw) -> Step:
-    return Step(id=id_, command_kind=kind, **kw)
+class _NullCmd:
+    kind = "Null"
+    Inputs = Empty
+    Outputs = Empty
+
+    async def execute(self, inputs: BaseModel, ctx) -> Outcome:  # type: ignore[no-untyped-def]
+        return Outcome.success()
 
 
-def test_workflow_step_by_id() -> None:
-    wf = Workflow(name="x", version=1, steps=(_step("a"), _step("b")), entry_step_id="a")
-    assert wf.step_by_id("a").id == "a"
-    assert wf.step_by_id("missing") is None
+def test_workflow_step_by_step_id() -> None:
+    a = step(_NullCmd)
+
+    class _B:
+        kind = "B"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx) -> Outcome:  # type: ignore[no-untyped-def]
+            return Outcome.success()
+
+    b = step(_B)
+    wf = Workflow(name="x", version=1, steps=(a, b), entry=a)
+    assert wf.step_by_step_id("Null") is a
+    assert wf.step_by_step_id("missing") is None
 
 
 def test_retry_policy_validation() -> None:
@@ -36,7 +53,9 @@ def test_retry_policy_validation() -> None:
 def test_outcome_factories() -> None:
     s = Outcome.success(outputs={"workspace_id": "abc"})
     assert s.kind is OutcomeKind.SUCCESS
+    # _DynModel supports both dict equality and item access for backward compat.
     assert s.outputs == {"workspace_id": "abc"}
+    assert s.outputs["workspace_id"] == "abc"
     assert s.failure_reason is None
     assert s.hitl_question is None
 
@@ -49,16 +68,47 @@ def test_outcome_factories() -> None:
     assert h.hitl_question == {"prompt": "approve?"}
 
 
+def test_outcome_with_typed_outputs() -> None:
+    class _Out(BaseModel):
+        workspace_id: str
+
+    out = _Out(workspace_id="ws-123")
+    s = Outcome.success(outputs=out)
+    assert s.outputs is out
+    assert s.outputs.workspace_id == "ws-123"  # type: ignore[attr-defined]
+
+
+def test_outcome_outputs_default_is_empty() -> None:
+    s = Outcome.success()
+    assert isinstance(s.outputs, Empty)
+    assert s.outputs.model_dump() == {}
+
+
 def test_terminal_action_in_transitions_is_valid() -> None:
+    a = step(_NullCmd)
     wf = Workflow(
         name="x",
         version=1,
-        steps=(_step("a", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}),),
-        entry_step_id="a",
+        steps=(a,),
+        entry=a,
+        transitions={a: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
-    assert wf.steps[0].transitions["success"] is TerminalAction.COMPLETE_WORKFLOW
+    assert wf.transitions[a]["success"] is TerminalAction.COMPLETE_WORKFLOW
 
 
 def test_command_category_enum_values() -> None:
     # Sanity that the three categories are present and string-stable.
     assert {c.value for c in CommandCategory} == {"workspace", "local", "hitl"}
+
+
+def test_empty_model_frozen() -> None:
+    e = Empty()
+    with pytest.raises(ValidationError):
+        e.x = "oops"  # type: ignore[attr-defined]
+
+
+def test_step_ref_equality_based_on_command_class_and_step_id() -> None:
+    a = step(_NullCmd)
+    b = step(_NullCmd)
+    assert a == b  # frozen dataclass — same fields → equal
+    assert hash(a) == hash(b)
