@@ -8,7 +8,7 @@ and an `__init_subclass__` guard that prevents subclasses from overriding it.
 
 Concrete subclasses implement `build_command` to produce the specific
 `AgentCommand` wire payload; returning `None` signals "nothing to dispatch"
-and the engine short-circuits to `Outcome.success()` via `_NullDispatch`.
+and the engine short-circuits to `Outcome.success()` via `NullDispatch`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, ClassVar, final
 from uuid import UUID
 
-from app.core.workflow import AgentDispatchCommand, Outcome, _NullDispatch
+from app.core.workflow import AgentDispatchCommand, NullDispatch, Outcome
 from app.core.workspace.dispatch import dispatch_via_workspace
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ class WorkspaceOpCommand(AgentDispatchCommand):
 
         Return `None` when there is nothing to dispatch (e.g. `workspace_id`
         is None in `CleanupWorkspace`). The `@final dispatch` raises
-        `_NullDispatch` in that case so the engine short-circuits to success.
+        `NullDispatch` in that case so the engine short-circuits to success.
         """
         ...
 
@@ -90,11 +90,11 @@ class WorkspaceOpCommand(AgentDispatchCommand):
         session: AsyncSession,
     ) -> UUID:
         """Enqueue the command via dispatch_via_workspace (Layer 2) and return
-        the command_id. Raises `_NullDispatch` when `build_command` returns None.
+        the command_id. Raises `NullDispatch` when `build_command` returns None.
         """
         cmd = await self.build_command(inputs, ctx, session=session)
         if cmd is None:
-            raise _NullDispatch()
+            raise NullDispatch()
         return await dispatch_via_workspace(
             command=cmd,
             workspace_id=cmd.workspace_id,  # type: ignore[attr-defined]

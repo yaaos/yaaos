@@ -18,3 +18,7 @@ rules:
     paths:
       include:
         - "app/domain/reviewer/commands/*.py"
+        - "app/core/workspace/commands/*.py"
+        - "app/domain/*/commands/*.py"
+      exclude:
+        - "app/core/workspace/commands/provision.py"

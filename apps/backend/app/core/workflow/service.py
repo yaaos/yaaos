@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from datetime import UTC as _UTC
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar, Protocol, cast
 from uuid import UUID
 
 import structlog
@@ -43,7 +43,9 @@ from app.core.workflow.types import (
     CommandContext,
     CommandNotRegisteredError,
     Empty,
+    HasAgentResponseHandler,
     HITLCommand,
+    NullDispatch,
     Outcome,
     OutcomeKind,
     RetryPolicy,
@@ -56,12 +58,32 @@ from app.core.workflow.types import (
     WorkflowNotFoundError,
     WorkflowState,
     WorkflowValidationError,
-    _NullDispatch,
     _step_outputs_var,
 )
 
 log = structlog.get_logger("core.workflow")
 _tracer = trace.get_tracer("core.workflow")
+
+# States where no natural task tick will arrive soon, so `request_cancel`
+# proactively enqueues `route_workflow`. AWAITING_AGENT is excluded — the
+# agent's terminal event is the trigger there.
+_PROACTIVE_CANCEL_STATES: frozenset[WorkflowState] = frozenset(
+    {WorkflowState.PENDING, WorkflowState.RUNNING, WorkflowState.AWAITING_HUMAN}
+)
+
+
+# ── Typed helpers for command-class attribute access ────────────────────
+# Used in `register_workflow` to read `kind` and `recovers_failure_label`
+# from command classes without untyped getattr calls.
+
+
+class _CommandClassProto(Protocol):
+    kind: ClassVar[str]
+
+
+class _RecoveryCommandClassProto(Protocol):
+    kind: ClassVar[str]
+    recovers_failure_label: ClassVar[str]
 
 
 class WorkflowFailedPayload(BaseModel):
@@ -238,7 +260,7 @@ async def _start_step_impl(
             # parks the execution in `awaiting_agent` and stores the returned
             # `command_id` as `pending_agent_command_id`. The terminal
             # AgentEvent arrives via `handle_agent_event` to resume routing.
-            # `_NullDispatch` is the signal from WorkspaceOpCommand.dispatch when
+            # `NullDispatch` is the signal from WorkspaceOpCommand.dispatch when
             # build_command returns None (e.g. CleanupWorkspace with no workspace_id)
             # — treat as a successful local outcome to skip the park.
             wfx.current_step_id = step_id
@@ -264,7 +286,7 @@ async def _start_step_impl(
                 null_dispatch = False
                 try:
                     command_id = await command.dispatch(typed_inputs, ws_cmd_ctx, session=s)
-                except _NullDispatch:
+                except NullDispatch:
                     null_dispatch = True
                     command_id = None
                 except Exception as exc:
@@ -471,8 +493,9 @@ async def _handle_agent_event_impl(
         _publish_state_changed(s, wfx)
 
         # For CodingAgentCommand steps on success, call handle_response to
-        # validate the agent's JSON output and produce a typed Outcome. The
-        # duck-type check avoids an import cycle (core.coding_agent →
+        # validate the agent's JSON output and produce a typed Outcome.
+        # `HasAgentResponseHandler` is a @runtime_checkable Protocol in types.py
+        # so isinstance is safe — avoids an import cycle (core.coding_agent →
         # core.workflow but NOT the reverse).
         retryable = True
         if outcome_label == "success" and completed_step_id is not None:
@@ -484,7 +507,7 @@ async def _handle_agent_event_impl(
                     command = engine.get_command(step.command_class.kind)
                 except CommandNotRegisteredError:
                     command = None
-                if command is not None and callable(getattr(command, "handle_response", None)):
+                if isinstance(command, HasAgentResponseHandler):
                     cmd_ctx = CommandContext(
                         workflow_execution_id=str(wfx.id),
                         ticket_id=str(wfx.ticket_id),
@@ -821,12 +844,6 @@ async def request_cancel(workflow_execution_id: str, *, session: AsyncSession) -
     if current_state in TERMINAL_STATES:
         return False
     wfx.cancel_requested = True
-    # Proactively enqueue route_workflow for states where the engine won't
-    # receive a natural task tick soon. AWAITING_AGENT is excluded — in-flight
-    # agent commands are not aborted; the terminal event is the trigger.
-    _PROACTIVE_CANCEL_STATES = frozenset(
-        {WorkflowState.PENDING, WorkflowState.RUNNING, WorkflowState.AWAITING_HUMAN}
-    )
     if current_state in _PROACTIVE_CANCEL_STATES:
         await enqueue(
             ROUTE_WORKFLOW,
@@ -1336,12 +1353,12 @@ class WorkflowEngine:
         # Auto-discover command classes from steps and register instances.
         for s in wf.steps:
             cmd_class = s.command_class
-            kind = getattr(cmd_class, "kind", None)  # type: ignore[attr-defined]
-            if kind is None:
+            if not hasattr(cmd_class, "kind"):
                 raise WorkflowError(
                     f"workflow '{wf.name}' step '{s.step_id}': command class "
                     f"'{cmd_class.__name__}' is missing a `kind` class attribute"
                 )
+            kind = cast(_CommandClassProto, cmd_class).kind
             if kind not in self._commands:
                 try:
                     instance = cmd_class()
@@ -1414,12 +1431,12 @@ class WorkflowEngine:
         # and auto-register each recovery command instance.
         recovery_map: dict[str, type] = {}
         for rc_class in wf.recovery_commands:
-            label = getattr(rc_class, "recovers_failure_label", None)
-            if label is None:
+            if not hasattr(rc_class, "recovers_failure_label"):
                 raise WorkflowError(
                     f"workflow '{wf.name}' recovery command '{rc_class.__name__}' "
                     f"is missing a `recovers_failure_label` class attribute"
                 )
+            label = cast(_RecoveryCommandClassProto, rc_class).recovers_failure_label
             if label in recovery_map:
                 raise WorkflowError(
                     f"workflow '{wf.name}' has duplicate recovery label '{label}' "
@@ -1427,12 +1444,12 @@ class WorkflowEngine:
                 )
             recovery_map[label] = rc_class
             # Auto-register the command instance so the engine can dispatch it.
-            rc_kind = getattr(rc_class, "kind", None)
-            if rc_kind is None:
+            if not hasattr(rc_class, "kind"):
                 raise WorkflowError(
                     f"workflow '{wf.name}' recovery command '{rc_class.__name__}' "
                     f"is missing a `kind` class attribute"
                 )
+            rc_kind = cast(_CommandClassProto, rc_class).kind
             if rc_kind not in self._commands:
                 try:
                     instance = rc_class()

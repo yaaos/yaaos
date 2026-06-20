@@ -119,7 +119,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
@@ -691,8 +691,10 @@ expose = [
   "Empty",
   "HANDLE_AGENT_EVENT",
   "HITLCommand",
+  "HasAgentResponseHandler",
   "HitlHistoryEntry",
   "LocalCommand",
+  "NullDispatch",
   "Outcome",
   "OutcomeKind",
   "ROUTE_WORKFLOW",
@@ -714,7 +716,6 @@ expose = [
   "WorkflowState",
   "WorkflowTerminalCallback",
   "WorkflowValidationError",
-  "_NullDispatch",
   "get_awaiting_human_execution",
   "get_engine",
   "get_execution_summary",

@@ -2,7 +2,7 @@
 
 Inherits from `WorkspaceOpCommand`. When `workspace_id` is None (provision
 failed before creating a workspace), `build_command` returns None and the
-`@final dispatch` raises `_NullDispatch`, which the engine catches and
+`@final dispatch` raises `NullDispatch`, which the engine catches and
 treats as `Outcome.success()`.
 """
 
@@ -33,7 +33,7 @@ class CleanupWorkspaceInputs(BaseModel):
     """Typed inputs for the CleanupWorkspace step.
 
     `workspace_id` is None when provision failed before creating a workspace —
-    `build_command` returns None in that case, triggering `_NullDispatch`.
+    `build_command` returns None in that case, triggering `NullDispatch`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -48,7 +48,7 @@ class CleanupWorkspace(WorkspaceOpCommand):
     """Tear down a workspace. Reads `workspace_id` from typed `CleanupWorkspaceInputs`.
 
     When `workspace_id` is None, `build_command` returns None which triggers
-    `_NullDispatch` in the `@final dispatch`. The engine catches `_NullDispatch`
+    `NullDispatch` in the `@final dispatch`. The engine catches `NullDispatch`
     and treats the step as `Outcome.success()` — idempotent cleanup after
     partial failures drains cleanly.
 

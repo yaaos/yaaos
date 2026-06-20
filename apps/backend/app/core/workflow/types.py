@@ -17,7 +17,7 @@ Key types:
 - `LocalCommand` — structural Protocol for the in-process command flavour (no isinstance in engine).
 - `HITLCommand` — ABC for human-in-the-loop commands; engine uses isinstance to discriminate.
 - `Empty` — zero-field frozen BaseModel used as the default `Inputs`/`Outputs`.
-- `_NullDispatch` — private exception raised by `WorkspaceOpCommand.dispatch` when
+- `NullDispatch` — exception raised by `WorkspaceOpCommand.dispatch` when
   `build_command` returns None; engine catches it and short-circuits to success.
 """
 
@@ -428,10 +428,25 @@ class HITLCommand(ABC):
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome: ...
 
 
+# ── Optional command capabilities ──────────────────────────────────────
+
+
+@runtime_checkable
+class HasAgentResponseHandler(Protocol):
+    """Structural Protocol for commands that validate the agent's raw output.
+
+    The engine calls `handle_response` in `handle_agent_event` when the step
+    completes with `outcome_label == "success"`, replacing the raw output with
+    the validated, typed `Outcome`. Implemented by `CodingAgentCommand`.
+    """
+
+    async def handle_response(self, output: str, ctx: CommandContext) -> Outcome: ...
+
+
 # ── Internal dispatch signals ────────────────────────────────────────────
 
 
-class _NullDispatch(Exception):
+class NullDispatch(Exception):
     """Raised by `WorkspaceOpCommand.dispatch` when `build_command` returns None.
 
     The engine catches this in the AgentDispatch branch and treats the step

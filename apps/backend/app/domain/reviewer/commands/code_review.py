@@ -1,11 +1,11 @@
 """CodeReview — full-PR review CodingAgentCommand.
 
 Inherits from `CodingAgentCommand` (which provides `@final dispatch` that calls
-`core/coding_agent.dispatch_invocation`). `build_invocation` fetches the BYOK
-API key and constructs the `Invocation` intent; the `@final dispatch` resolves
-the plugin, compiles the exec block, parks the workflow in AWAITING_AGENT, and
-auto-injects `CodeReview.ExpectedResponse.model_json_schema()` into the
-invocation context so the skill prompt carries the validated response schema.
+`core/coding_agent.dispatch_invocation`). `build_invocation` constructs the
+`Invocation` intent; the `@final dispatch` resolves the plugin, compiles the
+exec block, parks the workflow in AWAITING_AGENT, and auto-injects
+`CodeReview.ExpectedResponse.model_json_schema()` into the invocation context
+so the skill prompt carries the validated response schema.
 """
 
 from __future__ import annotations
@@ -54,12 +54,12 @@ class CodeReviewOutputs(BaseModel):
 class CodeReview(CodingAgentCommand):
     """Full-PR review dispatched to the remote coding agent.
 
-    `build_invocation` fetches the Anthropic API key from BYOK and constructs
-    the `Invocation` for the `pr_review` skill. The `@final dispatch` (from
-    `CodingAgentCommand`) resolves the `claude_code` plugin, calls
-    `plugin.compile_invocation`, delegates to `dispatch_invocation` (Layer 3),
-    and auto-injects `CodeReviewResponse.model_json_schema()` into the invocation
-    context under `output_schema`.
+    `build_invocation` constructs the `Invocation` for the `pr_review` skill.
+    BYOK API key delivery rides `ConfigUpdate.byok_secrets` at identity exchange.
+    The `@final dispatch` (from `CodingAgentCommand`) resolves the `claude_code`
+    plugin, calls `plugin.compile_invocation`, delegates to `dispatch_invocation`
+    (Layer 3), and auto-injects `CodeReviewResponse.model_json_schema()` into the
+    invocation context under `output_schema`.
 
     On `completed_success` the engine calls `handle_response` (from
     `CodingAgentCommand`) which validates the agent's JSON output against
@@ -85,13 +85,11 @@ class CodeReview(CodingAgentCommand):
         *,
         session: AsyncSession,
     ) -> Invocation:
-        """Fetch the Anthropic API key from BYOK and build the Invocation intent."""
-        from app.core import byok  # noqa: PLC0415
+        """Build the Invocation intent for the pr_review skill.
 
-        anthropic_api_key = await byok.get(inputs.org_id, "anthropic", session=session)
-        if anthropic_api_key is None:
-            raise RuntimeError(f"no Anthropic API key for org {inputs.org_id}; add one in Org Settings")
-
+        BYOK delivery for the Anthropic API key rides ConfigUpdate.byok_secrets
+        at identity exchange — no per-command key insertion needed here.
+        """
         review_ctx = ReviewContext(
             org_id=inputs.org_id,
             repo_external_id=inputs.repo_external_id,
@@ -103,6 +101,6 @@ class CodeReview(CodingAgentCommand):
             skill="pr_review",
             model="opus",
             effort="medium",
-            context={**review_ctx.model_dump(mode="json"), "anthropic_api_key": anthropic_api_key},
+            context=review_ctx.model_dump(mode="json"),
             wallclock_seconds=1200,
         )
