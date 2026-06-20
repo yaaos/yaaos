@@ -13,13 +13,13 @@
 
 ## Module architecture
 
-Implements the full `CodingAgentPlugin` Protocol surface: `build_invocation`, `parse_result`, and `validate_settings`. `build_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content so tests can drive the downstream `parse_review_output` validation path. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
+Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content so tests can drive the downstream `parse_review_output` validation path. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
 
 No telemetry, no byok lookup, no DB reads.
 
 ## Why it exists separately from `stub_coding_agent`
 
-`stub_coding_agent` wraps a real plugin so e2e flows exercise the real `build_invocation` shape. `fake_coding_agent` is test-shaped: zero coupling to a real plugin; lets a unit test register a `claude_code` plugin into an otherwise empty registry. The two never both register the same id.
+`stub_coding_agent` wraps a real plugin so e2e flows exercise the real `compile_invocation` shape. `fake_coding_agent` is test-shaped: zero coupling to a real plugin; lets a unit test register a `claude_code` plugin into an otherwise empty registry. The two never both register the same id.
 
 ## Data owned
 

@@ -1,13 +1,16 @@
 """core/coding_agent — Protocol + registry for coding-agent CLI plugins.
 
-The Protocol exposes two pure methods: `build_invocation` translates a
+The Plugin Protocol exposes two pure methods: `compile_invocation` translates a
 high-level `Invocation` (skill, model, effort, context, wallclock cap) into
 a concrete `InvokeCodingAgent` exec block; `parse_result` decodes a terminal
 AgentEvent payload into a `RunResult`. Plugins own skill resolution, model
 mapping, and stdout parsing. `dispatch_invocation` (Layer 3) calls
-`plugin.build_invocation`, builds an `InvokeClaudeCodeCommand`, delegates to
+`plugin.compile_invocation`, builds an `InvokeClaudeCodeCommand`, delegates to
 `dispatch_via_workspace` (Layer 2) with `claim_workspace=True` for the atomic
 enqueue + pin + claim, then inserts a `coding_agent_runs` row.
+
+`CodingAgentCommand` is the abstract base for workflow commands that invoke a
+coding-agent plugin; concrete impls live in `domain/<consumer>/commands/`.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from app.core.agent_gateway import (
 # registers the daily `coding_agent_activity_partition_maintenance` task with
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
+from app.core.coding_agent.commands_base import CodingAgentCommand
 from app.core.coding_agent.run_service import (
     create_run,
     get_step_activity,
@@ -110,6 +114,7 @@ __all__ = [
     "ACTIVITY_EVENT_KINDS",
     "ActivityEvent",
     "ActivityLog",
+    "CodingAgentCommand",
     "CodingAgentError",
     "CodingAgentPlugin",
     "CodingAgentRegistry",

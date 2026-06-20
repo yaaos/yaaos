@@ -22,7 +22,6 @@ from sqlalchemy import select
 from app.core.sse import subscribe_general
 from app.core.tasks import drain_once, get_broker, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -45,23 +44,21 @@ class _SSETestInput(BaseModel):
 
 class _LocalA:
     kind = "SSEStateA"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _LocalB:
     kind = "SSEStateB"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -174,12 +171,11 @@ async def test_failed_workflow_emits_failed_state_event(db_session, redis_or_ski
 
     class _Failing:
         kind = "SSEFailingF"
-        category = CommandCategory.LOCAL
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-            del inputs, ctx
+        async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
             return Outcome.failure(reason="planned")
 
     eng = WorkflowEngine()

@@ -9,13 +9,22 @@ Key types:
   typed access via `_step_outputs_var`.
 - `Workflow` — a typed workflow definition (steps + entry + transitions + optional finalizer).
 - `Outcome` — the result of a `WorkflowCommand.execute()`.
-- `WorkflowCommand` / `WorkspaceWorkflowCommand` — structural Protocols for command classes.
+- `WorkflowCommand` — base Protocol (kind + Inputs + Outputs ClassVars only).
+- `AgentDispatchCommand` — ABC for commands that enqueue an AgentCommand and park in
+  AWAITING_AGENT; engine uses isinstance to discriminate.
+- `WorkspaceOpCommand` / `CodingAgentCommand` — concrete ABC sub-hierarchies (defined
+  in `core/workspace/commands_base.py` and `core/coding_agent/commands_base.py`).
+- `LocalCommand` — structural Protocol for the in-process command flavour (no isinstance in engine).
+- `HITLCommand` — ABC for human-in-the-loop commands; engine uses isinstance to discriminate.
 - `Empty` — zero-field frozen BaseModel used as the default `Inputs`/`Outputs`.
+- `_NullDispatch` — private exception raised by `WorkspaceOpCommand.dispatch` when
+  `build_command` returns None; engine catches it and short-circuits to success.
 """
 
 from __future__ import annotations
 
 import dataclasses
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from enum import StrEnum
@@ -141,17 +150,6 @@ class WorkflowState(StrEnum):
 TERMINAL_STATES: frozenset[WorkflowState] = frozenset(
     {WorkflowState.DONE, WorkflowState.FAILED, WorkflowState.CANCELLED}
 )
-
-
-class CommandCategory(StrEnum):
-    """The three WorkflowCommand categories. Each gets a distinct branch in
-    `start_step` (see architecture.md § Async event-driven model).
-
-    Kept for Phase 3 backward compat; Phase 4 removes category-based dispatch."""
-
-    WORKSPACE = "workspace"
-    LOCAL = "local"
-    HITL = "hitl"
 
 
 class TerminalAction(StrEnum):
@@ -298,17 +296,16 @@ class CommandContext(BaseModel):
 
 @runtime_checkable
 class WorkflowCommand(Protocol):
-    """A WorkflowCommand. Implementations register against `WorkflowEngine`
-    by their `kind` string.
+    """Base Protocol for all WorkflowCommands. Implementations register against
+    `WorkflowEngine` by their `kind` string.
 
     `Inputs` and `Outputs` are ClassVar type references — the engine uses
     them to reconstruct typed models from the task queue's serialised dict
     and to populate the ContextVar for downstream lambdas respectively.
 
-    Category-based dispatch (`category: CommandCategory`) is NOT part of
-    the protocol — the engine uses `isinstance(cmd, WorkspaceWorkflowCommand)`
-    for workspace branching. Commands that need HITL behaviour still carry a
-    `category` attribute; LOCAL commands don't need one.
+    The engine discriminates concrete impls via isinstance against
+    `AgentDispatchCommand`, `HITLCommand`, and `LocalCommand` — the class
+    hierarchy IS the category; no enum needed.
     """
 
     kind: ClassVar[str]
@@ -318,13 +315,25 @@ class WorkflowCommand(Protocol):
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome: ...
 
 
-@runtime_checkable
-class WorkspaceWorkflowCommand(WorkflowCommand, Protocol):
-    """Workspace-category seam: enqueue an `AgentCommand` durably inside the
-    caller's transaction and return the new `command_id`. The engine sets
-    `pending_agent_command_id` to the returned value and parks the workflow
-    in `awaiting_agent`."""
+class AgentDispatchCommand(ABC):
+    """Abstract base for commands that enqueue an AgentCommand and park the
+    workflow execution in AWAITING_AGENT.
 
+    The engine uses `isinstance(command, AgentDispatchCommand)` to discriminate
+    this branch. Concrete dispatch paths:
+      - `WorkspaceOpCommand` (in `core/workspace/commands_base.py`) — operations
+        on an existing workspace via `dispatch_via_workspace`.
+      - `CodingAgentCommand` (in `core/coding_agent/commands_base.py`) — full
+        invocation via `dispatch_invocation`.
+      - `ProvisionWorkspace` (in `core/workspace/commands/provision.py`) — uses
+        Layer 1 directly because no workspace row exists yet.
+    """
+
+    kind: ClassVar[str]
+    Inputs: ClassVar[type[BaseModel]]
+    Outputs: ClassVar[type[BaseModel]] = Empty  # type: ignore[assignment]
+
+    @abstractmethod
     async def dispatch(
         self,
         inputs: BaseModel,
@@ -332,6 +341,60 @@ class WorkspaceWorkflowCommand(WorkflowCommand, Protocol):
         *,
         session: AsyncSession,
     ) -> UUID: ...
+
+
+class LocalCommand(Protocol):
+    """Protocol for in-process commands that execute synchronously in the
+    `start_step` task and advance the workflow immediately.
+
+    `session` is passed by the engine as a keyword argument.
+    Command bodies must NEVER call `session.commit()` — the engine commits.
+
+    Not runtime-checkable (isinstance not used by engine). Provides static
+    type annotation only — the engine's Local branch is the implicit fallback
+    when a command is neither `AgentDispatchCommand` nor `HITLCommand`.
+    """
+
+    kind: ClassVar[str]
+    Inputs: ClassVar[type[BaseModel]]
+    Outputs: ClassVar[type[BaseModel]]
+
+    async def execute(
+        self,
+        inputs: BaseModel,
+        ctx: CommandContext,
+        *,
+        session: AsyncSession,
+    ) -> Outcome: ...
+
+
+class HITLCommand(ABC):
+    """Abstract base for Human-in-the-Loop commands. Must return
+    `Outcome.hitl_pending(question=...)`. Engine writes the
+    `pending_human_decisions` row and parks in AWAITING_HUMAN.
+
+    ABC (not Protocol) so `isinstance(cmd, HITLCommand)` is reliable — the
+    engine uses it to discriminate the HITL branch from the Local branch.
+    """
+
+    kind: ClassVar[str]
+    Inputs: ClassVar[type[BaseModel]]
+    Outputs: ClassVar[type[BaseModel]]
+
+    @abstractmethod
+    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome: ...
+
+
+# ── Internal dispatch signals ────────────────────────────────────────────
+
+
+class _NullDispatch(Exception):
+    """Raised by `WorkspaceOpCommand.dispatch` when `build_command` returns None.
+
+    The engine catches this in the AgentDispatch branch and treats the step
+    as `Outcome.success()` without parking in AWAITING_AGENT. Used by
+    `CleanupWorkspace` when `workspace_id` is None (no workspace to clean up).
+    """
 
 
 # ── Error hierarchy ─────────────────────────────────────────────────────

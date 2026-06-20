@@ -25,7 +25,7 @@ import pytest
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -67,18 +67,16 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 
 class _SimpleLocal:
     kind = "StepAttrLocalCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
-class _SimpleWs:
+class _SimpleWs(AgentDispatchCommand):
     kind = "StepAttrWsCmd"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
 

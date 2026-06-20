@@ -18,7 +18,6 @@ from uuid import uuid4
 import pytest
 
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -36,34 +35,31 @@ pytestmark = pytest.mark.service
 
 class _NoopAlpha:
     kind = "NoopAlpha"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _NoopBeta:
     kind = "NoopBeta"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _NoopGamma:
     kind = "NoopGamma"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 

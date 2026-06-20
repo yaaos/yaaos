@@ -26,7 +26,6 @@ from opentelemetry.trace import StatusCode
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
     Empty,
     Outcome,
     TerminalAction,
@@ -48,12 +47,11 @@ class _RaisingLocal:
     """Raises RuntimeError from execute() — _safe_execute must record it."""
 
     kind = "RaisingLocalCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         raise RuntimeError("boom")
 
 
@@ -61,12 +59,11 @@ class _FailingLocal:
     """Returns Outcome.failure() — _safe_execute must mark the span ERROR."""
 
     kind = "FailingLocalCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.failure(reason="planned-failure")
 
 
@@ -74,12 +71,11 @@ class _SucceedingLocal:
     """Returns Outcome.success() — spans must remain unset (not ERROR)."""
 
     kind = "SucceedingLocalCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

@@ -29,7 +29,7 @@ pytestmark = pytest.mark.service
 
 
 @pytest.mark.asyncio
-async def test_secrets_scan_post_comment_failure_sets_span_error() -> None:
+async def test_secrets_scan_post_comment_failure_sets_span_error(db_session) -> None:  # type: ignore[no-untyped-def]
     """When post_comment raises after detecting a secret, SecretsScan records
     exception + ERROR on the active span but still returns success(label='skip')."""
     from app.core.vcs import Diff  # noqa: PLC0415
@@ -110,7 +110,7 @@ async def test_secrets_scan_post_comment_failure_sets_span_error() -> None:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("workflow.command.SecretsScan"):
             with scoped_vcs_plugin(_RaisingOnComment()):  # type: ignore[arg-type]
-                outcome = await SecretsScan().execute(inputs, ctx)
+                outcome = await SecretsScan().execute(inputs, ctx, session=db_session)
 
     # Outcome is still success/skip — the post_comment failure is non-fatal.
     assert outcome.label == "skip", f"expected skip, got {outcome.label!r}"
@@ -324,7 +324,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.command.PostFindings"):
-                outcome = await PostFindings().execute(inputs, ctx)
+                outcome = await PostFindings().execute(inputs, ctx, session=db_session)
     finally:
         bind_vcs_registry(prior_registry)
 

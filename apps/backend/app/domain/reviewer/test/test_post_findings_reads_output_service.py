@@ -127,7 +127,7 @@ async def test_post_findings_reads_output_field(db_session) -> None:
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
     with register_stub_vcs(plugin_id="github") as stub:
-        outcome = await PostFindings().execute(inputs, ctx)
+        outcome = await PostFindings().execute(inputs, ctx, session=db_session)
 
     assert outcome.label == "success", f"unexpected failure: {outcome.failure_reason}"
     assert outcome.outputs.admitted_count == 1
@@ -149,11 +149,12 @@ async def test_post_findings_reads_output_field(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_findings_empty_output_returns_zero() -> None:
+async def test_post_findings_empty_output_returns_zero(db_session) -> None:  # type: ignore[no-untyped-def]
     """`output=""` in typed inputs → zero findings, success outcome."""
     outcome = await PostFindings().execute(
         PostFindingsInputs(output="", org_id=uuid4()),
         _ctx(str(uuid4()), str(uuid4())),
+        session=db_session,
     )
     assert outcome.label == "success"
     assert outcome.outputs.admitted_count == 0

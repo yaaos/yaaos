@@ -19,7 +19,6 @@ from opentelemetry import trace
 
 from app.core.observability import current_traceparent
 from app.core.workflow import (
-    CommandCategory,
     Empty,
     Outcome,
     TerminalAction,
@@ -35,12 +34,11 @@ pytestmark = pytest.mark.service
 
 class _NoopLocal:
     kind = "RunRootSpanNoop"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

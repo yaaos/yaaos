@@ -21,7 +21,6 @@ import pytest
 
 from app.core.tasks import get_pending_outbox_payloads
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -35,13 +34,12 @@ from app.testing.workflow_harness import scoped_engine
 
 class _NoopLocal:
     kind: Literal["Noop"] = "Noop"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 

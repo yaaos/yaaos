@@ -34,12 +34,12 @@ class FakeCodingAgentPlugin:
     def __init__(self, plugin_id: str = "claude_code") -> None:
         self.plugin_id = plugin_id
         # Overridable per-instance return values.
-        self.build_invocation_result: InvokeCodingAgent | None = None
+        self.compile_invocation_result: InvokeCodingAgent | None = None
 
-    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+    def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a stable canned exec block for the given invocation."""
-        if self.build_invocation_result is not None:
-            return self.build_invocation_result
+        if self.compile_invocation_result is not None:
+            return self.compile_invocation_result
         return InvokeCodingAgent(
             argv=["fake-claude", "--skill", invocation.skill, "--model", invocation.model],
             env={},

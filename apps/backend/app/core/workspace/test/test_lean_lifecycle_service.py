@@ -37,7 +37,7 @@ from app.core.audit_log import ActorKind, list_for_entity
 from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -77,12 +77,11 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:
             return
 
 
-class _DispatchingWs:
-    """Workspace command that enqueues a real `agent_commands` row and
+class _DispatchingWs(AgentDispatchCommand):
+    """AgentDispatchCommand that enqueues a real `agent_commands` row and
     records the returned command_id for inspection by the test."""
 
     kind = "LeanLifecycleDispatch"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
@@ -114,11 +113,10 @@ class _DispatchingWs:
         return command_id
 
 
-class _FailingWs:
-    """Workspace command that always signals failure via terminal event."""
+class _FailingWs(AgentDispatchCommand):
+    """AgentDispatchCommand that always signals failure via terminal event."""
 
     kind = "LeanLifecycleFail"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
@@ -154,13 +152,12 @@ class _NoopLocal:
     """Local terminal step — drains the workflow to DONE."""
 
     kind = "LeanLifecycleTerminal"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None):  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -168,15 +165,14 @@ class _FinalizerLocal:
     """Local finalizer step — records that it was called."""
 
     kind = "LeanLifecycleFinalizer"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
 
     call_count: int = 0
 
-    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None):  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         _FinalizerLocal.call_count += 1
         return Outcome.success()
 

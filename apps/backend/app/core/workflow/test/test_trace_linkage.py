@@ -29,7 +29,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -72,23 +72,21 @@ def in_memory_spans():
 
 class _NoopA:
     kind = "TraceLinkNoopA"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _NoopB:
     kind = "TraceLinkNoopB"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -206,14 +204,13 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     bind_workspace_registry(WorkspaceRegistry())
     register_workspace_provider(_MinimalProvider())
 
-    class _NoopWs:
+    class _NoopWs(AgentDispatchCommand):
         kind = "DoOnAgent"
-        category = CommandCategory.WORKSPACE
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-            del inputs, ctx
+        async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+            del inputs, ctx, session
             return Outcome.success()
 
         async def dispatch(self, inputs: Empty, ctx, *, session) -> uuid4().__class__:  # type: ignore[no-untyped-def]

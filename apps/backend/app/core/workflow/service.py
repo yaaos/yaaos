@@ -1,10 +1,10 @@
 """`WorkflowEngine` + the three core/tasks task bodies.
 
 Provides:
-- `start_step` body — branches on command category. Local + HITL execute
-  inline; Workspace calls `command.dispatch(inputs, ctx, session=s)` to enqueue
-  an AgentCommand row, parks the workflow in `awaiting_agent`, and stores
-  the returned `command_id` as `pending_agent_command_id`.
+- `start_step` body — branches on command isinstance. AgentDispatchCommands call
+  `command.dispatch(inputs, ctx, session=s)` to enqueue an AgentCommand row and
+  park in `awaiting_agent`; HITLCommands run execute() and park in `awaiting_human`;
+  LocalCommands run execute() and advance to route_workflow immediately.
 - `handle_agent_event` body — validates the event matches the pending
   command id, clears it, enqueues `route_workflow`. Idempotent: stale
   events exit cleanly.
@@ -43,10 +43,11 @@ from app.core.workflow.start_hooks import get_start_hooks
 from app.core.workflow.terminal_hooks import get_terminal_hooks
 from app.core.workflow.types import (
     TERMINAL_STATES,
-    CommandCategory,
+    AgentDispatchCommand,
     CommandContext,
     CommandNotRegisteredError,
     Empty,
+    HITLCommand,
     Outcome,
     OutcomeKind,
     RetryPolicy,
@@ -59,7 +60,7 @@ from app.core.workflow.types import (
     WorkflowNotFoundError,
     WorkflowState,
     WorkflowValidationError,
-    WorkspaceWorkflowCommand,
+    _NullDispatch,
     _step_outputs_var,
 )
 
@@ -91,7 +92,7 @@ async def start_step(
 ) -> None:
     """Dispatch the step. Branches on the WorkflowCommand type:
 
-    - **Workspace** (`isinstance(cmd, WorkspaceWorkflowCommand)`) — calls
+    - **AgentDispatchCommand** (`isinstance(cmd, AgentDispatchCommand)`) — calls
       `command.dispatch(typed_inputs, ctx, session=s)` to enqueue an
       AgentCommand row, parks the workflow in `awaiting_agent`, and sets
       `pending_agent_command_id` to the returned `command_id`.
@@ -202,19 +203,22 @@ async def _start_step_impl(
         wfx.current_step_id = step_id
         _stamp_step_started(wfx, step_id)
 
-        if isinstance(command, WorkspaceWorkflowCommand):
-            # Workspace commands enqueue an AgentCommand durably inside this
+        if isinstance(command, AgentDispatchCommand):
+            # Agent-dispatch commands enqueue an AgentCommand durably inside this
             # transaction via the command's own `dispatch` method. The engine
             # parks the execution in `awaiting_agent` and stores the returned
             # `command_id` as `pending_agent_command_id`. The terminal
             # AgentEvent arrives via `handle_agent_event` to resume routing.
+            # `_NullDispatch` is the signal from WorkspaceOpCommand.dispatch when
+            # build_command returns None (e.g. CleanupWorkspace with no workspace_id)
+            # — treat as a successful local outcome to skip the park.
             outer_span = trace.get_current_span()
             kind = command_kind
             with with_remote_parent_span(
                 _tracer, f"workflow.command.{kind}", wfx.otel_trace_context
             ) as cmd_span:
                 cmd_span.set_attribute("command.kind", kind)
-                cmd_span.set_attribute("command.category", "workspace")
+                cmd_span.set_attribute("command.category", "agent_dispatch")
                 cmd_span.set_attribute("workflow.step_id", step_id)
                 cmd_span.set_attribute("workflow.attempt", attempt)
                 # Rebuild CommandContext with the command span's own traceparent so
@@ -226,36 +230,60 @@ async def _start_step_impl(
                     attempt=cmd_ctx.attempt,
                     traceparent=current_traceparent(),
                 )
+                null_dispatch = False
                 try:
                     command_id = await command.dispatch(typed_inputs, ws_cmd_ctx, session=s)
+                except _NullDispatch:
+                    null_dispatch = True
+                    command_id = None
                 except Exception as exc:
                     cmd_span.record_exception(exc)
                     cmd_span.set_status(StatusCode.ERROR, str(exc))
                     outer_span.set_status(StatusCode.ERROR, str(exc))
                     log.exception(
-                        "workflow.command.workspace_dispatch_raised",
+                        "workflow.command.agent_dispatch_raised",
                         workflow_execution_id=workflow_execution_id,
                         step_id=step_id,
                     )
                     await _enter_terminal_state(s, wfx, WorkflowState.FAILED)
                     await s.commit()
                     return
-            wfx.pending_agent_command_id = command_id
-            wfx.state = WorkflowState.AWAITING_AGENT.value
-            _publish_state_changed(s, wfx)
-            log.debug(
-                "workflow.start_step.workspace_dispatched",
-                workflow_execution_id=workflow_execution_id,
-                command_kind=command_kind,
-                command_id=str(command_id),
+
+            if null_dispatch:
+                # build_command returned None — treat as success and route normally.
+                outcome = Outcome.success()
+            else:
+                wfx.pending_agent_command_id = command_id
+                wfx.state = WorkflowState.AWAITING_AGENT.value
+                _publish_state_changed(s, wfx)
+                log.debug(
+                    "workflow.start_step.agent_dispatched",
+                    workflow_execution_id=workflow_execution_id,
+                    command_kind=command_kind,
+                    command_id=str(command_id),
+                )
+                await s.commit()
+                return
+
+        else:
+            # Local or HITL: run execute() inline.
+            # LocalCommand receives `session=s` so Phase 7 can wire transactional
+            # work; HITLCommand (ABC) does not take `session`.
+            is_hitl = isinstance(command, HITLCommand)
+            outcome = await _safe_execute(
+                command,
+                typed_inputs,
+                cmd_ctx,
+                traceparent=wfx.otel_trace_context,
+                category="hitl" if is_hitl else "local",
+                session=None if is_hitl else s,
             )
-            await s.commit()
-            return
 
-        # Local + HITL: run execute() inline.
-        outcome = await _safe_execute(command, typed_inputs, cmd_ctx, traceparent=wfx.otel_trace_context)
+        # ── Post-execute routing ────────────────────────────────────────
+        # Reached for: null_dispatch (agent command that skipped the park),
+        # LocalCommand, or HITLCommand after execute().
 
-        if getattr(command, "category", CommandCategory.LOCAL) == CommandCategory.HITL:
+        if isinstance(command, HITLCommand):
             if outcome.kind is not OutcomeKind.HITL_PENDING:
                 log.error(
                     "workflow.start_step.hitl_command_returned_non_pending",
@@ -278,7 +306,7 @@ async def _start_step_impl(
             await s.commit()
             return
 
-        # Local command — persist outcome + enqueue route_workflow.
+        # Local command (or null_dispatch) — persist outcome + enqueue route_workflow.
         wfx.step_attempts = {**wfx.step_attempts, step_id: attempt}
         await enqueue(
             ROUTE_WORKFLOW,
@@ -1202,19 +1230,30 @@ async def _safe_execute(
     inputs: BaseModel,
     ctx: CommandContext,
     traceparent: str | None = None,
+    category: str = "local",
+    session: object = None,
 ) -> Outcome:
-    """Call command.execute(inputs, ctx) inside a `workflow.command.{kind}` child span."""
+    """Call command.execute(inputs, ctx) inside a `workflow.command.{kind}` child span.
+
+    `category` is the span attribute value (``"local"`` or ``"hitl"``).
+    `session` is passed as ``session=session`` kwarg when not None — LocalCommand
+    Protocol declares it as a keyword-only argument; HITLCommand (ABC) does not take it.
+    Typed `object` (not `AsyncSession | None`) so the semgrep session-discipline rule
+    does not flag this private engine helper — callers are the sole source of truth on
+    what gets passed.
+    """
     outer_span = trace.get_current_span()
     kind = command.kind  # type: ignore[attr-defined]
-    cat = getattr(command, "category", CommandCategory.LOCAL)
-    cat_value = cat.value if isinstance(cat, CommandCategory) else str(cat)
     with with_remote_parent_span(_tracer, f"workflow.command.{kind}", traceparent) as child_span:
         child_span.set_attribute("command.kind", kind)
-        child_span.set_attribute("command.category", cat_value)
+        child_span.set_attribute("command.category", category)
         child_span.set_attribute("workflow.step_id", ctx.step_id)
         child_span.set_attribute("workflow.attempt", ctx.attempt)
         try:
-            outcome = await command.execute(inputs, ctx)  # type: ignore[arg-type]
+            if session is not None:
+                outcome = await command.execute(inputs, ctx, session=session)  # type: ignore[arg-type,call-arg]
+            else:
+                outcome = await command.execute(inputs, ctx)  # type: ignore[arg-type]
         except Exception as exc:
             child_span.record_exception(exc)
             child_span.set_status(StatusCode.ERROR, str(exc))

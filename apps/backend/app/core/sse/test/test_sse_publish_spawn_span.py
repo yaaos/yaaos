@@ -21,7 +21,6 @@ from opentelemetry import trace
 from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -61,13 +60,12 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 
 class _QuickLocal:
     kind = "SpawnSpanTestCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
     restart_safe = True
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 

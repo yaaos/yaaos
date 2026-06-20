@@ -131,7 +131,7 @@ async def test_post_findings_persists_canonical_finding_rows(db_session) -> None
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
     with register_stub_vcs(plugin_id="github") as stub:
-        outcome = await PostFindings().execute(inputs, ctx)
+        outcome = await PostFindings().execute(inputs, ctx, session=db_session)
 
     assert outcome.label == "success", f"unexpected failure: {outcome.failure_reason}"
     assert outcome.outputs.admitted_count == 2

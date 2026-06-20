@@ -32,7 +32,7 @@ from opentelemetry.trace import StatusCode
 from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -72,14 +72,13 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 # ── Test Workspace commands ────────────────────────────────────────────
 
 
-class _RecordingWs:
-    """Workspace command that records the CommandContext it received in dispatch().
+class _RecordingWs(AgentDispatchCommand):
+    """AgentDispatchCommand that records the CommandContext it received in dispatch().
 
     On success it returns a fake command_id (UUID). The test inspects
     `received_ctx` to confirm the traceparent was the command span's own."""
 
     kind = "ProvisionWs"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
     received_ctx = None  # populated by dispatch()
@@ -98,11 +97,10 @@ class _RecordingWs:
         return uuid4()
 
 
-class _RaisingWs:
-    """Workspace command whose dispatch() raises — tests the error path."""
+class _RaisingWs(AgentDispatchCommand):
+    """AgentDispatchCommand whose dispatch() raises — tests the error path."""
 
     kind = "ProvisionWsRaises"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
 
@@ -117,12 +115,11 @@ class _RaisingWs:
 
 class _SucceedingLocal:
     kind = "SpanCategoryLocalCmd"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

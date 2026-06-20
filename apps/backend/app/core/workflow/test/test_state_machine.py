@@ -29,9 +29,10 @@ from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
-    CommandCategory,
+    AgentDispatchCommand,
     CommandContext,
     Empty,
+    HITLCommand,
     Outcome,
     TerminalAction,
     Workflow,
@@ -66,10 +67,9 @@ def _recording(kind: str, outputs: dict[str, Any] | None = None):
     class _Cmd:
         Inputs = Empty
         Outputs = Empty
-        category = CommandCategory.LOCAL
         calls: list = _calls
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             _calls.append(
                 {
                     "inputs": inputs.model_dump(),
@@ -89,11 +89,10 @@ def _failing(kind: str):
     class _Cmd:
         Inputs = Empty
         Outputs = Empty
-        category = CommandCategory.LOCAL
         calls: int = 0
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-            del inputs, ctx
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
             type(self).calls += 1
             return Outcome.failure(reason="planned-failure")
 
@@ -107,10 +106,9 @@ def _raising(kind: str) -> type:
     class _Cmd:
         Inputs = Empty
         Outputs = Empty
-        category = CommandCategory.LOCAL
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-            del inputs, ctx
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
             raise RuntimeError("unexpected")
 
     _Cmd.kind = kind
@@ -120,9 +118,8 @@ def _raising(kind: str) -> type:
 # ── Concrete test commands that need class-level kind ────────────────────
 
 
-class _HitlAsk:
+class _HitlAsk(HITLCommand):
     kind = "AskHuman"
-    category = CommandCategory.HITL
     Inputs = Empty
     Outputs = Empty
 
@@ -131,8 +128,8 @@ class _HitlAsk:
         return Outcome.hitl_pending(question={"prompt": "approve?"})
 
 
-class _WorkspaceStub:
-    """Workspace-category command exercised by the engine's Workspace branch.
+class _WorkspaceStub(AgentDispatchCommand):
+    """AgentDispatchCommand exercised by the engine's AgentDispatch branch.
 
     `dispatch` returns a fresh UUID without writing an agent_commands row;
     these tests inject the terminal AgentEvent directly via `HANDLE_AGENT_EVENT`
@@ -141,11 +138,10 @@ class _WorkspaceStub:
     """
 
     kind = "DoOnAgent"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
         del inputs, ctx
         return Outcome.success()
 
@@ -363,10 +359,9 @@ async def test_typed_lambda_inputs_resolution(db_session) -> None:
         kind = "Provision"
         Inputs = Empty
         Outputs = _WorkspaceIdOut
-        category = CommandCategory.LOCAL
         calls: ClassVar[list] = []
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             type(self).calls.append(ctx.step_id)
             return Outcome.success(outputs=_WorkspaceIdOut(workspace_id="ws-123"))
 
@@ -374,10 +369,9 @@ async def test_typed_lambda_inputs_resolution(db_session) -> None:
         kind = "Review"
         Inputs = _ReviewIn
         Outputs = Empty
-        category = CommandCategory.LOCAL
         received_inputs: ClassVar[list] = []
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             type(self).received_inputs.append(inputs)  # type: ignore[arg-type]
             return Outcome.success()
 
@@ -419,10 +413,9 @@ async def test_typed_workflow_input_lambda(db_session) -> None:
         kind = "CaptureIn"
         Inputs: type[BaseModel]
         Outputs = Empty
-        category = CommandCategory.LOCAL
         received: ClassVar[list] = []
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             type(self).received.append(inputs)
             return Outcome.success()
 
@@ -761,11 +754,10 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 
     class _FailOnceCommand:
         kind = "DoReview"
-        category = CommandCategory.LOCAL
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs
             review_calls.append(ctx.step_id)
             if len(review_calls) == 1:
@@ -774,11 +766,10 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 
     class _RefreshCommand:
         kind = "DoRefresh"
-        category = CommandCategory.LOCAL
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs
             refresh_calls.append(ctx.step_id)
             return Outcome.success()
@@ -815,22 +806,20 @@ async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
 
     class _AlwaysFail:
         kind = "DoReview"
-        category = CommandCategory.LOCAL
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs, ctx
             review_calls.append("x")
             return Outcome.failure(reason="still expired", label="auth_expired")
 
     class _RefreshOk:
         kind = "DoRefresh"
-        category = CommandCategory.LOCAL
         Inputs = Empty
         Outputs = Empty
 
-        async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs, ctx
             refresh_calls.append("x")
             return Outcome.success()

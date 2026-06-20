@@ -6,7 +6,6 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from app.core.workflow import (
-    CommandCategory,
     Empty,
     Outcome,
     OutcomeKind,
@@ -96,9 +95,21 @@ def test_terminal_action_in_transitions_is_valid() -> None:
     assert wf.transitions[a]["success"] is TerminalAction.COMPLETE_WORKFLOW
 
 
-def test_command_category_enum_values() -> None:
-    # Sanity that the three categories are present and string-stable.
-    assert {c.value for c in CommandCategory} == {"workspace", "local", "hitl"}
+def test_command_discrimination_uses_isinstance() -> None:
+    """The engine uses isinstance checks on AgentDispatchCommand/HITLCommand, not a category enum."""
+    from app.core.workflow import AgentDispatchCommand, HITLCommand  # noqa: PLC0415
+
+    class _Local:
+        kind = "TestLocal"
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+            return Outcome.success()
+
+    cmd = _Local()
+    assert not isinstance(cmd, AgentDispatchCommand)
+    assert not isinstance(cmd, HITLCommand)
 
 
 def test_empty_model_frozen() -> None:

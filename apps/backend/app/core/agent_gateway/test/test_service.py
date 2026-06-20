@@ -27,7 +27,7 @@ from app.core.agent_gateway import (
 )
 from app.core.tasks import drain_once
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -168,9 +168,8 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
 
     test_org_id = uuid4()
 
-    class _NoopWs:
+    class _NoopWs(AgentDispatchCommand):
         kind = "NoopWs"
-        category = CommandCategory.WORKSPACE
         Inputs = Empty
         Outputs = Empty
         restart_safe = True
@@ -289,9 +288,8 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
 
     ws_org_id = uuid4()
 
-    class _NoopWs2:
+    class _NoopWs2(AgentDispatchCommand):
         kind = "NoopWs2"
-        category = CommandCategory.WORKSPACE
         Inputs = Empty
         Outputs = Empty
         restart_safe = True

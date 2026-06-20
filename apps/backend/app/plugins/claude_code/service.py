@@ -409,7 +409,7 @@ class ClaudeCodePlugin:
         """Claude Code requires an Anthropic API key delivered via BYOK."""
         return "anthropic"
 
-    def build_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
+    def compile_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
         Delegates argv/stdin/env composition to a synthetic ReviewContext
@@ -432,7 +432,7 @@ class ClaudeCodePlugin:
         missing = required - set(ctx_dict)
         if missing:
             raise CodingAgentError(
-                f"build_invocation: context missing required keys for pr_review: {sorted(missing)}"
+                f"compile_invocation: context missing required keys for pr_review: {sorted(missing)}"
             )
         review_ctx = _ReviewContext(
             org_id=ctx_dict["org_id"],

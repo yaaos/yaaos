@@ -34,7 +34,7 @@ from app.core.audit_log import ActorKind
 from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -48,13 +48,12 @@ from app.testing.workflow_harness import scoped_engine
 pytestmark = pytest.mark.service
 
 
-class _DispatchingWs:
-    """Workspace command whose `dispatch` enqueues a real agent_commands row
+class _DispatchingWs(AgentDispatchCommand):
+    """AgentDispatchCommand whose `dispatch` enqueues a real agent_commands row
     pre-stamped with the workflow_execution_id. `execute()` is unused — the
-    engine's Workspace branch never calls it."""
+    engine's AgentDispatch branch never calls it."""
 
     kind = "DispatchingWs"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
 
@@ -85,16 +84,15 @@ class _DispatchingWs:
 
 
 class _NoopLocal:
-    """Local terminal step — drains the workflow to DONE after the Workspace
+    """Local terminal step — drains the workflow to DONE after the AgentDispatch
     step's terminal event arrives."""
 
     kind = "DispatchingWsTerminal"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

@@ -254,12 +254,12 @@ async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> N
     )
 
 
-# ── ClaudeCodePlugin.build_invocation no longer emits ANTHROPIC_API_KEY ─────
+# ── ClaudeCodePlugin.compile_invocation no longer emits ANTHROPIC_API_KEY ─────
 
 
 @pytest.mark.service
-def test_build_invocation_does_not_emit_anthropic_api_key() -> None:
-    """`ClaudeCodePlugin.build_invocation` must NOT put ANTHROPIC_API_KEY in env.
+def test_compile_invocation_does_not_emit_anthropic_api_key() -> None:
+    """`ClaudeCodePlugin.compile_invocation` must NOT put ANTHROPIC_API_KEY in env.
 
     Key delivery is exclusively via ConfigUpdate byok_secrets, never via the
     InvokeCodingAgent exec env.
@@ -280,7 +280,7 @@ def test_build_invocation_does_not_emit_anthropic_api_key() -> None:
         },
         wallclock_seconds=300,
     )
-    result = ClaudeCodePlugin().build_invocation(inv)
+    result = ClaudeCodePlugin().compile_invocation(inv)
     assert "ANTHROPIC_API_KEY" not in result.env, (
-        f"build_invocation must NOT set ANTHROPIC_API_KEY in env; got env keys: {list(result.env.keys())}"
+        f"compile_invocation must NOT set ANTHROPIC_API_KEY in env; got env keys: {list(result.env.keys())}"
     )

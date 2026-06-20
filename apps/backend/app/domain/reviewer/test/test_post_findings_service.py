@@ -22,18 +22,21 @@ def _ctx() -> CommandContext:
     )
 
 
-async def test_empty_stdout_returns_success_zero_count() -> None:
+async def test_empty_stdout_returns_success_zero_count(db_session) -> None:  # type: ignore[no-untyped-def]
     """No stdout → zero findings, success without calling the DB."""
-    outcome = await PostFindings().execute(PostFindingsInputs(output="", org_id=uuid4()), _ctx())
+    outcome = await PostFindings().execute(
+        PostFindingsInputs(output="", org_id=uuid4()), _ctx(), session=db_session
+    )
     assert outcome.label == "success"
     assert outcome.outputs.admitted_count == 0
 
 
-async def test_nonconforming_output_returns_schema_invalid_failure() -> None:
+async def test_nonconforming_output_returns_schema_invalid_failure(db_session) -> None:  # type: ignore[no-untyped-def]
     """output that contains no terminal result event → schema_invalid failure."""
     outcome = await PostFindings().execute(
         PostFindingsInputs(output="not valid json stream output", org_id=uuid4()),
         _ctx(),
+        session=db_session,
     )
     assert outcome.label == "failure"
     assert outcome.failure_reason == "schema_invalid"

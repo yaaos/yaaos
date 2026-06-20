@@ -12,7 +12,6 @@ from sqlalchemy import select
 
 from app.core.tasks import drain_once
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -34,12 +33,11 @@ from app.core.workflow.models import WorkflowExecutionRow
 
 class _NoopCommand:
     kind = "Noop"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -330,13 +328,12 @@ class _FailOnce:
     """Fails the first call; succeeds all subsequent calls (class-level latch)."""
 
     kind = "FailOnce"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
     _fired: bool = False
 
-    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         if not self._fired:
             self._fired = True
             return Outcome.failure(reason="transient")
@@ -347,12 +344,11 @@ class _CleanupCommand:
     """Finalizer step that always succeeds."""
 
     kind = "Cleanup"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 

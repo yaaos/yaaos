@@ -28,7 +28,6 @@ from pydantic import BaseModel, ConfigDict
 from app.core.audit_log import list_for_entity
 from app.core.tasks import drain_once, get_broker, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
     Empty,
     Outcome,
@@ -51,13 +50,12 @@ class _LocalSuccess:
     """A LOCAL command that always returns success."""
 
     kind = "TermHookSuccessCmd"
-    category = CommandCategory.LOCAL
     restart_safe = True
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -65,7 +63,6 @@ class _LocalFail:
     """A LOCAL command that always returns failure with a given reason."""
 
     kind = "TermHookFailCmd"
-    category = CommandCategory.LOCAL
     restart_safe = True
     Inputs = Empty
     Outputs = Empty
@@ -73,8 +70,8 @@ class _LocalFail:
     def __init__(self, reason: str = "test_failure") -> None:
         self._reason = reason
 
-    async def execute(self, inputs: Empty, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.failure(reason=self._reason)
 
 

@@ -17,6 +17,7 @@ from app.core.workspace.commands import (
     RefreshWorkspaceAuthInputs,
     RefreshWorkspaceAuthOutputs,
 )
+from app.core.workspace.commands_base import WorkspaceOpCommand
 from app.core.workspace.dispatch import (
     dispatch_via_workspace,
     register_workspace_recovery_policies,
@@ -94,6 +95,7 @@ __all__ = [
     "WorkspaceExpiredError",
     "WorkspaceInfo",
     "WorkspaceNotFoundError",
+    "WorkspaceOpCommand",
     "WorkspaceOwner",
     "WorkspaceProvider",
     "WorkspaceProvisionError",

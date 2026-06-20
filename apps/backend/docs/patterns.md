@@ -274,11 +274,11 @@ When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(..
 
 ## WorkflowCommand discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories:
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three families:
 
-- **Workspace** — implements `WorkspaceWorkflowCommand` (adds `dispatch(inputs, ctx, *, session) -> UUID` to the base `WorkflowCommand` Protocol). `start_step` calls `dispatch` inside its own transaction to enqueue an `agent_commands` row pre-stamped with `workflow_execution_id`, parks the workflow in `awaiting_agent` on the returned `command_id`, and resumes via `handle_agent_event` when the terminal event arrives. Worker never blocks on the agent.
-- **Local** — implements `WorkflowCommand.execute(inputs, ctx) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
-- **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
+- **AgentDispatch** — subclasses of `AgentDispatchCommand` (ABC). `@final dispatch(inputs, ctx, *, session) -> UUID` is inherited; subclasses implement `build_command` (for `WorkspaceOpCommand`) or `build_invocation` (for `CodingAgentCommand`). `start_step` identifies them via `isinstance(cmd, AgentDispatchCommand)`, calls `dispatch`, parks in `awaiting_agent`, and stores the returned `command_id` as `pending_agent_command_id`. Worker never blocks on the agent.
+- **Local** — plain structural `LocalCommand` Protocol; `execute(inputs, ctx, *, session) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
+- **HITL** — subclasses of `HITLCommand` (ABC); `execute(inputs, ctx) -> Outcome` (no session). Must return `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 
 Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
 
@@ -397,7 +397,7 @@ When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer
 Mechanics:
 
 - **Real Postgres via `db_session`.** Transactional rollback per test — production code's `session()` hits the override; inner `commit()` calls become SAVEPOINT releases; outer transaction rolls back on teardown. Empty DB at start of each test.
-- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that implements `build_invocation` + `parse_result` without spawning any CLI. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
+- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that implements `compile_invocation` + `parse_result` without spawning any CLI. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
 - **HTTP routes via `httpx.ASGITransport`.** Drive endpoints in-process without a network listener. The pattern is already used by `app/domain/integrations/test/test_endpoints.py`, `app/domain/mcp_proxy/test/test_dispatch.py`, etc.
 - **Seed helpers from `app/testing/e2e_setup/`.** `seed_github_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
 

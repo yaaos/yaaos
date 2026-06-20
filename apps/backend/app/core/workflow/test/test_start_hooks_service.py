@@ -19,7 +19,6 @@ from app.core.audit_log import ActorKind
 from app.core.auth import org_context
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
     Empty,
     Outcome,
     TerminalAction,
@@ -38,12 +37,11 @@ class _NoopLocal:
     """Minimal local command that terminates the workflow successfully."""
 
     kind = "StartHookNoopLocal"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx: Any) -> Outcome:
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: Any, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
 
 

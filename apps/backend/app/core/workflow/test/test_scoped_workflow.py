@@ -13,18 +13,16 @@ from app.core.workflow import (
     get_engine,
     step,
 )
-from app.core.workflow.types import CommandCategory
 from app.testing.workflow_harness import scoped_workflow
 
 
 class _NoopLocal:
     kind = "ScopedTestNoop"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

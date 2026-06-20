@@ -42,7 +42,7 @@ from sqlalchemy import select as sa_select
 from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, enqueue, get_pending_outbox_payloads, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
     Empty,
     Outcome,
     TerminalAction,
@@ -83,11 +83,10 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 # ── Command stubs ──────────────────────────────────────────────────────
 
 
-class _MinimalWs:
-    """Workspace command that parks AWAITING_AGENT with a synthetic command_id."""
+class _MinimalWs(AgentDispatchCommand):
+    """AgentDispatchCommand that parks AWAITING_AGENT with a synthetic command_id."""
 
     kind = "HierarchyTestWs"
-    category = CommandCategory.WORKSPACE
     Inputs = Empty
     Outputs = Empty
     dispatched_id: UUID | None = None
@@ -104,23 +103,21 @@ class _MinimalWs:
 
 class _TerminalLocal:
     kind = "HierarchyTestTerminal"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _NoopLocal:
     kind = "HierarchyTestNoop"
-    category = CommandCategory.LOCAL
     Inputs = Empty
     Outputs = Empty
 
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 

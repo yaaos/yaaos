@@ -25,7 +25,7 @@ def _cmd_ctx() -> CommandContext:
     )
 
 
-async def test_secrets_scan_skips_when_diff_contains_aws_key() -> None:
+async def test_secrets_scan_skips_when_diff_contains_aws_key(db_session) -> None:  # type: ignore[no-untyped-def]
     """A `+`-prefixed line with an AWS access-key pattern triggers
     `Outcome.success(label="skip", outputs.rule_id="aws_access_key")`
     and posts the warning via `vcs.post_comment`."""
@@ -34,7 +34,7 @@ async def test_secrets_scan_skips_when_diff_contains_aws_key() -> None:
     inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id=pr_external_id)
     with register_stub_vcs(plugin_id="github") as stub:
         stub.set_diff(pr_external_id, Diff(raw=leaked, files=[]))
-        outcome = await SecretsScan().execute(inputs, _cmd_ctx())
+        outcome = await SecretsScan().execute(inputs, _cmd_ctx(), session=db_session)
 
     assert outcome.label == "skip"
     assert outcome.outputs.rule_id == "aws_access_key"
@@ -44,14 +44,14 @@ async def test_secrets_scan_skips_when_diff_contains_aws_key() -> None:
     assert "aws_access_key" in comment_body
 
 
-async def test_secrets_scan_advances_when_diff_is_clean() -> None:
+async def test_secrets_scan_advances_when_diff_is_clean(db_session) -> None:  # type: ignore[no-untyped-def]
     """A clean diff returns `Outcome.success` with rule_id=None — no
     `skip` label, so the workflow advances to ProvisionWorkspace."""
     pr_external_id = "pr-clean"
     inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id=pr_external_id)
     with register_stub_vcs(plugin_id="github") as stub:
         stub.set_diff(pr_external_id, Diff(raw="+def foo(): return 42\n", files=[]))
-        outcome = await SecretsScan().execute(inputs, _cmd_ctx())
+        outcome = await SecretsScan().execute(inputs, _cmd_ctx(), session=db_session)
 
     assert outcome.label == "success"
     assert outcome.outputs.rule_id is None
@@ -59,16 +59,16 @@ async def test_secrets_scan_advances_when_diff_is_clean() -> None:
     assert stub.posted_comments == []
 
 
-async def test_secrets_scan_advances_when_no_pr_link() -> None:
+async def test_secrets_scan_advances_when_no_pr_link(db_session) -> None:  # type: ignore[no-untyped-def]
     """Workflows whose ticket has no `pr_external_id` skip the gate as a no-op."""
     inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id=None)
-    outcome = await SecretsScan().execute(inputs, _cmd_ctx())
+    outcome = await SecretsScan().execute(inputs, _cmd_ctx(), session=db_session)
 
     assert outcome.label == "success"
     assert outcome.outputs.rule_id is None
 
 
-async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
+async def test_secrets_scan_advances_when_diff_fetch_fails(db_session) -> None:  # type: ignore[no-untyped-def]
     """Diff-fetch failures are best-effort — log + advance. We don't
     want a transient VCS hiccup to block reviews."""
 
@@ -82,7 +82,7 @@ async def test_secrets_scan_advances_when_diff_fetch_fails() -> None:
 
     inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id="pr-x")
     with scoped_vcs_plugin(_RaisingPlugin()):  # type: ignore[arg-type]
-        outcome = await SecretsScan().execute(inputs, _cmd_ctx())
+        outcome = await SecretsScan().execute(inputs, _cmd_ctx(), session=db_session)
 
     assert outcome.label == "success"
     assert outcome.outputs.rule_id is None

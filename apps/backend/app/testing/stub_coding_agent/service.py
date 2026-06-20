@@ -3,12 +3,12 @@
 The bootstrap (when `YAAOS_CODING_AGENT_STUB` is set) walks the
 `core/coding_agent` registry and replaces each registered plugin with a
 `StubCodingAgentPlugin` wrapping it. From every consumer's perspective, nothing
-changes — `dispatch_invocation` builds the exec block via `plugin.build_invocation`
+changes — `dispatch_invocation` builds the exec block via `plugin.compile_invocation`
 and calls `plugin.parse_result` on terminal events; it just never touches a real
 CLI or vendor API.
 
 The stub returns canned success results for the two Protocol methods:
-`build_invocation` and `parse_result`. It has zero knowledge of prompt content —
+`compile_invocation` and `parse_result`. It has zero knowledge of prompt content —
 that's the real plugin's responsibility.
 """
 
@@ -75,13 +75,13 @@ _STUB_LATENCY_MS = 10
 
 
 class StubCodingAgentPlugin:
-    """Wraps a real `CodingAgentPlugin`; intercepts `build_invocation` and `parse_result`."""
+    """Wraps a real `CodingAgentPlugin`; intercepts `compile_invocation` and `parse_result`."""
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self.plugin_id = wrapped.plugin_id
 
-    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+    def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a minimal stub exec block — argv=["stub"], empty env."""
         return InvokeCodingAgent(
             argv=["stub"],

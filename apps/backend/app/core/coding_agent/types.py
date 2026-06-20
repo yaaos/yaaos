@@ -1,7 +1,7 @@
 """Types + Protocol for the coding-agent abstraction.
 
 `CodingAgentPlugin` is the Protocol every coding-agent plugin must satisfy:
-`build_invocation` translates a high-level `Invocation` into a concrete
+`compile_invocation` translates a high-level `Invocation` into a concrete
 `InvokeCodingAgent` exec block; `parse_result` decodes a terminal AgentEvent
 payload into a `RunResult`; `validate_settings` validates and normalizes a raw
 settings dict. Plugins own skill resolution, model mapping, stdout parsing, and
@@ -26,11 +26,11 @@ Effort = str
 
 
 class Invocation(BaseModel):
-    """High-level intent passed to `CodingAgentPlugin.build_invocation`.
+    """High-level intent passed to `CodingAgentPlugin.compile_invocation`.
 
     Carries the skill name, model, effort level, generic context dict
     (plugin interprets the keys for the skill), and the wallclock cap.
-    Pure data — no exec block. `build_invocation` translates this into
+    Pure data — no exec block. `compile_invocation` translates this into
     an `InvokeCodingAgent` with the concrete argv/env/stdin the agent runs.
     """
 
@@ -42,7 +42,7 @@ class Invocation(BaseModel):
 
 
 class InvokeCodingAgent(BaseModel):
-    """Concrete exec block returned by `CodingAgentPlugin.build_invocation`.
+    """Concrete exec block returned by `CodingAgentPlugin.compile_invocation`.
 
     Carries the exact argv, env overrides, optional stdin, and wallclock
     cap the Go agent uses to spawn the Claude Code subprocess.
@@ -172,7 +172,7 @@ class CodingAgentPlugin(Protocol):
     """Protocol every coding-agent plugin must satisfy.
 
     `plugin_id` identifies the plugin in the registry and on run rows.
-    `build_invocation` is a pure function that translates a high-level
+    `compile_invocation` is a pure function that translates a high-level
     `Invocation` into a concrete `InvokeCodingAgent` exec block.
     `parse_result` is a pure function that decodes a terminal AgentEvent
     payload dict into a `RunResult`.
@@ -182,7 +182,7 @@ class CodingAgentPlugin(Protocol):
 
     plugin_id: str
 
-    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+    def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
         Pure function — no IO, no session. The plugin owns skill resolution

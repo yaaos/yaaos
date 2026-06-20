@@ -102,7 +102,7 @@ async def dispatch_invocation(
     """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
     (Layer 3 → Layer 2 → Layer 1), and insert a run row.
 
-    Calls `plugin.build_invocation(invocation)` to get the exec block, builds
+    Calls `plugin.compile_invocation(invocation)` to get the exec block, builds
     an `InvokeClaudeCodeCommand`, and delegates to `dispatch_via_workspace`
     with `claim_workspace=True` — which loads the workspace row (for `org_id`
     + `owning_agent_id`), enqueues, pins to the owning agent, and atomically
@@ -110,7 +110,7 @@ async def dispatch_invocation(
     `command_id`. Durable iff the caller's transaction commits.
 
     Raises:
-        `CodingAgentError` — `plugin.build_invocation` failed.
+        `CodingAgentError` — `plugin.compile_invocation` failed.
         `WorkspaceNotFoundError` — workspace row absent.
         `WorkspaceClaimFailed` — workspace busy or inactive.
     """
@@ -132,7 +132,7 @@ async def dispatch_invocation(
     if owner is None:
         raise WorkspaceNotFoundError(f"workspace {workspace_id} not found")
 
-    invocation_data = plugin.build_invocation(invocation)
+    invocation_data = plugin.compile_invocation(invocation)
 
     # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`

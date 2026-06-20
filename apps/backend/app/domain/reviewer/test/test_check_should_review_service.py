@@ -14,9 +14,11 @@ import pytest
 
 from app.core.workflow import CommandContext
 from app.domain.reviewer.commands import (
-    SKIP_LABELS,
     CheckShouldReview,
     CheckShouldReviewInputs,
+)
+from app.domain.reviewer.commands.check_should_review import (
+    SKIP_LABELS,
     _decide_skip,
 )
 
@@ -75,40 +77,45 @@ def _ctx() -> CommandContext:
 
 
 @pytest.mark.asyncio
-async def test_skip_when_draft() -> None:
-    outcome = await CheckShouldReview().execute(CheckShouldReviewInputs(is_draft=True), _ctx())
+async def test_skip_when_draft(db_session) -> None:  # type: ignore[no-untyped-def]
+    outcome = await CheckShouldReview().execute(
+        CheckShouldReviewInputs(is_draft=True), _ctx(), session=db_session
+    )
     assert outcome.label == "skip"
     assert outcome.outputs.skip_reason == "draft"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
-async def test_skip_when_fork() -> None:
-    outcome = await CheckShouldReview().execute(CheckShouldReviewInputs(is_draft=False, is_fork=True), _ctx())
+async def test_skip_when_fork(db_session) -> None:  # type: ignore[no-untyped-def]
+    outcome = await CheckShouldReview().execute(
+        CheckShouldReviewInputs(is_draft=False, is_fork=True), _ctx(), session=db_session
+    )
     assert outcome.label == "skip"
     assert outcome.outputs.skip_reason == "fork"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
-async def test_skip_when_skip_label_present() -> None:
+async def test_skip_when_skip_label_present(db_session) -> None:  # type: ignore[no-untyped-def]
     outcome = await CheckShouldReview().execute(
-        CheckShouldReviewInputs(is_draft=False, is_fork=False, labels=("WIP",)), _ctx()
+        CheckShouldReviewInputs(is_draft=False, is_fork=False, labels=("WIP",)), _ctx(), session=db_session
     )
     assert outcome.label == "skip"
     assert outcome.outputs.skip_reason.startswith("label:")  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
-async def test_skip_when_bot_author() -> None:
+async def test_skip_when_bot_author(db_session) -> None:  # type: ignore[no-untyped-def]
     outcome = await CheckShouldReview().execute(
         CheckShouldReviewInputs(is_draft=False, is_fork=False, labels=(), author_login="dependabot[bot]"),
         _ctx(),
+        session=db_session,
     )
     assert outcome.label == "skip"
     assert outcome.outputs.skip_reason == "bot_author"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
-async def test_happy_path_returns_success() -> None:
+async def test_happy_path_returns_success(db_session) -> None:  # type: ignore[no-untyped-def]
     outcome = await CheckShouldReview().execute(
         CheckShouldReviewInputs(
             is_draft=False,
@@ -117,5 +124,6 @@ async def test_happy_path_returns_success() -> None:
             author_login="alice",
         ),
         _ctx(),
+        session=db_session,
     )
     assert outcome.label == "success"
