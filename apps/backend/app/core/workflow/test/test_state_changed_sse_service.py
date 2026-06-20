@@ -5,7 +5,7 @@ subscriber receives one `workflow_state_changed` per transition, with the
 new state value carried on the payload. Catches the most common
 regression — adding a new state assignment without wiring the publish.
 
-The org_id used here matches the value passed in via `ticket_payload` so
+The org_id used here matches the value passed in via `workflow_input` so
 `_workflow_org_id` resolves it through the fallback path (no
 `OrgContextMiddleware` in this test harness).
 """

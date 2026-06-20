@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 
 from app.core.database import get_sessionmaker
 from app.core.vcs import VCSPullRequest
-from app.core.workflow import WorkflowEngine, bind_engine
+from app.core.workflow import WorkflowEngine
 from app.domain.reviewer.incremental_trigger import start_incremental_review
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import attach_pr_to_ticket
@@ -34,6 +34,7 @@ from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 from app.testing.seed import delete_pull_request, delete_ticket
 from app.testing.stub_vcs import register_stub_vcs
+from app.testing.workflow_harness import scoped_engine
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -159,29 +160,25 @@ async def test_concurrent_pushes_produce_exactly_one_review_row(
     pr_id = await _seed_pr_and_ticket(org_id, _seeded)
 
     engine = _RecordingEngine()
-    prior_engine = bind_engine(engine)
-    try:
-        with register_stub_vcs(plugin_id=_PLUGIN_ID) as stub:
-            # detect_force_push returns False by default → not a force push → is ancestor.
-            # No commit messages configured → no base-merge signal.
-            stub.set_force_push(_REPO_EXTERNAL_ID, _PREV_SHA, _HEAD_SHA, False)
+    with scoped_engine(engine), register_stub_vcs(plugin_id=_PLUGIN_ID) as stub:
+        # detect_force_push returns False by default → not a force push → is ancestor.
+        # No commit messages configured → no base-merge signal.
+        stub.set_force_push(_REPO_EXTERNAL_ID, _PREV_SHA, _HEAD_SHA, False)
 
-            results = await asyncio.gather(
-                start_incremental_review(
-                    pr_id,
-                    new_head_sha=_HEAD_SHA,
-                    prev_head_sha=_PREV_SHA,
-                    org_id=org_id,
-                ),
-                start_incremental_review(
-                    pr_id,
-                    new_head_sha=_HEAD_SHA,
-                    prev_head_sha=_PREV_SHA,
-                    org_id=org_id,
-                ),
-            )
-    finally:
-        bind_engine(prior_engine)
+        results = await asyncio.gather(
+            start_incremental_review(
+                pr_id,
+                new_head_sha=_HEAD_SHA,
+                prev_head_sha=_PREV_SHA,
+                org_id=org_id,
+            ),
+            start_incremental_review(
+                pr_id,
+                new_head_sha=_HEAD_SHA,
+                prev_head_sha=_PREV_SHA,
+                org_id=org_id,
+            ),
+        )
 
     scheduled_results = [r for r in results if r == "scheduled"]
     skipped_results = [r for r in results if r == "skipped:in_flight"]

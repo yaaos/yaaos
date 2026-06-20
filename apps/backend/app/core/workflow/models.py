@@ -50,8 +50,8 @@ class WorkflowExecutionRow(Base):
     # is consumed and the terminal FAILED state is recorded.
     pending_failure_step_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     pending_failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The ticket_payload supplied at engine.start() time. Resolver reads
-    # $ticket.<field> expressions from this column rather than step_state.
+    # The workflow_input supplied at engine.start() time. Lambda inputs_factory
+    # callbacks read typed snapshot fields from this column.
     workflow_input: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

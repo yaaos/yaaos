@@ -2,11 +2,6 @@
 
 Provides `scoped_engine` and `scoped_workflow` context managers that give
 service tests full engine isolation without touching `core/workflow` internals.
-Both helpers import only `core/workflow`'s production `__all__` API.
-
-Import pattern::
-
-    from app.testing.workflow_harness import scoped_engine, scoped_workflow
 """
 
 from __future__ import annotations
@@ -14,31 +9,31 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import app.core.workflow.service as _wf_svc
 from app.core.workflow import (
     Workflow,
     WorkflowEngine,
     WorkflowNotFoundError,
-    bind_engine,
     get_engine,
     register_workflow,
-    unregister_workflow,
 )
 
 
 @contextmanager
-def scoped_engine() -> Iterator[WorkflowEngine]:
-    """Context manager: swap in a fresh engine for the duration of the block.
+def scoped_engine(engine: WorkflowEngine | None = None) -> Iterator[WorkflowEngine]:
+    """Context manager: swap in a fresh (or supplied) engine for the duration of
+    the block, restoring the prior singleton on exit — even on exception.
 
-    The prior engine (if any) is restored on exit — even if an exception is
-    raised. Tests that need to register custom commands or workflows without
+    Tests that need to register custom commands or workflows without
     contaminating the process-singleton engine use this helper.
     """
-    fresh = WorkflowEngine()
-    prior = bind_engine(fresh)
+    fresh = engine if engine is not None else WorkflowEngine()
+    prior = _wf_svc._engine
+    _wf_svc._engine = fresh
     try:
         yield fresh
     finally:
-        bind_engine(prior)
+        _wf_svc._engine = prior
 
 
 @contextmanager
@@ -49,7 +44,7 @@ def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
 
     If the same (name, version) pair was already registered, the prior entry is
     saved and re-registered on exit. If it was not registered, the workflow is
-    simply unregistered on exit.
+    simply removed on exit.
     """
     engine = get_engine()
     try:
@@ -57,13 +52,15 @@ def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
     except WorkflowNotFoundError:
         prior = None
 
-    if prior is not None:
-        unregister_workflow(wf.name, wf.version)
+    key = (wf.name, wf.version)
+    engine._workflows.pop(key, None)
+    engine._recovery_maps.pop(key, None)
     register_workflow(wf)
     try:
         yield wf
     finally:
-        unregister_workflow(wf.name, wf.version)
+        engine._workflows.pop(key, None)
+        engine._recovery_maps.pop(key, None)
         if prior is not None:
             register_workflow(prior)
 

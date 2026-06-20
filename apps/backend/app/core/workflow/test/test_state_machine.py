@@ -47,8 +47,8 @@ from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionR
 from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 
 # ── Command factory helpers ──────────────────────────────────────────────
-# Phase 3 requires `kind` as a CLASS attribute (not constructor arg).
-# These factories produce concrete subclasses with class-level `kind`.
+# `kind` is a CLASS attribute (not a constructor arg) on all command types.
+# These factories produce concrete subclasses with a class-level `kind`.
 
 
 def _recording(kind: str, outputs: dict[str, Any] | None = None):
@@ -56,8 +56,8 @@ def _recording(kind: str, outputs: dict[str, Any] | None = None):
 
     The CommandClass has `kind` as a class attribute and a `calls` list
     (also a class attribute) that records each `execute` invocation.
-    Pre-register the returned instance via `register_command` so the engine
-    uses YOUR instance, not an auto-discovered one.
+    Register the workflow via `register_workflow` before running; the engine
+    discovers command classes from `wf.steps[*].command_class` automatically.
     """
     _calls: list[dict] = []
     _out = outputs or {}

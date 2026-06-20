@@ -504,7 +504,7 @@ Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shut
 
 `app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
 
-`app.testing.workflow_harness.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine via `core.workflow.bind_engine`, yields it, and restores the prior engine on exit — even on exception. Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
+`app.testing.workflow_harness.scoped_engine(engine=None)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh (or supplied) engine, restores the prior process-singleton on exit — even on exception. Supply an `engine` argument to install a pre-built subclass (e.g. a recording engine). Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 
 `core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
