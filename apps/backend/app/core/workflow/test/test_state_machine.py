@@ -64,9 +64,12 @@ def _recording(kind: str, outputs: dict[str, Any] | None = None):
     # Build a typed Pydantic model from the outputs dict so Outcome.success
     # receives a BaseModel (not a bare dict). The field types are inferred from
     # the values and are only used internally by the engine's serialisation path.
-    _fields: dict[str, Any] = {k: (type(v), v) for k, v in _raw.items()}
-    _OutModel: type[BaseModel] = create_model(f"_{kind}Out", **_fields) if _fields else Empty  # type: ignore[assignment]
-    _out_instance: BaseModel = _OutModel() if not _fields else _OutModel(**_raw)
+    _out_instance: BaseModel
+    if _raw:
+        _fields: dict[str, Any] = {k: (type(v), v) for k, v in _raw.items()}
+        _out_instance = create_model(f"_{kind}Out", **_fields)(**_raw)
+    else:
+        _out_instance = Empty()
 
     class _Cmd:
         Inputs = Empty
