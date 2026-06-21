@@ -14,32 +14,18 @@ import pytest
 from app.core import byok
 from app.core.audit_log import Actor
 from app.core.workflow import CommandContext
-from app.core.workspace import (
-    WorkspaceTicketContext,
-    get_workspace_command_state,
-    register_workflow_context_provider,
-)
+from app.core.workspace import get_workspace_command_state
 from app.domain.orgs import create_org
-from app.domain.reviewer.commands import CodeReview
+from app.domain.reviewer.commands import CodeReview, CodeReviewInputs
 from app.testing.seed import seed_agent as _seed_agent
 from app.testing.seed import seed_workspace as _seed_workspace
 
 pytestmark = pytest.mark.service
 
 
-class _StaticTicketContextProvider:
-    def __init__(self, ctx: WorkspaceTicketContext) -> None:
-        self._ctx = ctx
-
-    async def get_workspace_ticket_context(self, ticket_id: UUID) -> WorkspaceTicketContext:
-        del ticket_id
-        return self._ctx
-
-
 @pytest.mark.asyncio
 async def test_code_review_dispatch_new_path(
     db_session,
-    workflow_context_provider_isolation,
     plugin_registries_isolation,
 ) -> None:
     """CodeReview.dispatch inserts agent_commands + coding_agent_runs rows and claims
@@ -68,22 +54,15 @@ async def test_code_review_dispatch_new_path(
     await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
-    # Install a context provider that returns a minimal valid WorkspaceTicketContext.
-    register_workflow_context_provider(
-        _StaticTicketContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="owner/repo",
-                payload={
-                    "head_sha": "deadbeef",
-                    "base_sha": "babecafe",
-                    "pr_external_id": "42",
-                },
-            )
-        )
+    # Build typed inputs directly — no context provider needed.
+    inputs = CodeReviewInputs(
+        workspace_id=ws_id,
+        org_id=org_id,
+        repo_external_id="owner/repo",
+        pr_external_id="42",
+        head_sha="deadbeef",
+        base_sha="babecafe",
     )
-
     ctx = CommandContext(
         ticket_id=str(uuid4()),
         workflow_execution_id=str(wfx_id),
@@ -93,7 +72,7 @@ async def test_code_review_dispatch_new_path(
 
     cmd = CodeReview()
     command_id = await cmd.dispatch(
-        {"workspace_id": str(ws_id)},
+        inputs,
         ctx,
         session=db_session,
     )

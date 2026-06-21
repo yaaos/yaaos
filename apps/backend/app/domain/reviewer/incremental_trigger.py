@@ -151,14 +151,7 @@ async def start_incremental_review(
         await get_engine().start(
             workflow_name="incremental_review_v1",
             ticket_id=str(ticket.id),
-            ticket_payload={
-                "review_id": str(review_id),
-                "pr_id": str(pr.id),
-                "pr_external_id": pr.external_id,
-                "prev_sha": decision.scope.base_sha,
-                "head_sha": decision.scope.head_sha,
-                "base_sha": decision.scope.base_sha,
-            },
+            workflow_input=None,
             session=s,
         )
         await s.commit()

@@ -27,20 +27,33 @@ _SECRET_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private_key_pem", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
 )
 
+# AWS-published example access-key IDs. Documented placeholders that appear in
+# AWS's own IAM docs and in countless tutorials/fixtures; matching the AKIA
+# regex but never real credentials. Skip them so PRs that ship AWS doc snippets
+# or secrets-scan test fixtures aren't refused.
+_KNOWN_FAKE_SECRETS: frozenset[str] = frozenset(
+    {
+        "AKIAIOSFODNN7EXAMPLE",
+        "AKIAI44QH8DHBEXAMPLE",
+    }
+)
+
 
 def detect_secrets(diff: Diff) -> str | None:
     """Return the first secret-rule id matched by an added line in `diff`,
     or None when no secret pattern is observed.
 
     Only `+`-prefixed lines (excluding `+++` filename headers) are scanned
-    — a removed secret isn't a leak going forward.
+    — a removed secret isn't a leak going forward. Matches whose value is in
+    `_KNOWN_FAKE_SECRETS` are skipped and scanning continues.
     """
     for raw_line in (diff.raw or "").splitlines():
         if not raw_line.startswith("+") or raw_line.startswith("+++"):
             continue
         for rule_id, pat in _SECRET_RULES:
-            if pat.search(raw_line):
-                return rule_id
+            for match in pat.finditer(raw_line):
+                if match.group(0) not in _KNOWN_FAKE_SECRETS:
+                    return rule_id
     return None
 
 

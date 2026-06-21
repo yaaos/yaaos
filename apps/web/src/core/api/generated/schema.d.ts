@@ -2305,7 +2305,7 @@ export interface components {
             /** State */
             state: string;
             /** Steps */
-            steps: components["schemas"]["WorkflowStepSummary"][];
+            steps: components["schemas"]["WorkflowStepEntry"][];
             /**
              * Updated At
              * Format: date-time
@@ -2317,10 +2317,10 @@ export interface components {
             workflow_version: number;
         };
         /**
-         * WorkflowStepSummary
+         * WorkflowStepEntry
          * @description One step in a workflow run, projected for the ticket Activity tab.
          */
-        WorkflowStepSummary: {
+        WorkflowStepEntry: {
             /** Command Kind */
             command_kind: string;
             /** Completed At */

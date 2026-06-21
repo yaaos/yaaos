@@ -40,7 +40,7 @@ No "service classes". A module-level `async def` is the right shape for business
 
 - HTTP bodies (FastAPI handles this).
 - Webhook payloads parsed into Pydantic models before any business logic.
-- Coding-agent CLI stdout parsed by `plugin.parse_result(terminal_event_payload)` into `RunResult`; the run-sink writes this to `coding_agent_runs`. Post-processing of the agent's text output (`parse_review_output` → `list[ReportedFinding]`) is a `domain/reviewer` concern at the `PostFindings` workflow step.
+- Coding-agent CLI stdout parsed by `plugin.parse_result(terminal_event_payload)` into `RunResult`; the run-sink writes this to `coding_agent_runs`. `RunResult.output` is the structured response JSON from the stream-json `result` field; the engine calls `CodingAgentCommand.handle_response(output, ctx)` on `completed_success` to validate it against `ExpectedResponse` and produce a typed `Outcome`.
 - Audit payloads — every `kind` has a corresponding Pydantic class.
 - Internal cross-module calls: plain types/dataclasses fine where they fit.
 
@@ -180,7 +180,7 @@ Rules:
 
 - Service modules never write `session: AsyncSession | None`, never check `if session is None`, never call `db_session()` themselves. Semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces this.
 - Read-only services follow the same rule — required session, no commits — so callers can compose snapshot-consistent read-then-write.
-- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract.
+- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints, and the workflow engine's `_start_step_impl` for LocalCommands) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract. The workflow engine is a unique orchestrator: it opens one session, wraps the LocalCommand inside a SAVEPOINT, and passes the outer session so command writes + step state + outbox enqueue commit atomically.
 - `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
 
 ### Service-fn session-handling convention
@@ -274,13 +274,23 @@ When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(..
 
 ## WorkflowCommand discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three categories:
+Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three families:
 
-- **Workspace** — implements `WorkspaceWorkflowCommand` (adds `dispatch(inputs, ctx, *, session) -> UUID` to the base `WorkflowCommand` Protocol). `start_step` calls `dispatch` inside its own transaction to enqueue an `agent_commands` row pre-stamped with `workflow_execution_id`, parks the workflow in `awaiting_agent` on the returned `command_id`, and resumes via `handle_agent_event` when the terminal event arrives. Worker never blocks on the agent.
-- **Local** — implements `WorkflowCommand.execute(inputs, ctx) -> Outcome`. Runs in the worker process; persists outcome inline and enqueues `route_workflow` in the same transaction.
-- **HITL** — returns `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
+- **AgentDispatch** — subclasses of `AgentDispatchCommand` (ABC). `@final dispatch(inputs, ctx, *, session) -> UUID` is inherited; subclasses implement `build_command` (for `WorkspaceOpCommand`) or `build_invocation` (for `CodingAgentCommand`; the `@final dispatch` on `CodingAgentCommand` also auto-injects `ExpectedResponse.model_json_schema()` into the invocation context and on `completed_success` the engine duck-type calls `cmd.handle_response(output, ctx)` to validate the agent JSON output — schema violations produce `retryable=False`). `start_step` identifies them via `isinstance(cmd, AgentDispatchCommand)`, calls `dispatch`, parks in `awaiting_agent`, and stores the returned `command_id` as `pending_agent_command_id`. Worker never blocks on the agent.
+- **Local** — plain structural `LocalCommand` Protocol; `execute(inputs, ctx, *, session: AsyncSession) -> Outcome`. Runs in the worker process inside a SAVEPOINT; command DB writes + `step_attempts` stamp + `route_workflow` outbox enqueue commit atomically. **Session contract exception** — the engine (orchestrator) opens `db_session()` and passes the outer session to the command (service). The command must never call `session.commit()`. A `ValueError` from `execute` is the graceful validation path and returns `Outcome.failure`; other exceptions propagate, trigger SAVEPOINT rollback, and enter the workflow into `FAILED` without a route_workflow enqueue.
+- **HITL** — subclasses of `HITLCommand` (ABC); `execute(inputs, ctx) -> Outcome` (no session). Must return `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
 
 Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
+
+### Dispatch helper discipline
+
+Three layers gate every AgentCommand enqueue in the reviewer/workspace path:
+
+- **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `ProvisionWorkspace.dispatch` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
+- **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `CleanupWorkspace.dispatch` and `RefreshWorkspaceAuth.dispatch` route here with `claim_workspace=False`.
+- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the `InvokeClaudeCodeCommand` from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `CodeReview.dispatch` routes here.
+
+`apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside `app/domain/reviewer/commands/` or `app/core/workspace/commands.py` fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
 
 ### Single-flight per workspace
 
@@ -290,9 +300,9 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 `release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow after the workspace has been torn down.
 
-### Recovery policy registry
+### Recovery commands — per-workflow declaration
 
-AgentCommand failure labels (e.g. `auth_expired`) map to lifecycle WorkflowCommand kinds (e.g. `RefreshWorkspaceAuth`) via `core/workflow.register_recovery_policy` (`app/core/workflow/recovery.py`). The engine consults the registry on a recoverable failure and inserts the recovery command before re-dispatching the original. Producers (e.g. `core/workspace`) register their policies via an explicit startup call (`register_workspace_recovery_policies()`) in `web.py` / `worker.py` — not at import time.
+Failure-label → recovery command mappings are declared directly on the `Workflow` dataclass via `recovery_commands: tuple[type, ...]`. Each class must declare `recovers_failure_label: ClassVar[str]`. `WorkflowEngine.register_workflow` builds the per-workflow map and auto-registers each class — no separate startup call needed. Duplicate labels within one workflow raise `WorkflowError` at registration time.
 
 ## WorkspaceProvider contract
 
@@ -387,7 +397,7 @@ When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer
 Mechanics:
 
 - **Real Postgres via `db_session`.** Transactional rollback per test — production code's `session()` hits the override; inner `commit()` calls become SAVEPOINT releases; outer transaction rolls back on teardown. Empty DB at start of each test.
-- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that implements `build_invocation` + `parse_result` without spawning any CLI. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
+- **Stub plugins from `app/testing/`.** `YAAOS_CODING_AGENT_STUB=1` (set by `conftest.py`) wraps registered coding-agent plugins with `StubCodingAgentPlugin` that implements `compile_invocation` + `parse_result` without spawning any CLI. `app.testing.stub_workspace.wrap_all_registered_workspace_providers()` wraps the registered `WorkspaceProvider` with a no-op `StubWorkspaceProvider` (used by the dev stub mode; not used in service tests, which simulate agent events directly).
 - **HTTP routes via `httpx.ASGITransport`.** Drive endpoints in-process without a network listener. The pattern is already used by `app/domain/integrations/test/test_endpoints.py`, `app/domain/mcp_proxy/test/test_dispatch.py`, etc.
 - **Seed helpers from `app/testing/e2e_setup/`.** `seed_github_install`, `seed_lesson`, etc. are HTTP shims around the same domain calls a Playwright spec would hit — reuse them from pytest.
 
@@ -494,7 +504,7 @@ Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shut
 
 `app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
 
-`app.testing.workflow_harness.scoped_engine()` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine via `core.workflow.bind_engine`, yields it, and restores the prior engine on exit — even on exception. Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
+`app.testing.workflow_harness.scoped_engine(engine=None)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh (or supplied) engine, restores the prior process-singleton on exit — even on exception. Supply an `engine` argument to install a pre-built subclass (e.g. a recording engine). Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 
 `core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 

@@ -10,13 +10,13 @@ import structlog
 
 from app.core.coding_agent.types import (
     CodingAgentPlugin,
-    InvokeCodingAgent,
     PluginNotFoundError,
 )
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.coding_agent.types import Invocation
     from app.core.workflow.types import CommandContext
 
 log = structlog.get_logger("coding_agent")
@@ -93,53 +93,56 @@ def get_plugin(plugin_id: str) -> CodingAgentPlugin:
 
 async def dispatch_invocation(
     *,
-    workspace_id: UUID,
-    org_id: UUID,
-    agent_id: UUID,
-    workflow_execution_id: UUID,
+    invocation: Invocation,
     plugin: CodingAgentPlugin,
-    invocation_data: InvokeCodingAgent,
     ctx: CommandContext,
     session: AsyncSession,
 ) -> UUID:
-    """Enqueue an `InvokeClaudeCode` AgentCommand and insert a run row.
+    """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
+    (Layer 3 → Layer 2 → Layer 1), and insert a run row.
 
-    Mints a `command_id` (UUIDv7), enqueues the command via
-    `core/agent_gateway.enqueue_command`, inserts a `coding_agent_runs`
-    row (status=running), and pins the command to `agent_id` so the
-    workspace's owning agent will claim it. Returns the minted
+    `workspace_id` is read from `invocation.workspace_id`. Calls
+    `plugin.compile_invocation(invocation)` to get the exec block, builds
+    an `InvokeClaudeCodeCommand`, and delegates to `dispatch_via_workspace`
+    with `claim_workspace=True` — which loads the workspace row (for `org_id`
+    + `owning_agent_id`), enqueues, pins to the owning agent, and atomically
+    claims. Then inserts a `coding_agent_runs` row. Returns the minted
     `command_id`. Durable iff the caller's transaction commits.
 
-    `org_id` is required for the agent_commands and coding_agent_runs rows —
-    callers source it from their org context (e.g. the workflow execution's
-    org, the ticket's org, or the workspace owner's org).
-
-    No workspace-state check. Callers are expected to follow
-    `dispatch_invocation` with `try_claim` to enter single-flight mode and to
-    surface the `try_claim` failure (which is the single source of truth for
-    workspace busy/inactive). Raises `CodingAgentError` on invalid arguments.
+    Raises:
+        `CodingAgentError` — `plugin.compile_invocation` failed.
+        `WorkspaceNotFoundError` — workspace row absent.
+        `WorkspaceClaimFailed` — workspace busy or inactive.
     """
     from uuid import uuid7  # noqa: PLC0415
 
     from app.core.agent_gateway import (  # noqa: PLC0415
-        AgentCommandKind,
-        InvokeClaudeCodeFields,
-        enqueue_command_payload,
-        pin_command_to_agent,
+        InvokeClaudeCodeCommand,
+        InvokeClaudeCodeLimits,
     )
     from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
+    from app.core.workspace import (  # noqa: PLC0415
+        WorkspaceNotFoundError,
+        dispatch_via_workspace,
+        get_workspace_owner,
+    )
 
+    workspace_id = invocation.workspace_id
+    # Get org_id from the workspace row — needed for create_run.
+    owner = await get_workspace_owner(workspace_id, session=session)
+    if owner is None:
+        raise WorkspaceNotFoundError(f"workspace {workspace_id} not found")
+
+    invocation_data = plugin.compile_invocation(invocation)
+
+    # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
+    # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
+    # empty after json.Unmarshal and causes `completed_failure`.
     command_id = uuid7()
-
-    # Build the kind-specific fields via the typed model — no envelope keys here.
-    # The Go agent reads `invocation.exec.{argv,stdin,env}`; the top-level `exec`
-    # wrapper is required — a flat `{argv,stdin,env}` dict leaves `inv.Exec.Argv`
-    # empty after json.Unmarshal and causes `completed_failure` with
-    # "invocation.exec.argv missing or empty".
-    # `enqueue_command_payload` injects all envelope fields (kind, command_id,
-    # workspace_id, traceparent, completion_token, workflow_execution_id) LAST,
-    # so they cannot be overwritten here.
-    invoke_fields = InvokeClaudeCodeFields(
+    cmd = InvokeClaudeCodeCommand(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent=ctx.traceparent or "",
         invocation={
             "exec": {
                 "argv": invocation_data.argv,
@@ -147,24 +150,23 @@ async def dispatch_invocation(
                 "env": dict(invocation_data.env),
             }
         },
-        mcp_servers=[],
-        limits={"wallclock_seconds": invocation_data.wallclock_seconds},
+        mcp_servers=(),
+        limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
         result_spec={},
     )
-    await enqueue_command_payload(
-        org_id,
-        command_id=command_id,
-        kind=AgentCommandKind.INVOKE_CLAUDE_CODE,
+
+    # Layer 2: enqueue + pin + claim atomically.
+    await dispatch_via_workspace(
+        command=cmd,
         workspace_id=workspace_id,
-        payload_fields=invoke_fields,
-        traceparent=ctx.traceparent or "",
+        ctx=ctx,
         session=session,
-        workflow_execution_id=workflow_execution_id,
+        claim_workspace=True,
     )
 
     await create_run(
-        org_id=org_id,
-        workflow_execution_id=workflow_execution_id,
+        org_id=owner.org_id,
+        workflow_execution_id=UUID(ctx.workflow_execution_id),
         step_id=ctx.step_id,
         agent_command_id=command_id,
         command_kind="InvokeClaudeCode",
@@ -172,13 +174,11 @@ async def dispatch_invocation(
         session=session,
     )
 
-    await pin_command_to_agent(command_id, agent_id, session=session)
-
     log.info(
         "coding_agent.dispatch_invocation",
         command_id=str(command_id),
         workspace_id=str(workspace_id),
-        agent_id=str(agent_id),
+        org_id=str(owner.org_id),
         plugin_id=plugin.plugin_id,
         wallclock_seconds=invocation_data.wallclock_seconds,
     )

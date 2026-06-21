@@ -226,6 +226,14 @@ class WorkspaceNotFoundError(WorkspaceError, LookupError):
     """Raised when a workspace lookup by id returns no row."""
 
 
+class WorkspaceClaimFailed(WorkspaceError):
+    """Raised by `dispatch_via_workspace` when `claim_workspace=True` and the
+    workspace is busy (already has a current_command_id) or inactive (not
+    `status='active'`). Callers should treat this as a retryable condition —
+    the engine's existing dispatch-exception handling routes it as a retryable
+    failure via `RetryPolicy`."""
+
+
 class WorkspaceExpiredError(WorkspaceError):
     """Raised when a caller acts on an already-expired workspace."""
 

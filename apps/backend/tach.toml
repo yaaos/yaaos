@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workflow", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.config"
@@ -99,7 +99,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.core.workspace"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.domain.integrations"
@@ -119,15 +119,15 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.reviewer"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.observability", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.integrations", "app.domain.mcp_proxy", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.tickets"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow"]
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.domain.orgs", "app.domain.reviewer"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -349,6 +349,7 @@ expose = [
   "ACTIVITY_EVENT_KINDS",
   "ActivityEvent",
   "ActivityLog",
+  "CodingAgentCommand",
   "CodingAgentError",
   "CodingAgentPlugin",
   "CodingAgentRegistry",
@@ -619,6 +620,7 @@ expose = [
   "CommentCreated",
   "Diff",
   "FileSummary",
+  "InstallCredentials",
   "PluginNotFoundError",
   "PullRequestClosed",
   "PullRequestReadyForReview",
@@ -638,12 +640,14 @@ expose = [
   "VCSRegistry",
   "VCSTransientError",
   "VCSValidationError",
+  "VcsInstallNotFound",
   "bind_vcs_registry",
   "clone_url",
   "current_vcs_registry",
   "detect_force_push",
   "fetch_diff",
   "fetch_pr",
+  "get_install_credentials",
   "get_installation_token",
   "get_plugin",
   "install_url",
@@ -681,17 +685,22 @@ from = ["app.core.webserver"]
 
 [[interfaces]]
 expose = [
-  "CommandCategory",
+  "AgentDispatchCommand",
   "CommandContext",
   "CommandNotRegisteredError",
+  "Empty",
   "HANDLE_AGENT_EVENT",
+  "HITLCommand",
+  "HasAgentResponseHandler",
   "HitlHistoryEntry",
+  "LocalCommand",
+  "NullDispatch",
   "Outcome",
   "OutcomeKind",
   "ROUTE_WORKFLOW",
   "RetryPolicy",
   "START_STEP",
-  "Step",
+  "StepRef",
   "TERMINAL_STATES",
   "TerminalAction",
   "Workflow",
@@ -700,49 +709,54 @@ expose = [
   "WorkflowError",
   "WorkflowExecutionNotFoundError",
   "WorkflowExecutionSummary",
+  "WorkflowInputRef",
   "WorkflowNotFoundError",
   "WorkflowRunView",
+  "WorkflowStartCallback",
   "WorkflowState",
-  "WorkflowStepSummary",
-  "WorkspaceWorkflowCommand",
+  "WorkflowTerminalCallback",
+  "WorkflowValidationError",
   "bind_engine",
   "get_awaiting_human_execution",
   "get_engine",
   "get_execution_summary",
-  "get_recovery_policy",
-  "get_start_hooks",
-  "get_terminal_hooks",
+  "get_step_output",
   "handle_agent_event",
   "list_active_execution_ids",
-  "list_all_execution_states",
-  "list_executions_for_ticket",
   "list_hitl_history",
   "list_run_views_for_ticket",
-  "register_recovery_policy",
-  "register_start_hook",
-  "register_terminal_hook",
+  "list_workflow_states",
   "register_workflow",
-  "registered_recovery_labels",
   "request_cancel",
   "resume_hitl",
   "route_workflow",
   "start_step",
+  "step",
   "unregister_workflow",
+  "workflow_input",
 ]
 from = ["app.core.workflow"]
 
 [[interfaces]]
 expose = [
-  "ALL_LIFECYCLE_COMMANDS",
+  "CleanupWorkspace",
+  "CleanupWorkspaceInputs",
+  "CleanupWorkspaceOutputs",
   "CodingAgentCliResult",
   "HealthStatus",
   "NetworkPolicy",
   "OnStreamLine",
+  "ProvisionWorkspace",
+  "ProvisionWorkspaceInputs",
+  "ProvisionWorkspaceOutputs",
+  "RefreshWorkspaceAuth",
+  "RefreshWorkspaceAuthInputs",
+  "RefreshWorkspaceAuthOutputs",
   "RepoRefForSpec",
   "ResourceCaps",
-  "WorkflowContextProvider",
   "Workspace",
   "WorkspaceAgentReportSinkImpl",
+  "WorkspaceClaimFailed",
   "WorkspaceClaimState",
   "WorkspaceCommandState",
   "WorkspaceDestroyError",
@@ -751,19 +765,18 @@ expose = [
   "WorkspaceExpiredError",
   "WorkspaceInfo",
   "WorkspaceNotFoundError",
+  "WorkspaceOpCommand",
   "WorkspaceOwner",
   "WorkspaceProvider",
   "WorkspaceProvisionError",
   "WorkspaceRegistry",
   "WorkspaceSpec",
   "WorkspaceStatus",
-  "WorkspaceTicketContext",
-  "assert_workflow_context_provider",
   "bind_workspace_registry",
   "close_workspace",
   "current_workspace_registry",
+  "dispatch_via_workspace",
   "get_provider",
-  "get_workflow_context_provider",
   "get_workspace_claim_state",
   "get_workspace_command_state",
   "get_workspace_info",
@@ -772,10 +785,8 @@ expose = [
   "health_check_all",
   "is_workspace_provider_registered",
   "list_workspace_providers",
-  "register_workflow_context_provider",
   "register_workspace_provider",
   "register_workspace_providers",
-  "register_workspace_recovery_policies",
   "release_claim",
   "try_claim",
   "update_workspace_status",
@@ -896,15 +907,15 @@ from = ["app.domain.orgs"]
 
 [[interfaces]]
 expose = [
+  "CodeReviewResponse",
   "Confidence",
   "Debounce",
   "DomainEvent",
   "Finding",
-  "FindingDraftList",
   "FindingRaised",
   "FindingView",
   "PRReviewAggregate",
-  "ReportedFinding",
+  "ReportedFindingShape",
   "Review",
   "ReviewCompleted",
   "ReviewContext",
@@ -921,6 +932,7 @@ expose = [
   "Skip",
   "SkipReason",
   "SqlAlchemyAggregateRepository",
+  "TicketSnapshot",
   "TriggerDecision",
   "TriggerInputs",
   "acquire_pr_lock",
@@ -930,19 +942,15 @@ expose = [
   "decide_trigger",
   "dispatch_events",
   "finding_handle",
-  "finding_output_schema",
   "get_review",
   "humanize_skip",
   "is_off_topic_message",
   "is_yaaos_command",
   "list_findings_for_pr",
   "list_reviews_for_pr",
-  "parse_review_output",
   "prefix_broken_creds_warning",
   "publish_findings",
   "refresh_ticket_findings_summary",
-  "register_reviewer_start_hooks",
-  "register_reviewer_terminal_hooks",
   "start_pr_review",
 ]
 from = ["app.domain.reviewer"]
@@ -957,6 +965,7 @@ expose = [
   "TicketFilter",
   "TicketNotFoundError",
   "TicketStatus",
+  "TicketWorkflowContext",
   "abandon",
   "attach_pr_to_ticket",
   "attach_workflow_execution",
@@ -977,6 +986,8 @@ expose = [
   "set_workflow_execution",
   "transition_on_workflow_start",
   "transition_on_workflow_terminal",
+  "transition_ticket_on_start",
+  "transition_ticket_on_terminal",
   "update_findings_summary",
   "update_state",
   "upsert",

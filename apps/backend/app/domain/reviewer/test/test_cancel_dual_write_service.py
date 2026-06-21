@@ -16,13 +16,13 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import repository as identity_repo
 from app.core.identity import sessions as session_lifecycle
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     get_execution_summary,
+    step,
 )
 from app.domain.orgs import repository as orgs_repo
 from app.domain.tickets import create_from_pr as create_ticket
@@ -93,28 +93,24 @@ async def test_cancel_endpoint_sets_cancel_requested_on_workflow_executions(  # 
 
     class _NoopCmd:
         kind = "CancelTestNoop"
-        category = CommandCategory.LOCAL
+        Inputs = Empty
+        Outputs = Empty
         restart_safe = True
 
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
-            del inputs, ctx
+        async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
             return Outcome.success()
 
+    _noop_cmd_step = step(_NoopCmd)
     _stub_wf = Workflow(
         name="cancel_test_v1",
         version=1,
-        steps=(
-            Step(
-                id="s1",
-                command_kind="CancelTestNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="s1",
+        steps=(_noop_cmd_step,),
+        entry=_noop_cmd_step,
+        transitions={_noop_cmd_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     with scoped_engine() as engine:
-        engine.register_command(_NoopCmd())
         engine.register_workflow(_stub_wf)
         # Create two workflow executions for the ticket.
         wfx_id_running = await engine.start(

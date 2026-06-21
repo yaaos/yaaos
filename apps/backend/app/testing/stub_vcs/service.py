@@ -116,6 +116,9 @@ class StubVCSPlugin:
         del org_id
         return None
 
+    def clone_url(self, repo_external_id: str) -> str:
+        return f"https://stub.test/{repo_external_id}.git"
+
     def validate_settings(self, settings: dict[str, object]) -> dict[str, object]:
         return dict(settings)
 

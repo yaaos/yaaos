@@ -25,12 +25,13 @@ import pytest
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
@@ -66,24 +67,24 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 
 class _SimpleLocal:
     kind = "StepAttrLocalCmd"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
-class _SimpleWs:
+class _SimpleWs(AgentDispatchCommand):
     kind = "StepAttrWsCmd"
-    category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
         del inputs, ctx, session
         return uuid4()
 
@@ -94,23 +95,17 @@ class _SimpleWs:
 async def test_local_command_span_carries_step_id_and_attempt(db_session) -> None:  # type: ignore[no-untyped-def]
     """workflow.command.<Kind> span on the Local branch carries workflow.step_id
     and workflow.attempt attributes."""
-    cmd = _SimpleLocal()
+    local_step = step(_SimpleLocal)
     wf = Workflow(
         name="step-attr-local-test",
         version=1,
-        steps=(
-            Step(
-                id="my_step",
-                command_kind="StepAttrLocalCmd",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="my_step",
+        steps=(local_step,),
+        entry=local_step,
+        transitions={local_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="step-attr-local-test",
@@ -130,8 +125,8 @@ async def test_local_command_span_carries_step_id_and_attempt(db_session) -> Non
     cmd_span = cmd_spans[0]
     attrs = cmd_span.attributes or {}
 
-    assert attrs.get("workflow.step_id") == "my_step", (
-        f"expected workflow.step_id='my_step', got {attrs.get('workflow.step_id')!r}"
+    assert attrs.get("workflow.step_id") == "StepAttrLocalCmd", (
+        f"expected workflow.step_id='StepAttrLocalCmd', got {attrs.get('workflow.step_id')!r}"
     )
     assert attrs.get("workflow.attempt") == 0, (
         f"expected workflow.attempt=0, got {attrs.get('workflow.attempt')!r}"
@@ -141,23 +136,17 @@ async def test_local_command_span_carries_step_id_and_attempt(db_session) -> Non
 async def test_workspace_command_span_carries_step_id_and_attempt(db_session) -> None:  # type: ignore[no-untyped-def]
     """workflow.command.<Kind> span on the Workspace branch carries workflow.step_id
     and workflow.attempt attributes."""
-    cmd = _SimpleWs()
+    ws_step = step(_SimpleWs)
     wf = Workflow(
         name="step-attr-ws-test",
         version=1,
-        steps=(
-            Step(
-                id="ws_step",
-                command_kind="StepAttrWsCmd",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="ws_step",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="step-attr-ws-test",
@@ -177,8 +166,8 @@ async def test_workspace_command_span_carries_step_id_and_attempt(db_session) ->
     cmd_span = cmd_spans[0]
     attrs = cmd_span.attributes or {}
 
-    assert attrs.get("workflow.step_id") == "ws_step", (
-        f"expected workflow.step_id='ws_step', got {attrs.get('workflow.step_id')!r}"
+    assert attrs.get("workflow.step_id") == "StepAttrWsCmd", (
+        f"expected workflow.step_id='StepAttrWsCmd', got {attrs.get('workflow.step_id')!r}"
     )
     assert attrs.get("workflow.attempt") == 0, (
         f"expected workflow.attempt=0, got {attrs.get('workflow.attempt')!r}"

@@ -1,0 +1,24 @@
+rules:
+  - id: dispatch-helper-discipline
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Direct call to a dispatch primitive (enqueue_command, pin_command_to_agent,
+      try_claim, create_run) is not allowed in reviewer command files.
+      Route through dispatch_invocation (Layer 3) or dispatch_via_workspace
+      (Layer 2). These primitives may only be called directly in
+      core/workspace/dispatch.py, core/coding_agent/service.py, and
+      core/agent_gateway/. See apps/backend/docs/patterns.md § Dispatch helper
+      discipline.
+    pattern-either:
+      - pattern: enqueue_command(...)
+      - pattern: pin_command_to_agent(...)
+      - pattern: try_claim(...)
+      - pattern: create_run(...)
+    paths:
+      include:
+        - "app/domain/reviewer/commands/*.py"
+        - "app/core/workspace/commands/*.py"
+        - "app/domain/*/commands/*.py"
+      exclude:
+        - "app/core/workspace/commands/provision.py"

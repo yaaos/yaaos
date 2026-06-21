@@ -19,11 +19,11 @@ from opentelemetry import trace
 
 from app.core.observability import current_traceparent
 from app.core.workflow import (
-    CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
@@ -34,12 +34,15 @@ pytestmark = pytest.mark.service
 
 class _NoopLocal:
     kind = "RunRootSpanNoop"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
+
+
+_noop_step = step(_NoopLocal)
 
 
 async def test_workflow_run_root_span_emitted(db_session) -> None:  # type: ignore[no-untyped-def]
@@ -48,14 +51,9 @@ async def test_workflow_run_root_span_emitted(db_session) -> None:  # type: igno
     wf = Workflow(
         name="pr_review_v1",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="RunRootSpanNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(_noop_step,),
+        entry=_noop_step,
+        transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     tracer = trace.get_tracer("test.run_root_span")
@@ -66,7 +64,6 @@ async def test_workflow_run_root_span_emitted(db_session) -> None:  # type: igno
             upstream_traceparent = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(_NoopLocal())
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="pr_review_v1",
@@ -109,17 +106,12 @@ async def test_workflow_run_span_traceparent_stored_on_row(db_session) -> None: 
     own traceparent — not the upstream caller's traceparent. The first
     `route_workflow` task uses this value as its parent, placing task-body spans
     one level below the run span, not at the same level as the intake request."""
-    wf = Workflow(
+    wf2 = Workflow(
         name="pr_review_v1",
         version=2,
-        steps=(
-            Step(
-                id="step",
-                command_kind="RunRootSpanNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(_noop_step,),
+        entry=_noop_step,
+        transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     tracer = trace.get_tracer("test.run_root_span_stored")
@@ -128,9 +120,8 @@ async def test_workflow_run_span_traceparent_stored_on_row(db_session) -> None: 
             upstream_traceparent = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(_NoopLocal())
-                eng.register_workflow(wf)
-                wfx_id = await eng.start(
+                eng.register_workflow(wf2)
+                wfx_id2 = await eng.start(
                     workflow_name="pr_review_v1",
                     ticket_id=str(uuid4()),
                     traceparent=upstream_traceparent,
@@ -139,7 +130,7 @@ async def test_workflow_run_span_traceparent_stored_on_row(db_session) -> None: 
                 await db_session.commit()
 
     # Load the persisted row.
-    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id))
+    wfx = await db_session.get(WorkflowExecutionRow, UUID(wfx_id2))
     stored_tp = wfx.otel_trace_context
 
     # The stored traceparent must NOT equal the upstream caller's traceparent.

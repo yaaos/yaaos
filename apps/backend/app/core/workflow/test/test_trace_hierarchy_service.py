@@ -42,12 +42,13 @@ from sqlalchemy import select as sa_select
 from app.core.observability import current_traceparent
 from app.core.tasks import drain_once, enqueue, get_pending_outbox_payloads, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workflow.service import HANDLE_AGENT_EVENT
@@ -82,19 +83,19 @@ async def _drain(db_session, *, max_iters: int = 50) -> None:  # type: ignore[no
 # ── Command stubs ──────────────────────────────────────────────────────
 
 
-class _MinimalWs:
-    """Workspace command that parks AWAITING_AGENT with a synthetic command_id."""
+class _MinimalWs(AgentDispatchCommand):
+    """AgentDispatchCommand that parks AWAITING_AGENT with a synthetic command_id."""
 
     kind = "HierarchyTestWs"
-    category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
     dispatched_id: UUID | None = None
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
+    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
         del inputs, ctx, session
         _MinimalWs.dispatched_id = uuid4()
         return _MinimalWs.dispatched_id
@@ -102,21 +103,21 @@ class _MinimalWs:
 
 class _TerminalLocal:
     kind = "HierarchyTestTerminal"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
 class _NoopLocal:
     kind = "HierarchyTestNoop"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -132,25 +133,17 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
     agent-request span instead of the workflow.run.* trace."""
     _MinimalWs.dispatched_id = None
 
-    ws_cmd = _MinimalWs()
-    terminal_cmd = _TerminalLocal()
-
+    ws_step = step(_MinimalWs)
+    terminal_step = step(_TerminalLocal)
     wf = Workflow(
         name="hierarchy-ws-test",
         version=1,
-        steps=(
-            Step(
-                id="ws_step",
-                command_kind="HierarchyTestWs",
-                transitions={"success": "terminal"},
-            ),
-            Step(
-                id="terminal",
-                command_kind="HierarchyTestTerminal",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="ws_step",
+        steps=(ws_step, terminal_step),
+        entry=ws_step,
+        transitions={
+            ws_step: {"success": terminal_step},
+            terminal_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
 
     tracer = trace.get_tracer("test.hierarchy.ws")
@@ -160,8 +153,6 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(ws_cmd)
-                eng.register_command(terminal_cmd)
                 eng.register_workflow(wf)
 
                 wfx_id = await eng.start(
@@ -240,20 +231,18 @@ async def test_workflow_trace_hierarchy_pure_local(db_session) -> None:  # type:
     share the upstream trace_id.
 
     This path already worked before the fix; this test ensures it stays green."""
-    noop = _NoopLocal()
-
+    # Two-step local workflow uses _NoopLocal + _TerminalLocal (distinct kinds).
+    noop_step = step(_NoopLocal)
+    term_step = step(_TerminalLocal)
     wf = Workflow(
         name="hierarchy-local-test",
         version=1,
-        steps=(
-            Step(id="a", command_kind="HierarchyTestNoop", transitions={"success": "b"}),
-            Step(
-                id="b",
-                command_kind="HierarchyTestNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="a",
+        steps=(noop_step, term_step),
+        entry=noop_step,
+        transitions={
+            noop_step: {"success": term_step},
+            term_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
 
     tracer = trace.get_tracer("test.hierarchy.local")
@@ -263,7 +252,6 @@ async def test_workflow_trace_hierarchy_pure_local(db_session) -> None:  # type:
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(noop)
                 eng.register_workflow(wf)
 
                 wfx_id = await eng.start(
@@ -311,22 +299,14 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
     """
     _MinimalWs.dispatched_id = None
 
-    ws_cmd = _MinimalWs()
-    terminal_cmd = _TerminalLocal()
-    noop_cmd = _NoopLocal()
-
     # ── Sub-test 1: Local-only workflow ───────────────────────────────
+    noop_s = step(_NoopLocal)
     wf_local = Workflow(
         name="direct-parent-local",
         version=1,
-        steps=(
-            Step(
-                id="step_a",
-                command_kind="HierarchyTestNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step_a",
+        steps=(noop_s,),
+        entry=noop_s,
+        transitions={noop_s: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     tracer = trace.get_tracer("test.direct.parent")
@@ -337,7 +317,6 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(noop_cmd)
                 eng.register_workflow(wf_local)
 
                 await eng.start(
@@ -372,22 +351,17 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
     # ── Sub-test 2: Workspace workflow ────────────────────────────────
     _MinimalWs.dispatched_id = None
 
+    ws_s = step(_MinimalWs)
+    term_s = step(_TerminalLocal)
     wf_ws = Workflow(
         name="direct-parent-ws",
         version=1,
-        steps=(
-            Step(
-                id="ws_step",
-                command_kind="HierarchyTestWs",
-                transitions={"success": "term"},
-            ),
-            Step(
-                id="term",
-                command_kind="HierarchyTestTerminal",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="ws_step",
+        steps=(ws_s, term_s),
+        entry=ws_s,
+        transitions={
+            ws_s: {"success": term_s},
+            term_s: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
 
     with span_capture() as exporter2:
@@ -396,8 +370,6 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             upstream_ws_tp = current_traceparent()
 
             with scoped_engine() as eng2:
-                eng2.register_command(ws_cmd)
-                eng2.register_command(terminal_cmd)
                 eng2.register_workflow(wf_ws)
 
                 wfx_id = await eng2.start(
@@ -470,19 +442,13 @@ async def test_workflow_task_spans_in_workflow_trace(db_session) -> None:  # typ
     """
     from app.core.tasks import TaskMetadata  # noqa: PLC0415
 
-    noop = _NoopLocal()
-
+    pipe_step = step(_NoopLocal)
     wf = Workflow(
         name="layer-b-trace-pipe",
         version=1,
-        steps=(
-            Step(
-                id="step_x",
-                command_kind="HierarchyTestNoop",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step_x",
+        steps=(pipe_step,),
+        entry=pipe_step,
+        transitions={pipe_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     tracer = trace.get_tracer("test.layer_b.pipe")
@@ -492,7 +458,6 @@ async def test_workflow_task_spans_in_workflow_trace(db_session) -> None:  # typ
             upstream_tp = current_traceparent()
 
             with scoped_engine() as eng:
-                eng.register_command(noop)
                 eng.register_workflow(wf)
 
                 await eng.start(

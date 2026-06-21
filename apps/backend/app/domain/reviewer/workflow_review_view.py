@@ -2,7 +2,7 @@
 
 `pr_review_v1` workflows run through `workflow_executions`. The
 `/api/reviewer/metrics` endpoint surfaces the `ReviewJob`-shaped aggregate
-the SPA reads, so this module projects `WorkflowExecutionSummary` into
+the SPA reads, so this module projects `WorkflowRunView` into
 `ReviewJob` fields.
 
 Fields not tracked in `workflow_executions` (tokens, model, effort)
@@ -23,10 +23,10 @@ from uuid import UUID
 
 from app.core.database import session as db_session
 from app.core.workflow import (
-    WorkflowExecutionSummary,
+    WorkflowRunView,
     WorkflowState,
-    list_all_execution_states,
-    list_executions_for_ticket,
+    list_run_views_for_ticket,
+    list_workflow_states,
 )
 from app.domain.reviewer.review_job import ReviewJob
 
@@ -41,39 +41,37 @@ _STATE_TO_STATUS: dict[str, str] = {
 }
 
 
-def project_workflow_to_review_job(
-    summary: WorkflowExecutionSummary, *, pr_id: UUID, org_id: UUID
-) -> ReviewJob:
-    """Read one `WorkflowExecutionSummary` as a `ReviewJob`."""
-    status = _STATE_TO_STATUS.get(summary.state, summary.state)
+def project_workflow_to_review_job(run_view: WorkflowRunView, *, pr_id: UUID, org_id: UUID) -> ReviewJob:
+    """Read one `WorkflowRunView` as a `ReviewJob`."""
+    status = _STATE_TO_STATUS.get(run_view.state, run_view.state)
     return ReviewJob(
-        id=summary.id,
+        id=run_view.id,
         org_id=org_id,
         pr_id=pr_id,
         status=status,
-        trigger_reason=summary.workflow_name,
+        trigger_reason=run_view.workflow_name,
         destination="vcs",
         scope_kind="full",
         commit_sha_at_start=None,
         sequence_number=0,
-        created_at=summary.created_at,
-        updated_at=summary.updated_at,
-        scheduled_at=summary.created_at,
+        created_at=run_view.created_at,
+        updated_at=run_view.updated_at,
+        scheduled_at=run_view.created_at,
     )
 
 
 async def list_review_jobs_for_ticket(ticket_id: UUID, *, pr_id: UUID, org_id: UUID) -> list[ReviewJob]:
     """Return all workflow-execution projections for one ticket."""
     async with db_session() as s:
-        summaries = await list_executions_for_ticket(ticket_id, session=s)
-    return [project_workflow_to_review_job(r, pr_id=pr_id, org_id=org_id) for r in summaries]
+        run_views = await list_run_views_for_ticket(ticket_id, session=s)
+    return [project_workflow_to_review_job(r, pr_id=pr_id, org_id=org_id) for r in run_views]
 
 
 async def workflow_metrics_summary(*, org_id: UUID) -> dict[str, Any]:
     """Org-scoped counts-by-status over `workflow_executions`."""
     del org_id
     async with db_session() as s:
-        states = await list_all_execution_states(session=s)
+        states = await list_workflow_states(session=s)
     statuses: dict[str, int] = {}
     posted = 0
     failed = 0

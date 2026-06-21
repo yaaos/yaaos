@@ -52,7 +52,8 @@ class CodingAgentRunSinkImpl:
 
         `outputs` is the full AgentEvent outputs dict from the agent; it is
         passed directly to `plugin.parse_result` which reads `stdout` and
-        `exit_code` from it.
+        `exit_code` from it. `parse_result` extracts the structured response
+        JSON from the stream-json `result` field and places it in `RunResult.output`.
 
         Returns an `AgentEventEnrichment` on `InvokeClaudeCode` terminal events
         so `agent_gateway` can merge those keys into the workflow outputs.

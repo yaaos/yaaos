@@ -1,10 +1,9 @@
-"""`PostFindings` happy-path — `ReportedFinding`s flow end-to-end and land
-as canonical `FindingRow` rows with correct severity/confidence/display_id.
+"""`PostFindings` happy-path — typed `ReportedFindingShape`s flow end-to-end
+and land as canonical `FindingRow` rows with correct severity/confidence/display_id.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -13,30 +12,16 @@ from sqlalchemy import select
 
 from app.core.vcs import VCSPullRequest
 from app.core.workflow import CommandContext
-from app.core.workspace import (
-    WorkspaceTicketContext,
-    register_workflow_context_provider,
-)
-from app.domain.reviewer.commands import PostFindings
+from app.domain.reviewer.commands import PostFindings, PostFindingsInputs
 from app.domain.reviewer.models import FindingRow
+from app.domain.reviewer.types import ReportedFindingShape
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 
-class _StaticContextProvider:
-    def __init__(self, context: WorkspaceTicketContext) -> None:
-        self._context = context
-
-    async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        del ticket_id
-        return self._context
-
-
 @pytest.mark.service
-async def test_post_findings_persists_canonical_finding_rows(
-    db_session, workflow_context_provider_isolation
-) -> None:  # type: ignore[no-untyped-def]
-    """Two `ReportedFinding`s flow through `PostFindings` → canonical `FindingRow`
+async def test_post_findings_persists_canonical_finding_rows(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Two `ReportedFindingShape`s flow through `PostFindings` → canonical `FindingRow`
     rows land in the DB with correct severity, confidence, and monotonic
     `finding_display_id` values.
     """
@@ -83,77 +68,57 @@ async def test_post_findings_persists_canonical_finding_rows(
     pr_id = pr.id
     await db_session.commit()
 
-    # 2. Context provider returns the real pr_id so PostFindings can resolve it.
-    register_workflow_context_provider(
-        _StaticContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeef"},
-                pr_id=pr_id,
-            )
-        )
-    )
-
-    # 3. Two canonical ReportedFinding dicts — severity + confidence are valid enum strings.
-    #    Encoded as stream-json stdout (the format `PostFindings` now parses via the plugin).
-    findings_payload = {
-        "findings": [
-            {
-                "file": "src/foo.py",
-                "line": 10,
-                "category": "security",
-                "severity": "blocker",
-                "confidence": "verified",
-                "rationale": "Unvalidated input passed to SQL query.",
-                "rule_violated": "sql-injection",
-                "rule_source": "owasp",
-                "suggested_fix": "Use parameterized queries.",
-            },
-            {
-                "file": None,
-                "line": None,
-                "category": "correctness",
-                "severity": "nit",
-                "confidence": "speculative",
-                "rationale": "Minor naming inconsistency.",
-                "rule_violated": "naming/convention",
-                "rule_source": "yaaos",
-                "suggested_fix": "Rename to snake_case.",
-            },
-        ]
-    }
-    # Stream-json format: each line is a JSON object; `type=result` carries the payload.
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
-            json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": json.dumps(findings_payload),
-                    "is_error": False,
-                }
-            ),
-        ]
-    )
+    # 2. Two canonical `ReportedFindingShape` objects — severity + confidence are
+    #    strict enum strings already validated by `CodingAgentCommand.handle_response`.
+    findings = [
+        ReportedFindingShape(
+            file="src/foo.py",
+            line=10,
+            category="security",
+            severity="blocker",
+            confidence="verified",
+            rationale="Unvalidated input passed to SQL query.",
+            rule_violated="sql-injection",
+            rule_source="owasp",
+            suggested_fix="Use parameterized queries.",
+        ),
+        ReportedFindingShape(
+            file=None,
+            line=None,
+            category="correctness",
+            severity="nit",
+            confidence="speculative",
+            rationale="Minor naming inconsistency.",
+            rule_violated="naming/convention",
+            rule_source="yaaos",
+            suggested_fix="Rename to snake_case.",
+        ),
+    ]
 
     ctx = CommandContext(
         workflow_execution_id=str(uuid4()),
         ticket_id=str(ticket_id),
-        step_id="post",
+        step_id="PostFindings",
         attempt=0,
+    )
+
+    # 3. Build typed inputs — `pr_id` and `pr_external_id` let PostFindings resolve the PR.
+    inputs = PostFindingsInputs(
+        findings=findings,
+        org_id=org_id,
+        pr_id=pr_id,
+        pr_external_id=f"pr-{ext_id}",
+        vcs_plugin_id="github",
     )
 
     # 4. Register stub VCS plugin so the GitHub-post half of PostFindings succeeds.
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
     with register_stub_vcs(plugin_id="github") as stub:
-        outcome = await PostFindings().execute({"output": stdout}, ctx)
+        outcome = await PostFindings().execute(inputs, ctx, session=db_session)
 
     assert outcome.label == "success", f"unexpected failure: {outcome.failure_reason}"
-    assert outcome.outputs.get("admitted_count") == 2
+    assert outcome.outputs.admitted_count == 2
 
     # 5. Both FindingRow rows landed in the DB with canonical schema.
     rows = (

@@ -18,13 +18,14 @@ from uuid import uuid4
 import pytest
 
 from app.core.workflow import (
-    CommandCategory,
     CommandContext,
+    Empty,
     Outcome,
-    Step,
+    TerminalAction,
     Workflow,
     WorkflowRunView,
     list_run_views_for_ticket,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.workflow_harness import scoped_engine, scoped_workflow
@@ -32,16 +33,44 @@ from app.testing.workflow_harness import scoped_engine, scoped_workflow
 pytestmark = pytest.mark.service
 
 
-class _NoopLocal:
-    category = CommandCategory.LOCAL
-    restart_safe = True
+class _NoopAlpha:
+    kind = "NoopAlpha"
+    Inputs = Empty
+    Outputs = Empty
 
-    def __init__(self, kind: str) -> None:
-        self.kind = kind
-
-    async def execute(self, inputs, ctx: CommandContext) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
         return Outcome.success()
+
+
+class _NoopBeta:
+    kind = "NoopBeta"
+    Inputs = Empty
+    Outputs = Empty
+
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
+        return Outcome.success()
+
+
+class _NoopGamma:
+    kind = "NoopGamma"
+    Inputs = Empty
+    Outputs = Empty
+
+    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
+        del inputs, ctx, session
+        return Outcome.success()
+
+
+# Step ids are now command kind names.
+_ALPHA_ID = "NoopAlpha"
+_BETA_ID = "NoopBeta"
+_GAMMA_ID = "NoopGamma"
+
+_alpha_step = step(_NoopAlpha)
+_beta_step = step(_NoopBeta)
+_gamma_step = step(_NoopGamma)
 
 
 def _wfx(
@@ -72,21 +101,14 @@ def _engine_with_three_step_workflow():
         wf = Workflow(
             name="test_runview_v1",
             version=1,
-            steps=(
-                Step(id="alpha", command_kind="NoopAlpha"),
-                Step(id="beta", command_kind="NoopBeta"),
-                Step(id="gamma", command_kind="NoopGamma"),
-            ),
-            entry_step_id="alpha",
+            steps=(_alpha_step, _beta_step, _gamma_step),
+            entry=_alpha_step,
+            transitions={
+                _alpha_step: {"success": _beta_step},
+                _beta_step: {"success": _gamma_step},
+                _gamma_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+            },
         )
-        # Register the commands so engine.get_workflow returns the def
-        # without complaining about command kinds.
-        from app.core.workflow import get_engine  # noqa: PLC0415
-
-        eng = get_engine()
-        eng.register_command(_NoopLocal("NoopAlpha"))
-        eng.register_command(_NoopLocal("NoopBeta"))
-        eng.register_command(_NoopLocal("NoopGamma"))
         with scoped_workflow(wf):
             yield
 
@@ -102,15 +124,15 @@ async def test_runview_projects_done_running_pending_states(
     row = _wfx(
         ticket_id,
         state="running",
-        current_step_id="beta",
+        current_step_id=_BETA_ID,
         step_state={
-            "alpha": {
+            _ALPHA_ID: {
                 "outcome_label": "success",
                 "outputs": {},
                 "started_at": t1,
                 "completed_at": t1,
             },
-            "beta": {"started_at": t1},
+            _BETA_ID: {"started_at": t1},
         },
     )
     db_session.add(row)
@@ -123,15 +145,15 @@ async def test_runview_projects_done_running_pending_states(
     assert run.workflow_name == "test_runview_v1"
 
     by_id = {s.step_id: s for s in run.steps}
-    assert by_id["alpha"].state == "done"
-    assert by_id["alpha"].started_at is not None
-    assert by_id["alpha"].completed_at is not None
-    assert by_id["beta"].state == "running"
-    assert by_id["beta"].started_at is not None
-    assert by_id["beta"].completed_at is None
-    assert by_id["gamma"].state == "pending"
-    assert by_id["gamma"].started_at is None
-    assert by_id["gamma"].completed_at is None
+    assert by_id[_ALPHA_ID].state == "done"
+    assert by_id[_ALPHA_ID].started_at is not None
+    assert by_id[_ALPHA_ID].completed_at is not None
+    assert by_id[_BETA_ID].state == "running"
+    assert by_id[_BETA_ID].started_at is not None
+    assert by_id[_BETA_ID].completed_at is None
+    assert by_id[_GAMMA_ID].state == "pending"
+    assert by_id[_GAMMA_ID].started_at is None
+    assert by_id[_GAMMA_ID].completed_at is None
 
 
 @pytest.mark.asyncio
@@ -142,9 +164,9 @@ async def test_runview_projects_failed_step(db_session, _engine_with_three_step_
     row = _wfx(
         ticket_id,
         state="failed",
-        current_step_id="alpha",
+        current_step_id=_ALPHA_ID,
         step_state={
-            "alpha": {
+            _ALPHA_ID: {
                 "outcome_label": "timeout",
                 "outputs": {},
                 "started_at": t1,
@@ -157,10 +179,10 @@ async def test_runview_projects_failed_step(db_session, _engine_with_three_step_
 
     runs = await list_run_views_for_ticket(ticket_id, session=db_session)
     by_id = {s.step_id: s for s in runs[0].steps}
-    assert by_id["alpha"].state == "failed"
+    assert by_id[_ALPHA_ID].state == "failed"
     # Other steps untouched → pending (terminal execution state, never ran).
-    assert by_id["beta"].state == "pending"
-    assert by_id["gamma"].state == "pending"
+    assert by_id[_BETA_ID].state == "pending"
+    assert by_id[_GAMMA_ID].state == "pending"
 
 
 @pytest.mark.asyncio
@@ -172,19 +194,19 @@ async def test_runview_projects_skipped_step(db_session, _engine_with_three_step
         ticket_id,
         state="done",
         step_state={
-            "alpha": {
+            _ALPHA_ID: {
                 "outcome_label": "_skipped",
                 "outputs": {},
                 "started_at": t1,
                 "completed_at": t1,
             },
-            "beta": {
+            _BETA_ID: {
                 "outcome_label": "success",
                 "outputs": {},
                 "started_at": t1,
                 "completed_at": t1,
             },
-            "gamma": {
+            _GAMMA_ID: {
                 "outcome_label": "success",
                 "outputs": {},
                 "started_at": t1,
@@ -197,9 +219,9 @@ async def test_runview_projects_skipped_step(db_session, _engine_with_three_step
 
     runs = await list_run_views_for_ticket(ticket_id, session=db_session)
     by_id = {s.step_id: s for s in runs[0].steps}
-    assert by_id["alpha"].state == "skipped"
-    assert by_id["beta"].state == "done"
-    assert by_id["gamma"].state == "done"
+    assert by_id[_ALPHA_ID].state == "skipped"
+    assert by_id[_BETA_ID].state == "done"
+    assert by_id[_GAMMA_ID].state == "done"
 
 
 @pytest.mark.asyncio
@@ -212,7 +234,7 @@ async def test_runview_pending_when_terminal_execution_state_and_no_outcome(
     row = _wfx(
         ticket_id,
         state="cancelled",
-        current_step_id="alpha",
+        current_step_id=_ALPHA_ID,
         step_state={},
     )
     db_session.add(row)

@@ -4,8 +4,8 @@ All Workspace-category steps dispatch over the wire (awaiting_agent). Tests
 simulate each agent terminal event via `_advance_pending_agent_event`.
 
 Asserts:
-- CheckShouldReview (real body) reads admission signals from ticket
-  payload; non-draft non-fork PR advances past the skip gate.
+- CheckShouldReview (real body) reads admission signals from TicketSnapshot;
+  non-draft non-fork PR advances past the skip gate.
 - Workspace steps (ProvisionWorkspace, CodeReview, CleanupWorkspace) park in
   awaiting_agent; simulated agent events advance each one.
 - PostFindings (real body, LOCAL) runs inline and persists FindingRows.
@@ -25,16 +25,9 @@ from app.core import byok
 from app.core.audit_log import Actor
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary
-from app.core.workspace import (
-    WorkspaceTicketContext,
-    register_workflow_context_provider,
-    register_workspace_provider,
-)
+from app.core.workspace import register_workspace_provider
 from app.domain.orgs import create_org
-from app.domain.reviewer.commands import (
-    ALL_LOCAL_COMMANDS,
-    ALL_WORKSPACE_COMMANDS,
-)
+from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.seed import seed_agent as _seed_agent_for_tests
@@ -73,27 +66,10 @@ class _StubWorkspaceProvider:
         return None
 
 
-class _StaticWorkflowContextProvider:
-    """Returns a fixed WorkspaceTicketContext regardless of ticket_id —
-    matches the single-ticket scope of this test."""
-
-    def __init__(self, context: WorkspaceTicketContext) -> None:
-        self._context = context
-
-    async def get_workspace_ticket_context(self, ticket_id):  # type: ignore[no-untyped-def]
-        del ticket_id
-        return self._context
-
-
 @pytest.fixture
-def _registered_engine(workspace_providers_isolation, workflow_context_provider_isolation):  # type: ignore[no-untyped-def]
-    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
-
+def _registered_engine(workspace_providers_isolation):  # type: ignore[no-untyped-def]
     register_workspace_provider(_StubWorkspaceProvider())
-    # Register lifecycle + reviewer commands (mirrors domain/reviewer bootstrap).
     with scoped_engine() as eng:
-        for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            eng.register_command(cmd)
         eng.register_workflow(pr_review_v1)
         yield eng
 
@@ -160,15 +136,13 @@ async def _advance_pending_agent_event(  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.service
-async def test_pr_review_v1_with_findings_persists_to_db(
-    db_session, workspace_providers_isolation, workflow_context_provider_isolation
-) -> None:  # type: ignore[no-untyped-def]
+async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_providers_isolation) -> None:  # type: ignore[no-untyped-def]
     """Full workflow walk verifying PostFindings (LOCAL) persists FindingRows.
 
     All Workspace steps park at AWAITING_AGENT. Each is advanced by a
     simulated agent event:
     - ProvisionWorkspace: event returns the seeded workspace_id.
-    - CodeReview: event returns one canonical ReportedFinding via outputs.
+    - CodeReview: event returns a CodeReviewResponse JSON in outputs; handle_response validates it.
     - CleanupWorkspace: event returns empty outputs.
 
     PostFindings (LOCAL) runs inline, validates the canonical finding, and
@@ -262,19 +236,11 @@ async def test_pr_review_v1_with_findings_persists_to_db(
     )
     await db_session.commit()
 
-    register_workflow_context_provider(
-        _StaticWorkflowContextProvider(
-            WorkspaceTicketContext(
-                org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeef", "base_sha": "babecafe"},
-                pr_id=pr_id,
-            )
-        )
-    )
-
-    # CodeReview agent event returns stream-json stdout; PostFindings (LOCAL) parses it.
+    # CodeReview agent event returns a JSON string matching CodeReviewResponse shape.
+    # `handle_response` calls `CodeReviewResponse.model_validate_json(output)` so the
+    # output must be direct JSON, not stream-json. The run-sink extracts the `result`
+    # field from stream-json in the real flow; the test simulates the already-extracted
+    # output by passing `json.dumps(spy_finding_payload)` directly.
     spy_finding_payload = {
         "findings": [
             {
@@ -290,40 +256,31 @@ async def test_pr_review_v1_with_findings_persists_to_db(
             }
         ]
     }
-    spy_stdout = "\n".join(
-        [
-            json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "opus"}),
-            json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": json.dumps(spy_finding_payload),
-                    "is_error": False,
-                }
-            ),
-        ]
-    )
+    spy_output = json.dumps(spy_finding_payload)
 
-    from app.core.workspace import ALL_LIFECYCLE_COMMANDS  # noqa: PLC0415
     from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
 
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        pr_id=pr_id,
+        pr_external_id=f"pr-{ext_id}",
+        head_sha="deadbeef",
+        base_sha="babecafe",
+        is_draft=False,
+        is_fork=False,
+    )
+
     with scoped_engine() as eng:
-        for cmd in ALL_LIFECYCLE_COMMANDS:
-            eng.register_command(cmd)
-        for cmd in (*ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            eng.register_command(cmd)
         eng.register_workflow(pr_review_v1)
 
         with register_stub_vcs(plugin_id="github"):
             wfx_id = await eng.start(
                 workflow_name="pr_review_v1",
                 ticket_id=str(ticket_id),
-                ticket_payload={
-                    "head_sha": "deadbeef",
-                    "base_sha": "babecafe",
-                    "is_draft": False,
-                    "is_fork": False,
-                },
+                workflow_input=snapshot,
                 session=db_session,
             )
             await db_session.commit()
@@ -332,11 +289,12 @@ async def test_pr_review_v1_with_findings_persists_to_db(
 
             # ProvisionWorkspace: return the pre-seeded workspace_id.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": seeded_ws_id})
-            # CodeReview: return the parsed output via outputs; PostFindings parses it.
+            # CodeReview: handle_response validates the JSON against CodeReviewResponse;
+            # PostFindings receives typed findings from the Outcome.
             await _advance_pending_agent_event(
                 db_session,
                 wfx_id,
-                outputs={"output": spy_stdout},
+                outputs={"output": spy_output},
             )
             # PostFindings (LOCAL) ran inline. CleanupWorkspace parks.
             await _advance_pending_agent_event(db_session, wfx_id, outputs={})
@@ -368,7 +326,13 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
     AWAITING_AGENT; the test simulates each terminal AgentEvent via
     `_advance_pending_agent_event`. Local commands (`CheckShouldReview`,
     `PostFindings`) execute inline on the control plane. Workflow ends DONE
-    with no pending agent command."""
+    with no pending agent command.
+
+    Uses `register_stub_vcs` so `ProvisionWorkspace.dispatch` can call
+    `get_install_credentials` without a real GitHub App installation.
+    """
+    from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
+
     org_id = await _seed_org_with_anthropic_key(db_session)
     ticket_id, _ = await create_ticket(
         org_id=org_id,
@@ -389,52 +353,59 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         },
         session=db_session,
     )
-    register_workflow_context_provider(
-        _StaticWorkflowContextProvider(
-            WorkspaceTicketContext(
+
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="me/repo",
+        pr_external_id="42",
+        head_sha="deadbeefcafef00d",
+        base_sha="babecafe",
+        is_draft=False,
+        is_fork=False,
+        labels=("enhancement",),
+        author_login="alice",
+    )
+
+    with register_stub_vcs(plugin_id="github"):
+        wfx_id = await _registered_engine.start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(ticket_id),
+            workflow_input=snapshot,
+            session=db_session,
+        )
+        await db_session.commit()
+
+        # Initial drain — CheckShouldReview (Local) executes inline; then
+        # ProvisionWorkspace (Workspace) dispatches and parks at AWAITING_AGENT.
+        await _drain_workflow_outbox(db_session)
+
+        # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
+        agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+        sim_workspace_id = str(
+            await _seed_workspace_for_tests(
                 org_id=org_id,
-                plugin_id="github",
-                repo_external_id="me/repo",
-                payload={"head_sha": "deadbeefcafef00d", "base_sha": "babecafe"},
+                provider_id="in_process",
+                sha="deadbeefcafef00d",
+                agent_id=agent_row["id"],
+                caller_session=db_session,
             )
         )
-    )
+        await db_session.commit()
+        await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
-    wfx_id = await _registered_engine.start(
-        workflow_name="pr_review_v1",
-        ticket_id=str(ticket_id),
-        session=db_session,
-    )
-    await db_session.commit()
-
-    # Initial drain — CheckShouldReview (Local) executes inline; then
-    # ProvisionWorkspace (Workspace) dispatches and parks at AWAITING_AGENT.
-    await _drain_workflow_outbox(db_session)
-
-    # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
-    sim_workspace_id = str(
-        await _seed_workspace_for_tests(
-            org_id=org_id,
-            provider_id="in_process",
-            sha="deadbeefcafef00d",
-            agent_id=agent_row["id"],
-            caller_session=db_session,
+        # CodeReview parks. Simulate zero-findings response — handle_response validates
+        # the JSON against CodeReviewResponse; empty findings list → PostFindings no-op.
+        await _advance_pending_agent_event(
+            db_session,
+            wfx_id,
+            outputs={"output": '{"findings": []}'},
         )
-    )
-    await db_session.commit()
-    await _advance_pending_agent_event(db_session, wfx_id, outputs={"workspace_id": sim_workspace_id})
 
-    # CodeReview parks. Simulate empty output (no findings path — PostFindings treats no output as zero findings).
-    await _advance_pending_agent_event(
-        db_session,
-        wfx_id,
-        outputs={"output": ""},
-    )
-
-    # PostFindings (Local) ran inline with empty stdout → success-no-op;
-    # CleanupWorkspace then parked. Simulate its terminal event.
-    await _advance_pending_agent_event(db_session, wfx_id, outputs={})
+        # PostFindings (Local) ran inline with empty findings list → success-no-op;
+        # CleanupWorkspace then parked. Simulate its terminal event.
+        await _advance_pending_agent_event(db_session, wfx_id, outputs={})
 
     wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
     assert wfx.state == WorkflowState.DONE.value

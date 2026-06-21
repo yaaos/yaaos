@@ -1491,7 +1491,7 @@
           },
           "steps": {
             "items": {
-              "$ref": "#/components/schemas/WorkflowStepSummary"
+              "$ref": "#/components/schemas/WorkflowStepEntry"
             },
             "title": "Steps",
             "type": "array"
@@ -1524,7 +1524,7 @@
         "title": "WorkflowRunView",
         "type": "object"
       },
-      "WorkflowStepSummary": {
+      "WorkflowStepEntry": {
         "description": "One step in a workflow run, projected for the ticket Activity tab.",
         "properties": {
           "command_kind": {
@@ -1571,7 +1571,7 @@
           "started_at",
           "completed_at"
         ],
-        "title": "WorkflowStepSummary",
+        "title": "WorkflowStepEntry",
         "type": "object"
       },
       "WorkspaceEvent": {

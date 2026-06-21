@@ -12,10 +12,13 @@ Exposes:
 - Provider registration under id `remote_agent`.
 - `dispatch_provision_workspace(org_id, workspace_id, *, ..., session)` helper
   that enqueues a ProvisionWorkspace command durably inside the caller's transaction.
-- `dispatch_cleanup_workspace(workspace_id, *, org_id, agent_id, traceparent, session)`
-  that enqueues a CleanupWorkspace command pinned to the owning agent.
 - `provision()` / `destroy()` that hand control to the agent via
   `ProvisionWorkspace` / `CleanupWorkspace` AgentCommands.
+
+Cleanup and post-provision dispatch (Cleanup, RefreshWorkspaceAuth, CodeReview)
+routes through `core/workspace.dispatch_via_workspace` (Layer 2), which handles
+enqueue + pin + optional claim for any command that operates on an existing
+workspace row.
 
 The synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
 returning a `CodingAgentCliResult`) don't fit the async event-driven
@@ -35,12 +38,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import (
     AuthBlock,
-    CleanupWorkspaceCommand,
     ProvisionWorkspaceCommand,
     RepoRef,
     enqueue_command,
     has_any_reachable_agent,
-    pin_command_to_agent,
 )
 from app.core.workspace.types import (
     CodingAgentCliResult,
@@ -195,41 +196,12 @@ async def dispatch_provision_workspace(
     return ProvisionWorkspaceDispatch(command_id=command_id)
 
 
-async def dispatch_cleanup_workspace(
-    workspace_id: UUID,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    traceparent: str,
-    session: AsyncSession,
-) -> UUID:
-    """Enqueue a `CleanupWorkspace` command pinned to the owning agent.
-
-    `agent_id` is the workspace's stored owning agent (`WorkspaceRow.agent_id`)
-    — the pod that ran `ProvisionWorkspace`. Post-provision commands MUST go to
-    that same agent; re-picking would route to a pod that has no such workspace.
-    The command row is pre-stamped with `agent_id` so `claim_next` can
-    find it in the workspace_ids sweep.
-    Returns the new `command_id`.
-    """
-    command_id = uuid7()
-    cmd = CleanupWorkspaceCommand(
-        command_id=command_id,
-        workspace_id=workspace_id,
-        traceparent=traceparent,
-    )
-    await enqueue_command(org_id=org_id, command=cmd, session=session)
-    # Pre-assign the agent so claim_next's workspace_ids sweep finds it.
-    await pin_command_to_agent(command_id, agent_id, session=session)
-    return command_id
-
-
 def register_workspace_providers() -> None:
     """Register the shipped workspace provider into the process registry.
 
     Called explicitly from the web + worker composition roots after the
     workspace module is loaded — not at import time, so the process controls
-    when registration happens (mirrors `register_workspace_recovery_policies`).
+    when registration happens.
     `RemoteAgentWorkspaceProvider` is the only shipped implementation: it
     dispatches every workspace operation to a customer-deployed WorkspaceAgent
     via `core/agent_gateway`. `ProvisionWorkspace.dispatch` requires at least

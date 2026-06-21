@@ -10,119 +10,137 @@ Covers:
 - Workspace step async cycle: start_step → awaiting_agent → terminal event → route → done.
 - Failure + retry → fail_workflow after exhaustion.
 - HITL pause + resume.
-- `append_steps` inserts at front of remaining sequence.
 - Cancellation during `awaiting_agent`: cancel + event → cancelled.
 - Stale event handling: duplicate event is a no-op.
+- Typed lambda inputs: upstream step outputs propagate to downstream steps.
+- workflow_input: typed snapshot available to all step input lambdas.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from sqlalchemy import select
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
     HANDLE_AGENT_EVENT,
     ROUTE_WORKFLOW,
-    CommandCategory,
+    AgentDispatchCommand,
     CommandContext,
+    Empty,
+    HITLCommand,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowEngine,
     WorkflowState,
-    register_recovery_policy,
     request_cancel,
     resume_hitl,
+    step,
+    workflow_input,
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workflow.recovery import _clear_recovery_policies_for_tests
 from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
 
-# ── Test commands ───────────────────────────────────────────────────────
+# ── Command factory helpers ──────────────────────────────────────────────
+# `kind` is a CLASS attribute (not a constructor arg) on all command types.
+# These factories produce concrete subclasses with a class-level `kind`.
 
 
-class _RecordingLocal:
-    """Local command that records each invocation and returns Outcome.success
-    with the supplied outputs."""
+def _recording(kind: str, outputs: dict[str, Any] | None = None):
+    """Return (CommandClass, calls_list) for a recording LOCAL command.
 
-    def __init__(self, kind: str, outputs: dict[str, Any] | None = None) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
-        self._outputs = outputs or {}
-        self.calls: list[dict] = []
+    The CommandClass has `kind` as a class attribute and a `calls` list
+    (also a class attribute) that records each `execute` invocation.
+    Register the workflow via `register_workflow` before running; the engine
+    discovers command classes from `wf.steps[*].command_class` automatically.
+    """
+    _calls: list[dict] = []
+    _raw = outputs or {}
+    # Build a typed Pydantic model from the outputs dict so Outcome.success
+    # receives a BaseModel (not a bare dict). The field types are inferred from
+    # the values and are only used internally by the engine's serialisation path.
+    _out_instance: BaseModel
+    if _raw:
+        _fields: dict[str, Any] = {k: (type(v), v) for k, v in _raw.items()}
+        _out_instance = create_model(f"_{kind}Out", **_fields)(**_raw)
+    else:
+        _out_instance = Empty()
 
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
-        self.calls.append({"inputs": dict(inputs), "step_id": ctx.step_id, "attempt": ctx.attempt})
-        return Outcome.success(outputs=self._outputs)
+    class _Cmd:
+        Inputs = Empty
+        Outputs = Empty
+        calls: list = _calls
 
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            _calls.append(
+                {
+                    "inputs": inputs.model_dump(),
+                    "step_id": ctx.step_id,
+                    "attempt": ctx.attempt,
+                }
+            )
+            return Outcome.success(outputs=_out_instance)
 
-class _FailingLocal:
-    """Local command that returns Outcome.failure(); used for retry tests."""
-
-    def __init__(self, kind: str) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
-        self.calls: int = 0
-
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        self.calls += 1
-        return Outcome.failure(reason="planned-failure")
-
-
-class _RaisingLocal:
-    """Local command that raises — _safe_execute should catch and turn it
-    into a failure outcome."""
-
-    def __init__(self, kind: str) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
-
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        raise RuntimeError("unexpected")
+    _Cmd.kind = kind  # class attribute — readable via getattr(_Cmd, "kind")
+    return _Cmd, _calls
 
 
-class _HitlAsk:
+def _failing(kind: str):
+    """Return (CommandClass, instance) for a LOCAL command that always returns failure."""
+
+    class _Cmd:
+        Inputs = Empty
+        Outputs = Empty
+        calls: int = 0
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
+            type(self).calls += 1
+            return Outcome.failure(reason="planned-failure")
+
+    _Cmd.kind = kind
+    return _Cmd, _Cmd()
+
+
+def _raising(kind: str) -> type:
+    """Return CommandClass for a LOCAL command that always raises RuntimeError."""
+
+    class _Cmd:
+        Inputs = Empty
+        Outputs = Empty
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            del inputs, ctx, session
+            raise RuntimeError("unexpected")
+
+    _Cmd.kind = kind
+    return _Cmd
+
+
+# ── Concrete test commands that need class-level kind ────────────────────
+
+
+class _HitlQuestion(BaseModel):
+    prompt: str
+
+
+class _HitlAsk(HITLCommand):
     kind = "AskHuman"
-    category = CommandCategory.HITL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
         del inputs, ctx
-        return Outcome.hitl_pending(question={"prompt": "approve?"})
+        return Outcome.hitl_pending(question=_HitlQuestion(prompt="approve?"))
 
 
-class _AppendOnce:
-    """First call returns Outcome.success with append_steps; subsequent calls
-    just return success. Used to verify append_steps insertion."""
-
-    def __init__(self, kind: str, extra: tuple[Step, ...]) -> None:
-        self.kind = kind
-        self.category = CommandCategory.LOCAL
-        self.restart_safe = True
-        self._extra = extra
-        self._fired = False
-
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
-        del inputs, ctx
-        if not self._fired:
-            self._fired = True
-            return Outcome.success(append_steps=self._extra)
-        return Outcome.success()
-
-
-class _WorkspaceStub:
-    """Workspace-category command exercised by the engine's Workspace branch.
+class _WorkspaceStub(AgentDispatchCommand):
+    """AgentDispatchCommand exercised by the engine's AgentDispatch branch.
 
     `dispatch` returns a fresh UUID without writing an agent_commands row;
     these tests inject the terminal AgentEvent directly via `HANDLE_AGENT_EVENT`
@@ -131,14 +149,14 @@ class _WorkspaceStub:
     """
 
     kind = "DoOnAgent"
-    category = CommandCategory.WORKSPACE
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs: BaseModel | dict, ctx: CommandContext) -> Outcome:
+    async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
         del inputs, ctx
         return Outcome.success()
 
-    async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+    async def dispatch(self, inputs: BaseModel, ctx: CommandContext, *, session: Any) -> Any:
         del inputs, ctx, session
         return uuid4()
 
@@ -222,9 +240,9 @@ def _with_stub_workspace_provider():
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:
+    """Build an engine and register the workflow (auto-discovers step + recovery commands)."""
+    del commands  # auto-discovery via register_workflow; passed for historical call-site compat
     eng = WorkflowEngine()
-    for c in commands:
-        eng.register_command(c)
     eng.register_workflow(workflow)
     # Install as the process singleton so task bodies pick it up.
     import app.core.workflow.service as svc  # noqa: PLC0415
@@ -242,18 +260,21 @@ def _ticket_id() -> str:
 
 @pytest.mark.asyncio
 async def test_local_only_workflow_runs_to_done(db_session) -> None:
-    a = _RecordingLocal("A", outputs={"out_a": 1})
-    b = _RecordingLocal("B", outputs={"out_b": 2})
+    _CmdA, calls_a = _recording("A", outputs={"out_a": 1})
+    _CmdB, calls_b = _recording("B", outputs={"out_b": 2})
+    a_step = step(_CmdA)
+    b_step = step(_CmdB)
     wf = Workflow(
         name="local-2",
         version=1,
-        steps=(
-            Step(id="s1", command_kind="A"),
-            Step(id="s2", command_kind="B", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}),
-        ),
-        entry_step_id="s1",
+        steps=(a_step, b_step),
+        entry=a_step,
+        transitions={
+            a_step: {"success": b_step},
+            b_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
-    eng = _engine_with(a, b, workflow=wf)
+    eng = _engine_with(_CmdA(), _CmdB(), workflow=wf)
     exec_id = await eng.start(workflow_name="local-2", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
 
@@ -263,69 +284,68 @@ async def test_local_only_workflow_runs_to_done(db_session) -> None:
         await db_session.execute(select(WorkflowExecutionRow).where(WorkflowExecutionRow.id == exec_id))
     ).scalar_one()
     assert wfx.state == WorkflowState.DONE.value
-    assert wfx.current_step_id == "s2"
-    assert wfx.step_state["s1"]["outputs"] == {"out_a": 1}
-    assert wfx.step_state["s2"]["outputs"] == {"out_b": 2}
-    assert len(a.calls) == 1
-    assert len(b.calls) == 1
+    assert wfx.current_step_id == "B"
+    assert wfx.step_state["A"]["outputs"] == {"out_a": 1}
+    assert wfx.step_state["B"]["outputs"] == {"out_b": 2}
+    assert len(calls_a) == 1
+    assert len(calls_b) == 1
 
 
 @pytest.mark.asyncio
 async def test_failure_no_retry_routes_to_fail_workflow(db_session) -> None:
-    fail = _FailingLocal("Bad")
+    _CmdBad, fail_instance = _failing("Bad")
+    bad_step = step(_CmdBad)
     wf = Workflow(
         name="bad-1",
         version=1,
-        steps=(Step(id="only", command_kind="Bad"),),
-        entry_step_id="only",
+        steps=(bad_step,),
+        entry=bad_step,
     )
-    eng = _engine_with(fail, workflow=wf)
+    eng = _engine_with(fail_instance, workflow=wf)
     exec_id = await eng.start(workflow_name="bad-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.FAILED.value
-    assert fail.calls == 1  # default retry_policy.max_attempts = 1 → no retry
+    assert _CmdBad.calls == 1  # default retry_policy.max_attempts = 1 → no retry
+    _CmdBad.calls = 0  # reset class-level counter
 
 
 @pytest.mark.asyncio
 async def test_failure_with_retry_eventually_fails(db_session) -> None:
     from app.core.workflow import RetryPolicy  # noqa: PLC0415
 
-    fail = _FailingLocal("Bad")
+    _CmdBad, fail_instance = _failing("BadRetry")
+    bad_step = step(_CmdBad, retry_policy=RetryPolicy(max_attempts=3))
     wf = Workflow(
         name="retry-3",
         version=1,
-        steps=(
-            Step(
-                id="only",
-                command_kind="Bad",
-                retry_policy=RetryPolicy(max_attempts=3),
-            ),
-        ),
-        entry_step_id="only",
+        steps=(bad_step,),
+        entry=bad_step,
     )
-    eng = _engine_with(fail, workflow=wf)
+    eng = _engine_with(fail_instance, workflow=wf)
     exec_id = await eng.start(workflow_name="retry-3", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.FAILED.value
-    assert fail.calls == 3
+    assert _CmdBad.calls == 3
+    _CmdBad.calls = 0
 
 
 @pytest.mark.asyncio
 async def test_raising_command_becomes_failure(db_session) -> None:
-    raiser = _RaisingLocal("Boom")
+    _CmdBoom = _raising("Boom")
+    boom_step = step(_CmdBoom)
     wf = Workflow(
         name="raise-1",
         version=1,
-        steps=(Step(id="only", command_kind="Boom"),),
-        entry_step_id="only",
+        steps=(boom_step,),
+        entry=boom_step,
     )
-    eng = _engine_with(raiser, workflow=wf)
+    eng = _engine_with(_CmdBoom(), workflow=wf)
     exec_id = await eng.start(workflow_name="raise-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
@@ -335,57 +355,117 @@ async def test_raising_command_becomes_failure(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_input_resolution_pulls_prior_step_outputs(db_session) -> None:
-    a = _RecordingLocal("A", outputs={"workspace_id": "ws-123"})
-    b = _RecordingLocal("B")
-    wf = Workflow(
-        name="resolve-1",
-        version=1,
-        steps=(
-            Step(id="provision", command_kind="A"),
-            Step(
-                id="use",
-                command_kind="B",
-                inputs={"workspace_id": "$provision.workspace_id"},
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="provision",
+async def test_typed_lambda_inputs_resolution(db_session) -> None:
+    """Upstream step outputs propagate to downstream steps via typed lambda inputs."""
+
+    class _WorkspaceIdOut(BaseModel):
+        workspace_id: str
+
+    class _ReviewIn(BaseModel):
+        workspace_id: str
+
+    class _ProvisionCmd:
+        kind = "Provision"
+        Inputs = Empty
+        Outputs = _WorkspaceIdOut
+        calls: ClassVar[list] = []
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            type(self).calls.append(ctx.step_id)
+            return Outcome.success(outputs=_WorkspaceIdOut(workspace_id="ws-123"))
+
+    class _ReviewCmd:
+        kind = "Review"
+        Inputs = _ReviewIn
+        Outputs = Empty
+        received_inputs: ClassVar[list] = []
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            type(self).received_inputs.append(inputs)  # type: ignore[arg-type]
+            return Outcome.success()
+
+    provision_step = step(_ProvisionCmd)
+    review_step = step(
+        _ReviewCmd,
+        inputs=lambda: _ReviewIn(workspace_id=provision_step.outputs.workspace_id),  # type: ignore[attr-defined]
     )
-    eng = _engine_with(a, b, workflow=wf)
-    exec_id = await eng.start(workflow_name="resolve-1", ticket_id=_ticket_id(), session=db_session)
+    wf = Workflow(
+        name="lambda-resolve-1",
+        version=1,
+        steps=(provision_step, review_step),
+        entry=provision_step,
+        transitions={
+            provision_step: {"success": review_step},
+            review_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
+    )
+    eng = _engine_with(workflow=wf)
+    exec_id = await eng.start(workflow_name="lambda-resolve-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.DONE.value
-    assert b.calls[0]["inputs"] == {"workspace_id": "ws-123"}
+    assert len(_ReviewCmd.received_inputs) == 1
+    assert _ReviewCmd.received_inputs[0].workspace_id == "ws-123"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
-async def test_append_steps_inserts_at_front(db_session) -> None:
-    inserted = _RecordingLocal("Inserted", outputs={"i": True})
-    appender = _AppendOnce("Appender", extra=(Step(id="inserted", command_kind="Inserted"),))
-    tail = _RecordingLocal("Tail")
-    wf = Workflow(
-        name="append-1",
-        version=1,
-        steps=(
-            Step(id="appender", command_kind="Appender"),
-            Step(id="tail", command_kind="Tail", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}),
+async def test_typed_workflow_input_lambda(db_session) -> None:
+    """workflow_input snapshot is accessible inside step input lambdas."""
+
+    class _TicketSnap(BaseModel):
+        head_sha: str
+        author: str | None = None
+
+    class _CaptureInputs:
+        kind = "CaptureIn"
+        Inputs: type[BaseModel]
+        Outputs = Empty
+        received: ClassVar[list] = []
+
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
+            type(self).received.append(inputs)
+            return Outcome.success()
+
+    class _CaptureIn(BaseModel):
+        sha: str
+        author: str | None
+
+    _CaptureInputs.Inputs = _CaptureIn
+    ticket = workflow_input(_TicketSnap)
+    cap_step = step(
+        _CaptureInputs,
+        inputs=lambda: _CaptureIn(  # type: ignore[misc]
+            sha=ticket.outputs.head_sha,  # type: ignore[attr-defined]
+            author=ticket.outputs.author,  # type: ignore[attr-defined]
         ),
-        entry_step_id="appender",
     )
-    eng = _engine_with(appender, inserted, tail, workflow=wf)
-    exec_id = await eng.start(workflow_name="append-1", ticket_id=_ticket_id(), session=db_session)
+    wf = Workflow(
+        name="wf-input-lambda-1",
+        version=1,
+        steps=(cap_step,),
+        entry=cap_step,
+        workflow_input=ticket,
+        transitions={cap_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
+    )
+    eng = _engine_with(workflow=wf)
+    snapshot = _TicketSnap(head_sha="deadbeef", author="alice")
+    exec_id = await eng.start(
+        workflow_name="wf-input-lambda-1",
+        ticket_id=_ticket_id(),
+        session=db_session,
+        workflow_input=snapshot,
+    )
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.DONE.value
-    # The inserted step ran between appender and tail.
-    assert len(inserted.calls) == 1
-    assert len(tail.calls) == 1
+    assert len(_CaptureInputs.received) == 1
+    received = _CaptureInputs.received[0]
+    assert received.sha == "deadbeef"  # type: ignore[attr-defined]
+    assert received.author == "alice"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -395,11 +475,12 @@ async def test_workspace_step_transitions_to_awaiting_agent(
     """Workspace branch always dispatches over the wire to the single
     registered provider and parks the workflow in awaiting_agent."""
     ws = _WorkspaceStub()
+    ws_step = step(_WorkspaceStub)
     wf = Workflow(
         name="ws-1",
         version=1,
-        steps=(Step(id="do", command_kind="DoOnAgent"),),
-        entry_step_id="do",
+        steps=(ws_step,),
+        entry=ws_step,
     )
     eng = _engine_with(ws, workflow=wf)
     exec_id = await eng.start(
@@ -413,21 +494,19 @@ async def test_workspace_step_transitions_to_awaiting_agent(
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.AWAITING_AGENT.value
     assert wfx.pending_agent_command_id is not None
-    assert wfx.current_step_id == "do"
+    assert wfx.current_step_id == "DoOnAgent"
 
 
 @pytest.mark.asyncio
 async def test_handle_agent_event_advances_workflow(db_session, _with_stub_workspace_provider) -> None:
     ws = _WorkspaceStub()
+    ws_step = step(_WorkspaceStub)
     wf = Workflow(
         name="ws-then-done",
         version=1,
-        steps=(
-            Step(
-                id="do", command_kind="DoOnAgent", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}
-            ),
-        ),
-        entry_step_id="do",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
     eng = _engine_with(ws, workflow=wf)
     exec_id = await eng.start(
@@ -462,21 +541,19 @@ async def test_handle_agent_event_advances_workflow(db_session, _with_stub_works
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.DONE.value
     assert wfx.pending_agent_command_id is None
-    assert wfx.step_state["do"]["outputs"] == {"result": "ok"}
+    assert wfx.step_state["DoOnAgent"]["outputs"] == {"result": "ok"}
 
 
 @pytest.mark.asyncio
 async def test_stale_handle_agent_event_is_noop(db_session, _with_stub_workspace_provider) -> None:
     ws = _WorkspaceStub()
+    ws_step = step(_WorkspaceStub)
     wf = Workflow(
         name="ws-stale",
         version=1,
-        steps=(
-            Step(
-                id="do", command_kind="DoOnAgent", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}
-            ),
-        ),
-        entry_step_id="do",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
     eng = _engine_with(ws, workflow=wf)
     exec_id = await eng.start(
@@ -529,20 +606,21 @@ async def test_stale_handle_agent_event_is_noop(db_session, _with_stub_workspace
 
 @pytest.mark.asyncio
 async def test_hitl_pause_and_resume(db_session) -> None:
+    _TailCls, _ = _recording("Tail")
     asker = _HitlAsk()
-    tail = _RecordingLocal("Tail")
+    tail = _TailCls()
+
+    ask_step = step(_HitlAsk)
+    tail_step = step(_TailCls)
     wf = Workflow(
         name="hitl-1",
         version=1,
-        steps=(
-            Step(id="ask", command_kind="AskHuman", hitl=True),
-            Step(
-                id="tail",
-                command_kind="Tail",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="ask",
+        steps=(ask_step, tail_step),
+        entry=ask_step,
+        transitions={
+            ask_step: {"hitl_pending": tail_step},
+            tail_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
     eng = _engine_with(asker, tail, workflow=wf)
     exec_id = await eng.start(workflow_name="hitl-1", ticket_id=_ticket_id(), session=db_session)
@@ -582,15 +660,13 @@ async def test_request_cancel_during_awaiting_agent_then_event(
     db_session, _with_stub_workspace_provider
 ) -> None:
     ws = _WorkspaceStub()
+    ws_step = step(_WorkspaceStub)
     wf = Workflow(
         name="ws-cancel",
         version=1,
-        steps=(
-            Step(
-                id="do", command_kind="DoOnAgent", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}
-            ),
-        ),
-        entry_step_id="do",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
     eng = _engine_with(ws, workflow=wf)
     exec_id = await eng.start(
@@ -637,14 +713,16 @@ async def test_route_workflow_skips_when_terminal(db_session) -> None:
     """An out-of-order route_workflow against a terminal workflow is a no-op."""
     from app.core.tasks import enqueue  # noqa: PLC0415
 
-    noop = _RecordingLocal("Noop")
+    _NoopCls, _ = _recording("Noop2")
+    noop_step = step(_NoopCls)
     wf = Workflow(
         name="term-skip",
         version=1,
-        steps=(Step(id="only", command_kind="Noop"),),
-        entry_step_id="only",
+        steps=(noop_step,),
+        entry=noop_step,
+        transitions={noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
-    eng = _engine_with(noop, workflow=wf)
+    eng = _engine_with(_NoopCls(), workflow=wf)
     exec_id = await eng.start(workflow_name="term-skip", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
@@ -657,7 +735,7 @@ async def test_route_workflow_skips_when_terminal(db_session) -> None:
         ROUTE_WORKFLOW,
         args={
             "workflow_execution_id": str(exec_id),
-            "completed_step_id": "only",
+            "completed_step_id": "Noop2",
             "outcome_label": "success",
             "outputs": {},
             "traceparent": None,
@@ -673,22 +751,18 @@ async def test_route_workflow_skips_when_terminal(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) -> None:
-    """When a Local command fails with a label that has a registered
-    recovery policy, the engine inserts the recovery command as an
-    appended step that runs BEFORE the failed step retries. Recovery
-    fires at most once per step instance."""
-    _clear_recovery_policies_for_tests()
-    register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
-
+    """When a Workflow declares a recovery command for a failure label, the engine
+    inserts it as an appended step that runs BEFORE the failed step retries.
+    Recovery fires at most once per step instance."""
     review_calls: list[str] = []
     refresh_calls: list[str] = []
 
     class _FailOnceCommand:
         kind = "DoReview"
-        category = CommandCategory.LOCAL
-        restart_safe = True
+        Inputs = Empty
+        Outputs = Empty
 
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs
             review_calls.append(ctx.step_id)
             if len(review_calls) == 1:
@@ -697,27 +771,25 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 
     class _RefreshCommand:
         kind = "DoRefresh"
-        category = CommandCategory.LOCAL
-        restart_safe = True
+        recovers_failure_label = "auth_expired"
+        Inputs = Empty
+        Outputs = Empty
 
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs
             refresh_calls.append(ctx.step_id)
             return Outcome.success()
 
+    review_step = step(_FailOnceCommand)
     wf = Workflow(
         name="recovery-1",
         version=1,
-        steps=(
-            Step(
-                id="review",
-                command_kind="DoReview",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="review",
+        steps=(review_step,),
+        entry=review_step,
+        transitions={review_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
+        recovery_commands=(_RefreshCommand,),
     )
-    eng = _engine_with(_FailOnceCommand(), _RefreshCommand(), workflow=wf)
+    eng = _engine_with(workflow=wf)
     exec_id = await eng.start(workflow_name="recovery-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
@@ -733,39 +805,39 @@ async def test_recovery_policy_inserts_recovery_step_before_retry(db_session) ->
 async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
     """Second failure with the same recovery-eligible label after recovery
     has already run falls through to Tier-3 fail — no infinite loop."""
-    _clear_recovery_policies_for_tests()
-    register_recovery_policy(failure_label="auth_expired", command_kind="DoRefresh")
-
     review_calls: list[str] = []
     refresh_calls: list[str] = []
 
     class _AlwaysFail:
         kind = "DoReview"
-        category = CommandCategory.LOCAL
-        restart_safe = True
+        Inputs = Empty
+        Outputs = Empty
 
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs, ctx
             review_calls.append("x")
             return Outcome.failure(reason="still expired", label="auth_expired")
 
     class _RefreshOk:
         kind = "DoRefresh"
-        category = CommandCategory.LOCAL
-        restart_safe = True
+        recovers_failure_label = "auth_expired"
+        Inputs = Empty
+        Outputs = Empty
 
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
+        async def execute(self, inputs: BaseModel, ctx: CommandContext, *, session=None) -> Outcome:
             del inputs, ctx
             refresh_calls.append("x")
             return Outcome.success()
 
+    review_step = step(_AlwaysFail)
     wf = Workflow(
         name="recovery-2",
         version=1,
-        steps=(Step(id="review", command_kind="DoReview"),),
-        entry_step_id="review",
+        steps=(review_step,),
+        entry=review_step,
+        recovery_commands=(_RefreshOk,),
     )
-    eng = _engine_with(_AlwaysFail(), _RefreshOk(), workflow=wf)
+    eng = _engine_with(workflow=wf)
     exec_id = await eng.start(workflow_name="recovery-2", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
@@ -774,59 +846,6 @@ async def test_recovery_policy_fires_at_most_once_per_step(db_session) -> None:
     assert len(review_calls) == 2
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     assert wfx.state == WorkflowState.FAILED.value
-
-
-@pytest.mark.asyncio
-async def test_ticket_payload_resolved_in_step_inputs(db_session) -> None:
-    """`$ticket.<field>` resolves from the payload stashed at engine.start()
-    time. Lets workflow definitions pass ticket fields into Local commands
-    without each body re-fetching from the DB."""
-    captured: list[dict[str, Any]] = []
-
-    class _CaptureInputs:
-        kind = "CaptureInputs"
-        category = CommandCategory.LOCAL
-        restart_safe = True
-
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
-            del ctx
-            captured.append(dict(inputs))
-            return Outcome.success()
-
-    wf = Workflow(
-        name="payload-1",
-        version=1,
-        steps=(
-            Step(
-                id="capture",
-                command_kind="CaptureInputs",
-                inputs={
-                    "sha": "$ticket.head_sha",
-                    "missing": "$ticket.does_not_exist",
-                    "from_step": "$ticket.author",
-                },
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="capture",
-    )
-    eng = _engine_with(_CaptureInputs(), workflow=wf)
-    exec_id = await eng.start(
-        workflow_name="payload-1",
-        ticket_id=_ticket_id(),
-        ticket_payload={"head_sha": "deadbeef", "author": "alice"},
-        session=db_session,
-    )
-    await db_session.commit()
-    await _drain_workflow_outbox(db_session)
-
-    assert len(captured) == 1
-    assert captured[0]["sha"] == "deadbeef"
-    assert captured[0]["from_step"] == "alice"
-    assert captured[0]["missing"] is None
-
-    wfx = await db_session.get(WorkflowExecutionRow, exec_id)
-    assert wfx.state == WorkflowState.DONE.value
 
 
 @pytest.mark.asyncio
@@ -839,66 +858,29 @@ async def test_finalizer_runs_then_workflow_records_failed(db_session) -> None:
     must NOT flip the execution to DONE — the pending failure context from the
     failing step must win instead.
     """
-    failing = _FailingLocal("Work")
-    cleanup = _RecordingLocal("Cleanup")
+    _FailWork, fail_instance = _failing("Work")
+    _CleanupCls, cleanup_calls = _recording("Cleanup")
+    work_step = step(_FailWork)
+    cleanup_step = step(_CleanupCls)
     wf = Workflow(
         name="finalizer-1",
         version=1,
-        steps=(
-            Step(id="work", command_kind="Work"),
-            Step(
-                id="cleanup",
-                command_kind="Cleanup",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="work",
-        finalizer_step_id="cleanup",
+        steps=(work_step, cleanup_step),
+        entry=work_step,
+        finalizer=cleanup_step,
+        transitions={
+            cleanup_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
-    eng = _engine_with(failing, cleanup, workflow=wf)
+    eng = _engine_with(fail_instance, _CleanupCls(), workflow=wf)
     exec_id = await eng.start(workflow_name="finalizer-1", ticket_id=_ticket_id(), session=db_session)
     await db_session.commit()
     await _drain_workflow_outbox(db_session)
 
     wfx = await db_session.get(WorkflowExecutionRow, exec_id)
     # The finalizer must have run exactly once.
-    assert len(cleanup.calls) == 1
+    assert len(cleanup_calls) == 1
     # The workflow must end in FAILED, not DONE.
     assert wfx.state == WorkflowState.FAILED.value
     assert wfx.failure_reason == "planned-failure"
-
-
-@pytest.mark.asyncio
-async def test_ticket_payload_missing_when_not_supplied(db_session) -> None:
-    """Engine.start without ticket_payload → $ticket.<field> resolves to None."""
-    captured: list[Any] = []
-
-    class _CaptureValue:
-        kind = "CaptureValue"
-        category = CommandCategory.LOCAL
-        restart_safe = True
-
-        async def execute(self, inputs, ctx: CommandContext) -> Outcome:
-            del ctx
-            captured.append(inputs.get("v"))
-            return Outcome.success()
-
-    wf = Workflow(
-        name="payload-2",
-        version=1,
-        steps=(
-            Step(
-                id="cap",
-                command_kind="CaptureValue",
-                inputs={"v": "$ticket.head_sha"},
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="cap",
-    )
-    eng = _engine_with(_CaptureValue(), workflow=wf)
-    await eng.start(workflow_name="payload-2", ticket_id=_ticket_id(), session=db_session)
-    await db_session.commit()
-    await _drain_workflow_outbox(db_session)
-
-    assert captured == [None]
+    _FailWork.calls = 0  # reset class-level counter

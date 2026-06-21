@@ -1,7 +1,8 @@
-"""Service tests for the reviewer start hook.
+"""Service tests for the reviewer workflow start callback.
 
 Verifies that the `pending → running` ticket transition fires atomically with
-the workflow bootstrap commit when `pr_review_v1` starts.
+the workflow bootstrap commit when `pr_review_v1` starts. The callback is
+attached to `pr_review_v1.on_start` — no separate registration call needed.
 
 Covers:
 - After engine.start + drain, ticket status is `running`.
@@ -17,7 +18,7 @@ import pytest
 
 from app.core.audit_log import list_for_entity
 from app.core.tasks import drain_once, get_pending_task_names
-from app.domain.reviewer.start_hook import register_reviewer_start_hooks
+from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr, set_workflow_execution
 from app.domain.tickets import get as get_ticket
@@ -49,24 +50,12 @@ async def _drain(db_session, *, max_iters: int = 20) -> None:
 @pytest.mark.asyncio
 async def test_workflow_start_flips_ticket_to_running(
     db_session,
-    start_hooks_isolation,
     workspace_providers_isolation,
-    workflow_context_provider_isolation,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """Bootstrap: ticket is pending at create_from_pr, running after route_workflow
-    drains and the start hook fires."""
+    drains and the on_start callback fires."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.workspace import (  # noqa: PLC0415
-        ALL_LIFECYCLE_COMMANDS,
-        register_workflow_context_provider,
-    )
-    from app.domain.reviewer.commands import (  # noqa: PLC0415
-        ALL_LOCAL_COMMANDS,
-        ALL_WORKSPACE_COMMANDS,
-    )
-
-    register_reviewer_start_hooks()
 
     org_id = uuid4()
 
@@ -88,45 +77,27 @@ async def test_workflow_start_flips_ticket_to_running(
     ticket = await get_ticket(ticket_id, org_id=org_id)
     assert ticket.status == "pending"
 
-    class _StaticCtxProvider:
-        async def get_workspace_ticket_context(self, tid):  # type: ignore[no-untyped-def]
-            from app.core.workspace import WorkspaceTicketContext  # noqa: PLC0415
-
-            return WorkspaceTicketContext(
-                ticket_id=tid,
-                org_id=org_id,
-                payload={
-                    "head_sha": "abc",
-                    "is_draft": False,
-                    "is_fork": False,
-                    "action": "opened",
-                    "pr_external_id": "repo/r#1",
-                    "html_url": "http://example.com",
-                    "base_sha": "def",
-                    "author_login": "user",
-                    "author_type": "user",
-                    "labels": [],
-                    "head_repo_full": "repo/r",
-                    "base_repo_full": "repo/r",
-                    "event": "pull_request",
-                },
-            )
-
-    register_workflow_context_provider(_StaticCtxProvider())
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="repo/r",
+        head_sha="abc",
+        is_draft=False,
+        is_fork=False,
+    )
 
     with scoped_engine() as engine:
-        for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            engine.register_command(cmd)
         engine.register_workflow(pr_review_v1)
 
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id_str = await engine.start(
                 workflow_name="pr_review_v1",
                 ticket_id=str(ticket_id),
-                ticket_payload={"head_sha": "abc", "is_draft": False, "is_fork": False},
+                workflow_input=snapshot,
                 session=db_session,
             )
-            # Stamp the ticket so the hook can find the right execution.
+            # Stamp the ticket so the callback can find the right execution.
             await set_workflow_execution(
                 ticket_id,
                 workflow_execution_id=UUID(wfx_id_str),
@@ -135,7 +106,7 @@ async def test_workflow_start_flips_ticket_to_running(
             await db_session.commit()
 
             # Drain exactly one route_workflow task — which triggers the
-            # bootstrap branch and fires the start hook.
+            # bootstrap branch and fires the on_start callback.
             await _drain(db_session, max_iters=2)
 
     ticket = await get_ticket(ticket_id, org_id=org_id)
@@ -145,24 +116,12 @@ async def test_workflow_start_flips_ticket_to_running(
 @pytest.mark.asyncio
 async def test_two_status_changed_audit_rows_no_duplicates(
     db_session,
-    start_hooks_isolation,
     workspace_providers_isolation,
-    workflow_context_provider_isolation,
-) -> None:  # type: ignore[no-untyped-def]
-    """Exactly one ticket.status_changed audit row (pending→running from start hook).
+) -> None:
+    """Exactly one ticket.status_changed audit row (pending→running from on_start callback).
     create_from_pr writes ticket.created only — no duplicate status_changed at creation."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.workspace import (  # noqa: PLC0415
-        ALL_LIFECYCLE_COMMANDS,
-        register_workflow_context_provider,
-    )
-    from app.domain.reviewer.commands import (  # noqa: PLC0415
-        ALL_LOCAL_COMMANDS,
-        ALL_WORKSPACE_COMMANDS,
-    )
-
-    register_reviewer_start_hooks()
 
     org_id = uuid4()
 
@@ -179,42 +138,24 @@ async def test_two_status_changed_audit_rows_no_duplicates(
     )
     assert created is True
 
-    class _StaticCtxProvider:
-        async def get_workspace_ticket_context(self, tid):  # type: ignore[no-untyped-def]
-            from app.core.workspace import WorkspaceTicketContext  # noqa: PLC0415
-
-            return WorkspaceTicketContext(
-                ticket_id=tid,
-                org_id=org_id,
-                payload={
-                    "head_sha": "abc",
-                    "is_draft": False,
-                    "is_fork": False,
-                    "action": "opened",
-                    "pr_external_id": "repo/r#1",
-                    "html_url": "http://example.com",
-                    "base_sha": "def",
-                    "author_login": "user",
-                    "author_type": "user",
-                    "labels": [],
-                    "head_repo_full": "repo/r",
-                    "base_repo_full": "repo/r",
-                    "event": "pull_request",
-                },
-            )
-
-    register_workflow_context_provider(_StaticCtxProvider())
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_id,
+        org_id=org_id,
+        plugin_id="github",
+        repo_external_id="repo/r",
+        head_sha="abc",
+        is_draft=False,
+        is_fork=False,
+    )
 
     with scoped_engine() as engine:
-        for cmd in (*ALL_LIFECYCLE_COMMANDS, *ALL_WORKSPACE_COMMANDS, *ALL_LOCAL_COMMANDS):
-            engine.register_command(cmd)
         engine.register_workflow(pr_review_v1)
 
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id_str = await engine.start(
                 workflow_name="pr_review_v1",
                 ticket_id=str(ticket_id),
-                ticket_payload={"head_sha": "abc", "is_draft": False, "is_fork": False},
+                workflow_input=snapshot,
                 session=db_session,
             )
             await set_workflow_execution(
@@ -227,8 +168,8 @@ async def test_two_status_changed_audit_rows_no_duplicates(
             await _drain(db_session, max_iters=2)
 
     entries = await list_for_entity("ticket", ticket_id, org_id=org_id, kinds=["ticket.status_changed"])
-    # Exactly one: pending→running (start hook). create_from_pr writes ticket.created, not
-    # ticket.status_changed, so there's no duplicate event from creation.
+    # Exactly one: pending→running (on_start callback). create_from_pr writes
+    # ticket.created only — no duplicate status_changed at creation.
     assert len(entries) == 1, (
         f"Expected 1 ticket.status_changed audit row; got {len(entries)}: {[e.payload for e in entries]}"
     )

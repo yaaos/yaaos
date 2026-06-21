@@ -1,12 +1,7 @@
 """Workflow harness for multi-module service tests.
 
 Provides `scoped_engine` and `scoped_workflow` context managers that give
-service tests full engine isolation without touching `core/workflow` internals.
-Both helpers import only `core/workflow`'s production `__all__` API.
-
-Import pattern::
-
-    from app.testing.workflow_harness import scoped_engine, scoped_workflow
+service tests full engine isolation through `core/workflow`'s public seams.
 """
 
 from __future__ import annotations
@@ -26,14 +21,14 @@ from app.core.workflow import (
 
 
 @contextmanager
-def scoped_engine() -> Iterator[WorkflowEngine]:
-    """Context manager: swap in a fresh engine for the duration of the block.
+def scoped_engine(engine: WorkflowEngine | None = None) -> Iterator[WorkflowEngine]:
+    """Context manager: swap in a fresh (or supplied) engine for the duration of
+    the block, restoring the prior singleton on exit — even on exception.
 
-    The prior engine (if any) is restored on exit — even if an exception is
-    raised. Tests that need to register custom commands or workflows without
+    Tests that need to register custom commands or workflows without
     contaminating the process-singleton engine use this helper.
     """
-    fresh = WorkflowEngine()
+    fresh = engine if engine is not None else WorkflowEngine()
     prior = bind_engine(fresh)
     try:
         yield fresh
@@ -49,7 +44,7 @@ def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
 
     If the same (name, version) pair was already registered, the prior entry is
     saved and re-registered on exit. If it was not registered, the workflow is
-    simply unregistered on exit.
+    simply removed on exit.
     """
     engine = get_engine()
     try:
@@ -57,8 +52,7 @@ def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
     except WorkflowNotFoundError:
         prior = None
 
-    if prior is not None:
-        unregister_workflow(wf.name, wf.version)
+    unregister_workflow(wf.name, wf.version)
     register_workflow(wf)
     try:
         yield wf

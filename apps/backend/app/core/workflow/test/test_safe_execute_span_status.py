@@ -26,12 +26,12 @@ from opentelemetry.trace import StatusCode
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
@@ -47,11 +47,11 @@ class _RaisingLocal:
     """Raises RuntimeError from execute() — _safe_execute must record it."""
 
     kind = "RaisingLocalCmd"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         raise RuntimeError("boom")
 
 
@@ -59,11 +59,11 @@ class _FailingLocal:
     """Returns Outcome.failure() — _safe_execute must mark the span ERROR."""
 
     kind = "FailingLocalCmd"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.failure(reason="planned-failure")
 
 
@@ -71,11 +71,11 @@ class _SucceedingLocal:
     """Returns Outcome.success() — spans must remain unset (not ERROR)."""
 
     kind = "SucceedingLocalCmd"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -108,23 +108,17 @@ async def _drain(db_session) -> None:  # type: ignore[no-untyped-def]
 async def test_safe_execute_records_exception_on_raise(db_session) -> None:
     """A command that raises → `workflow.command.RaisingLocalCmd` span is
     `StatusCode.ERROR` with an `exception` event."""
-    cmd = _RaisingLocal()
+    raising_step = step(_RaisingLocal)
     wf = Workflow(
         name="span-raise-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="RaisingLocalCmd",
-                transitions={"failure": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(raising_step,),
+        entry=raising_step,
+        transitions={raising_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-raise-test",
@@ -159,23 +153,17 @@ async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> 
     """A command returning `Outcome.failure(reason=...)` →
     `workflow.command.FailingLocalCmd` is `StatusCode.ERROR` with the reason
     as description; NO `exception` event."""
-    cmd = _FailingLocal()
+    failing_step = step(_FailingLocal)
     wf = Workflow(
         name="span-failure-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="FailingLocalCmd",
-                transitions={"failure": TerminalAction.FAIL_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(failing_step,),
+        entry=failing_step,
+        transitions={failing_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-failure-test",
@@ -213,23 +201,17 @@ async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> 
 async def test_safe_execute_ok_on_success_outcome(db_session) -> None:
     """Regression guard: a success outcome leaves both spans with default
     status (not ERROR). Neither span should have an `exception` event."""
-    cmd = _SucceedingLocal()
+    succeeding_step = step(_SucceedingLocal)
     wf = Workflow(
         name="span-success-test",
         version=1,
-        steps=(
-            Step(
-                id="step",
-                command_kind="SucceedingLocalCmd",
-                transitions={"success": TerminalAction.COMPLETE_WORKFLOW},
-            ),
-        ),
-        entry_step_id="step",
+        steps=(succeeding_step,),
+        entry=succeeding_step,
+        transitions={succeeding_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
     with span_capture() as exporter:
         with scoped_engine() as eng:
-            eng.register_command(cmd)
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-success-test",

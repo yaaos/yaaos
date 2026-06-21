@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class RepoRef(BaseModel):
@@ -164,8 +164,28 @@ class VCSValidationError(VCSError):
     pass
 
 
+class VcsInstallNotFound(VCSError, LookupError):
+    """Raised by `get_install_credentials` when no active VCS App installation
+    exists for the org (e.g. the GitHub App was uninstalled). Callers should
+    surface this as a user-actionable configuration error."""
+
+
 class PluginNotFoundError(LookupError):
     pass
+
+
+class InstallCredentials(BaseModel):
+    """Clone URL and installation token for a repo.
+
+    Returned by `get_install_credentials`. Frozen so it can't be mutated
+    after construction. `installation_token` is `SecretStr` so the value
+    never appears in logs, repr, or audit payloads.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    clone_url: str
+    installation_token: SecretStr
 
 
 # Protocol

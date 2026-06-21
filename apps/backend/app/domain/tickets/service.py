@@ -392,23 +392,45 @@ async def get_payload(ticket_id: UUID, *, session: AsyncSession) -> dict[str, An
     return dict(row.payload or {})
 
 
-async def get_workspace_ticket_context(ticket_id: UUID):  # type: ignore[no-untyped-def]
-    """Read the ticket fields a Workspace WorkflowCommand needs to build a
-    `WorkspaceSpec` — `org_id`, `plugin_id`, `repo_external_id`, `payload`.
-    Returns None when the ticket is missing.
+class TicketWorkflowContext:
+    """Minimal ticket fields needed to build a TicketSnapshot for workflow start.
 
-    Owns its session (read-only, no commits). Registered with
-    `core/workspace.register_workflow_context_provider` at boot so
-    `ProvisionWorkspace` can read tickets without crossing the
-    core → domain layer boundary.
+    A plain value object (not a Pydantic model) — callers access attributes
+    directly. Returned by `get_workspace_ticket_context` for use in
+    `domain/reviewer.start_pr_review` which builds the typed `TicketSnapshot`
+    from these fields.
     """
-    from app.core.workspace import WorkspaceTicketContext  # noqa: PLC0415
 
+    __slots__ = ("org_id", "payload", "plugin_id", "pr_id", "repo_external_id")
+
+    def __init__(
+        self,
+        *,
+        org_id: UUID,
+        plugin_id: str,
+        repo_external_id: str,
+        payload: dict,  # type: ignore[type-arg]
+        pr_id: UUID | None = None,
+    ) -> None:
+        self.org_id = org_id
+        self.plugin_id = plugin_id
+        self.repo_external_id = repo_external_id
+        self.payload = payload
+        self.pr_id = pr_id
+
+
+async def get_workspace_ticket_context(ticket_id: UUID) -> TicketWorkflowContext | None:
+    """Read the ticket fields needed to build a `TicketSnapshot` for workflow start.
+
+    Returns `None` when the ticket is missing. Owns its session (read-only, no
+    commits). Called by `domain/reviewer.start_pr_review` which constructs the
+    typed `TicketSnapshot` from the returned fields.
+    """
     async with db_session() as s:
         row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
     if row is None:
         return None
-    return WorkspaceTicketContext(
+    return TicketWorkflowContext(
         org_id=row.org_id,
         plugin_id=row.plugin_id or "github",
         repo_external_id=row.repo_external_id or "",

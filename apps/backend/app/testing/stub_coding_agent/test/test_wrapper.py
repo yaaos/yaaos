@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -25,7 +26,7 @@ from app.testing.stub_coding_agent import (
 class _DummyPlugin:
     plugin_id = "dummy"
 
-    def build_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
+    def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         return InvokeCodingAgent(
             argv=["real-claude"],
             env={},
@@ -37,11 +38,18 @@ class _DummyPlugin:
         return RunResult(output="real", usage=Usage(), activity=ActivityLog())
 
 
-def test_build_invocation_returns_stub_argv() -> None:
-    """StubCodingAgentPlugin.build_invocation returns a minimal stub exec block."""
+def test_compile_invocation_returns_stub_argv() -> None:
+    """StubCodingAgentPlugin.compile_invocation returns a minimal stub exec block."""
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    inv = Invocation(skill="pr_review", model="opus", effort="medium", context={}, wallclock_seconds=60)
-    result = stub.build_invocation(inv)
+    inv = Invocation(
+        workspace_id=uuid.UUID(int=0),
+        skill="pr_review",
+        model="opus",
+        effort="medium",
+        context={},
+        wallclock_seconds=60,
+    )
+    result = stub.compile_invocation(inv)
     assert isinstance(result, InvokeCodingAgent)
     assert result.argv == ["stub"]
     assert result.wallclock_seconds == 60

@@ -29,13 +29,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import (
-    CommandCategory,
+    AgentDispatchCommand,
+    Empty,
     Outcome,
-    Step,
     TerminalAction,
     Workflow,
     WorkflowState,
     get_engine,
+    step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
@@ -69,13 +70,23 @@ def in_memory_spans():
     processor.shutdown()
 
 
-class _NoopLocal:
-    kind = "Noop"
-    category = CommandCategory.LOCAL
-    restart_safe = True
+class _NoopA:
+    kind = "TraceLinkNoopA"
+    Inputs = Empty
+    Outputs = Empty
 
-    async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
+        return Outcome.success()
+
+
+class _NoopB:
+    kind = "TraceLinkNoopB"
+    Inputs = Empty
+    Outputs = Empty
+
+    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+        del inputs, ctx, session
         return Outcome.success()
 
 
@@ -102,15 +113,17 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
     under the upstream span context.  Drive a two-Local-step workflow and
     assert the custom spans emitted share the upstream trace_id."""
     eng = get_engine()
-    eng.register_command(_NoopLocal())
+    a_step = step(_NoopA)
+    b_step = step(_NoopB)
     workflow = Workflow(
         name="trace-linkage-test",
         version=1,
-        steps=(
-            Step(id="a", command_kind="Noop", transitions={"success": "b"}),
-            Step(id="b", command_kind="Noop", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}),
-        ),
-        entry_step_id="a",
+        steps=(a_step, b_step),
+        entry=a_step,
+        transitions={
+            a_step: {"success": b_step},
+            b_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
+        },
     )
     eng.register_workflow(workflow)
 
@@ -191,29 +204,26 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
     bind_workspace_registry(WorkspaceRegistry())
     register_workspace_provider(_MinimalProvider())
 
-    class _NoopWs:
+    class _NoopWs(AgentDispatchCommand):
         kind = "DoOnAgent"
-        category = CommandCategory.WORKSPACE
-        restart_safe = True
+        Inputs = Empty
+        Outputs = Empty
 
-        async def execute(self, inputs, ctx):  # type: ignore[no-untyped-def]
-            del inputs, ctx
+        async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
+            del inputs, ctx, session
             return Outcome.success()
 
-        async def dispatch(self, inputs, ctx, *, session):  # type: ignore[no-untyped-def]
+        async def dispatch(self, inputs: Empty, ctx, *, session) -> uuid4().__class__:  # type: ignore[no-untyped-def]
             del inputs, ctx, session
             return uuid4()
 
-    eng.register_command(_NoopWs())
+    ws_step = step(_NoopWs)
     workflow = Workflow(
         name="trace-linkage-ws",
         version=1,
-        steps=(
-            Step(
-                id="do", command_kind="DoOnAgent", transitions={"success": TerminalAction.COMPLETE_WORKFLOW}
-            ),
-        ),
-        entry_step_id="do",
+        steps=(ws_step,),
+        entry=ws_step,
+        transitions={ws_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
     eng.register_workflow(workflow)
 

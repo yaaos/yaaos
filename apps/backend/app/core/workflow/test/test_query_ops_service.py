@@ -1,15 +1,12 @@
 """Service tests for the `core/workflow` query ops.
 
-Covers the public read-projection API added alongside the removal of
-`WorkflowExecutionRow` / `PendingHumanDecisionRow` from the module's
-public surface:
+Covers the public read-projection API in `core/workflow/views.py`:
 
-- `list_executions_for_ticket` — newest-first ordering, correct projection.
 - `get_execution_summary` — found and not-found paths.
 - `get_awaiting_human_execution` — most recent awaiting_human row; None otherwise.
 - `list_active_execution_ids` — excludes terminal states.
 - `list_hitl_history` — ordered entries; empty when no decisions exist.
-- `list_all_execution_states` — all state values returned.
+- `list_workflow_states` — all state values returned.
 """
 
 from __future__ import annotations
@@ -19,13 +16,11 @@ from uuid import uuid4
 import pytest
 
 from app.core.workflow import (
-    WorkflowExecutionSummary,
     get_awaiting_human_execution,
     get_execution_summary,
     list_active_execution_ids,
-    list_all_execution_states,
-    list_executions_for_ticket,
     list_hitl_history,
+    list_workflow_states,
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
 
@@ -44,32 +39,6 @@ def _make_wfx(ticket_id, state: str = "running") -> WorkflowExecutionRow:
         cancel_requested=False,
         otel_trace_context=None,
     )
-
-
-@pytest.mark.asyncio
-async def test_list_executions_for_ticket_returns_newest_first(db_session) -> None:
-    ticket_id = uuid4()
-    r1 = _make_wfx(ticket_id, "done")
-    r2 = _make_wfx(ticket_id, "running")
-    db_session.add(r1)
-    db_session.add(r2)
-    await db_session.flush()
-
-    results = await list_executions_for_ticket(ticket_id, session=db_session)
-    assert len(results) == 2
-    # Both are WorkflowExecutionSummary instances.
-    assert all(isinstance(r, WorkflowExecutionSummary) for r in results)
-    # States are projected correctly.
-    states = {r.state for r in results}
-    assert states == {"done", "running"}
-    # ticket_id projected correctly.
-    assert all(r.ticket_id == ticket_id for r in results)
-
-
-@pytest.mark.asyncio
-async def test_list_executions_for_ticket_returns_empty_for_unknown(db_session) -> None:
-    results = await list_executions_for_ticket(uuid4(), session=db_session)
-    assert results == []
 
 
 @pytest.mark.asyncio
@@ -184,12 +153,12 @@ async def test_list_hitl_history_empty_when_no_executions(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_all_execution_states_returns_all(db_session) -> None:
+async def test_list_workflow_states_returns_all(db_session) -> None:
     ticket_id = uuid4()
     db_session.add(_make_wfx(ticket_id, "running"))
     db_session.add(_make_wfx(ticket_id, "done"))
     await db_session.flush()
 
-    states = await list_all_execution_states(session=db_session)
+    states = await list_workflow_states(session=db_session)
     assert "running" in states
     assert "done" in states

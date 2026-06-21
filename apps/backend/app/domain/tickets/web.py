@@ -47,7 +47,7 @@ def _org() -> UUID:
     return org_id
 
 
-class WorkflowStepSummary(BaseModel):
+class WorkflowStepEntry(BaseModel):
     """One step in a workflow run, projected for the ticket Activity tab."""
 
     step_id: str
@@ -68,7 +68,7 @@ class WorkflowRunView(BaseModel):
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
-    steps: list[WorkflowStepSummary]
+    steps: list[WorkflowStepEntry]
 
 
 class StepActivityResponse(BaseModel):
@@ -302,7 +302,7 @@ async def workflow_runs(ticket_id: UUID) -> list[WorkflowRunView]:
             created_at=r.created_at,
             updated_at=r.updated_at,
             steps=[
-                WorkflowStepSummary(
+                WorkflowStepEntry(
                     step_id=st.step_id,
                     command_kind=st.command_kind,
                     state=st.state,

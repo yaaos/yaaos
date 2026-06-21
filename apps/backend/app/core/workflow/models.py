@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,6 +34,25 @@ class WorkflowExecutionRow(Base):
     # Short failure label written on terminal-fail; queryable for the run-view UI.
     # Values: schema_invalid | agent_failure | timeout | provision_failed | command_error
     failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # ── Typed engine-state columns (migration b3c4d5e6f7a8) ─────────────────
+    # Replaces the former JSONB magic-key pattern in step_state. step_state
+    # now holds only per-step outputs keyed by step_id.
+    finalizer_fired: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("FALSE"), default=False
+    )
+    step_attempts: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'"), default=dict
+    )
+    recovered_steps: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'"), default=dict
+    )
+    # Set while a finalizer step is in flight; cleared once the pending failure
+    # is consumed and the terminal FAILED state is recorded.
+    pending_failure_step_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The workflow_input supplied at engine.start() time. Lambda inputs_factory
+    # callbacks read typed snapshot fields from this column.
+    workflow_input: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

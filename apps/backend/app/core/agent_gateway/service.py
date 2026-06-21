@@ -997,7 +997,8 @@ async def record_agent_event(
 
     # Strip raw agent `stdout` after the sink has processed it. The sink is
     # the source of truth for what flows forward — it returns `{"output": ...}`
-    # (the parsed skill stdout) so workflow steps read the correct key.
+    # (the structured skill response JSON extracted from the stream-json result field)
+    # so `CodingAgentCommand.handle_response` can directly validate it.
     # Leaving `stdout` in the forwarded dict would allow stale reads of the
     # old key from any future step that accidentally used it.
     outputs.pop("stdout", None)

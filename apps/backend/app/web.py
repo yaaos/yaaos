@@ -68,23 +68,10 @@ from app.domain import lessons  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 
-# 5a. Startup assertions — must run after domain/reviewer import so the
-# workflow-context provider and recovery policies are registered by the
-# domain module's own bootstrap. These crash the process loudly at startup
-# if the wiring is wrong, rather than surfacing as a mid-flow None.
-from app.core.workspace import (  # noqa: E402
-    assert_workflow_context_provider,
-    register_workspace_providers,
-    register_workspace_recovery_policies,
-)
-from app.domain.reviewer import register_reviewer_start_hooks  # noqa: E402
-from app.domain.reviewer import register_reviewer_terminal_hooks  # noqa: E402
+# 5a. Workspace providers registration.
+from app.core.workspace import register_workspace_providers  # noqa: E402
 
 register_workspace_providers()
-register_workspace_recovery_policies()
-register_reviewer_start_hooks()
-register_reviewer_terminal_hooks()
-assert_workflow_context_provider()
 
 # 5b. Structural run-sink assertion — `core/coding_agent` registers the sink
 # at import time (step 4 above). Crash loud here rather than silently dropping

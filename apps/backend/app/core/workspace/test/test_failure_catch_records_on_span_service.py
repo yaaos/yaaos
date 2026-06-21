@@ -21,17 +21,17 @@ pytestmark = pytest.mark.service
 @pytest.mark.asyncio
 async def test_workspace_cleanup_failure_records_on_span(db_session) -> None:  # type: ignore[no-untyped-def]
     """close_workspace failure inside CleanupWorkspace.execute records exception + ERROR on span."""
-    import app.core.workspace.commands as _cmds  # noqa: PLC0415
+    import app.core.workspace.commands.cleanup as _cleanup_mod  # noqa: PLC0415
 
-    original_close = _cmds.close_workspace
+    original_close = _cleanup_mod.close_workspace
 
     async def _raising_close(ws_id: UUID) -> None:
         raise RuntimeError("simulated close_workspace failure")
 
-    _cmds.close_workspace = _raising_close  # type: ignore[attr-defined]
+    _cleanup_mod.close_workspace = _raising_close  # type: ignore[attr-defined]
 
     try:
-        from app.core.workspace.commands import CleanupWorkspace  # noqa: PLC0415
+        from app.core.workspace.commands import CleanupWorkspace, CleanupWorkspaceInputs  # noqa: PLC0415
 
         cmd = CleanupWorkspace()
         ctx = CommandContext(
@@ -40,14 +40,14 @@ async def test_workspace_cleanup_failure_records_on_span(db_session) -> None:  #
             step_id="cleanup_workspace",
             attempt=0,
         )
-        ws_id = str(UUID("00000000-0000-0000-0000-000000000099"))
-
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("workflow.command.CleanupWorkspace"):
-                outcome = await cmd.execute({"workspace_id": ws_id}, ctx)
+                outcome = await cmd.execute(
+                    CleanupWorkspaceInputs(workspace_id=UUID("00000000-0000-0000-0000-000000000099")), ctx
+                )
     finally:
-        _cmds.close_workspace = original_close  # type: ignore[attr-defined]
+        _cleanup_mod.close_workspace = original_close  # type: ignore[attr-defined]
 
     assert outcome.kind.name == "FAILURE", f"expected FAILURE, got {outcome.kind}"
 
