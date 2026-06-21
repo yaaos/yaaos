@@ -17,7 +17,7 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import public_route, require
 from app.domain.orgs import repository as orgs_repo
 
@@ -65,8 +65,8 @@ def _make_app() -> FastAPI:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
-    member_user = await identity_repo.insert_user(db_session, display_name="Member")
+    user = await insert_user(db_session, display_name="Owner")
+    member_user = await insert_user(db_session, display_name="Member")
     org = await orgs_repo.insert_org(db_session, slug="acme")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
@@ -77,9 +77,9 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
 
     raw_owner = "owner-raw-token"
     raw_member = "member-raw-token"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_owner),
+        token_hash=hash_token(raw_owner),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-owner",
@@ -87,9 +87,9 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
         user_agent=None,
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_member),
+        token_hash=hash_token(raw_member),
         user_id=member_user.id,
         workspace_id=None,
         csrf_token="csrf-member",
@@ -258,11 +258,11 @@ async def test_csrf_skipped_on_safe_method(seeded) -> None:
 @pytest.mark.asyncio
 async def test_role_check_does_not_leak_membership_existence(db_session, seeded) -> None:
     """Caller without membership in an existing org sees 404, not 403."""
-    outsider = await identity_repo.insert_user(db_session, display_name="Outsider")
+    outsider = await insert_user(db_session, display_name="Outsider")
     raw = f"outsider-{uuid.uuid4()}"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw),
+        token_hash=hash_token(raw),
         user_id=outsider.id,
         workspace_id=None,
         csrf_token="x",

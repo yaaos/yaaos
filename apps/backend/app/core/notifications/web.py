@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from app.core.auth import public_route
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import get_session_by_hash, hash_token
 from app.core.notifications import service as notif_service
 from app.core.webserver import RouteSpec, register_routes
 
@@ -43,9 +43,9 @@ async def _resolve_user(yaaos_session: str | None) -> UUID | None:
         return None
     from datetime import UTC, datetime  # noqa: PLC0415
 
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await identity_repo.get_session_by_hash(s, token_hash)
+        row = await get_session_by_hash(s, token_hash)
     if row is None or row.user_id is None:
         return None
     if row.expires_at < datetime.now(UTC):

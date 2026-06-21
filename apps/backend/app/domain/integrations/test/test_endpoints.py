@@ -20,8 +20,7 @@ from sqlalchemy import select
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.config import get_settings
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import insert_user, mint_session
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.integrations import web as _integ_web  # noqa: F401
@@ -100,8 +99,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
+    admin = await insert_user(db_session, display_name="A")
+    member = await insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="integ-ep")
     await orgs_repo.insert_membership(
         db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
@@ -109,8 +108,8 @@ async def seeded(db_session):
     await orgs_repo.insert_membership(
         db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
-    admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
+    member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()
     yield {
         "org": org,

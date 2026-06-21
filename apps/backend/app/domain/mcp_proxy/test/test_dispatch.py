@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
@@ -143,7 +143,7 @@ async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     from app.domain.reviewer import Review  # noqa: PLC0415
 
     org = await orgs_repo.insert_org(db_session, slug=f"mcp-disp-{uuid4().hex[:8]}")
-    await identity_repo.insert_user(db_session, display_name="U")
+    await insert_user(db_session, display_name="U")
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
         org_id=org.org_id,

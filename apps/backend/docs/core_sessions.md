@@ -27,7 +27,7 @@
 2. Exchange code; `ProviderError` → 502.
 3. Reject unverified email → 403 `email_not_verified`.
 4. Run [`login_via_oauth`](core_identity.md#login-orchestrator). TOTP step-up when user has verified secret (signed `yaaos_totp_challenge` cookie).
-5. On success: `sessions.create`, set `yaaos_session` (HttpOnly, SameSite=Lax) + `yaaos_csrf` (non-HttpOnly) cookies, 303 to signed `next`.
+5. On success: `mint_session` (from [`core/identity`](core_identity.md)), set `yaaos_session` (HttpOnly, SameSite=Lax) + `yaaos_csrf` (non-HttpOnly) cookies, 303 to signed `next`.
 6. Open-redirect defeated by `_safe_next`: only same-origin absolute paths honored.
 
 **State vs TOTP-challenge cookie** use different `itsdangerous` salts (`yaaos-oauth-state` vs `yaaos-totp-challenge`) so a login state can't be replayed at the step-up endpoint.

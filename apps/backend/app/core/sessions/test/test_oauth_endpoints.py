@@ -9,8 +9,14 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import ProviderProfile
-from app.core.identity import repository as repo
+from app.core.identity import (
+    ProviderProfile,
+    add_email,
+    add_oauth_identity,
+    find_oauth_identity,
+    find_user_by_email,
+    insert_user,
+)
 from app.core.sessions import web as auth_web  # noqa: F401 — ensures /api/auth routes register
 from app.domain.orgs import invite
 from app.domain.orgs import repository as orgs_repo
@@ -65,9 +71,9 @@ async def _begin_login_and_get_state() -> str:
 
 @pytest.mark.asyncio
 async def test_callback_existing_identity_issues_session(db_session) -> None:
-    user = await repo.insert_user(db_session, display_name="E")
-    await repo.add_email(db_session, user_id=user.id, email="e@example.com", verified=True)
-    await repo.add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
+    user = await insert_user(db_session, display_name="E")
+    await add_email(db_session, user_id=user.id, email="e@example.com", verified=True)
+    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
     state = await _begin_login_and_get_state()
     set_next_profile(
         ProviderProfile(
@@ -116,15 +122,15 @@ async def test_callback_unknown_user_redirects_to_login_with_reason(db_session) 
     assert resp.headers["location"] == "/login?reason=not_provisioned"
     assert "yaaos_session" not in resp.cookies
     # No rows were written.
-    assert await repo.find_user_by_email(db_session, "nobody@example.com") is None
-    assert await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-2") is None
+    assert await find_user_by_email(db_session, "nobody@example.com") is None
+    assert await find_oauth_identity(db_session, provider="test", external_subject="ex-2") is None
 
 
 @pytest.mark.asyncio
 async def test_callback_email_match_without_identity_autolinks(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    await repo.add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
-    await repo.add_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
+    user = await insert_user(db_session)
+    await add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
+    await add_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
     await db_session.commit()
     state = await _begin_login_and_get_state()
     set_next_profile(
@@ -146,7 +152,7 @@ async def test_callback_email_match_without_identity_autolinks(db_session) -> No
     assert resp.status_code in (302, 303)
     assert "yaaos_session" in resp.cookies
     # Identity row attached to the pre-existing user, no new user row.
-    linked = await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-3")
+    linked = await find_oauth_identity(db_session, provider="test", external_subject="ex-3")
     assert linked is not None and linked.user_id == user.id
 
 

@@ -8,6 +8,7 @@
 - Does NOT own: `/api/auth/*` HTTP routes (those are in [`core/sessions`](core_sessions.md)) or `/api/user/*` (those are in `user_web.py`, `USER_SCOPED`). Org/role-aware dependency factories (`require(action)`) live in [`core/sessions`](core_sessions.md).
 - Does NOT read `domain/orgs` — `/api/user/me` membership list and session-expiry audit both go through [`core/tenancy`](core_tenancy.md) (`list_memberships_for_user`).
 - Emits: `CreatedSession` (raw token + CSRF token) to the callback handler.
+- **Public interface** — all functions are flat re-exports from `app.core.identity`. Session lifecycle functions carry explicit prefixes to avoid collision: `mint_session`, `lookup_session`, `revoke_session`, `revoke_all_sessions_for_user`, `rotate_session`, `touch_session`, `cleanup_expired_sessions`. TOTP functions: `enroll_totp`, `verify_totp`. Callers never import `repository`, `sessions`, or `totp` submodules directly — use the flat names from the package root.
 
 ## Why / invariants
 
@@ -23,8 +24,8 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 **Session security invariants:**
 - PK is the sha256 hex of the raw token; raw tokens never stored in DB.
 - Per-session CSRF token in `yaaos_csrf` (non-HttpOnly) echoed in `X-CSRF-Token` on mutations — double-submit pattern.
-- `sessions.rotate(old_raw)` on role change / invite-accept / SSO satisfaction: deletes old row and mints new one atomically.
-- "Sign out everywhere" calls `sessions.revoke_all_for_user(user_id)`. Role revocation triggers this automatically.
+- `rotate_session(old_raw)` on role change / invite-accept / SSO satisfaction: deletes old row and mints new one atomically.
+- "Sign out everywhere" calls `revoke_all_sessions_for_user(user_id)`. Role revocation triggers this automatically.
 - `sso_satisfied_for_org_id` + timestamp encode 8-hour SSO TTL per org.
 
 **TOTP secret** — at most one per user. Base32 seed encrypted via [`core/secrets`](core_secrets.md); `verified_at` set only after the user proves possession.

@@ -16,7 +16,7 @@ import httpx
 import pytest
 
 from app.core.config import get_settings
-from app.core.identity import repository as identity_repo
+from app.core.identity.repository import find_oauth_identity, find_user_by_email
 from app.domain.orgs import repository as orgs_repo
 
 _BIN = Path(__file__).resolve().parents[4] / "bin" / "bootstrap"
@@ -120,9 +120,9 @@ async def test_bootstrap_creates_all_rows(github_user_lookup, db_session) -> Non
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-bootstrap@example.com")
+        user = await find_user_by_email(s, "jack-bootstrap@example.com")
         assert user is not None
-        identity = await identity_repo.find_oauth_identity(s, provider="github", external_subject="9991")
+        identity = await find_oauth_identity(s, provider="github", external_subject="9991")
         assert identity is not None and identity.user_id == user.id
         org = await orgs_repo.get_org_by_slug(s, "acme-boot")
         assert org is not None
@@ -150,7 +150,7 @@ async def test_bootstrap_is_idempotent(github_user_lookup) -> None:
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-idem@example.com")
+        user = await find_user_by_email(s, "jack-idem@example.com")
         assert user is not None
         org = await orgs_repo.get_org_by_slug(s, "idem-org")
         assert org is not None
@@ -168,7 +168,7 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-retry@example.com")
+        user = await find_user_by_email(s, "jack-retry@example.com")
         assert user is not None
         org = await orgs_repo.get_org_by_slug(s, "retry-org")
         assert org is not None

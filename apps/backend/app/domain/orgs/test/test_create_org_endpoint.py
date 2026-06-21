@@ -13,8 +13,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import insert_user, mint_session
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 
@@ -34,8 +33,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="C")
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await insert_user(db_session, display_name="C")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "sess": sess}
 

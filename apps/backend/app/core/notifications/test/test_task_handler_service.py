@@ -20,7 +20,7 @@ import pytest_asyncio
 from sqlalchemy import select
 
 from app.core.auth import Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.notifications import NotificationSpec, fanout
 from app.core.notifications.models import NotificationRow
 from app.core.notifications.service import create
@@ -31,8 +31,8 @@ from app.domain.orgs import repository as orgs_repo
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    alice = await identity_repo.insert_user(db_session, display_name="Alice")
-    bob = await identity_repo.insert_user(db_session, display_name="Bob")
+    alice = await insert_user(db_session, display_name="Alice")
+    bob = await insert_user(db_session, display_name="Bob")
     org = await orgs_repo.insert_org(db_session, slug="task-org", display_name="TaskOrg")
     await orgs_repo.insert_membership(
         db_session, user_id=alice.id, org_id=org.org_id, role=Role.BUILDER, handle="alice"

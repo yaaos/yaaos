@@ -34,7 +34,7 @@ Invitations are the sole access gate for new members — no self-signup. SAML SS
 
 ## Membership mutations
 
-- `change_role` — updates row + calls `sessions.revoke_all_for_user`. User must re-authenticate.
+- `change_role` — updates row + calls `revoke_all_sessions_for_user`. User must re-authenticate.
 - `remove_member` — deletes row + revokes all sessions. No-op if row already gone.
 
 Both audit with `from_role` + `to_role` payload.

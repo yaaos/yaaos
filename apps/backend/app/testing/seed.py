@@ -204,9 +204,9 @@ async def set_session_last_seen(
     """Write `last_seen_at` for a session row identified by `token_hash`.
     Helper to simulate idle sessions in tests without importing SessionRow.
     """
-    from app.core.identity import repository as repo  # noqa: PLC0415
+    from app.core.identity import get_session_by_hash  # noqa: PLC0415
 
-    row = await repo.get_session_by_hash(db, token_hash)
+    row = await get_session_by_hash(db, token_hash)
     assert row is not None, f"session not found for hash: {token_hash[:8]}..."
     row.last_seen_at = last_seen_at
     await db.flush()

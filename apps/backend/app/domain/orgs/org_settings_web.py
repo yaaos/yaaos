@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from app.core.agent_gateway import revoke_all_for_arn
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import get_session_by_hash, get_user, hash_token, list_emails_for_user
 from app.core.sessions import require
 from app.core.tenancy import (
     get_org_full as _get_org_full,
@@ -120,9 +120,9 @@ async def create_org(
     """
     if not yaaos_session:
         return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        sess_row = await identity_repo.get_session_by_hash(s, token_hash)
+        sess_row = await get_session_by_hash(s, token_hash)
         if sess_row is None or sess_row.user_id is None:
             return JSONResponse(status_code=401, content={"error": "unauthenticated"})
         from datetime import UTC, datetime  # noqa: PLC0415
@@ -286,9 +286,9 @@ async def list_mine(
     """Cross-org list of the user's memberships. Powers the org switcher and `/orgs` picker."""
     if not yaaos_session:
         return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await identity_repo.get_session_by_hash(s, token_hash)
+        row = await get_session_by_hash(s, token_hash)
         if row is None or row.user_id is None:
             return JSONResponse(status_code=401, content={"error": "unauthenticated"})
         from datetime import UTC, datetime  # noqa: PLC0415
@@ -342,10 +342,10 @@ async def config_status() -> ConfigStatusResponse:
         for m in admin_memberships:
             if m.role.value not in ("owner", "admin"):
                 continue
-            user = await identity_repo.get_user(s, m.user_id)
+            user = await get_user(s, m.user_id)
             if user is None:
                 continue
-            emails = await identity_repo.list_emails_for_user(s, m.user_id)
+            emails = await list_emails_for_user(s, m.user_id)
             primary = next(
                 (e.email for e in emails if e.is_primary),
                 emails[0].email if emails else None,

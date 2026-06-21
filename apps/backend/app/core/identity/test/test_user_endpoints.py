@@ -8,9 +8,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
 from app.core.identity import user_web as _user_web  # noqa: F401
+from app.core.identity.repository import add_email, insert_user
+from app.core.identity.sessions import create as _create_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 
@@ -31,18 +31,14 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="Acc")
-    e1 = await identity_repo.add_email(
-        db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True
-    )
-    e2 = await identity_repo.add_email(
-        db_session, user_id=user.id, email="alt@x.test", is_primary=False, verified=True
-    )
+    user = await insert_user(db_session, display_name="Acc")
+    e1 = await add_email(db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True)
+    e2 = await add_email(db_session, user_id=user.id, email="alt@x.test", is_primary=False, verified=True)
     org = await orgs_repo.insert_org(db_session, slug="acc-org")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="acc"
     )
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "e1": e1, "e2": e2, "org": org, "session": s}
 
@@ -77,15 +73,13 @@ async def test_delete_non_last_verified_email_ok(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_last_verified_email_blocked(db_session) -> None:
-    user = await identity_repo.insert_user(db_session, display_name="One")
-    only = await identity_repo.add_email(
-        db_session, user_id=user.id, email="only@x.test", is_primary=True, verified=True
-    )
+    user = await insert_user(db_session, display_name="One")
+    only = await add_email(db_session, user_id=user.id, email="only@x.test", is_primary=True, verified=True)
     org = await orgs_repo.insert_org(db_session, slug="one-org")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="one"
     )
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:

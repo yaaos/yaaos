@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, Role, limiter, org_id_var, user_id_var
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import get_session_by_hash, get_user, hash_token, list_emails_for_user
 from app.core.sessions import current_actor, public_route, require
 from app.core.tenancy import update_member_handle as _update_member_handle
 from app.core.webserver import RouteSpec, register_routes
@@ -79,8 +79,8 @@ async def list_members() -> list[MemberView]:
         rows = await orgs_repo.list_memberships_for_org(s, org_id)
         out: list[MemberView] = []
         for row in rows:
-            user = await identity_repo.get_user(s, row.user_id)
-            emails = await identity_repo.list_emails_for_user(s, row.user_id)
+            user = await get_user(s, row.user_id)
+            emails = await list_emails_for_user(s, row.user_id)
             primary = next((e for e in emails if e.is_primary), emails[0] if emails else None)
             out.append(
                 MemberView(
@@ -231,8 +231,8 @@ async def _resolve_session_user(s, raw_token: str) -> UUID | None:
     """Look up the user_id behind a session cookie. Inlined here because
     `accept_invitation` runs without the `require()` dep that normally
     populates `user_id_var`."""
-    token_hash = identity_repo.hash_token(raw_token)
-    row = await identity_repo.get_session_by_hash(s, token_hash)
+    token_hash = hash_token(raw_token)
+    row = await get_session_by_hash(s, token_hash)
     if row is None or row.user_id is None:
         return None
     from datetime import UTC, datetime  # noqa: PLC0415

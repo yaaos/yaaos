@@ -273,11 +273,16 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
     the session normally."""
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
-    from app.core.identity import create_email, create_session, create_user  # noqa: PLC0415
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import (  # noqa: PLC0415
+        create_email,
+        create_session,
+        create_user,
+        find_user_by_email,
+        hash_token,
+    )
 
     async with db_session() as s:
-        existing = await identity_repo.find_user_by_email(s, email)
+        existing = await find_user_by_email(s, email)
         if existing is not None:
             user = existing
         else:
@@ -291,7 +296,7 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
             )
         await create_session(
             s,
-            token_hash=identity_repo.hash_token(raw_session_token),
+            token_hash=hash_token(raw_session_token),
             user_id=user.id,
             workspace_id=None,
             csrf_token="e2e-csrf",

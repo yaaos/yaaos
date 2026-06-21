@@ -11,16 +11,26 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.identity import repository as repo
+from app.core.identity.repository import (
+    add_email,
+    add_oauth_identity,
+    find_oauth_identity,
+    find_user_by_email,
+    get_session_by_hash,
+    hash_token,
+    insert_session,
+    insert_user,
+    upsert_totp_secret,
+)
 
 
 @pytest.mark.asyncio
 async def test_create_user_with_email_and_oauth_identity(db_session) -> None:
-    user = await repo.insert_user(db_session, display_name="Jack")
+    user = await insert_user(db_session, display_name="Jack")
     assert user.id is not None
     assert user.display_name == "Jack"
 
-    email_row = await repo.add_email(
+    email_row = await add_email(
         db_session,
         user_id=user.id,
         email="jack@example.com",
@@ -30,7 +40,7 @@ async def test_create_user_with_email_and_oauth_identity(db_session) -> None:
     assert email_row.verified_at is not None
     assert email_row.is_primary is True
 
-    oauth = await repo.add_oauth_identity(
+    oauth = await add_oauth_identity(
         db_session,
         user_id=user.id,
         provider="github",
@@ -38,31 +48,31 @@ async def test_create_user_with_email_and_oauth_identity(db_session) -> None:
     )
     assert oauth.verified_at is not None
 
-    looked_up = await repo.find_oauth_identity(db_session, provider="github", external_subject="42")
+    looked_up = await find_oauth_identity(db_session, provider="github", external_subject="42")
     assert looked_up is not None
     assert looked_up.user_id == user.id
 
 
 @pytest.mark.asyncio
 async def test_find_user_by_email_case_insensitive(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    await repo.add_email(db_session, user_id=user.id, email="Mixed.Case@Example.com", verified=True)
-    hit = await repo.find_user_by_email(db_session, "mixed.case@example.com")
+    user = await insert_user(db_session)
+    await add_email(db_session, user_id=user.id, email="Mixed.Case@Example.com", verified=True)
+    hit = await find_user_by_email(db_session, "mixed.case@example.com")
     assert hit is not None and hit.id == user.id
 
 
 @pytest.mark.asyncio
 async def test_find_user_by_unverified_email_returns_none(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    await repo.add_email(db_session, user_id=user.id, email="x@example.com", verified=False)
-    assert await repo.find_user_by_email(db_session, "x@example.com") is None
+    user = await insert_user(db_session)
+    await add_email(db_session, user_id=user.id, email="x@example.com", verified=False)
+    assert await find_user_by_email(db_session, "x@example.com") is None
 
 
 @pytest.mark.asyncio
 async def test_session_insert_and_lookup(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    token_hash = repo.hash_token("rawtoken")
-    row = await repo.insert_session(
+    user = await insert_user(db_session)
+    token_hash = hash_token("rawtoken")
+    row = await insert_session(
         db_session,
         token_hash=token_hash,
         user_id=user.id,
@@ -74,20 +84,20 @@ async def test_session_insert_and_lookup(db_session) -> None:
     )
     assert row.token_hash == token_hash
 
-    fetched = await repo.get_session_by_hash(db_session, token_hash)
+    fetched = await get_session_by_hash(db_session, token_hash)
     assert fetched is not None and fetched.user_id == user.id
     assert fetched.csrf_token == "csrf-abc"
 
 
 @pytest.mark.asyncio
 async def test_totp_secret_upsert(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    first = await repo.upsert_totp_secret(db_session, user_id=user.id, encrypted_secret=b"sec1")
+    user = await insert_user(db_session)
+    first = await upsert_totp_secret(db_session, user_id=user.id, encrypted_secret=b"sec1")
     assert first.verified_at is None
 
     # Mark it verified, then upsert again — verification should reset.
     first.verified_at = datetime.now(UTC)
     await db_session.flush()
-    second = await repo.upsert_totp_secret(db_session, user_id=user.id, encrypted_secret=b"sec2")
+    second = await upsert_totp_secret(db_session, user_id=user.id, encrypted_secret=b"sec2")
     assert second.encrypted_secret == b"sec2"
     assert second.verified_at is None

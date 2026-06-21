@@ -11,8 +11,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import hash_token, insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.core.tenancy import get_org_full, update_org_fields
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
@@ -54,9 +53,9 @@ def _idle_probe_client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await identity_repo.insert_user(db_session, display_name="O")
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
+    owner = await insert_user(db_session, display_name="O")
+    admin = await insert_user(db_session, display_name="A")
+    member = await insert_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="ts-org")
     await orgs_repo.insert_membership(
         db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
@@ -67,8 +66,8 @@ async def seeded(db_session):
     await orgs_repo.insert_membership(
         db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
-    admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
+    member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()
     yield {
         "org": org,
@@ -358,9 +357,7 @@ async def test_idle_session_rejected_when_override_set(seeded, db_session) -> No
     ago is rejected by the require() dep with 401 session_idle_expired."""
     await update_org_fields(db_session, seeded["org"].org_id, session_timeout_override=10)
     sess = seeded["admin_sess"]
-    await _backdate_session_last_seen(
-        db_session, token_hash=identity_repo.hash_token(sess.raw_token), minutes_ago=30
-    )
+    await _backdate_session_last_seen(db_session, token_hash=hash_token(sess.raw_token), minutes_ago=30)
 
     async with _idle_probe_client() as c:
         r = await c.get(
@@ -377,9 +374,7 @@ async def test_idle_session_within_override_passes(seeded, db_session) -> None:
     """Within the override window: passes."""
     await update_org_fields(db_session, seeded["org"].org_id, session_timeout_override=60)
     sess = seeded["admin_sess"]
-    await _backdate_session_last_seen(
-        db_session, token_hash=identity_repo.hash_token(sess.raw_token), minutes_ago=30
-    )
+    await _backdate_session_last_seen(db_session, token_hash=hash_token(sess.raw_token), minutes_ago=30)
 
     async with _idle_probe_client() as c:
         r = await c.get(
@@ -395,9 +390,7 @@ async def test_idle_default_used_when_override_null(seeded, db_session) -> None:
     """No override → global SESSION_IDLE_TIMEOUT (12h) governs. A 30-minute
     idle session is still fresh under the default."""
     sess = seeded["admin_sess"]
-    await _backdate_session_last_seen(
-        db_session, token_hash=identity_repo.hash_token(sess.raw_token), minutes_ago=30
-    )
+    await _backdate_session_last_seen(db_session, token_hash=hash_token(sess.raw_token), minutes_ago=30)
     async with _idle_probe_client() as c:
         r = await c.get(
             "/api/memberships",

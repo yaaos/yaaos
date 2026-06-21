@@ -10,9 +10,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
 from app.core.identity import user_web as _user_web  # noqa: F401
+from app.core.identity.repository import add_email, insert_user, set_user_github_username
+from app.core.identity.sessions import create as _create_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import repository as orgs_repo
 
@@ -33,10 +33,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="Acc")
-    await identity_repo.add_email(
-        db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True
-    )
+    user = await insert_user(db_session, display_name="Acc")
+    await add_email(db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True)
     org_a = await orgs_repo.insert_org(db_session, slug="org-a")
     org_b = await orgs_repo.insert_org(db_session, slug="org-b")
     await orgs_repo.insert_membership(
@@ -45,7 +43,7 @@ async def seeded(db_session):
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="beta"
     )
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "org_a": org_a, "org_b": org_b, "session": s}
 
@@ -121,9 +119,7 @@ async def test_patch_user_updates_display_name(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_clears_github_username(seeded, db_session) -> None:
-    await identity_repo.set_user_github_username(
-        db_session, user_id=seeded["user"].id, github_username="octocat"
-    )
+    await set_user_github_username(db_session, user_id=seeded["user"].id, github_username="octocat")
     await db_session.commit()
     sess = seeded["session"]
     async with _client() as c:
@@ -172,7 +168,7 @@ async def test_patch_own_handle_updates(seeded) -> None:
 @pytest.mark.asyncio
 async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     # Add another member to org_a holding the handle we'll try to take.
-    other = await identity_repo.insert_user(db_session, display_name="Other")
+    other = await insert_user(db_session, display_name="Other")
     await orgs_repo.insert_membership(
         db_session,
         user_id=other.id,

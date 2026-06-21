@@ -10,7 +10,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.audit_log import Actor, list_for_org
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
 from app.domain import integrations as integ
@@ -78,7 +78,7 @@ def stub_exchange(monkeypatch):
 
 @pytest.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="U")
+    user = await insert_user(db_session, display_name="U")
     org = await orgs_repo.insert_org(db_session, slug="integ-test")
     return {"user": user, "org": org, "actor": Actor.user(user_id=user.id)}
 

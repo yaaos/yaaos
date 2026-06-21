@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.audit_log import list_for_entity
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.domain.orgs import repository as orgs_repo
 from app.domain.reviewer.orphan_sweep import ORPHAN_REASON, _sweep_once
 from app.domain.tickets import get as get_ticket
@@ -72,7 +72,7 @@ async def _seed_workflow_execution(  # type: ignore[no-untyped-def]
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  # type: ignore[no-untyped-def]
-    user = await identity_repo.insert_user(db_session, display_name="J")
+    user = await insert_user(db_session, display_name="J")
     org = await orgs_repo.insert_org(db_session, slug="orphan-org")
     del user
     # Older than the 300 s default grace.
@@ -100,7 +100,7 @@ async def test_sweep_flips_stale_running_ticket_to_failed(db_session) -> None:  
 @pytest.mark.asyncio
 async def test_sweep_skips_ticket_with_active_workflow_execution(db_session) -> None:  # type: ignore[no-untyped-def]
     """A `running` ticket with a non-terminal workflow_executions row must not be touched."""
-    user = await identity_repo.insert_user(db_session, display_name="J")
+    user = await insert_user(db_session, display_name="J")
     org = await orgs_repo.insert_org(db_session, slug="active-wfx-org")
     del user
     ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#9", age_seconds=600)
@@ -122,7 +122,7 @@ async def test_sweep_skips_ticket_stalled_at_provision_workspace(db_session) -> 
     This is the exact production incident — workflow stuck at an early step, sweep fires,
     falsely marks the ticket failed before the agent comes online.
     """
-    user = await identity_repo.insert_user(db_session, display_name="J")
+    user = await insert_user(db_session, display_name="J")
     org = await orgs_repo.insert_org(db_session, slug="provision-stall-org")
     del user
     ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#10", age_seconds=600)
@@ -147,7 +147,7 @@ async def test_sweep_flips_stale_running_ticket_with_only_terminal_workflow_to_f
     In production the workflow terminal hook should have already flipped the ticket,
     but the sweep is a defense-in-depth backstop for that failure mode.
     """
-    user = await identity_repo.insert_user(db_session, display_name="J")
+    user = await insert_user(db_session, display_name="J")
     org = await orgs_repo.insert_org(db_session, slug="terminal-wfx-org")
     del user
     ticket_id = await _seed_running_ticket(db_session, org.org_id, ext="x/y#11", age_seconds=600)

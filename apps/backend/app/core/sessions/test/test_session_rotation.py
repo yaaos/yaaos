@@ -12,9 +12,14 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import ProviderProfile
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import (
+    ProviderProfile,
+    add_email,
+    add_oauth_identity,
+    insert_user,
+    lookup_session,
+    mint_session,
+)
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.plugins.oauth_test import set_next_profile
 
@@ -40,12 +45,10 @@ async def _state() -> str:
 
 @pytest_asyncio.fixture
 async def staged_user(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="Rot")
-    await identity_repo.add_email(db_session, user_id=user.id, email="rot@example.com", verified=True)
-    await identity_repo.add_oauth_identity(
-        db_session, user_id=user.id, provider="test", external_subject="rot-1"
-    )
-    pre = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await insert_user(db_session, display_name="Rot")
+    await add_email(db_session, user_id=user.id, email="rot@example.com", verified=True)
+    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="rot-1")
+    pre = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "pre": pre}
 
@@ -79,9 +82,9 @@ async def test_pre_auth_cookie_revoked_on_callback(staged_user, db_session) -> N
     from app.core.database import session as factory  # noqa: PLC0415
 
     async with factory() as s:
-        assert await session_lifecycle.lookup(s, pre_token) is None
+        assert await lookup_session(s, pre_token) is None
 
     new_token = r.cookies.get("yaaos_session")
     assert new_token is not None and new_token != pre_token
     async with factory() as s:
-        assert await session_lifecycle.lookup(s, new_token) is not None
+        assert await lookup_session(s, new_token) is not None

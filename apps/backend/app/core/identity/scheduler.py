@@ -23,8 +23,8 @@ from sqlalchemy import delete as sql_delete
 from app.core.audit_log import AUDIT_LOG_RETENTION
 from app.core.audit_log import purge_older_than as purge_audit_older_than
 from app.core.database import session as db_session
-from app.core.identity import sessions
 from app.core.identity.models import UserTotpSecretRow
+from app.core.identity.sessions import cleanup_expired as _cleanup_expired_sessions
 from app.core.tasks import scheduled
 
 log = structlog.get_logger("identity.cleanup")
@@ -86,7 +86,7 @@ async def _purge_expired_sessions() -> int:
                     org_id=m.org_id,
                     session=s,
                 )
-        n = await sessions.cleanup_expired(s)
+        n = await _cleanup_expired_sessions(s)
         await s.commit()
         return n
 

@@ -12,8 +12,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import insert_user, mint_session
 from app.core.notifications import web as _notifications_web  # noqa: F401
 from app.core.notifications.models import NotificationRow
 from app.core.notifications.service import create
@@ -35,8 +34,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    alice = await identity_repo.insert_user(db_session, display_name="Alice")
-    bob = await identity_repo.insert_user(db_session, display_name="Bob")
+    alice = await insert_user(db_session, display_name="Alice")
+    bob = await insert_user(db_session, display_name="Bob")
     org = await orgs_repo.insert_org(db_session, slug="notif-org", display_name="NotifOrg")
     # One notification for Alice, one for Bob — proves per-user scoping.
     n_alice = await create(
@@ -55,8 +54,8 @@ async def seeded(db_session):
         body="No high-severity findings.",
         session=db_session,
     )
-    sess_alice = await session_lifecycle.create(db_session, user_id=alice.id, workspace_id=None)
-    sess_bob = await session_lifecycle.create(db_session, user_id=bob.id, workspace_id=None)
+    sess_alice = await mint_session(db_session, user_id=alice.id, workspace_id=None)
+    sess_bob = await mint_session(db_session, user_id=bob.id, workspace_id=None)
     await db_session.commit()
     yield {
         "alice": alice,

@@ -23,7 +23,7 @@ from app.core.audit_log import Actor, ActorKind, audit
 from app.core.auth import Role, org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import list_emails_for_user
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.tasks import scheduled
 from app.domain.integrations.models import McpCredentialRow
@@ -70,7 +70,7 @@ async def _notify_owners(row: McpCredentialRow) -> int:
         # Collect verified email addresses for each owner.
         owner_emails: list[str] = []
         for uid in owner_ids:
-            for email_row in await identity_repo.list_emails_for_user(s, uid):
+            for email_row in await list_emails_for_user(s, uid):
                 if email_row.verified_at is not None:
                     owner_emails.append(email_row.email)
     if not owner_emails:

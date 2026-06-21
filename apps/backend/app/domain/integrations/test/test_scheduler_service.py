@@ -16,7 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.auth import Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import add_email, insert_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.tasks import get_broker
@@ -69,10 +69,8 @@ def stub_provider():
 
 async def _seed(db_session, *, owner_email: str = "owner-svc@example.com"):
     org = await orgs_repo.insert_org(db_session, slug=f"sched-svc-{datetime.now(UTC).timestamp()}")
-    owner = await identity_repo.insert_user(db_session, display_name="Owner")
-    await identity_repo.add_email(
-        db_session, user_id=owner.id, email=owner_email, is_primary=True, verified=True
-    )
+    owner = await insert_user(db_session, display_name="Owner")
+    await add_email(db_session, user_id=owner.id, email=owner_email, is_primary=True, verified=True)
     await orgs_repo.insert_membership(
         db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )

@@ -13,15 +13,15 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.domain.lessons.service import LessonFilter, list_lessons
 from app.domain.orgs import repository as orgs_repo
 
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    alice = await identity_repo.insert_user(db_session, display_name="A")
-    bob = await identity_repo.insert_user(db_session, display_name="B")
+    alice = await insert_user(db_session, display_name="A")
+    bob = await insert_user(db_session, display_name="B")
     org = await orgs_repo.insert_org(db_session, slug="lf-org")
 
     now = datetime.now(UTC)

@@ -13,8 +13,7 @@ from fastapi import FastAPI
 
 import app.web  # noqa: F401  — registers the reviewer router
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import insert_user, mint_session
 from app.core.workflow import (
     CommandContext,
     Empty,
@@ -55,11 +54,11 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
     if existing is None:
         org = await orgs_repo.insert_org(db_session, slug=_ORG_SLUG)
         existing = org
-    user = await identity_repo.insert_user(db_session, display_name="Builder")
+    user = await insert_user(db_session, display_name="Builder")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=existing.org_id, role=Role.BUILDER, handle="b"
     )
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
 
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(

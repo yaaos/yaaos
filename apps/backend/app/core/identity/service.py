@@ -14,9 +14,19 @@ from uuid import UUID
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.identity import repository as repo
 from app.core.identity.models import UserRow
 from app.core.identity.providers import ProviderProfile
+from app.core.identity.repository import (
+    add_email,
+    add_oauth_identity,
+    find_oauth_identity,
+    find_user_by_email,
+    get_session_by_hash,
+    get_user,
+    insert_session,
+    insert_user,
+    set_user_github_username,
+)
 from app.core.identity.types import (
     EmailAlreadyLinkedError,
     OAuthIdentity,
@@ -79,28 +89,26 @@ async def login_via_oauth(
 
     Unverified emails are rejected by the caller before this is invoked.
     """
-    identity_row = await repo.find_oauth_identity(
+    identity_row = await find_oauth_identity(
         db, provider=provider_id, external_subject=profile.external_subject
     )
     if identity_row is not None:
-        user_row = await repo.get_user(db, identity_row.user_id)
+        user_row = await get_user(db, identity_row.user_id)
         assert user_row is not None
         if provider_id == "github" and profile.provider_login:
-            await repo.set_user_github_username(
-                db, user_id=user_row.id, github_username=profile.provider_login
-            )
+            await set_user_github_username(db, user_id=user_row.id, github_username=profile.provider_login)
         return LoginResult(user=User.from_row(user_row), newly_created=False)
 
-    existing_user_row = await repo.find_user_by_email(db, profile.primary_email)
+    existing_user_row = await find_user_by_email(db, profile.primary_email)
     if existing_user_row is not None:
-        await repo.add_oauth_identity(
+        await add_oauth_identity(
             db,
             user_id=existing_user_row.id,
             provider=provider_id,
             external_subject=profile.external_subject,
         )
         if provider_id == "github" and profile.provider_login:
-            await repo.set_user_github_username(
+            await set_user_github_username(
                 db, user_id=existing_user_row.id, github_username=profile.provider_login
             )
         return LoginResult(user=User.from_row(existing_user_row), newly_created=False)
@@ -110,7 +118,7 @@ async def login_via_oauth(
 
 async def create_user(db: AsyncSession, *, display_name: str = "") -> User:
     """Insert a new user row and return it as a value object. The caller owns the transaction."""
-    return User.from_row(await repo.insert_user(db, display_name=display_name))
+    return User.from_row(await insert_user(db, display_name=display_name))
 
 
 async def create_email(
@@ -123,7 +131,7 @@ async def create_email(
 ) -> UserEmail:
     """Insert an email row for `user_id` and return it as a value object. The caller owns the transaction."""
     return UserEmail.from_row(
-        await repo.add_email(db, user_id=user_id, email=email, is_primary=is_primary, verified=verified)
+        await add_email(db, user_id=user_id, email=email, is_primary=is_primary, verified=verified)
     )
 
 
@@ -137,7 +145,7 @@ async def create_oauth_identity(
 ) -> OAuthIdentity:
     """Insert an oauth_identity row for `user_id` and return it as a value object. The caller owns the transaction."""
     return OAuthIdentity.from_row(
-        await repo.add_oauth_identity(
+        await add_oauth_identity(
             db, user_id=user_id, provider=provider, external_subject=external_subject, verified=verified
         )
     )
@@ -156,7 +164,7 @@ async def create_session(
 ) -> Session:
     """Insert a session row and return it as a value object. The caller owns the transaction."""
     return Session.from_row(
-        await repo.insert_session(
+        await insert_session(
             db,
             token_hash=token_hash,
             user_id=user_id,
@@ -177,7 +185,7 @@ async def _set_session_last_seen_for_tests(
 ) -> None:
     """Write `last_seen_at` for a session row identified by `token_hash`.
     Test-only helper to simulate idle sessions without importing `SessionRow`."""
-    row = await repo.get_session_by_hash(db, token_hash)
+    row = await get_session_by_hash(db, token_hash)
     assert row is not None, f"session not found for hash: {token_hash[:8]}..."
     row.last_seen_at = last_seen_at
     await db.flush()

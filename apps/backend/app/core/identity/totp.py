@@ -21,7 +21,7 @@ import pyotp
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.identity import repository as repo
+from app.core.identity.repository import get_totp_secret, upsert_totp_secret
 from app.core.secrets import SecretsDecryptError, decrypt, encrypt
 
 log = structlog.get_logger("identity.totp")
@@ -52,7 +52,7 @@ async def enroll(
     """
     seed = _new_seed()
     ciphertext = encrypt(seed)
-    await repo.upsert_totp_secret(session, user_id=user_id, encrypted_secret=ciphertext)
+    await upsert_totp_secret(session, user_id=user_id, encrypted_secret=ciphertext)
     label = account_label or str(user_id)
     uri = pyotp.totp.TOTP(seed).provisioning_uri(name=label, issuer_name=issuer)
     return seed, uri
@@ -67,7 +67,7 @@ async def verify(
     """Verify `code` against the user's stored TOTP secret. On success,
     stamp `verified_at` + `last_used_at` and return True. On failure return
     False (no row mutation)."""
-    row = await repo.get_totp_secret(session, user_id)
+    row = await get_totp_secret(session, user_id)
     if row is None:
         return False
     try:
@@ -87,7 +87,7 @@ async def verify(
 
 
 async def has_verified_totp(session: AsyncSession, user_id: UUID) -> bool:
-    row = await repo.get_totp_secret(session, user_id)
+    row = await get_totp_secret(session, user_id)
     return row is not None and row.verified_at is not None
 
 

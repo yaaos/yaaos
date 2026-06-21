@@ -23,7 +23,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sse import publish_workspace_activity
 from app.core.sse.web import _workspace_activity_stream
 from app.domain.orgs import repository as orgs_repo
@@ -48,7 +48,7 @@ def _client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
     """Caller in org A; the requested wfx id belongs to a different org."""
-    user = await identity_repo.insert_user(db_session, display_name="OrgAOwner")
+    user = await insert_user(db_session, display_name="OrgAOwner")
 
     org_a = await orgs_repo.insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
@@ -56,9 +56,9 @@ async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
     )
 
     raw_token = f"wfa-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-wfa",

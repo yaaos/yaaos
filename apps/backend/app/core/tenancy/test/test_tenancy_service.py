@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 
 from app.core.auth import Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.tenancy import (
     AuthOrg,
     MembershipView,
@@ -26,8 +26,8 @@ from app.core.tenancy import (
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    alice = await identity_repo.insert_user(db_session, display_name="Alice")
-    bob = await identity_repo.insert_user(db_session, display_name="Bob")
+    alice = await insert_user(db_session, display_name="Alice")
+    bob = await insert_user(db_session, display_name="Bob")
     org = await create_org(db_session, slug="tenancy-test-org", display_name="Tenancy Test Org")
     await create_membership(
         db_session,
@@ -71,7 +71,7 @@ async def test_tenancy_resolve_auth_org(seeded, db_session) -> None:
 async def test_tenancy_resolve_auth_org_missing_membership(seeded, db_session) -> None:
     """resolve_auth_org returns None when the user has no membership."""
     org: OrgRef = seeded["org"]
-    stranger = await identity_repo.insert_user(db_session, display_name="Stranger")
+    stranger = await insert_user(db_session, display_name="Stranger")
 
     result = await resolve_auth_org(db_session, user_id=stranger.id, slug=org.slug)
     assert result is None
@@ -109,7 +109,7 @@ async def test_list_memberships_returns_views(seeded, db_session) -> None:
 @pytest.mark.service
 async def test_list_memberships_multiple_orgs(db_session) -> None:
     """list_memberships_for_user returns one view per org membership."""
-    user = await identity_repo.insert_user(db_session, display_name="MultiOrg")
+    user = await insert_user(db_session, display_name="MultiOrg")
     org_a = await create_org(db_session, slug="multi-a", display_name="Org A")
     org_b = await create_org(db_session, slug="multi-b", display_name="Org B")
     await create_membership(db_session, user_id=user.id, org_id=org_a.org_id, role=Role.ADMIN, handle="u-a")
@@ -129,7 +129,7 @@ async def test_list_memberships_multiple_orgs(db_session) -> None:
 @pytest.mark.service
 async def test_create_org_membership_via_tenancy(db_session) -> None:
     """create_org + create_membership produce a resolvable AuthOrg."""
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
+    user = await insert_user(db_session, display_name="Owner")
     org = await create_org(db_session, slug="new-via-tenancy", display_name="New Org")
 
     assert isinstance(org, OrgRef)

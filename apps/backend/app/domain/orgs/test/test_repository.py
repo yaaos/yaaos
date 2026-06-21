@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.tenancy import get_membership_info, update_org_fields
 from app.domain.orgs import repository as repo
 
@@ -23,7 +23,7 @@ async def test_create_org_and_owner_membership(db_session) -> None:
     org = await repo.insert_org(db_session, slug="acme", display_name="Acme")
     assert org.slug == "acme"
 
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
+    user = await insert_user(db_session, display_name="Owner")
     await repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
     )
@@ -36,8 +36,8 @@ async def test_create_org_and_owner_membership(db_session) -> None:
 @pytest.mark.asyncio
 async def test_unique_handle_per_org(db_session) -> None:
     org = await repo.insert_org(db_session, slug="dup-handle")
-    a = await identity_repo.insert_user(db_session)
-    b = await identity_repo.insert_user(db_session)
+    a = await insert_user(db_session)
+    b = await insert_user(db_session)
     await repo.insert_membership(db_session, user_id=a.id, org_id=org.org_id, role=Role.OWNER, handle="jack")
     with pytest.raises(IntegrityError):
         await repo.insert_membership(
@@ -57,7 +57,7 @@ async def test_role_covers_ordering() -> None:
 @pytest.mark.asyncio
 async def test_update_role(db_session) -> None:
     org = await repo.insert_org(db_session, slug="role-change")
-    user = await identity_repo.insert_user(db_session)
+    user = await insert_user(db_session)
     await repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="m"
     )

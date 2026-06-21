@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit
 from app.core.auth import Role
 from app.core.config import get_settings
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import revoke_all_sessions_for_user
 from app.core.tenancy import (
     change_role as _tenancy_change_role,
 )
@@ -217,7 +217,7 @@ async def remove_member(
         return
     from_role = existing.role
     await _tenancy_remove_member(db, user_id=user_id, org_id=org_id)
-    await session_lifecycle.revoke_all_for_user(db, user_id)
+    await revoke_all_sessions_for_user(db, user_id)
 
     await audit(
         "membership",
@@ -249,7 +249,7 @@ async def change_role(
         raise LookupError("membership not found")
     from_role = existing.role
     await _tenancy_change_role(db, user_id=user_id, org_id=org_id, role=new_role)
-    await session_lifecycle.revoke_all_for_user(db, user_id)
+    await revoke_all_sessions_for_user(db, user_id)
 
     await audit(
         "membership",

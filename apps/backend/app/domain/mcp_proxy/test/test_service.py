@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user
 from app.core.vcs import VCSPullRequest
 from app.domain.mcp_proxy import lookup_token, mint_token, revoke_token
 from app.domain.mcp_proxy.models import McpReviewTokenRow
@@ -26,7 +26,7 @@ from app.domain.tickets import upsert as upsert_pr
 
 
 async def _seed_review(db_session) -> tuple:  # type: ignore[return]
-    user = await identity_repo.insert_user(db_session, display_name="U")
+    user = await insert_user(db_session, display_name="U")
     org = await orgs_repo.insert_org(db_session, slug=f"mcp-test-{uuid4().hex[:6]}")
     ext_id = "pr-1"
     idempotency_key = f"{ext_id}-{uuid4().hex[:6]}"

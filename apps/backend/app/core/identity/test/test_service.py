@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.identity import repository as repo
 from app.core.identity import service as svc
+from app.core.identity.repository import hash_token
 
 
 @pytest.mark.asyncio
@@ -52,7 +52,7 @@ async def test_create_oauth_identity_round_trip(db_session) -> None:
 @pytest.mark.asyncio
 async def test_create_session_round_trip(db_session) -> None:
     user = await svc.create_user(db_session, display_name="Dave")
-    token_hash = repo.hash_token("raw-token-xyz")
+    token_hash = hash_token("raw-token-xyz")
     session = await svc.create_session(
         db_session,
         token_hash=token_hash,

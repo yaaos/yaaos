@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI
 
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import require
 from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/me
 from app.domain.orgs import repository as orgs_repo
@@ -60,16 +60,16 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     """Owner with a valid session + a writable org. Tests that need a
     stale `last_seen_at` mutate the row in-place."""
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
+    user = await insert_user(db_session, display_name="Owner")
     org = await orgs_repo.insert_org(db_session, slug=f"af-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
 
     raw_token = f"af-owner-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-af",
@@ -137,7 +137,7 @@ async def test_org_scoped_idle_timeout_clears_cookies_and_writes_audit(seeded, d
     # Force the session's last_seen_at far enough in the past that the
     # default idle window has elapsed. SESSION_IDLE_TIMEOUT default is
     # measured in minutes; 1 day back is comfortably stale.
-    token_hash = identity_repo.hash_token(seeded["token"])
+    token_hash = hash_token(seeded["token"])
     await _set_session_last_seen_for_tests(
         db_session,
         token_hash=token_hash,

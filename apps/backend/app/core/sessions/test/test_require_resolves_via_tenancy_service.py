@@ -23,7 +23,7 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import insert_user, mint_session
 from app.core.sessions import require
 from app.core.sessions import web as _auth_web  # noqa: F401 — mounts /api/auth/*
 from app.domain.orgs import repository as orgs_repo
@@ -49,14 +49,12 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    user = await identity_repo.insert_user(db_session, display_name="Probe")
+    user = await insert_user(db_session, display_name="Probe")
     org = await orgs_repo.insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe"
     )
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"org": org, "user": user, "token": sess.raw_token}
 
@@ -114,11 +112,9 @@ async def test_require_resolves_via_tenancy_no_domain_import(seeded) -> None:
 async def test_require_returns_404_for_non_member(db_session) -> None:
     """User without a membership → 404 (same shape as org-not-found, don't
     leak existence)."""
-    user = await identity_repo.insert_user(db_session, display_name="Outsider")
+    user = await insert_user(db_session, display_name="Outsider")
     org = await orgs_repo.insert_org(db_session, slug=f"outsider-{uuid.uuid4().hex[:8]}")
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -134,14 +130,12 @@ async def test_require_returns_404_for_non_member(db_session) -> None:
 @pytest.mark.asyncio
 async def test_require_returns_403_for_insufficient_role(db_session) -> None:
     """Builder role is insufficient for an Admin-only action → 403."""
-    user = await identity_repo.insert_user(db_session, display_name="Builder")
+    user = await insert_user(db_session, display_name="Builder")
     org = await orgs_repo.insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
         db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld"
     )
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     # MEMBERS_INVITE requires Admin; Builder should get 403.

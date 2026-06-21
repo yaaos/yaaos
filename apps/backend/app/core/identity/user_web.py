@@ -52,13 +52,13 @@ def _err(status: int, code: str) -> HTTPException:
 
 @router.get("/emails", dependencies=[Depends(require_session)])
 async def list_emails() -> list[EmailView]:
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity.repository import list_emails_for_user as _list_emails_for_user  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
         raise _err(401, "unauthenticated")
     async with db_session() as s:
-        rows = await identity_repo.list_emails_for_user(s, user_id)
+        rows = await _list_emails_for_user(s, user_id)
     return [
         EmailView(id=r.id, email=r.email, is_primary=r.is_primary, verified=r.verified_at is not None)
         for r in rows
@@ -72,13 +72,13 @@ async def add_email(
     body: _AddEmailRequest,
     yaaos_csrf: Annotated[str | None, Cookie()] = None,
 ) -> EmailView:
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity.repository import add_email as _repo_add_email  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
         raise _err(401, "unauthenticated")
     async with db_session() as s:
-        row = await identity_repo.add_email(
+        row = await _repo_add_email(
             s, user_id=user_id, email=body.email.lower(), is_primary=False, verified=False
         )
         await s.commit()
@@ -90,8 +90,13 @@ async def add_email(
 async def remove_email(request: Request, email_id: UUID) -> dict[str, str]:
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
     from app.core.identity.models import UserEmailRow  # noqa: PLC0415
+    from app.core.identity.repository import (  # noqa: PLC0415
+        count_verified_emails as _count_verified_emails,
+    )
+    from app.core.identity.repository import (  # noqa: PLC0415
+        delete_email as _delete_email,
+    )
 
     user_id = user_id_var.get()
     if user_id is None:
@@ -106,10 +111,10 @@ async def remove_email(request: Request, email_id: UUID) -> dict[str, str]:
             raise _err(404, "email_not_found")
         # Last-verified-email invariant.
         if row.verified_at is not None:
-            verified_count = await identity_repo.count_verified_emails(s, user_id)
+            verified_count = await _count_verified_emails(s, user_id)
             if verified_count <= 1:
                 raise _err(409, "last_verified_email")
-        deleted = await identity_repo.delete_email(s, user_id=user_id, email_id=email_id)
+        deleted = await _delete_email(s, user_id=user_id, email_id=email_id)
         if not deleted:
             raise _err(404, "email_not_found")
         await s.commit()
@@ -134,17 +139,22 @@ class _PatchUserRequest(BaseModel):
 @router.get("/me", dependencies=[Depends(require_session)])
 async def user_me() -> _UserMeResponse:
     """Profile payload for the User > Details page."""
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity.repository import (  # noqa: PLC0415
+        get_user as _get_user,
+    )
+    from app.core.identity.repository import (  # noqa: PLC0415
+        list_emails_for_user as _list_emails_for_user2,
+    )
     from app.core.tenancy import list_memberships_for_user  # noqa: PLC0415
 
     user_id = user_id_var.get()
     if user_id is None:
         raise _err(401, "unauthenticated")
     async with db_session() as s:
-        user = await identity_repo.get_user(s, user_id)
+        user = await _get_user(s, user_id)
         if user is None:
             raise _err(404, "user_not_found")
-        emails = await identity_repo.list_emails_for_user(s, user_id)
+        emails = await _list_emails_for_user2(s, user_id)
         membership_views = await list_memberships_for_user(s, user_id)
         memberships_view = [
             {
@@ -178,16 +188,21 @@ async def patch_user_me(
     """Update profile fields. `display_name` accepted as plain text; the
     `github_username` denorm is owned by the login flow and is never written
     here. `clear_github_username=true` removes the verified value."""
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity.repository import (  # noqa: PLC0415
+        set_user_display_name as _set_user_display_name,
+    )
+    from app.core.identity.repository import (  # noqa: PLC0415
+        set_user_github_username as _set_user_github_username,
+    )
 
     user_id = user_id_var.get()
     if user_id is None:
         raise _err(401, "unauthenticated")
     async with db_session() as s:
         if body.display_name is not None:
-            await identity_repo.set_user_display_name(s, user_id=user_id, display_name=body.display_name)
+            await _set_user_display_name(s, user_id=user_id, display_name=body.display_name)
         if body.clear_github_username:
-            await identity_repo.set_user_github_username(s, user_id=user_id, github_username=None)
+            await _set_user_github_username(s, user_id=user_id, github_username=None)
         await s.commit()
     return await user_me()
 

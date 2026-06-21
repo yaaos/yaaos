@@ -24,7 +24,7 @@ import pytest_asyncio
 from fastapi import APIRouter, Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import require
 from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
@@ -51,7 +51,7 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     """One owner user with a valid session, belonging to two orgs.
     Used for the membership-gated + cross-org tests."""
-    user = await identity_repo.insert_user(db_session, display_name="TestOwner")
+    user = await insert_user(db_session, display_name="TestOwner")
 
     org_a = await orgs_repo.insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
     await orgs_repo.insert_membership(
@@ -62,9 +62,9 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     # User is NOT a member of org_b — used for the 403 test.
 
     raw_token = f"sse-test-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-sse",
@@ -92,11 +92,11 @@ async def test_general_endpoint_returns_401_without_session() -> None:
 @pytest.mark.asyncio
 async def test_general_endpoint_returns_400_without_org_slug(db_session) -> None:
     """`GET /api/sse/general` with session but no X-Yaaos-Org-Slug → 400."""
-    user = await identity_repo.insert_user(db_session, display_name="NoOrgUser")
+    user = await insert_user(db_session, display_name="NoOrgUser")
     raw_token = f"noorg-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-noorg",

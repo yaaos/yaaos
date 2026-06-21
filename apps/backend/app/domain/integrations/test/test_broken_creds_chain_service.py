@@ -23,7 +23,7 @@ from pydantic import SecretStr
 
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import add_email, insert_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
@@ -114,10 +114,8 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
 
     # 1. Seed org + Owner + email + credential (initially "ok").
     org = await orgs_repo.insert_org(db_session, slug=f"svc-chain-{uuid4().hex[:8]}")
-    owner = await identity_repo.insert_user(db_session, display_name="Owner")
-    await identity_repo.add_email(
-        db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True
-    )
+    owner = await insert_user(db_session, display_name="Owner")
+    await add_email(db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True)
     await orgs_repo.insert_membership(
         db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
     )
