@@ -28,7 +28,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -193,8 +193,7 @@ class Workflow(BaseModel):
     version: int = Field(ge=1)
     steps: tuple[StepRef, ...]
     entry: StepRef
-    # dict[StepRef, dict[str, StepRef | TerminalAction]]
-    transitions: Any = Field(default_factory=dict)
+    transitions: dict[StepRef, dict[str, StepRef | TerminalAction]] = Field(default_factory=dict)
     finalizer: StepRef | None = None
     workflow_input: WorkflowInputRef | None = None
 
