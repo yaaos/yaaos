@@ -1582,3 +1582,29 @@ def get_engine() -> WorkflowEngine:
 def register_workflow(wf: Workflow) -> None:
     """Register a workflow spec on the process-singleton engine."""
     get_engine().register_workflow(wf)
+
+
+def bind_engine(instance: WorkflowEngine | None) -> WorkflowEngine | None:
+    """Swap the process-singleton engine. Returns the prior engine (or None if
+    no engine was bound). Test-only public seam — production never calls this.
+
+    Used by `app/testing/workflow_harness.scoped_engine` to install a fresh
+    engine for a single test scope.
+    """
+    global _engine
+    prior = _engine
+    _engine = instance
+    return prior
+
+
+def unregister_workflow(workflow_name: str, version: int) -> None:
+    """Remove a workflow from the process-singleton engine by name + version.
+    Test-only public seam — production never calls this.
+
+    Used by `app/testing/workflow_harness.scoped_workflow` to clean up a
+    workflow registration on scope exit.
+    """
+    key = (workflow_name, version)
+    engine = get_engine()
+    engine._workflows.pop(key, None)
+    engine._recovery_maps.pop(key, None)

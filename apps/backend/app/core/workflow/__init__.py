@@ -9,6 +9,7 @@ from app.core.workflow.service import (
     ROUTE_WORKFLOW,
     START_STEP,
     WorkflowEngine,
+    bind_engine,
     get_engine,
     handle_agent_event,
     register_workflow,
@@ -16,6 +17,7 @@ from app.core.workflow.service import (
     resume_hitl,
     route_workflow,
     start_step,
+    unregister_workflow,
 )
 from app.core.workflow.types import (
     TERMINAL_STATES,
@@ -88,6 +90,7 @@ __all__ = [
     "WorkflowState",
     "WorkflowTerminalCallback",
     "WorkflowValidationError",
+    "bind_engine",
     "get_awaiting_human_execution",
     "get_engine",
     "get_execution_summary",
@@ -103,5 +106,6 @@ __all__ = [
     "route_workflow",
     "start_step",
     "step",
+    "unregister_workflow",
     "workflow_input",
 ]

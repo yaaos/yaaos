@@ -716,6 +716,7 @@ expose = [
   "WorkflowState",
   "WorkflowTerminalCallback",
   "WorkflowValidationError",
+  "bind_engine",
   "get_awaiting_human_execution",
   "get_engine",
   "get_execution_summary",
@@ -731,6 +732,7 @@ expose = [
   "route_workflow",
   "start_step",
   "step",
+  "unregister_workflow",
   "workflow_input",
 ]
 from = ["app.core.workflow"]

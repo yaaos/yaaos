@@ -1,7 +1,7 @@
 """Workflow harness for multi-module service tests.
 
 Provides `scoped_engine` and `scoped_workflow` context managers that give
-service tests full engine isolation without touching `core/workflow` internals.
+service tests full engine isolation through `core/workflow`'s public seams.
 """
 
 from __future__ import annotations
@@ -9,13 +9,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-import app.core.workflow.service as _wf_svc
 from app.core.workflow import (
     Workflow,
     WorkflowEngine,
     WorkflowNotFoundError,
+    bind_engine,
     get_engine,
     register_workflow,
+    unregister_workflow,
 )
 
 
@@ -28,12 +29,11 @@ def scoped_engine(engine: WorkflowEngine | None = None) -> Iterator[WorkflowEngi
     contaminating the process-singleton engine use this helper.
     """
     fresh = engine if engine is not None else WorkflowEngine()
-    prior = _wf_svc._engine
-    _wf_svc._engine = fresh
+    prior = bind_engine(fresh)
     try:
         yield fresh
     finally:
-        _wf_svc._engine = prior
+        bind_engine(prior)
 
 
 @contextmanager
@@ -52,15 +52,12 @@ def scoped_workflow(wf: Workflow) -> Iterator[Workflow]:
     except WorkflowNotFoundError:
         prior = None
 
-    key = (wf.name, wf.version)
-    engine._workflows.pop(key, None)
-    engine._recovery_maps.pop(key, None)
+    unregister_workflow(wf.name, wf.version)
     register_workflow(wf)
     try:
         yield wf
     finally:
-        engine._workflows.pop(key, None)
-        engine._recovery_maps.pop(key, None)
+        unregister_workflow(wf.name, wf.version)
         if prior is not None:
             register_workflow(prior)
 
