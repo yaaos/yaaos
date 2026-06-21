@@ -75,5 +75,8 @@ Unit tests in `app/plugins/claude_code/test/`:
 - `test_stream_parsing.py` — `_parse_stream_events` + `_parse_usage` + `_render_activity_log` private helpers: well-formed streams, garbage interleaved with valid JSON, partial streams (timeout case).
 - `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
 - `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
+- `test_set_claude_code_plugin_for_tests.py` — `set_claude_code_plugin_for_tests` swaps and restores the singleton for the block.
+
+`set_claude_code_plugin_for_tests` (exported from `app.plugins.claude_code`) is the test seam for swapping the singleton `ClaudeCodePlugin` instance.
 
 CLI subprocess + output parsing + Anthropic auth probe exercised end-to-end by e2e tests with `YAAOS_CODING_AGENT_STUB=1`.

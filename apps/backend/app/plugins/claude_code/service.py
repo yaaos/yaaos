@@ -11,7 +11,8 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -621,3 +622,21 @@ def bootstrap() -> None:
 
 def get_plugin() -> ClaudeCodePlugin:
     return _plugin
+
+
+@contextmanager
+def set_claude_code_plugin_for_tests(plugin: ClaudeCodePlugin | None = None) -> Iterator[ClaudeCodePlugin]:
+    """Context manager: swap the singleton plugin for the duration of the block.
+
+    Pass an explicit ``plugin`` instance or omit to receive a fresh default
+    ``ClaudeCodePlugin``. Restores the prior singleton on exit — even on exception.
+
+    Production never calls this.
+    """
+    global _plugin
+    prior = _plugin
+    _plugin = plugin if plugin is not None else ClaudeCodePlugin()
+    try:
+        yield _plugin
+    finally:
+        _plugin = prior

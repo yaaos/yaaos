@@ -25,7 +25,8 @@ claim is the strong guarantee that exactly one enqueue happens per slot.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -103,13 +104,24 @@ def registered_schedule_ids() -> list[str]:
     return sorted(_SCHEDULES.keys())
 
 
-def _reset_schedules_for_tests() -> None:
-    """Intra-module helper — clears the static registry between tests.
+@contextmanager
+def set_scheduler_for_tests() -> Iterator[None]:
+    """Context manager: snapshot the scheduler registry, clear it for the
+    block, and restore on exit (even on exception).
 
-    Not in `__all__`, not surfaced cross-module; the autouse fixture in
-    `app/testing/isolation.py` calls this to keep test bodies clean.
+    Tests that register custom schedules use this so their registrations
+    do not persist across tests and do not see schedules from other modules
+    that were imported before the test ran.
+
+    Production never calls this.
     """
+    prior = dict(_SCHEDULES)
     _SCHEDULES.clear()
+    try:
+        yield
+    finally:
+        _SCHEDULES.clear()
+        _SCHEDULES.update(prior)
 
 
 async def tick_once(*, session: AsyncSession, now: datetime | None = None) -> list[str]:

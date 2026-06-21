@@ -26,7 +26,6 @@ from sqlalchemy import delete, select
 
 from app.core.database import get_sessionmaker
 from app.core.vcs import VCSPullRequest
-from app.core.workflow import WorkflowEngine
 from app.domain.reviewer.incremental_trigger import start_incremental_review
 from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import attach_pr_to_ticket
@@ -34,7 +33,7 @@ from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 from app.testing.seed import delete_pull_request, delete_ticket
 from app.testing.stub_vcs import register_stub_vcs
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -42,23 +41,6 @@ _REPO_EXTERNAL_ID = "owner/repo"
 _PREV_SHA = "aaaa1111"
 _HEAD_SHA = "bbbb2222"
 _PLUGIN_ID = "github"
-
-
-class _RecordingEngine(WorkflowEngine):
-    """WorkflowEngine subclass that records `start` calls without executing them.
-
-    Returns a fixed UUID so the caller can commit and proceed. Does not
-    validate workflow registration — callers that just want to count dispatches
-    do not need to register any workflow.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.start_calls: list[dict] = []
-
-    async def start(self, *, workflow_name: str, ticket_id: str, **kwargs) -> str:  # type: ignore[override]
-        self.start_calls.append({"workflow_name": workflow_name, "ticket_id": ticket_id})
-        return str(uuid4())
 
 
 @dataclass
@@ -159,8 +141,10 @@ async def test_concurrent_pushes_produce_exactly_one_review_row(
     org_id = uuid4()
     pr_id = await _seed_pr_and_ticket(org_id, _seeded)
 
-    engine = _RecordingEngine()
-    with scoped_engine(engine), register_stub_vcs(plugin_id=_PLUGIN_ID) as stub:
+    with (
+        set_engine_for_tests(scenario="recording") as engine,
+        register_stub_vcs(plugin_id=_PLUGIN_ID) as stub,
+    ):
         # detect_force_push returns False by default → not a force push → is ancestor.
         # No commit messages configured → no base-merge signal.
         stub.set_force_push(_REPO_EXTERNAL_ID, _PREV_SHA, _HEAD_SHA, False)

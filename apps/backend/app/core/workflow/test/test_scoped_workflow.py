@@ -1,4 +1,9 @@
-"""scoped_workflow context manager — isolated-registration contract."""
+"""set_engine_for_tests — isolated-engine contract.
+
+Asserts that `set_engine_for_tests` provides a fresh engine for the block,
+that the recording scenario records start calls without executing workflows,
+and that the prior engine is restored on exit (even on exception).
+"""
 
 from __future__ import annotations
 
@@ -10,14 +15,13 @@ from app.core.workflow import (
     TerminalAction,
     Workflow,
     WorkflowNotFoundError,
-    get_engine,
+    set_engine_for_tests,
     step,
 )
-from app.testing.workflow_harness import scoped_workflow
 
 
 class _NoopLocal:
-    kind = "ScopedTestNoop"
+    kind = "SetEngineTestNoop"
     Inputs = Empty
     Outputs = Empty
 
@@ -28,7 +32,7 @@ class _NoopLocal:
 
 _noop_step = step(_NoopLocal)
 _TEMP_WORKFLOW = Workflow(
-    name="scoped-temp-test",
+    name="set-engine-test-temp",
     version=1,
     steps=(_noop_step,),
     entry=_noop_step,
@@ -36,39 +40,61 @@ _TEMP_WORKFLOW = Workflow(
 )
 
 
-def test_scoped_workflow_registers_while_inside() -> None:
-    """Workflow is findable inside the block."""
-    eng = get_engine()
-
-    with scoped_workflow(_TEMP_WORKFLOW):
-        wf = eng.get_workflow("scoped-temp-test")
-        assert wf.name == "scoped-temp-test"
+def test_set_engine_for_tests_gives_fresh_engine() -> None:
+    """Engine inside the block is fresh (no pre-existing registrations)."""
+    with set_engine_for_tests() as eng:
+        eng.register_workflow(_TEMP_WORKFLOW)
+        assert "set-engine-test-temp" in eng.registered_workflow_names()
 
 
-def test_scoped_workflow_unregisters_after_exit() -> None:
-    """Workflow is gone once the block exits normally."""
-    eng = get_engine()
+def test_set_engine_for_tests_restores_after_exit() -> None:
+    """Prior engine is restored once the block exits normally."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
 
-    with scoped_workflow(_TEMP_WORKFLOW):
-        pass
+    prior = svc._engine  # capture BEFORE the block installs a fresh one
+    with set_engine_for_tests() as eng:
+        assert eng is not prior
+    assert svc._engine is prior  # restored
 
-    with pytest.raises(WorkflowNotFoundError):
-        eng.get_workflow("scoped-temp-test")
 
+def test_set_engine_for_tests_restores_on_exception() -> None:
+    """Prior engine is restored even when an exception propagates."""
+    import app.core.workflow.service as svc  # noqa: PLC0415
 
-def test_scoped_workflow_unregisters_on_exception() -> None:
-    """Workflow is unregistered even when an exception propagates."""
-    eng = get_engine()
+    prior = svc._engine
 
     with pytest.raises(RuntimeError, match="test-error"):
-        with scoped_workflow(_TEMP_WORKFLOW):
+        with set_engine_for_tests():
             raise RuntimeError("test-error")
 
-    with pytest.raises(WorkflowNotFoundError):
-        eng.get_workflow("scoped-temp-test")
+    assert svc._engine is prior
 
 
-def test_scoped_workflow_yields_spec() -> None:
-    """The context manager yields the same Workflow object it received."""
-    with scoped_workflow(_TEMP_WORKFLOW) as wf:
-        assert wf is _TEMP_WORKFLOW
+def test_set_engine_for_tests_recording_scenario() -> None:
+    """scenario='recording' yields a _RecordingWorkflowEngine whose
+    start_calls list accumulates calls without touching the DB."""
+    from uuid import uuid4  # noqa: PLC0415
+
+    with set_engine_for_tests(scenario="recording") as eng:
+        # Recording engine start never raises WorkflowNotFoundError.
+        ticket_id = str(uuid4())
+        import asyncio  # noqa: PLC0415
+
+        result = asyncio.get_event_loop().run_until_complete(
+            eng.start(
+                workflow_name="anything",
+                ticket_id=ticket_id,
+                session=None,  # type: ignore[arg-type]
+            )
+        )
+        assert isinstance(result, str)
+        assert len(eng.start_calls) == 1
+        assert eng.start_calls[0]["workflow_name"] == "anything"
+        assert eng.start_calls[0]["ticket_id"] == ticket_id
+
+
+def test_workflow_not_found_inside_default_engine() -> None:
+    """Default engine raises WorkflowNotFoundError for unknown workflow."""
+    with set_engine_for_tests() as eng:
+        with pytest.raises(WorkflowNotFoundError):
+            eng.get_workflow("not-registered")

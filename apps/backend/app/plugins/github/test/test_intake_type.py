@@ -29,7 +29,7 @@ from app.core.workflow import (
     step,
 )
 from app.plugins.github.intake_type import GithubIntakeType
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 class _NoopLocal:
@@ -51,7 +51,7 @@ def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
     """Register a one-step `pr_review_v1` workflow so `_prepare_pr_review`'s
     `engine.start(workflow_name="pr_review_v1", ...)` resolves without
     pulling in the full reviewer command set."""
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="pr_review_v1",

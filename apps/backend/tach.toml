@@ -302,10 +302,10 @@ expose = [
   "actor_id_var",
   "actor_kind_var",
   "auth_failure_response",
-  "bind_request_structlog_vars",
   "classify_route",
   "clear_cookie_attrs",
   "command_id_var",
+  "configure_structlog_context",
   "csrf_cookie_attrs",
   "current_actor_kind",
   "current_org_id",
@@ -383,6 +383,7 @@ expose = [
   "migrate",
   "ping",
   "session",
+  "set_db_session_for_tests",
   "shutdown",
   "truncate_all_tables",
 ]
@@ -545,11 +546,11 @@ from = ["app.core.sessions"]
 [[interfaces]]
 expose = [
   "GeneralEventKind",
-  "bind_shutdown_event",
   "publish_general",
   "publish_general_after_commit",
   "publish_workspace_activity",
   "serialize_for_sse",
+  "set_shutdown_event_for_tests",
   "shutdown",
   "sse_prelude",
   "subscribe_general",
@@ -572,6 +573,8 @@ expose = [
   "schedule_task",
   "scheduled",
   "scheduler_loop",
+  "set_broker_for_tests",
+  "set_scheduler_for_tests",
   "shutdown",
   "task",
   "tick_once",
@@ -711,9 +714,8 @@ expose = [
   "WorkflowState",
   "WorkflowTerminalCallback",
   "WorkflowValidationError",
-  "bind_engine",
   "get_awaiting_human_execution",
-  "get_engine",
+  "get_command",
   "get_execution_summary",
   "get_step_output",
   "handle_agent_event",
@@ -722,12 +724,15 @@ expose = [
   "list_run_views_for_ticket",
   "list_workflow_states",
   "register_workflow",
+  "registered_command_kinds",
+  "registered_workflow_names",
   "request_cancel",
   "resume_hitl",
   "route_workflow",
+  "set_engine_for_tests",
+  "start",
   "start_step",
   "step",
-  "unregister_workflow",
   "workflow_input",
 ]
 from = ["app.core.workflow"]
@@ -866,6 +871,7 @@ expose = [
   "accept_invitation",
   "audit_web",
   "change_role",
+  "clear_global_inbox",
   "clear_vcs",
   "create_membership",
   "create_org",
@@ -991,7 +997,12 @@ expose = [
 from = ["app.domain.tickets"]
 
 [[interfaces]]
-expose = ["ClaudeCodePlugin", "bootstrap", "set_repo_skill"]
+expose = [
+  "ClaudeCodePlugin",
+  "bootstrap",
+  "set_claude_code_plugin_for_tests",
+  "set_repo_skill",
+]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]
@@ -1001,20 +1012,20 @@ expose = [
   "GithubIntakeType",
   "bootstrap",
   "bootstrap_oauth",
-  "get_plugin",
   "mark_webhook_processed",
   "record_app_install",
   "record_webhook_event",
+  "set_github_plugin_for_tests",
   "verify_webhook_signature",
 ]
 from = ["app.plugins.github"]
 
 [[interfaces]]
-expose = ["LinearProvider", "bootstrap"]
+expose = ["LinearProvider", "bootstrap", "set_linear_provider_for_tests"]
 from = ["app.plugins.linear"]
 
 [[interfaces]]
-expose = ["NotionProvider", "bootstrap"]
+expose = ["NotionProvider", "bootstrap", "set_notion_provider_for_tests"]
 from = ["app.plugins.notion"]
 
 [[interfaces]]

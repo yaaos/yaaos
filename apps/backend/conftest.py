@@ -164,8 +164,7 @@ async def db_session(_migrated_schema: None) -> AsyncIterator:
     from sqlalchemy import event  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
 
-    from app.core.database import get_engine  # noqa: PLC0415
-    from app.core.database.service import set_test_session_override  # noqa: PLC0415
+    from app.core.database import get_engine, set_db_session_for_tests  # noqa: PLC0415
 
     engine = get_engine()
     async with engine.connect() as connection:
@@ -183,11 +182,10 @@ async def db_session(_migrated_schema: None) -> AsyncIterator:
             if trans.nested and not trans._parent.nested:
                 connection.sync_connection.begin_nested()
 
-        set_test_session_override(async_session)
-        try:
-            yield async_session
-        finally:
-            set_test_session_override(None)
-            await async_session.close()
-            if outer_trans.is_active:
-                await outer_trans.rollback()
+        with set_db_session_for_tests(async_session):
+            try:
+                yield async_session
+            finally:
+                await async_session.close()
+                if outer_trans.is_active:
+                    await outer_trans.rollback()

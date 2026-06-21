@@ -38,7 +38,7 @@ from app.core.workflow import (
 )
 from app.core.workspace import register_workspace_provider
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 class _MinimalWorkspaceProvider:
@@ -190,7 +190,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session, workspace_pr
             return cmd.command_id
 
     _noop_ws = step(_NoopWs)
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="gw-terminal-test",
@@ -308,7 +308,7 @@ async def test_progress_event_does_not_advance_workflow(db_session, workspace_pr
             return cmd.command_id
 
     _noop_ws2 = step(_NoopWs2)
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="gw-progress-test",

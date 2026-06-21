@@ -25,3 +25,7 @@ None. `mcp_credentials` lives in [`domain/integrations`](domain_integrations.md)
 ## How it's tested
 
 `apps/fake-notion` in docker-compose mirrors the Notion OAuth + MCP surface (HTTP Basic on token, `Notion-Version` header, search/page/block/comment tools). Backend integration tests use a stubbed provider; e2e drives the fake.
+
+`set_notion_provider_for_tests` (exported from `app.plugins.notion`) is the test seam for swapping the singleton `NotionProvider` instance.
+
+`test_set_notion_provider_for_tests.py` — verifies `set_notion_provider_for_tests` swaps and restores the singleton.

@@ -8,11 +8,7 @@ mutation, no restore loops.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest_asyncio
-
-from app.core.sse import bind_shutdown_event
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -56,14 +52,17 @@ async def sts_verify_isolation():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def sse_shutdown_event_isolation() -> None:
+async def sse_shutdown_event_isolation():
     """Bind a fresh asyncio.Event as the SSE shutdown signal for each test.
 
     Autouse so every test in the backend suite gets an isolated event without
     importing or calling anything. A previously-set event from another test
     cannot leak into this one.
     """
-    bind_shutdown_event(asyncio.Event())
+    from app.core.sse import set_shutdown_event_for_tests  # noqa: PLC0415
+
+    with set_shutdown_event_for_tests():
+        yield
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -80,7 +79,7 @@ async def subscriber_registry_isolation():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def scheduler_registry_isolation() -> None:
+async def scheduler_registry_isolation():
     """Clear the recurring-task scheduler registry per test.
 
     Schedules are registered at import time (e.g. the `scheduled_runs`
@@ -88,9 +87,10 @@ async def scheduler_registry_isolation() -> None:
     or `schedule_task`) must start with a known-empty registry so the
     `tick_once` call only fires the schedules the test introduced.
     """
-    from app.core.tasks.scheduler import _reset_schedules_for_tests  # noqa: PLC0415
+    from app.core.tasks import set_scheduler_for_tests  # noqa: PLC0415
 
-    _reset_schedules_for_tests()
+    with set_scheduler_for_tests():
+        yield
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -143,7 +143,7 @@ async def start_pr_review(
     from uuid import UUID  # noqa: PLC0415
 
     from app.core.database import session as db_session  # noqa: PLC0415
-    from app.core.workflow import get_engine  # noqa: PLC0415
+    from app.core.workflow import start as workflow_start  # noqa: PLC0415
 
     del trigger_reason
     ticket_uuid = ticket_id if isinstance(ticket_id, UUID) else UUID(str(ticket_id))
@@ -169,7 +169,7 @@ async def start_pr_review(
     )
 
     async with db_session() as s:
-        wfx_id = await get_engine().start(
+        wfx_id = await workflow_start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_uuid),
             workflow_input=snapshot,
@@ -180,16 +180,15 @@ async def start_pr_review(
 
 
 def _register_workflows() -> None:
-    from app.core.workflow import WorkflowError, get_engine  # noqa: PLC0415
+    from app.core.workflow import WorkflowError, register_workflow  # noqa: PLC0415
     from app.domain.reviewer.workflows import ALL_WORKFLOWS  # noqa: PLC0415
 
-    engine = get_engine()
     # Auto-discovery via register_workflow populates all regular commands from
     # the workflow's steps tuple, and all recovery commands from
     # wf.recovery_commands (including RefreshWorkspaceAuth for pr_review_v1).
     for wf in ALL_WORKFLOWS:
         try:
-            engine.register_workflow(wf)
+            register_workflow(wf)
         except WorkflowError:
             pass
 

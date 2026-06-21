@@ -31,7 +31,7 @@ from app.core.workflow import (
     step,
 )
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -90,7 +90,7 @@ async def test_sse_publish_emits_spawn_span_in_workflow_trace(db_session) -> Non
             upstream_trace_id = outer_span.get_span_context().trace_id
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="sse-spawn-span-test",

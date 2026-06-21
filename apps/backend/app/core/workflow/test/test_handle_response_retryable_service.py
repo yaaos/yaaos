@@ -27,7 +27,7 @@ from app.core.workflow import (
     get_execution_summary,
     step,
 )
-from app.testing.workflow_harness import scoped_engine, scoped_workflow
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -114,66 +114,65 @@ async def test_schema_violation_skips_retry_and_fails(db_session) -> None:
 
     wf = _make_workflow()
 
-    with scoped_workflow(wf):
-        with scoped_engine() as eng:
-            eng.register_workflow(wf)
+    with set_engine_for_tests() as eng:
+        eng.register_workflow(wf)
 
-            ticket_id = str(uuid4())
+        ticket_id = str(uuid4())
 
-            wfx_id = await eng.start(
-                workflow_name="_test_schema_retry",
-                ticket_id=ticket_id,
-                workflow_input=None,
-                session=db_session,
-            )
-            await db_session.commit()
+        wfx_id = await eng.start(
+            workflow_name="_test_schema_retry",
+            ticket_id=ticket_id,
+            workflow_input=None,
+            session=db_session,
+        )
+        await db_session.commit()
 
-            from app.core.tasks import get_broker  # noqa: PLC0415
+        from app.core.tasks import get_broker  # noqa: PLC0415
 
-            async def _dispatcher(kind: str, payload: dict) -> None:
-                assert kind == "taskiq_enqueue"
-                decorated = get_broker().find_task(payload["task_name"])
-                assert decorated is not None
-                await decorated.original_func(**payload["args"])
+        async def _dispatcher(kind: str, payload: dict) -> None:
+            assert kind == "taskiq_enqueue"
+            decorated = get_broker().find_task(payload["task_name"])
+            assert decorated is not None
+            await decorated.original_func(**payload["args"])
 
-            async def _drain(max_iter: int = 20) -> None:
-                for _ in range(max_iter):
-                    pending = await get_pending_task_names(db_session)
-                    if not pending:
-                        break
-                    delivered = await drain_once(db_session, dispatcher=_dispatcher)
-                    await db_session.commit()
-                    if delivered == 0:
-                        break
+        async def _drain(max_iter: int = 20) -> None:
+            for _ in range(max_iter):
+                pending = await get_pending_task_names(db_session)
+                if not pending:
+                    break
+                delivered = await drain_once(db_session, dispatcher=_dispatcher)
+                await db_session.commit()
+                if delivered == 0:
+                    break
 
-            # Initial drain — _SchemaCmd dispatches (AgentDispatch branch).
-            await _drain()
+        # Initial drain — _SchemaCmd dispatches (AgentDispatch branch).
+        await _drain()
 
-            wfx_snap = await get_execution_summary(UUID(wfx_id), session=db_session)
-            assert wfx_snap is not None
-            assert wfx_snap.state == WorkflowState.AWAITING_AGENT.value
-            assert wfx_snap.pending_agent_command_id is not None
+        wfx_snap = await get_execution_summary(UUID(wfx_id), session=db_session)
+        assert wfx_snap is not None
+        assert wfx_snap.state == WorkflowState.AWAITING_AGENT.value
+        assert wfx_snap.pending_agent_command_id is not None
 
-            # Simulate a terminal event with invalid JSON output — handle_response
-            # will fail with retryable=False.
-            bad_output = json.dumps({"wrong_key": "bad"})
-            await enqueue(
-                HANDLE_AGENT_EVENT,
-                args={
-                    "workflow_execution_id": wfx_id,
-                    "agent_command_id": str(wfx_snap.pending_agent_command_id),
-                    "outcome_label": "success",
-                    "outputs": {"output": bad_output},
-                    "traceparent": None,
-                },
-                session=db_session,
-            )
-            await db_session.commit()
-            await _drain()
+        # Simulate a terminal event with invalid JSON output — handle_response
+        # will fail with retryable=False.
+        bad_output = json.dumps({"wrong_key": "bad"})
+        await enqueue(
+            HANDLE_AGENT_EVENT,
+            args={
+                "workflow_execution_id": wfx_id,
+                "agent_command_id": str(wfx_snap.pending_agent_command_id),
+                "outcome_label": "success",
+                "outputs": {"output": bad_output},
+                "traceparent": None,
+            },
+            session=db_session,
+        )
+        await db_session.commit()
+        await _drain()
 
-            # Workflow must be FAILED — not retried (attempt 1 of 3 available).
-            final = await get_execution_summary(UUID(wfx_id), session=db_session)
-            assert final is not None
-            assert final.state == WorkflowState.FAILED.value, (
-                f"expected FAILED, got {final.state!r} — schema violation should bypass retry"
-            )
+        # Workflow must be FAILED — not retried (attempt 1 of 3 available).
+        final = await get_execution_summary(UUID(wfx_id), session=db_session)
+        assert final is not None
+        assert final.state == WorkflowState.FAILED.value, (
+            f"expected FAILED, got {final.state!r} — schema violation should bypass retry"
+        )

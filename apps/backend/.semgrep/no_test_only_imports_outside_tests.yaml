@@ -13,6 +13,14 @@ rules:
       - metavariable-regex:
           metavariable: $NAME
           regex: "^(set_[a-z_]+_for_tests|_reset_[a-z_]+|_canonical_[a-z_]+|_[a-z_]+_for_tests)$"
+    paths:
+      exclude:
+        - "**/__init__.py"
     # The semgrep scan already excludes app/testing and test_*.py files via
     # CLI flags in bin/ci; this rule is the belt-and-suspenders for any
     # production file that might accidentally import a test seam.
+    # __init__.py files are excluded because they are module-interface re-export
+    # barrels: importing set_*_for_tests there is a deliberate re-export into
+    # the module's __all__, not a usage in production logic. bin/sync_modules
+    # Rule-17 and the test-seam-export check already gate what may appear in
+    # __all__.

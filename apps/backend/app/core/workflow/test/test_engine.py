@@ -211,7 +211,7 @@ async def test_start_creates_execution_row_and_routes_to_done(db_session) -> Non
 
     eng = _engine_with_workflow()
     # Install as process singleton so task bodies (route_workflow, start_step)
-    # can look up the engine via get_engine().
+    # can look up the engine via _get_engine().
     svc._engine = eng
 
     ticket_id = str(uuid4())

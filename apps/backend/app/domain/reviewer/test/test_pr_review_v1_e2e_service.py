@@ -32,7 +32,7 @@ from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.seed import seed_agent as _seed_agent_for_tests
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 async def _seed_org_with_anthropic_key(db_session) -> UUID:  # type: ignore[no-untyped-def]
@@ -69,7 +69,7 @@ class _StubWorkspaceProvider:
 @pytest.fixture
 def _registered_engine(workspace_providers_isolation):  # type: ignore[no-untyped-def]
     register_workspace_provider(_StubWorkspaceProvider())
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(pr_review_v1)
         yield eng
 
@@ -273,7 +273,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
         is_fork=False,
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(pr_review_v1)
 
         with register_stub_vcs(plugin_id="github"):

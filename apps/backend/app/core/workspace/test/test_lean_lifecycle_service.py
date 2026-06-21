@@ -49,7 +49,7 @@ from app.core.workflow import (
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceStatus
 from app.testing.seed import seed_agent
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -598,7 +598,7 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-once-test",
@@ -668,7 +668,7 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-no-refire-test",
@@ -734,7 +734,7 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
     )
 
     ticket_id = str(uuid4())
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-record-test",
@@ -808,7 +808,7 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-label-fallback-test",
@@ -872,7 +872,7 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-failure-context-test",

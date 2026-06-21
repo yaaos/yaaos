@@ -53,7 +53,7 @@ from app.core.intake import (
     IntakeSideEffect,
     parse_rereview,
 )
-from app.core.workflow import get_engine
+from app.core.workflow import start as workflow_start
 
 log = structlog.get_logger("intake.github")
 
@@ -337,7 +337,7 @@ class GithubIntakeType:
             labels=tuple(ticket_payload["labels"]),
             author_login=vcs_pr.author_login,
         )
-        workflow_execution_id = await get_engine().start(
+        workflow_execution_id = await workflow_start(
             workflow_name="pr_review_v1",
             ticket_id=str(ticket_id),
             traceparent=current_traceparent(),

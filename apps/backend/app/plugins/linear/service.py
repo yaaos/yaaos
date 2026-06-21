@@ -12,6 +12,9 @@ the `--allowed-tools` CLI flag + the proxy's allowlist check.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import httpx
 import structlog
 from pydantic import SecretStr
@@ -94,3 +97,21 @@ def bootstrap() -> None:
 
 def get_provider() -> LinearProvider:
     return _provider
+
+
+@contextmanager
+def set_linear_provider_for_tests(provider: LinearProvider | None = None) -> Iterator[LinearProvider]:
+    """Context manager: swap the singleton provider for the duration of the block.
+
+    Pass an explicit ``provider`` instance or omit to receive a fresh default
+    ``LinearProvider``. Restores the prior singleton on exit — even on exception.
+
+    Production never calls this.
+    """
+    global _provider
+    prior = _provider
+    _provider = provider if provider is not None else LinearProvider()
+    try:
+        yield _provider
+    finally:
+        _provider = prior

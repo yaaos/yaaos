@@ -20,6 +20,9 @@ Both quirks are encoded in `ProviderConfig` so they don't leak into
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import httpx
 import structlog
 from pydantic import SecretStr
@@ -102,3 +105,21 @@ def bootstrap() -> None:
 
 def get_provider() -> NotionProvider:
     return _provider
+
+
+@contextmanager
+def set_notion_provider_for_tests(provider: NotionProvider | None = None) -> Iterator[NotionProvider]:
+    """Context manager: swap the singleton provider for the duration of the block.
+
+    Pass an explicit ``provider`` instance or omit to receive a fresh default
+    ``NotionProvider``. Restores the prior singleton on exit — even on exception.
+
+    Production never calls this.
+    """
+    global _provider
+    prior = _provider
+    _provider = provider if provider is not None else NotionProvider()
+    try:
+        yield _provider
+    finally:
+        _provider = prior

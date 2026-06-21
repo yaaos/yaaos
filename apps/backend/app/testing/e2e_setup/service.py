@@ -29,19 +29,22 @@ DEFAULT_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def reset() -> None:
-    """Truncate all tables and flush Redis rate-limit state.
+    """Truncate all tables, flush Redis rate-limit state, and clear the email inbox.
 
     DB truncation covers all domain state. Redis rate-limit keys for the
     agent identity-exchange endpoint are also deleted so a subsequent seed
     (bootstrap_owner) isn't blocked by a prior run's burst from the agent
-    container's IP.
+    container's IP. The module-global email inbox is cleared so emails from a
+    previous (possibly failed) test run do not pollute the next run.
     """
     from app.core.agent_gateway import delete_identity_exchange_rate_limits  # noqa: PLC0415
+    from app.domain.orgs import clear_global_inbox  # noqa: PLC0415
 
     async with db_session() as s:
         await truncate_all_tables(s)
         await s.commit()
     await delete_identity_exchange_rate_limits()
+    clear_global_inbox()
 
 
 async def seed_github_install(

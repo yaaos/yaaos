@@ -199,9 +199,9 @@ def require(action: Action) -> Callable[..., None]:
         route_security_resolved.set("org_scoped")
         # Bind structlog so log lines + the inner handler carry the identity.
         # Middleware unbinds at request end.
-        from app.core.auth import bind_request_structlog_vars  # noqa: PLC0415
+        from app.core.auth import configure_structlog_context  # noqa: PLC0415
 
-        bind_request_structlog_vars()
+        configure_structlog_context()
         # Best-effort: touch the session row so `last_seen_at` reflects
         # actual usage. Single-write per authenticated request; cheap.
         session_cookie = request.cookies.get("yaaos_session")

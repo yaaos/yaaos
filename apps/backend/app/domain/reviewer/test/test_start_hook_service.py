@@ -22,7 +22,7 @@ from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr, set_workflow_execution
 from app.domain.tickets import get as get_ticket
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -87,7 +87,7 @@ async def test_workflow_start_flips_ticket_to_running(
         is_fork=False,
     )
 
-    with scoped_engine() as engine:
+    with set_engine_for_tests() as engine:
         engine.register_workflow(pr_review_v1)
 
         async with org_context(org_id, ActorKind.SYSTEM):
@@ -148,7 +148,7 @@ async def test_two_status_changed_audit_rows_no_duplicates(
         is_fork=False,
     )
 
-    with scoped_engine() as engine:
+    with set_engine_for_tests() as engine:
         engine.register_workflow(pr_review_v1)
 
         async with org_context(org_id, ActorKind.SYSTEM):

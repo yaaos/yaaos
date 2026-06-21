@@ -12,10 +12,10 @@ from app.plugins.github.oauth import GitHubOAuthProvider, bootstrap_oauth
 from app.plugins.github.service import (
     GitHubPlugin,
     bootstrap,
-    get_plugin,
     mark_webhook_processed,
     record_app_install,
     record_webhook_event,
+    set_github_plugin_for_tests,
     verify_webhook_signature,
 )
 
@@ -25,10 +25,10 @@ __all__ = [
     "GithubIntakeType",
     "bootstrap",
     "bootstrap_oauth",
-    "get_plugin",
     "mark_webhook_processed",
     "record_app_install",
     "record_webhook_event",
+    "set_github_plugin_for_tests",
     "verify_webhook_signature",
 ]
 

@@ -9,6 +9,9 @@ to Redis.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from taskiq import AsyncBroker
 from taskiq_redis import ListQueueBroker
 
@@ -40,3 +43,22 @@ def shutdown() -> None:
     """
     global _broker
     _broker = None
+
+
+@contextmanager
+def set_broker_for_tests(broker: AsyncBroker | None = None) -> Iterator[AsyncBroker | None]:
+    """Context manager: swap the singleton broker for the duration of the block.
+
+    Restores the prior broker on exit — even on exception. Pass an explicit
+    ``broker`` instance to test broker-dependent paths, or pass ``None`` to
+    simulate an uninitialized broker.
+
+    Production never calls this.
+    """
+    global _broker
+    prior = _broker
+    _broker = broker
+    try:
+        yield _broker
+    finally:
+        _broker = prior

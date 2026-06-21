@@ -19,9 +19,11 @@ See `apps/backend/docs/core_workflow.md`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC as _UTC
 from datetime import datetime
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Literal, Protocol, cast
 from uuid import UUID
 
 import structlog
@@ -161,7 +163,7 @@ async def _start_step_impl(
         # Cancellation check — route through the finalizer (one-shot) before
         # entering CANCELLED, unless the finalizer is already in flight.
         if wfx.cancel_requested:
-            _ss_engine = get_engine()
+            _ss_engine = _get_engine()
             try:
                 _ss_wf = _ss_engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
             except WorkflowNotFoundError:
@@ -203,7 +205,7 @@ async def _start_step_impl(
             )
             return
 
-        engine = get_engine()
+        engine = _get_engine()
         wf = engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
         step = _resolve_step(wfx, wf, step_id)
         if step is None:
@@ -499,7 +501,7 @@ async def _handle_agent_event_impl(
         # core.workflow but NOT the reverse).
         retryable = True
         if outcome_label == "success" and completed_step_id is not None:
-            engine = get_engine()
+            engine = _get_engine()
             wf = engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
             step = _resolve_step(wfx, wf, completed_step_id)
             if step is not None:
@@ -600,7 +602,7 @@ async def _route_workflow_impl(
         # and FAIL_WORKFLOW target branches further below (gated on
         # `finalizer_fired AND completed_step_id == wf.finalizer.step_id`).
         if wfx.cancel_requested and not wfx.finalizer_fired:
-            _rw_engine = get_engine()
+            _rw_engine = _get_engine()
             try:
                 _rw_wf = _rw_engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
             except WorkflowNotFoundError:
@@ -629,7 +631,7 @@ async def _route_workflow_impl(
             await s.commit()
             return
 
-        engine = get_engine()
+        engine = _get_engine()
         wf = engine.get_workflow(wfx.workflow_name, version=wfx.workflow_version)
 
         # Initial call from start(): no completed step. Bootstrap by
@@ -928,7 +930,7 @@ def _resolve_step(wfx: WorkflowExecutionRow, wf: Workflow, step_id: str) -> Step
         if failure_label is None:
             return None
         # Look up the per-workflow recovery command class from the engine.
-        recovery_class = get_engine()._get_recovery_class(wf.name, wf.version, failure_label)
+        recovery_class = _get_engine()._get_recovery_class(wf.name, wf.version, failure_label)
         if recovery_class is None:
             return None
         return StepRef(
@@ -1115,7 +1117,7 @@ async def _enter_terminal_state(
     _publish_state_changed(session, wfx)
     org_id = _workflow_org_id(wfx)
     try:
-        wf = get_engine().get_workflow(wfx.workflow_name, version=wfx.workflow_version)
+        wf = _get_engine().get_workflow(wfx.workflow_name, version=wfx.workflow_version)
     except WorkflowNotFoundError:
         wf = None
     if wf is not None and wf.on_terminal is not None:
@@ -1304,7 +1306,7 @@ async def _safe_execute(
 
 
 class WorkflowEngine:
-    """Workflow + WorkflowCommand registry. Process-singleton via `get_engine()`.
+    """Workflow + WorkflowCommand registry. Process-singleton via `_get_engine()`.
 
     `register_workflow(wf)` validates the workflow definition, auto-discovers
     all command classes from the steps tuple (instantiating each to build the
@@ -1571,8 +1573,8 @@ class WorkflowEngine:
 _engine: WorkflowEngine | None = None
 
 
-def get_engine() -> WorkflowEngine:
-    """Process-singleton engine."""
+def _get_engine() -> WorkflowEngine:
+    """Process-singleton engine. Lazy-created on first use."""
     global _engine
     if _engine is None:
         _engine = WorkflowEngine()
@@ -1581,30 +1583,109 @@ def get_engine() -> WorkflowEngine:
 
 def register_workflow(wf: Workflow) -> None:
     """Register a workflow spec on the process-singleton engine."""
-    get_engine().register_workflow(wf)
+    _get_engine().register_workflow(wf)
 
 
-def bind_engine(instance: WorkflowEngine | None) -> WorkflowEngine | None:
-    """Swap the process-singleton engine. Returns the prior engine (or None if
-    no engine was bound). Test-only public seam — production never calls this.
+class _RecordingWorkflowEngine(WorkflowEngine):
+    """WorkflowEngine that records `start` calls without executing workflows.
 
-    Used by `app/testing/workflow_harness.scoped_engine` to install a fresh
-    engine for a single test scope.
+    Returns a generated UUID on every `start` call so callers can commit and
+    proceed. Does not validate workflow registration — useful for tests that
+    only want to count or inspect dispatches.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.start_calls: list[dict] = []
+
+    async def start(  # type: ignore[override]
+        self,
+        *,
+        workflow_name: str,
+        ticket_id: str,
+        **kwargs: Any,
+    ) -> str:
+        import uuid as _uuid  # noqa: PLC0415
+
+        self.start_calls.append({"workflow_name": workflow_name, "ticket_id": ticket_id, **kwargs})
+        return str(_uuid.uuid4())
+
+
+_SCENARIOS: dict[str, type[WorkflowEngine]] = {
+    "default": WorkflowEngine,
+    "recording": _RecordingWorkflowEngine,
+}
+
+
+@contextmanager
+def set_engine_for_tests(
+    *,
+    scenario: Literal["default", "recording"] = "default",
+) -> Iterator[WorkflowEngine]:
+    """Context manager: install a fresh WorkflowEngine (or a recording variant)
+    as the process singleton for the duration of the block. Restores the prior
+    engine on exit — even on exception.
+
+    ``scenario="default"`` yields a plain engine; ``scenario="recording"``
+    yields a ``_RecordingWorkflowEngine`` whose ``.start_calls`` list lets
+    tests assert on dispatch counts without running real workflows.
+
+    Production never calls this. Tests that register custom commands or workflows
+    without contaminating the process-singleton engine use this seam.
     """
     global _engine
     prior = _engine
-    _engine = instance
-    return prior
+    fresh: WorkflowEngine = _SCENARIOS[scenario]()
+    _engine = fresh
+    try:
+        yield fresh
+    finally:
+        _engine = prior
 
 
-def unregister_workflow(workflow_name: str, version: int) -> None:
-    """Remove a workflow from the process-singleton engine by name + version.
-    Test-only public seam — production never calls this.
+# ── Module-level free functions delegating to the process-singleton engine ──
+# These are the public surface.  Callers never hold a reference to the engine
+# instance itself.  Tests that need engine-level assertions use
+# `set_engine_for_tests` which yields the fresh engine.
 
-    Used by `app/testing/workflow_harness.scoped_workflow` to clean up a
-    workflow registration on scope exit.
+
+async def start(
+    *,
+    workflow_name: str,
+    ticket_id: str,
+    version: int | None = None,
+    traceparent: str | None = None,
+    workflow_input: BaseModel | None = None,
+    session: AsyncSession,
+) -> str:
+    """Create a `workflow_executions` row and enqueue the initial route step.
+
+    Delegates to the process-singleton engine. Returns the new execution id as
+    a string UUID.
     """
-    key = (workflow_name, version)
-    engine = get_engine()
-    engine._workflows.pop(key, None)
-    engine._recovery_maps.pop(key, None)
+    return await _get_engine().start(
+        workflow_name=workflow_name,
+        ticket_id=ticket_id,
+        version=version,
+        traceparent=traceparent,
+        workflow_input=workflow_input,
+        session=session,
+    )
+
+
+def get_command(kind: str) -> WorkflowCommand:
+    """Return the registered WorkflowCommand instance for ``kind``.
+
+    Raises ``CommandNotRegisteredError`` when not found.
+    """
+    return _get_engine().get_command(kind)
+
+
+def registered_workflow_names() -> list[str]:
+    """Return the sorted list of registered workflow names."""
+    return _get_engine().registered_workflow_names()
+
+
+def registered_command_kinds() -> list[str]:
+    """Return the sorted list of registered command kind strings."""
+    return _get_engine().registered_command_kinds()

@@ -25,3 +25,7 @@ None. `mcp_credentials` lives in [`domain/integrations`](domain_integrations.md)
 ## How it's tested
 
 `apps/fake-linear` in docker-compose covers OAuth + MCP round-trips. Backend integration tests use a stubbed `IntegrationProvider`; e2e drives the fake.
+
+`set_linear_provider_for_tests` (exported from `app.plugins.linear`) is the test seam for swapping the singleton `LinearProvider` instance.
+
+`test_set_linear_provider_for_tests.py` — verifies `set_linear_provider_for_tests` swaps and restores the singleton.

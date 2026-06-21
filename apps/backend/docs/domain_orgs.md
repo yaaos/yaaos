@@ -79,7 +79,9 @@ See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/codi
 - `test/test_repository.py` — repository helpers (invitation + shim calls to tenancy) against real Postgres.
 - `test/test_invitations.py` — invite, accept, used-token, expired-token, garbage-token, remove revokes sessions, role change revokes sessions.
 - `test/test_membership_endpoints.py` — ASGI-driven: invite + email sent, role enforcement, accept happy path, accept-expired → 410, accept-used → 410, remove/change_role session revocation.
-- `test/test_inbox_binding.py` — ContextVar isolation for the email inbox: `send_plain` writes to the bound inbox; fresh bind hides prior messages; fail-fast `RuntimeError` before bind.
+- `test/test_inbox_binding.py` — Email inbox coverage: ContextVar isolation per unit test (`set_email_inbox_for_tests`); module-global fallback for the e2e / test-stack path (`clear_global_inbox` wipes the shared inbox between runs).
 - `test/test_tenancy_delegation.py` — service tests verifying `create_org` + `create_membership` delegate through `core/tenancy`, and SSO authz flags are written via `set_sso_authz_for_org`.
 
-Email inbox isolation between tests is provided by the `email_inbox_isolation` autouse fixture in `app/testing/isolation`. Tests read sent emails via `app.testing.seed.read_email_inbox()`.
+Email inbox isolation between unit tests is provided by the `email_inbox_isolation` autouse fixture in `app/testing/isolation`. Tests read sent emails via `app.testing.seed.read_email_inbox()`.
+
+The inbox has two layers: (1) a ContextVar override (`set_email_inbox_for_tests`) that unit tests use for full isolation; (2) a module-global fallback (`_global_inbox`) that the e2e test stack relies on so emails written in one HTTP request task are visible to the inbox-reader request task (each task inherits a copy of the root context where the ContextVar is unset). `clear_global_inbox` resets the module-global; `testing/e2e_setup.reset()` calls it so emails from a previous test run do not leak.

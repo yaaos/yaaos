@@ -32,7 +32,7 @@
 - `register_workflow` auto-instantiates every command class in `steps` and `recovery_commands` via `cmd_class()` (zero-arg constructor). Constructor args are not supported — use class-level attributes for test-injectable config.
 - Duplicate `recovers_failure_label` in `recovery_commands` raises `WorkflowError` at registration time (not at dispatch time).
 - `TERMINAL_STATES = {done, failed, cancelled}` — check before enqueuing further work.
-- Test isolation uses `scoped_engine` / `scoped_workflow` from [`app/testing/workflow_harness`](../app/testing/workflow_harness.py). `scoped_engine` accepts an optional `engine` argument to install a pre-built subclass (e.g. a recording engine). Neither name is on `core/workflow`'s public surface.
+- Test isolation uses `set_engine_for_tests` from `app.core.workflow` (re-exported via `app.testing.workflow_harness`). Pass `scenario="recording"` to get a `_RecordingWorkflowEngine` that captures `start()` calls without DB access; omit the argument for a fresh empty engine. The function name is the public surface — `scoped_engine` and `scoped_workflow` no longer exist.
 - Read projections (`WorkflowExecutionSummary`, `WorkflowRunView`, `HitlHistoryEntry`, `list_*`, `get_*`) live in `core/workflow/views.py` and are re-exported from `__init__.py`. `list_workflow_states` returns all `workflow_executions.state` values for org-scoped status counts.
 
 ## Vocabulary

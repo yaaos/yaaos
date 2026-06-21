@@ -33,7 +33,7 @@ from app.core.workflow import (
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import get as get_ticket
 from app.domain.tickets import set_workflow_execution, transition_ticket_on_terminal
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -164,7 +164,7 @@ async def test_done_workflow_flips_ticket_to_done(db_session) -> None:
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             _pr_review_wf(
                 _success_step,
@@ -202,7 +202,7 @@ async def test_failed_workflow_flips_ticket_to_failed_with_reason(db_session) ->
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             _pr_review_wf(
                 _fail_reason_step,
@@ -248,7 +248,7 @@ async def test_cancelled_workflow_flips_ticket_to_cancelled(db_session) -> None:
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             _pr_review_wf(
                 _success_step,
@@ -298,7 +298,7 @@ async def test_non_owning_execution_leaves_ticket_untouched(db_session) -> None:
     # Point the ticket at a DIFFERENT (phantom) execution id.
     other_wfx_id = uuid4()
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             _pr_review_wf(
                 _success_step,
@@ -343,7 +343,7 @@ async def test_no_on_terminal_leaves_ticket_untouched(db_session) -> None:
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="other_workflow_v1",
@@ -391,7 +391,7 @@ async def test_redelivered_terminal_is_noop_no_raise(db_session) -> None:
 
     ticket_id = await _seed_running_ticket(db_session, org_id=org_id)
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             _pr_review_wf(
                 _success_step,

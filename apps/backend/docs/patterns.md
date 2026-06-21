@@ -536,17 +536,17 @@ Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): 
 
 Function-scoped autouse `plugin_registries_isolation` fixture: calls `set_X_for_tests()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test gets a fresh canonical copy — no restore, no leak, no order dependence.
 
-Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shutdown_event(asyncio.Event())` before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
+Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `set_shutdown_event_for_tests()` (from `app.core.sse`) before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
 
 `core.vcs.set_vcs_for_tests(plugin=X)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy of the current registry with the plugin replaced and restores the prior binding on exit. Import from `app.core.vcs`.
 
-`app.testing.workflow_harness.scoped_engine(engine=None)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh (or supplied) engine, restores the prior process-singleton on exit — even on exception. Supply an `engine` argument to install a pre-built subclass (e.g. a recording engine). Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
+`app.core.workflow.set_engine_for_tests(scenario=...)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine (or the built-in `"recording"` scenario engine), restores the prior process-singleton on exit — even on exception. Import from `app.core.workflow` or `app.testing.workflow_harness`. Pass `scenario="recording"` to get a `_RecordingWorkflowEngine` that captures `start()` calls without DB access.
 
 `core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
 Rules:
 - No wholesale-wipe or `unregister_*` loop between tests. The autouse fixture handles isolation structurally.
-- `set_vcs_for_tests` / `scoped_engine` / `scoped_workflow` bind on entry, restore prior binding on exit. The yielded value is the same object passed in.
+- `set_vcs_for_tests` / `set_engine_for_tests` bind on entry, restore prior singleton on exit. The yielded value is the bound instance.
 - Never alias the canonical registry dict in a helper — always `.copy()` to prevent leakage.
 
 ## Subscription self-cleanup (async generator pattern)

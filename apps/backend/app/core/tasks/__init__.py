@@ -30,12 +30,13 @@ from app.core.shutdown_registry import (
 # Register the daily prune for `scheduled_runs` — this is the first
 # `@scheduled` consumer (self-exercising; proves the wiring).
 from app.core.tasks import scheduled_runs_prune as _scheduled_runs_prune  # noqa: F401
-from app.core.tasks.broker import get_broker
+from app.core.tasks.broker import get_broker, set_broker_for_tests
 from app.core.tasks.drain import drain_once
 from app.core.tasks.scheduler import (
     schedule_task,
     scheduled,
     scheduler_loop,
+    set_scheduler_for_tests,
     tick_once,
 )
 from app.core.tasks.service import (
@@ -62,6 +63,8 @@ __all__ = [
     "schedule_task",
     "scheduled",
     "scheduler_loop",
+    "set_broker_for_tests",
+    "set_scheduler_for_tests",
     "shutdown",
     "task",
     "tick_once",

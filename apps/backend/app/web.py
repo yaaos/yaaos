@@ -17,10 +17,7 @@ from app.core import database  # noqa: F401
 from app.core import redis  # noqa: F401
 from app.core import observability
 
-import asyncio
-from app.core import sse as _core_sse
-
-_core_sse.bind_shutdown_event(asyncio.Event())
+from app.core import sse as _core_sse  # noqa: F401 — registers shutdown hook
 
 observability.configure(role="app")
 

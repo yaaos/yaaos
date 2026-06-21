@@ -145,10 +145,10 @@ async def start_incremental_review(
         await _fail_review(review_id, "no_ticket")
         return "skipped:no_ticket"
 
-    from app.core.workflow import get_engine  # noqa: PLC0415
+    from app.core.workflow import start as workflow_start  # noqa: PLC0415
 
     async with db_session() as s:
-        await get_engine().start(
+        await workflow_start(
             workflow_name="incremental_review_v1",
             ticket_id=str(ticket.id),
             workflow_input=None,

@@ -26,7 +26,7 @@ from app.core.workflow import (
 )
 from app.domain.orgs import repository as orgs_repo
 from app.domain.tickets import create_from_pr as create_ticket
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 def _app() -> FastAPI:
@@ -110,7 +110,7 @@ async def test_cancel_endpoint_sets_cancel_requested_on_workflow_executions(  # 
         transitions={_noop_cmd_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
-    with scoped_engine() as engine:
+    with set_engine_for_tests() as engine:
         engine.register_workflow(_stub_wf)
         # Create two workflow executions for the ticket.
         wfx_id_running = await engine.start(

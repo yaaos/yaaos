@@ -14,7 +14,13 @@ from app.domain.orgs.coding_agents import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
-from app.domain.orgs.email import SentEmail, read_sent_emails, send_plain, set_email_inbox_for_tests
+from app.domain.orgs.email import (
+    SentEmail,
+    clear_global_inbox,
+    read_sent_emails,
+    send_plain,
+    set_email_inbox_for_tests,
+)
 from app.domain.orgs.invitations import (
     InvitationExpiredError,
     InvitationInvalidError,
@@ -94,6 +100,7 @@ __all__ = [
     "accept_invitation",
     "audit_web",
     "change_role",
+    "clear_global_inbox",
     "clear_vcs",
     "create_membership",
     "create_org",

@@ -27,7 +27,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -63,7 +63,7 @@ async def test_workflow_run_root_span_emitted(db_session) -> None:  # type: igno
             upstream_span_id = upstream_span.get_span_context().span_id
             upstream_traceparent = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="pr_review_v1",
@@ -119,7 +119,7 @@ async def test_workflow_run_span_traceparent_stored_on_row(db_session) -> None: 
         with tracer.start_as_current_span("upstream-intake"):
             upstream_traceparent = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf2)
                 wfx_id2 = await eng.start(
                     workflow_name="pr_review_v1",
