@@ -21,7 +21,7 @@ from app.core.agent_gateway import bearers
 from app.core.agent_gateway.bearers import _verify_override as _bearer_verify_override
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.sse import subscribe_workspace_activity
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 
 def _app() -> FastAPI:
@@ -37,7 +37,7 @@ def _app() -> FastAPI:
 
 async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     """Insert org + agent row + issue a bearer. Returns (org_id, agent_id, bearer_token)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"act-pub-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"act-pub-{uuid4().hex[:6]}")
     org.registered_iam_arn = f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}"
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(

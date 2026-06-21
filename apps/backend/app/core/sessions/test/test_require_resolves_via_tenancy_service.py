@@ -26,7 +26,7 @@ from app.core.auth import Action, AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import require
 from app.core.sessions import web as _auth_web  # noqa: F401 — mounts /api/auth/*
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -50,10 +50,8 @@ def _client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     user = await insert_user(db_session, display_name="Probe")
-    org = await orgs_repo.insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe"
-    )
+    org = await insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"org": org, "user": user, "token": sess.raw_token}
@@ -113,7 +111,7 @@ async def test_require_returns_404_for_non_member(db_session) -> None:
     """User without a membership → 404 (same shape as org-not-found, don't
     leak existence)."""
     user = await insert_user(db_session, display_name="Outsider")
-    org = await orgs_repo.insert_org(db_session, slug=f"outsider-{uuid.uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"outsider-{uuid.uuid4().hex[:8]}")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
@@ -131,10 +129,8 @@ async def test_require_returns_404_for_non_member(db_session) -> None:
 async def test_require_returns_403_for_insufficient_role(db_session) -> None:
     """Builder role is insufficient for an Admin-only action → 403."""
     user = await insert_user(db_session, display_name="Builder")
-    org = await orgs_repo.insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld"
-    )
+    org = await insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 

@@ -16,7 +16,7 @@ from app.core.identity import insert_user, mint_session
 from app.core.notifications import web as _notifications_web  # noqa: F401
 from app.core.notifications.models import NotificationRow
 from app.core.notifications.service import create
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 
 def _app() -> FastAPI:
@@ -36,7 +36,7 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session):
     alice = await insert_user(db_session, display_name="Alice")
     bob = await insert_user(db_session, display_name="Bob")
-    org = await orgs_repo.insert_org(db_session, slug="notif-org", display_name="NotifOrg")
+    org = await insert_org(db_session, slug="notif-org", display_name="NotifOrg")
     # One notification for Alice, one for Bob — proves per-user scoping.
     n_alice = await create(
         user_id=alice.id,

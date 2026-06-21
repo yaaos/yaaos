@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import add_email, insert_user, lookup_session, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -36,14 +36,10 @@ async def test_me_without_session_returns_401() -> None:
 async def test_me_returns_user_and_memberships(db_session) -> None:
     user = await insert_user(db_session, display_name="Jack K")
     await add_email(db_session, user_id=user.id, email="jack@example.com", is_primary=True, verified=True)
-    org_a = await orgs_repo.insert_org(db_session, slug="me-org-a", display_name="A")
-    org_b = await orgs_repo.insert_org(db_session, slug="me-org-b", display_name="B")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="jack"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.ADMIN, handle="jk"
-    )
+    org_a = await insert_org(db_session, slug="me-org-a", display_name="A")
+    org_b = await insert_org(db_session, slug="me-org-b", display_name="B")
+    await insert_membership(db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="jack")
+    await insert_membership(db_session, user_id=user.id, org_id=org_b.org_id, role=Role.ADMIN, handle="jk")
     s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
@@ -102,10 +98,8 @@ async def test_me_memberships_have_no_broken_integrations_field(db_session) -> N
     """/api/auth/me memberships do not expose broken_integrations — that lives
     in GET /api/integrations/broken-summary (domain/integrations)."""
     user = await insert_user(db_session, display_name="A")
-    org = await orgs_repo.insert_org(db_session, slug="me-no-broken-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
+    org = await insert_org(db_session, slug="me-no-broken-org")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 

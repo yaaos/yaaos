@@ -32,7 +32,7 @@ from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -113,12 +113,10 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     stub_provider.next_validate = False
 
     # 1. Seed org + Owner + email + credential (initially "ok").
-    org = await orgs_repo.insert_org(db_session, slug=f"svc-chain-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"svc-chain-{uuid4().hex[:8]}")
     owner = await insert_user(db_session, display_name="Owner")
     await add_email(db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True)
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
-    )
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner")
     db_session.add(
         McpCredentialRow(
             org_id=org.org_id,

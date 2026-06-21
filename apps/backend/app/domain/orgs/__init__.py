@@ -1,10 +1,6 @@
 """domain/orgs — orgs, memberships, invitations, SSO config, VCS + coding-agents."""
 
 from app.core.agent_gateway import register_org_arn_lookup as _register_arn_lookup
-from app.domain.orgs import (
-    repository,
-    sso,
-)
 from app.domain.orgs.coding_agents import (
     CodingAgentAlreadyInstalledError,
     CodingAgentInstall,
@@ -36,6 +32,27 @@ from app.domain.orgs.onboarding import (
     get_onboarding_status,
     register_onboarding_contributor,
 )
+
+# Flat re-exports from repository.py
+# Rename-on-promote (name collision with service-layer function of same name but different signature):
+#   repository.get_org        -> get_org_full  (repository returns OrgFullView; service.get_org returns Org)
+#   repository.get_org_by_slug -> get_org_full_by_slug (same reason)
+from app.domain.orgs.repository import (
+    get_invitation_by_token_hash,
+    get_membership,
+    hash_token,
+    insert_invitation,
+    insert_membership,
+    insert_org,
+    list_memberships_for_org,
+    update_role,
+)
+from app.domain.orgs.repository import (
+    get_org as get_org_full,
+)
+from app.domain.orgs.repository import (
+    get_org_by_slug as get_org_full_by_slug,
+)
 from app.domain.orgs.service import (
     InsufficientRoleError,
     Invitation,
@@ -53,7 +70,10 @@ from app.domain.orgs.service import (
     get_org_by_slug,
 )
 from app.domain.orgs.service import _lookup_org_by_arn as _arn_lookup_impl
+
+# Flat re-exports from sso.py (ExemptOwnerWithoutTotpError not previously in __all__)
 from app.domain.orgs.sso import (
+    ExemptOwnerWithoutTotpError,
     SsoConfigError,
     get_config,
     register_assertion_verifier,
@@ -81,6 +101,7 @@ __all__ = [
     "CodingAgentAlreadyInstalledError",
     "CodingAgentInstall",
     "CodingAgentNotInstalledError",
+    "ExemptOwnerWithoutTotpError",
     "InsufficientRoleError",
     "Invitation",
     "InvitationError",
@@ -107,30 +128,38 @@ __all__ = [
     "delete_expired_invitations",
     "find_saml_org_slug_for_domain",
     "get_config",
+    "get_invitation_by_token_hash",
+    "get_membership",
     "get_onboarding_status",
     "get_org",
     "get_org_by_slug",
+    "get_org_full",
+    "get_org_full_by_slug",
     "get_vcs",
+    "hash_token",
+    "insert_invitation",
+    "insert_membership",
+    "insert_org",
     "install_coding_agent",
     "invite",
     "list_active_member_ids",
     "list_coding_agents",
+    "list_memberships_for_org",
     "org_settings_web",
     "read_sent_emails",
     "register_assertion_verifier",
     "register_onboarding_contributor",
     "register_vcs_clear_hook",
     "remove_member",
-    "repository",
     "run_assertion_verifier",
     "send_plain",
     "set_email_inbox_for_tests",
     "set_vcs",
     "sp_metadata_xml",
-    "sso",
     "sso_web",
     "uninstall_coding_agent",
     "update_coding_agent_settings",
+    "update_role",
     "upsert_config",
     "web",
 ]

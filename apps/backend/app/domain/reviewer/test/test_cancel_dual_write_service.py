@@ -23,7 +23,7 @@ from app.core.workflow import (
     get_execution_summary,
     step,
 )
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_org_full_by_slug, insert_membership, insert_org
 from app.domain.tickets import create_from_pr as create_ticket
 from app.testing.workflow_harness import set_engine_for_tests
 
@@ -50,12 +50,12 @@ _ORG_SLUG = "dual-write-test"
 async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
     """Insert a ticket + a Builder session so the cancel endpoint can
     authenticate. Returns (ticket_id, session)."""
-    existing = await orgs_repo.get_org_by_slug(db_session, _ORG_SLUG)
+    existing = await get_org_full_by_slug(db_session, _ORG_SLUG)
     if existing is None:
-        org = await orgs_repo.insert_org(db_session, slug=_ORG_SLUG)
+        org = await insert_org(db_session, slug=_ORG_SLUG)
         existing = org
     user = await insert_user(db_session, display_name="Builder")
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=user.id, org_id=existing.org_id, role=Role.BUILDER, handle="b"
     )
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)

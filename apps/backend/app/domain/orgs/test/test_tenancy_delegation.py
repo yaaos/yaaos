@@ -7,8 +7,7 @@ import pytest
 from app.core.auth import Role
 from app.core.identity import create_user
 from app.core.tenancy import get_membership_info, get_org_full
-from app.domain.orgs import create_membership, create_org
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import create_membership, create_org, insert_org
 from app.domain.orgs.sso import upsert_config
 
 
@@ -44,7 +43,7 @@ async def test_sso_set_authz_via_tenancy(db_session) -> None:
     — resolve_auth_org sees sso_enabled=True after the config is upserted."""
     from app.core.tenancy import resolve_auth_org  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug="sso-authz-org")
+    org = await insert_org(db_session, slug="sso-authz-org")
     user = await create_user(db_session, display_name="Owner")
     await create_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     await db_session.commit()

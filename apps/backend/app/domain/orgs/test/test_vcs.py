@@ -11,8 +11,7 @@ from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import clear_vcs, get_vcs, set_vcs
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import clear_vcs, get_vcs, insert_membership, insert_org, set_vcs
 from app.domain.orgs import vcs_web as _vcs_web  # noqa: F401
 
 
@@ -45,16 +44,10 @@ async def seeded(db_session):
     owner = await insert_user(db_session, display_name="O")
     admin = await insert_user(db_session, display_name="A")
     member = await insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="vcs-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
+    org = await insert_org(db_session, slug="vcs-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
     owner_sess = await mint_session(db_session, user_id=owner.id, workspace_id=None)
     admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)

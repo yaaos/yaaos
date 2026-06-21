@@ -17,7 +17,7 @@ from app.core.secrets import encrypt
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 from app.testing.seed import read_email_inbox
 
 # Drives the hourly health-check loop end-to-end: provider.validate →
@@ -63,11 +63,11 @@ def stub_provider():
 
 
 async def _seed(db_session, *, owner_email: str | None = "owner@example.com"):
-    org = await orgs_repo.insert_org(db_session, slug=f"sched-{datetime.now(UTC).timestamp()}")
+    org = await insert_org(db_session, slug=f"sched-{datetime.now(UTC).timestamp()}")
     if owner_email is not None:
         owner = await insert_user(db_session, display_name="Owner")
         await add_email(db_session, user_id=owner.id, email=owner_email, is_primary=True, verified=True)
-        await orgs_repo.insert_membership(
+        await insert_membership(
             db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
         )
     row = McpCredentialRow(

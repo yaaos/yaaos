@@ -14,8 +14,8 @@ from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, lookup_session, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.dep load
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import invite as invite_service
-from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
 from app.testing.seed import read_email_inbox
 
@@ -38,11 +38,11 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     owner_user = await insert_user(db_session, display_name="Owner")
     member_user = await insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="endpoints-org")
-    await orgs_repo.insert_membership(
+    org = await insert_org(db_session, slug="endpoints-org")
+    await insert_membership(
         db_session, user_id=owner_user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 

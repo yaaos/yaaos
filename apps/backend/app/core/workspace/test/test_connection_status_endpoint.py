@@ -14,7 +14,7 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.dep load
 from app.core.workspace import web as _workspace_web  # noqa: F401 — registers /api/workspaces
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -34,11 +34,9 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session):
     owner = await insert_user(db_session, display_name="Owner")
     builder = await insert_user(db_session, display_name="Builder")
-    org = await orgs_repo.insert_org(db_session, slug="ws-status-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
+    org = await insert_org(db_session, slug="ws-status-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(
         db_session, user_id=builder.id, org_id=org.org_id, role=Role.BUILDER, handle="bld"
     )
     owner_sess = await mint_session(db_session, user_id=owner.id, workspace_id=None)

@@ -27,7 +27,7 @@ from app.core.agent_gateway.sts_verifier import (
 from app.core.audit_log import list_for_entity
 from app.core.tenancy import update_org_fields
 from app.core.workspace import WorkspaceStatus, get_workspace_info
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 from app.testing.seed import seed_agent, seed_workspace
 
 # ── App / client helpers ─────────────────────────────────────────────────
@@ -66,7 +66,7 @@ async def _make_admin_session(db_session):
     from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import insert_user, mint_session  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug=f"shutdown-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"shutdown-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -74,9 +74,7 @@ async def _make_admin_session(db_session):
         aws_region="us-east-1",
     )
     user = await insert_user(db_session, display_name="Admin")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="admin"
-    )
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="admin")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     # Return raw_token, csrf_token for double-submit CSRF in mutation requests.
@@ -85,7 +83,7 @@ async def _make_admin_session(db_session):
 
 async def _seed_org_and_agent(db_session, *, iam_arn: str = "arn:aws:iam::111122223333:role/yaaos"):
     """Create an org row (required by bearer_tokens FK) + a seed agent. Returns (org, agent_dict)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"del-test-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"del-test-{uuid4().hex[:6]}")
     await update_org_fields(db_session, org.org_id, registered_iam_arn=iam_arn, aws_region="us-east-1")
     agent = await seed_agent(
         org_id=org.org_id,
@@ -325,7 +323,7 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
     """A region-mismatch identity exchange writes one `identity_exchange_failed`
     audit row attributed to the matched org."""
     canonical_arn = "arn:aws:iam::999988887777:role/region-test"
-    org = await orgs_repo.insert_org(db_session, slug=f"region-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"region-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -368,7 +366,7 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
     `audit_entries.org_id` is mandatory and can't be populated."""
     # Use a different unregistered ARN to avoid cross-test pollution.
     unregistered_arn = f"arn:aws:iam::000000000000:role/no-org-{uuid4().hex[:6]}"
-    org = await orgs_repo.insert_org(db_session, slug=f"no-org-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"no-org-{uuid4().hex[:6]}")
     await db_session.commit()
 
     async def _stub(_payload: str) -> VerifiedIdentity:

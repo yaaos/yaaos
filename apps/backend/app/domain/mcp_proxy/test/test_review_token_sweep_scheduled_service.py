@@ -20,7 +20,7 @@ from app.core.vcs import VCSPullRequest
 from app.domain.mcp_proxy import mint_token
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.mcp_proxy.service import _sweep_once, mcp_review_token_sweep
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -37,7 +37,7 @@ _TASK_NAME = "mcp_review_token_sweep"
 
 async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     user = await insert_user(db_session, display_name="U")
-    org = await orgs_repo.insert_org(db_session, slug=f"mcp-tok-svc-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"mcp-tok-svc-{uuid4().hex[:8]}")
     ext_id = f"pr-svc-{uuid4().hex[:6]}"
     ticket_id, _ = await create_ticket(
         org_id=org.org_id,

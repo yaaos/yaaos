@@ -8,8 +8,13 @@ from uuid import uuid4
 import pytest
 
 from app.core.auth import Role
-from app.domain.orgs import delete_expired_invitations, find_saml_org_slug_for_domain, get_org
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import (
+    delete_expired_invitations,
+    find_saml_org_slug_for_domain,
+    get_org,
+    insert_invitation,
+    insert_org,
+)
 
 # ---------------------------------------------------------------------------
 # get_org
@@ -19,7 +24,7 @@ from app.domain.orgs import repository as orgs_repo
 @pytest.mark.asyncio
 async def test_get_org_returns_org(db_session) -> None:
     """Happy path: returns an Org value object with the right attributes."""
-    row = await orgs_repo.insert_org(db_session, slug="get-org-happy", display_name="Happy Org")
+    row = await insert_org(db_session, slug="get-org-happy", display_name="Happy Org")
     await db_session.commit()
 
     org = await get_org(row.org_id)
@@ -50,7 +55,7 @@ async def _make_invitation(
     accepted_at: datetime | None = None,
 ) -> None:
     """Insert a minimal invitation row directly via the repository."""
-    await orgs_repo.insert_invitation(
+    await insert_invitation(
         db,
         org_id=org_id,
         email=f"user-{uuid4().hex[:8]}@example.com",
@@ -75,7 +80,7 @@ async def _make_invitation(
 @pytest.mark.asyncio
 async def test_delete_expired_invitations_counts_only_unaccepted_past_due(db_session) -> None:
     """Only unaccepted+expired rows are deleted; accepted and future rows survive."""
-    org = await orgs_repo.insert_org(db_session, slug="del-inv-org")
+    org = await insert_org(db_session, slug="del-inv-org")
 
     now = datetime.now(UTC)
 
@@ -104,7 +109,7 @@ async def test_delete_expired_invitations_counts_only_unaccepted_past_due(db_ses
 @pytest.mark.asyncio
 async def test_delete_expired_invitations_zero_when_none_expired(db_session) -> None:
     """Returns 0 when no invitations are eligible."""
-    org = await orgs_repo.insert_org(db_session, slug="del-inv-none")
+    org = await insert_org(db_session, slug="del-inv-none")
     await _make_invitation(
         db_session,
         org_id=org.org_id,
@@ -126,7 +131,7 @@ async def test_find_saml_org_slug_for_domain_returns_slug(db_session) -> None:
     """Happy path: enabled config whose domain list contains the queried domain."""
     from app.domain.orgs.sso import upsert_config  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug="saml-domain-org")
+    org = await insert_org(db_session, slug="saml-domain-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -145,7 +150,7 @@ async def test_find_saml_org_slug_for_domain_returns_none_when_disabled(db_sessi
     """Disabled config must not match."""
     from app.domain.orgs.sso import upsert_config  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug="saml-disabled-org")
+    org = await insert_org(db_session, slug="saml-disabled-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,

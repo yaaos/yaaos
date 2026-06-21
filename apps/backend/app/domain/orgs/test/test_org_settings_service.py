@@ -16,8 +16,8 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.core.tenancy import update_org_fields
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401
 
 
@@ -40,13 +40,13 @@ async def two_orgs(db_session):
     admin_a = await insert_user(db_session, display_name="Admin A")
     admin_b = await insert_user(db_session, display_name="Admin B")
 
-    org_a = await orgs_repo.insert_org(db_session, slug="org-arn-a")
-    org_b = await orgs_repo.insert_org(db_session, slug="org-arn-b")
+    org_a = await insert_org(db_session, slug="org-arn-a")
+    org_b = await insert_org(db_session, slug="org-arn-b")
 
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=admin_a.id, org_id=org_a.org_id, role=Role.ADMIN, handle="adm-a"
     )
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=admin_b.id, org_id=org_b.org_id, role=Role.ADMIN, handle="adm-b"
     )
 

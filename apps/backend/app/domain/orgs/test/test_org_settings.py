@@ -14,8 +14,8 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import hash_token, insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.core.tenancy import get_org_full, update_org_fields
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401
 from app.testing.seed import set_session_last_seen as _set_session_last_seen_for_tests
 
@@ -56,16 +56,10 @@ async def seeded(db_session):
     owner = await insert_user(db_session, display_name="O")
     admin = await insert_user(db_session, display_name="A")
     member = await insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="ts-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
+    org = await insert_org(db_session, slug="ts-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
     admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()

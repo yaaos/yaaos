@@ -18,7 +18,7 @@ from app.core.oauth import ProviderConfig
 from app.core.vcs import VCSPullRequest
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import get_token_by_hash, hash_token
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -70,7 +70,7 @@ def stub_providers():
 
 
 async def _seed_org(db_session, slug: str):
-    return await orgs_repo.insert_org(db_session, slug=slug)
+    return await insert_org(db_session, slug=slug)
 
 
 async def _seed_review_row(db_session, *, org_id):

@@ -18,8 +18,7 @@ from app.core.identity import (
     insert_user,
 )
 from app.core.sessions import web as auth_web  # noqa: F401 — ensures /api/auth routes register
-from app.domain.orgs import invite
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org, invite
 from app.plugins.oauth_test import set_next_profile
 
 
@@ -187,7 +186,7 @@ async def test_callback_invitation_alone_does_not_provision(db_session) -> None:
     Here we assert the legacy "invitation-on-first-login" pathway is gone."""
     from app.core.audit_log import Actor  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug="inviteorg")
+    org = await insert_org(db_session, slug="inviteorg")
     await invite(
         db_session,
         org_id=org.org_id,

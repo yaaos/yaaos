@@ -20,9 +20,8 @@ from app.core.identity import (
 )
 from app.core.sessions import require
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org, upsert_config
 from app.domain.orgs import sso_web as _sso_web  # noqa: F401
-from app.domain.orgs import upsert_config
 from app.plugins.saml_test import sign_assertion
 
 
@@ -52,10 +51,8 @@ def _client() -> httpx.AsyncClient:
 async def sso_org(db_session):
     user = await insert_user(db_session, display_name="SSO User")
     await add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="sso-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso"
-    )
+    org = await insert_org(db_session, slug="sso-org")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -104,7 +101,7 @@ async def test_acs_happy_path_marks_session_sso_satisfied(sso_org, db_session) -
 
 @pytest.mark.asyncio
 async def test_acs_jit_creates_user_when_enabled(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug="jit-org")
+    org = await insert_org(db_session, slug="jit-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -132,7 +129,7 @@ async def test_acs_jit_creates_user_when_enabled(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_acs_no_jit_rejects_unknown_user(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug="nojit-org")
+    org = await insert_org(db_session, slug="nojit-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -181,10 +178,8 @@ async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None
 async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
     owner = await insert_user(db_session, display_name="Owner")
     await add_email(db_session, user_id=owner.id, email="owner@example.com", verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="exempt-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow"
-    )
+    org = await insert_org(db_session, slug="exempt-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow")
     seed, _ = await enroll_totp(db_session, user_id=owner.id)
     await verify_totp(db_session, user_id=owner.id, code=pyotp.TOTP(seed).now())
     await upsert_config(

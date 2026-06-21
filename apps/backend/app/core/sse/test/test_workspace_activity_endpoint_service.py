@@ -26,7 +26,7 @@ from app.core.auth import AuthMiddleware, Role, register_handler
 from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sse import publish_workspace_activity
 from app.core.sse.web import _workspace_activity_stream
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -50,8 +50,8 @@ async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
     """Caller in org A; the requested wfx id belongs to a different org."""
     user = await insert_user(db_session, display_name="OrgAOwner")
 
-    org_a = await orgs_repo.insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
+    org_a = await insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 

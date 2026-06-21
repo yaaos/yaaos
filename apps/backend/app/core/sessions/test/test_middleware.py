@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI
 from app.core.auth import Action, AuthMiddleware, Role
 from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import public_route, require
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -67,11 +67,9 @@ def _make_app() -> FastAPI:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     user = await insert_user(db_session, display_name="Owner")
     member_user = await insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="acme")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
+    org = await insert_org(db_session, slug="acme")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(
         db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 

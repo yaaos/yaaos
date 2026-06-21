@@ -14,8 +14,8 @@ from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
 from app.core.identity import insert_user, mint_session
+from app.domain.orgs import get_membership, insert_org
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
 
 
 def _app() -> FastAPI:
@@ -62,7 +62,7 @@ async def test_create_org_happy_path(seeded, db_session) -> None:
     assert body["name"] == "Brand New"
     assert body["role"] == "admin"
     # Membership row exists for the caller.
-    membership = await orgs_repo.get_membership(db_session, user_id=seeded["user"].id, org_id=body["id"])
+    membership = await get_membership(db_session, user_id=seeded["user"].id, org_id=body["id"])
     assert membership is not None
     assert membership.role == "admin"
 
@@ -82,7 +82,7 @@ async def test_create_org_invalid_slug_returns_422(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_create_org_duplicate_slug_returns_409(seeded, db_session) -> None:
-    await orgs_repo.insert_org(db_session, slug="taken", display_name="Taken")
+    await insert_org(db_session, slug="taken", display_name="Taken")
     await db_session.commit()
     sess = seeded["sess"]
     async with _client() as c:

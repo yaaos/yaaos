@@ -12,7 +12,7 @@ from app.core.identity import user_web as _user_web  # noqa: F401
 from app.core.identity.repository import add_email, insert_user
 from app.core.identity.sessions import create as _create_session
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -34,10 +34,8 @@ async def seeded(db_session):
     user = await insert_user(db_session, display_name="Acc")
     e1 = await add_email(db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True)
     e2 = await add_email(db_session, user_id=user.id, email="alt@x.test", is_primary=False, verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="acc-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="acc"
-    )
+    org = await insert_org(db_session, slug="acc-org")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="acc")
     s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "e1": e1, "e2": e2, "org": org, "session": s}
@@ -75,10 +73,8 @@ async def test_delete_non_last_verified_email_ok(seeded) -> None:
 async def test_delete_last_verified_email_blocked(db_session) -> None:
     user = await insert_user(db_session, display_name="One")
     only = await add_email(db_session, user_id=user.id, email="only@x.test", is_primary=True, verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="one-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="one"
-    )
+    org = await insert_org(db_session, slug="one-org")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="one")
     s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 

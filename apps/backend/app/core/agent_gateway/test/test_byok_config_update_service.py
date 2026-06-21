@@ -23,7 +23,7 @@ from app.core.agent_gateway.models import AgentCommandRow
 from app.core.agent_gateway.service import enqueue_config_update_for_agent
 from app.core.agent_gateway.types import AgentCommandKind, AgentConfig
 from app.core.audit_log import Actor
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.testing.seed import seed_agent
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ from app.testing.seed import seed_agent
 
 async def _make_org(db_session) -> UUID:
     """Insert a minimal org row and return its id."""
-    org = await orgs_repo.insert_org(db_session, slug=f"test-org-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"test-org-{uuid4().hex[:8]}")
     return org.org_id
 
 

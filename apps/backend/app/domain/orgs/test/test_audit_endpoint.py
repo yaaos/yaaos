@@ -13,7 +13,7 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import audit_web as _audit_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 class _Payload(BaseModel):
@@ -37,13 +37,9 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session):
     owner = await insert_user(db_session, display_name="Owner")
     member = await insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="audit-endpoint")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
+    org = await insert_org(db_session, slug="audit-endpoint")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
     owner_session = await mint_session(db_session, user_id=owner.id, workspace_id=None)
     member_session = await mint_session(db_session, user_id=member.id, workspace_id=None)
     # Two distinguishable audit rows.

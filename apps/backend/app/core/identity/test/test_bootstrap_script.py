@@ -17,7 +17,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.core.identity.repository import find_oauth_identity, find_user_by_email
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_membership, get_org_full_by_slug
 
 _BIN = Path(__file__).resolve().parents[4] / "bin" / "bootstrap"
 
@@ -124,9 +124,9 @@ async def test_bootstrap_creates_all_rows(github_user_lookup, db_session) -> Non
         assert user is not None
         identity = await find_oauth_identity(s, provider="github", external_subject="9991")
         assert identity is not None and identity.user_id == user.id
-        org = await orgs_repo.get_org_by_slug(s, "acme-boot")
+        org = await get_org_full_by_slug(s, "acme-boot")
         assert org is not None
-        membership = await orgs_repo.get_membership(s, user_id=user.id, org_id=org.org_id)
+        membership = await get_membership(s, user_id=user.id, org_id=org.org_id)
         assert membership is not None and membership.role == "owner"
 
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
@@ -152,7 +152,7 @@ async def test_bootstrap_is_idempotent(github_user_lookup) -> None:
     async with get_sessionmaker()() as s:
         user = await find_user_by_email(s, "jack-idem@example.com")
         assert user is not None
-        org = await orgs_repo.get_org_by_slug(s, "idem-org")
+        org = await get_org_full_by_slug(s, "idem-org")
         assert org is not None
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
@@ -170,7 +170,7 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
     async with get_sessionmaker()() as s:
         user = await find_user_by_email(s, "jack-retry@example.com")
         assert user is not None
-        org = await orgs_repo.get_org_by_slug(s, "retry-org")
+        org = await get_org_full_by_slug(s, "retry-org")
         assert org is not None
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()

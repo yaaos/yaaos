@@ -56,7 +56,7 @@ from app.core.tenancy import (
     update_org_fields as _update_org_fields,
 )
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_org_full_by_slug, insert_membership, insert_org
 from app.domain.orgs.onboarding import get_onboarding_status
 
 log = structlog.get_logger("orgs.settings.web")
@@ -134,12 +134,12 @@ async def create_org(
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}[a-z0-9]|[a-z0-9]", slug):
             return JSONResponse(status_code=422, content={"error": "invalid_slug"})
 
-        existing = await orgs_repo.get_org_by_slug(s, slug)
+        existing = await get_org_full_by_slug(s, slug)
         if existing is not None:
             return JSONResponse(status_code=409, content={"error": "slug_taken"})
 
-        org = await orgs_repo.insert_org(s, slug=slug, display_name=body.name.strip())
-        await orgs_repo.insert_membership(
+        org = await insert_org(s, slug=slug, display_name=body.name.strip())
+        await insert_membership(
             s,
             user_id=sess_row.user_id,
             org_id=org.org_id,

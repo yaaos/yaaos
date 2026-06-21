@@ -55,7 +55,7 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 ## Data owned
 
-Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `get_org_full`, `list_memberships_for_org`, `update_org_fields`, etc.). `domain/orgs/repository.py` exposes compatibility shims over those service functions for callers in this module and tests. See `models.py` + [core_database.md](core_database.md) for columns.
+Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `update_org_fields`, etc.). `domain/orgs/repository.py` holds thin shims over tenancy that expose a few targeted reads; these are flat re-exported from `domain/orgs/__init__` as `get_org_full`, `get_org_full_by_slug`, `get_membership`, `list_memberships_for_org`, `insert_org`, `insert_membership`, `insert_invitation`, `get_invitation_by_token_hash`, `hash_token`, `update_role`. Callers import them from `app.domain.orgs` directly — there is no `repository` namespace handle. See `models.py` + [core_database.md](core_database.md) for columns.
 
 Notable constraints:
 - `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.

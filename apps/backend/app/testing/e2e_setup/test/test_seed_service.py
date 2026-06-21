@@ -11,8 +11,7 @@ import pytest
 
 from app.core.audit_log import list_for_org
 from app.core.auth import Role
-from app.domain.orgs import get_org_by_slug
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_membership, get_org_by_slug, get_org_full_by_slug
 from app.testing.e2e_setup.service import (
     seed_bootstrap_owner,
     seed_github_install,
@@ -40,14 +39,14 @@ async def test_seed_bootstrap_owner_creates_org_and_membership(db_session) -> No
     org = await get_org_by_slug("seed-test-org")
     assert org is not None
 
-    membership = await orgs_repo.get_org_by_slug(db_session, "seed-test-org")
+    membership = await get_org_full_by_slug(db_session, "seed-test-org")
     assert membership is not None  # org exists — membership verified below via role
     # Verify owner membership via the repository (intra-e2e_setup — testing layer can reach any module).
     from app.core.identity import find_user_by_email  # noqa: PLC0415
 
     user = await find_user_by_email(db_session, "owner@example.com")
     assert user is not None
-    m = await orgs_repo.get_membership(db_session, user_id=user.id, org_id=org.id)
+    m = await get_membership(db_session, user_id=user.id, org_id=org.id)
     assert m is not None
     assert Role(m.role) == Role.OWNER
 

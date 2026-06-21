@@ -14,8 +14,8 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import web as _sessions_web  # noqa: F401
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs import web as _orgs_web  # noqa: F401
 from app.domain.orgs.onboarding import (
     _reset_contributors_for_tests,
@@ -39,14 +39,10 @@ def _client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def seeded(db_session):
     user = await insert_user(db_session, display_name="U")
-    org_a = await orgs_repo.insert_org(db_session, slug="alpha", display_name="Alpha")
-    org_b = await orgs_repo.insert_org(db_session, slug="beta", display_name="Beta")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="u-a"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="u-b"
-    )
+    org_a = await insert_org(db_session, slug="alpha", display_name="Alpha")
+    org_b = await insert_org(db_session, slug="beta", display_name="Beta")
+    await insert_membership(db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="u-a")
+    await insert_membership(db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="u-b")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "org_a": org_a, "org_b": org_b, "sess": sess}

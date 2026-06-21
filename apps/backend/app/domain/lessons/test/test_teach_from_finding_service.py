@@ -15,14 +15,14 @@ from sqlalchemy import text
 
 from app.core.audit_log import Actor
 from app.domain import lessons
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 pytestmark = pytest.mark.service
 
 
 @pytest.mark.asyncio
 async def test_teach_yaaos_creates_lesson_under_correct_repo_with_audit(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug=f"svc-teach-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"svc-teach-{uuid4().hex[:8]}")
     await db_session.commit()
 
     title = "Cite the CWE family"

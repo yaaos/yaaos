@@ -28,7 +28,7 @@ from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import require
 from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -53,12 +53,12 @@ async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     Used for the membership-gated + cross-org tests."""
     user = await insert_user(db_session, display_name="TestOwner")
 
-    org_a = await orgs_repo.insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
+    org_a = await insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 
-    org_b = await orgs_repo.insert_org(db_session, slug=f"org-b-{uuid.uuid4().hex[:8]}")
+    org_b = await insert_org(db_session, slug=f"org-b-{uuid.uuid4().hex[:8]}")
     # User is NOT a member of org_b — used for the 403 test.
 
     raw_token = f"sse-test-{uuid.uuid4().hex[:8]}"

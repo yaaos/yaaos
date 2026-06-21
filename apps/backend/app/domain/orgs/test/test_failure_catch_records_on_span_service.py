@@ -34,9 +34,9 @@ async def test_orgs_failure_catch_records_on_span() -> None:
                 run_assertion_verifier("saml-data", "idp-meta")
     finally:
         # Remove the registered raising verifier to avoid contaminating other tests.
-        from app.domain.orgs import sso as _sso  # noqa: PLC0415
+        from app.domain.orgs.sso import _verifiers as _sso_verifiers  # noqa: PLC0415
 
-        _sso._verifiers[:] = [v for v in _sso._verifiers if v is not _raising_verifier]
+        _sso_verifiers[:] = [v for v in _sso_verifiers if v is not _raising_verifier]
 
     # Result may be None (no verifier returned a non-None) — that's fine.
     # What matters is the span carries the exception event.

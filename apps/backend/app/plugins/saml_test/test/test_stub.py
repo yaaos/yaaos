@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.orgs import sso as sso_service
+from app.domain.orgs import run_assertion_verifier
 from app.plugins.saml_test.service import sign_assertion, verify_assertion
 
 
@@ -24,13 +24,13 @@ def test_dispatcher_registers_test_verifier() -> None:
     """`bootstrap()` runs at import; the registry should accept a test
     assertion via `run_assertion_verifier`."""
     token = sign_assertion({"email": "abc@example.test", "name_id": "abc"})
-    out = sso_service.run_assertion_verifier(token, "<EntityDescriptor/>")
+    out = run_assertion_verifier(token, "<EntityDescriptor/>")
     assert out is not None
     assert out["email"] == "abc@example.test"
 
 
 def test_dispatcher_returns_none_for_garbage() -> None:
-    assert sso_service.run_assertion_verifier("bad-token", "<EntityDescriptor/>") is None
+    assert run_assertion_verifier("bad-token", "<EntityDescriptor/>") is None
 
 
 @pytest.mark.asyncio

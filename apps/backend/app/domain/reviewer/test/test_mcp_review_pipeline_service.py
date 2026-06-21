@@ -31,7 +31,7 @@ from app.core.vcs import VCSPullRequest
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
@@ -91,7 +91,7 @@ def _client() -> httpx.AsyncClient:
 async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, str]:
     """Seed org + ticket + PR + review + a `last_refresh_status="failed"` credential.
     Mints the per-review bearer and returns (review, raw_token)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
     await insert_user(db_session, display_name="U")
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(

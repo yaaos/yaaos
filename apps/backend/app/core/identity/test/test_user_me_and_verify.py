@@ -14,7 +14,7 @@ from app.core.identity import user_web as _user_web  # noqa: F401
 from app.core.identity.repository import add_email, insert_user, set_user_github_username
 from app.core.identity.sessions import create as _create_session
 from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -35,12 +35,12 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session):
     user = await insert_user(db_session, display_name="Acc")
     await add_email(db_session, user_id=user.id, email="primary@x.test", is_primary=True, verified=True)
-    org_a = await orgs_repo.insert_org(db_session, slug="org-a")
-    org_b = await orgs_repo.insert_org(db_session, slug="org-b")
-    await orgs_repo.insert_membership(
+    org_a = await insert_org(db_session, slug="org-a")
+    org_b = await insert_org(db_session, slug="org-b")
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_a.org_id, role=Role.BUILDER, handle="alpha"
     )
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_b.org_id, role=Role.BUILDER, handle="beta"
     )
     s = await _create_session(db_session, user_id=user.id, workspace_id=None)
@@ -169,7 +169,7 @@ async def test_patch_own_handle_updates(seeded) -> None:
 async def test_patch_own_handle_rejects_duplicate(seeded, db_session) -> None:
     # Add another member to org_a holding the handle we'll try to take.
     other = await insert_user(db_session, display_name="Other")
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session,
         user_id=other.id,
         org_id=seeded["org_a"].org_id,

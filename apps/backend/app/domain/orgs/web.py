@@ -28,8 +28,8 @@ from app.core.identity import get_session_by_hash, get_user, hash_token, list_em
 from app.core.sessions import current_actor, public_route, require
 from app.core.tenancy import update_member_handle as _update_member_handle
 from app.core.webserver import RouteSpec, register_routes
+from app.domain.orgs import get_membership, list_memberships_for_org
 from app.domain.orgs import invitations as inv
-from app.domain.orgs import repository as orgs_repo
 from app.domain.orgs.service import Membership
 from app.domain.orgs.types import InvitationError
 
@@ -76,7 +76,7 @@ async def list_members() -> list[MemberView]:
     if org_id is None:
         raise _err(400, "no_org_context")
     async with db_session() as s:
-        rows = await orgs_repo.list_memberships_for_org(s, org_id)
+        rows = await list_memberships_for_org(s, org_id)
         out: list[MemberView] = []
         for row in rows:
             user = await get_user(s, row.user_id)
@@ -188,7 +188,7 @@ async def patch_own_membership_handle(
     from datetime import UTC, datetime  # noqa: PLC0415
 
     async with db_session() as s:
-        existing = await orgs_repo.get_membership(s, user_id=self_user_id, org_id=org_id)
+        existing = await get_membership(s, user_id=self_user_id, org_id=org_id)
         if existing is None:
             raise _err(404, "membership_not_found")
         try:

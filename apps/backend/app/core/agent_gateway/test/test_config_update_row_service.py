@@ -43,7 +43,7 @@ from app.core.agent_gateway.types import (
     RepoRef,
 )
 from app.core.tenancy import update_org_fields
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.testing.seed import seed_agent
 
 _IDENTITY_ENDPOINT = "/api/v1/agent/identity"
@@ -115,7 +115,7 @@ async def test_identity_exchange_enqueues_config_update_row(db_session) -> None:
     status='pending', non-null completion_token_hash, scoped to the new agent_id."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent-cu"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-agent-cu/task-cu-01"
-    org = await orgs_repo.insert_org(db_session, slug=f"cu-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"cu-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -236,7 +236,7 @@ async def test_claim_next_configured_returns_config_update_first_when_both_pendi
 async def test_duplicate_enqueue_both_claimed_idempotently(db_session) -> None:
     """Two enqueue_config_update_for_agent calls produce two separate rows that
     are both claimed in FIFO order and their terminal events ack 200."""
-    org = await orgs_repo.insert_org(db_session, slug=f"dup-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"dup-{uuid4().hex[:6]}")
     org_id = org.org_id
     agent_id = await _make_agent(db_session, org_id=org_id)
 
@@ -341,7 +341,7 @@ async def test_duplicate_enqueue_both_claimed_idempotently(db_session) -> None:
 async def test_events_handler_returns_410_on_missing_row(db_session) -> None:
     """POST /api/v1/commands/{random-uuid}/events with kind=completed_success
     returns 410 with {"error": "stale_claim"} when the command_id has no row."""
-    org = await orgs_repo.insert_org(db_session, slug=f"sc-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sc-{uuid4().hex[:6]}")
     agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org.org_id,
@@ -398,7 +398,7 @@ async def test_agent_command_pk_rejects_non_v7_uuid(db_session) -> None:
     uuid4 — the authoritative guard for the FIFO sort-key invariant that the
     semgrep taint rule cannot see across the producer-DTO → enqueue_command hop.
     A uuid7 PK inserts cleanly."""
-    org = await orgs_repo.insert_org(db_session, slug=f"v7-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"v7-{uuid4().hex[:6]}")
 
     db_session.add(AgentCommandRow(id=uuid4(), org_id=org.org_id, command_kind="ProvisionWorkspace"))
     with pytest.raises(IntegrityError):
@@ -406,6 +406,6 @@ async def test_agent_command_pk_rejects_non_v7_uuid(db_session) -> None:
     await db_session.rollback()
 
     # A uuid7 PK satisfies the constraint.
-    org = await orgs_repo.insert_org(db_session, slug=f"v7ok-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"v7ok-{uuid4().hex[:6]}")
     db_session.add(AgentCommandRow(id=uuid7(), org_id=org.org_id, command_kind="ProvisionWorkspace"))
     await db_session.flush()

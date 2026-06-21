@@ -26,20 +26,18 @@ from app.core.notifications.models import NotificationRow
 from app.core.notifications.service import create
 from app.core.notifications.tasks import _fanout
 from app.core.tasks import drain_once, enqueue
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
     alice = await insert_user(db_session, display_name="Alice")
     bob = await insert_user(db_session, display_name="Bob")
-    org = await orgs_repo.insert_org(db_session, slug="task-org", display_name="TaskOrg")
-    await orgs_repo.insert_membership(
+    org = await insert_org(db_session, slug="task-org", display_name="TaskOrg")
+    await insert_membership(
         db_session, user_id=alice.id, org_id=org.org_id, role=Role.BUILDER, handle="alice"
     )
-    await orgs_repo.insert_membership(
-        db_session, user_id=bob.id, org_id=org.org_id, role=Role.BUILDER, handle="bob"
-    )
+    await insert_membership(db_session, user_id=bob.id, org_id=org.org_id, role=Role.BUILDER, handle="bob")
     await db_session.commit()
     yield {"alice": alice, "bob": bob, "org": org}
 

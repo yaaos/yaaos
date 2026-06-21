@@ -15,19 +15,19 @@ from app.domain.orgs import (
     InvitationUsedError,
     accept_invitation,
     change_role,
+    get_membership,
+    insert_membership,
+    insert_org,
     invite,
     remove_member,
 )
-from app.domain.orgs import repository as orgs_repo
 from app.testing.seed import read_email_inbox
 
 
 async def _bootstrap_org_and_owner(db):
-    org = await orgs_repo.insert_org(db, slug="acme-inv")
+    org = await insert_org(db, slug="acme-inv")
     owner = await insert_user(db, display_name="Owner")
-    await orgs_repo.insert_membership(
-        db, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
-    )
+    await insert_membership(db, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner")
     return org, owner
 
 
@@ -134,15 +134,13 @@ async def test_accept_garbage_token_raises_invalid(db_session) -> None:
 async def test_remove_member_revokes_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await insert_user(db_session)
-    await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t"
-    )
+    await insert_membership(db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t")
     s1 = await mint_session(db_session, user_id=target.id, workspace_id=None)
     s2 = await mint_session(db_session, user_id=target.id, workspace_id=None)
 
     await remove_member(db_session, org_id=org.org_id, user_id=target.id, actor=Actor.user(user_id=owner.id))
 
-    assert await orgs_repo.get_membership(db_session, user_id=target.id, org_id=org.org_id) is None
+    assert await get_membership(db_session, user_id=target.id, org_id=org.org_id) is None
     assert await lookup_session(db_session, s1.raw_token) is None
     assert await lookup_session(db_session, s2.raw_token) is None
 
@@ -151,9 +149,7 @@ async def test_remove_member_revokes_sessions(db_session) -> None:
 async def test_change_role_rotates_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
     target = await insert_user(db_session)
-    await orgs_repo.insert_membership(
-        db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t2"
-    )
+    await insert_membership(db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t2")
     s1 = await mint_session(db_session, user_id=target.id, workspace_id=None)
 
     membership = await change_role(

@@ -30,7 +30,7 @@ from app.core.agent_gateway.sts_verifier import (
     set_sts_verify_for_tests,
 )
 from app.core.tenancy import update_org_fields
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 _ENDPOINT = "/api/v1/agent/identity"
 
@@ -87,7 +87,7 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
     ledger row written with issued_iam_arn."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-agent/task-abc-123"
-    org = await orgs_repo.insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -150,7 +150,7 @@ async def test_identity_exchange_bearer_ttl_is_one_hour(db_session) -> None:
 
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-ttl-test"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-ttl-test/task-ttl"
-    org = await orgs_repo.insert_org(db_session, slug=f"sts-ttl-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sts-ttl-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -195,7 +195,7 @@ async def test_identity_exchange_rotation_non_revoking(db_session) -> None:
     """Calling exchange twice issues a new bearer without revoking the old."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-rotate"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-rotate/task-rotate"
-    org = await orgs_repo.insert_org(db_session, slug=f"sts-rot-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sts-rot-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -264,7 +264,7 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
     """Verified ARN matches an org, but the signed URL targets a different
     region than the org's pinned `aws_region` → 401 region_mismatch."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent"
-    org = await orgs_repo.insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sts-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -344,7 +344,7 @@ async def test_identity_exchange_response_includes_org_id(db_session) -> None:
     registered_iam_arn matched the verified canonical ARN."""
     canonical_arn = "arn:aws:iam::555555555555:role/yaaos-org-id-test"
     raw_arn = "arn:aws:sts::555555555555:assumed-role/yaaos-org-id-test/task-orgid"
-    org = await orgs_repo.insert_org(db_session, slug=f"sts-orgid-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sts-orgid-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,

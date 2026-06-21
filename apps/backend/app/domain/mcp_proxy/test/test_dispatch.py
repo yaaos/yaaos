@@ -40,7 +40,7 @@ from app.domain.mcp_proxy import (
     web as _mcp_web,
 )
 from app.domain.mcp_proxy.models import McpReviewTokenRow
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -142,7 +142,7 @@ def _client() -> httpx.AsyncClient:
 async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     from app.domain.reviewer import Review  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug=f"mcp-disp-{uuid4().hex[:8]}")
+    org = await insert_org(db_session, slug=f"mcp-disp-{uuid4().hex[:8]}")
     await insert_user(db_session, display_name="U")
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
