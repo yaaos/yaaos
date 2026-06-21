@@ -98,6 +98,7 @@ class CodeReview(CodingAgentCommand):
             base_sha=inputs.base_sha or "",
         )
         return Invocation(
+            workspace_id=inputs.workspace_id,
             skill="pr_review",
             model="opus",
             effort="medium",

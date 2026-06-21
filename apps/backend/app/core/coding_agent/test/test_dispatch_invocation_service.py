@@ -41,8 +41,9 @@ def _ctx(wfe_id: uuid.UUID, step_id: str = "review") -> CommandContext:
     )
 
 
-def _invocation() -> Invocation:
+def _invocation(workspace_id: UUID) -> Invocation:
     return Invocation(
+        workspace_id=workspace_id,
         skill="pr_review",
         model="opus",
         effort="medium",
@@ -72,8 +73,7 @@ async def test_dispatch_invocation_returns_uuid(db_session) -> None:
     ws_id = await _seed_active_workspace(org_id, db_session)
 
     command_id = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         session=db_session,
@@ -90,8 +90,7 @@ async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
     ws_id = await _seed_active_workspace(org_id, db_session)
 
     command_id = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         session=db_session,
@@ -116,8 +115,7 @@ async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command
     ws_id = await _seed_active_workspace(org_id, db_session)
 
     command_id = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         session=db_session,
@@ -141,8 +139,7 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
     )
 
     command_id = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=ctx,
         session=db_session,
@@ -165,8 +162,7 @@ async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -
     ws_id = await _seed_active_workspace(org_id, db_session)
 
     command_id = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         session=db_session,
@@ -185,8 +181,7 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
     ws_id = await _seed_active_workspace(org_id, db_session)
 
     id1 = await dispatch_invocation(
-        workspace_id=ws_id,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         session=db_session,
@@ -206,8 +201,7 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
     )
     wfe_id2 = uuid.uuid4()
     id2 = await dispatch_invocation(
-        workspace_id=ws_id2,
-        invocation=_invocation(),
+        invocation=_invocation(ws_id2),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id2),
         session=db_session,
@@ -219,10 +213,10 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
 @pytest.mark.asyncio
 async def test_dispatch_invocation_workspace_not_found_raises(db_session) -> None:
     """WorkspaceNotFoundError raised when workspace row does not exist."""
+    nonexistent_ws_id = uuid.uuid4()
     with pytest.raises(WorkspaceNotFoundError):
         await dispatch_invocation(
-            workspace_id=uuid.uuid4(),  # no matching row
-            invocation=_invocation(),
+            invocation=_invocation(nonexistent_ws_id),
             plugin=FakeCodingAgentPlugin(),
             ctx=_ctx(uuid.uuid4()),
             session=db_session,
@@ -249,8 +243,7 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
 
     with pytest.raises(WorkspaceClaimFailed):
         await dispatch_invocation(
-            workspace_id=ws_id,
-            invocation=_invocation(),
+            invocation=_invocation(ws_id),
             plugin=FakeCodingAgentPlugin(),
             ctx=_ctx(wfe_id),
             session=db_session,

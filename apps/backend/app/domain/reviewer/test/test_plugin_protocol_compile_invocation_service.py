@@ -36,6 +36,7 @@ def test_claude_code_plugin_compile_invocation_returns_invoke_coding_agent() -> 
     from app.plugins.claude_code import ClaudeCodePlugin  # noqa: PLC0415
 
     inv = Invocation(
+        workspace_id="00000000-0000-0000-0000-000000000099",
         skill="pr_review",
         model="opus",
         effort="medium",

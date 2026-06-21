@@ -125,6 +125,12 @@ class CodingAgentCommand(AgentDispatchCommand):
         Auto-injects `ExpectedResponse.model_json_schema()` into the invocation
         context under the `output_schema` key so the skill prompt carries the
         validated response contract without each subclass having to set it.
+
+        The workspace is identified by `Invocation.workspace_id`, which the
+        subclass sets in `build_invocation`. `dispatch` never reads `workspace_id`
+        from the opaque `inputs` object — `inputs: object` is genuinely opaque
+        here; subclasses own their own typed `Inputs` and access them in
+        `build_invocation`.
         """
         from app.core.coding_agent.service import (  # noqa: PLC0415
             dispatch_invocation,
@@ -144,9 +150,7 @@ class CodingAgentCommand(AgentDispatchCommand):
                     }
                 }
             )
-            workspace_id = inputs.workspace_id  # Inputs Protocol requirement
             return await dispatch_invocation(
-                workspace_id=workspace_id,
                 invocation=invocation,
                 plugin=plugin,
                 ctx=ctx,

@@ -93,7 +93,6 @@ def get_plugin(plugin_id: str) -> CodingAgentPlugin:
 
 async def dispatch_invocation(
     *,
-    workspace_id: UUID,
     invocation: Invocation,
     plugin: CodingAgentPlugin,
     ctx: CommandContext,
@@ -102,7 +101,8 @@ async def dispatch_invocation(
     """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
     (Layer 3 → Layer 2 → Layer 1), and insert a run row.
 
-    Calls `plugin.compile_invocation(invocation)` to get the exec block, builds
+    `workspace_id` is read from `invocation.workspace_id`. Calls
+    `plugin.compile_invocation(invocation)` to get the exec block, builds
     an `InvokeClaudeCodeCommand`, and delegates to `dispatch_via_workspace`
     with `claim_workspace=True` — which loads the workspace row (for `org_id`
     + `owning_agent_id`), enqueues, pins to the owning agent, and atomically
@@ -127,6 +127,7 @@ async def dispatch_invocation(
         get_workspace_owner,
     )
 
+    workspace_id = invocation.workspace_id
     # Get org_id from the workspace row — needed for create_run.
     owner = await get_workspace_owner(workspace_id, session=session)
     if owner is None:

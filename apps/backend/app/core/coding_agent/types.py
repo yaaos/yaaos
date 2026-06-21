@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -28,12 +29,16 @@ Effort = str
 class Invocation(BaseModel):
     """High-level intent passed to `CodingAgentPlugin.compile_invocation`.
 
-    Carries the skill name, model, effort level, generic context dict
-    (plugin interprets the keys for the skill), and the wallclock cap.
+    Carries the workspace the coding-agent runs in, the skill name, model,
+    effort level, generic context dict (plugin interprets the keys for the
+    skill), and the wallclock cap. `workspace_id` identifies the workspace row
+    that owns this invocation — `CodingAgentCommand.@final dispatch` reads it
+    here rather than via an untyped attribute access on the inputs object.
     Pure data — no exec block. `compile_invocation` translates this into
     an `InvokeCodingAgent` with the concrete argv/env/stdin the agent runs.
     """
 
+    workspace_id: UUID
     skill: str
     model: str
     effort: Effort

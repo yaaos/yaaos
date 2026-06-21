@@ -51,6 +51,7 @@ class _MinimalCommand(CodingAgentCommand):
 
     async def build_invocation(self, inputs: _EmptyInputs, ctx: CommandContext, *, session) -> Invocation:  # type: ignore[override]
         return Invocation(
+            workspace_id=uuid4(),
             skill="stub",
             model="opus",
             effort="low",

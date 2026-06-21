@@ -268,6 +268,7 @@ def test_compile_invocation_does_not_emit_anthropic_api_key() -> None:
     from app.plugins.claude_code import ClaudeCodePlugin  # noqa: PLC0415
 
     inv = Invocation(
+        workspace_id="00000000-0000-0000-0000-000000000099",
         skill="pr_review",
         model="opus",
         effort="medium",

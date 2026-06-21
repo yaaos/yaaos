@@ -5,10 +5,14 @@ Pure-unit: no DB, no IO.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.core.coding_agent import CodingAgentError, Invocation, InvokeCodingAgent
 from app.plugins.claude_code.service import ClaudeCodePlugin
+
+_STUB_WORKSPACE_ID = uuid.UUID("00000000-0000-0000-0000-000000000099")
 
 
 def _plugin() -> ClaudeCodePlugin:
@@ -17,6 +21,7 @@ def _plugin() -> ClaudeCodePlugin:
 
 def _pr_review_invocation(**overrides) -> Invocation:  # type: ignore[no-untyped-def]
     base: dict = {
+        "workspace_id": _STUB_WORKSPACE_ID,
         "skill": "pr_review",
         "model": "opus",
         "effort": "medium",

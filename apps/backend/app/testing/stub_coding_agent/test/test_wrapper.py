@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -40,7 +41,14 @@ class _DummyPlugin:
 def test_compile_invocation_returns_stub_argv() -> None:
     """StubCodingAgentPlugin.compile_invocation returns a minimal stub exec block."""
     stub = StubCodingAgentPlugin(wrapped=_DummyPlugin())
-    inv = Invocation(skill="pr_review", model="opus", effort="medium", context={}, wallclock_seconds=60)
+    inv = Invocation(
+        workspace_id=uuid.UUID(int=0),
+        skill="pr_review",
+        model="opus",
+        effort="medium",
+        context={},
+        wallclock_seconds=60,
+    )
     result = stub.compile_invocation(inv)
     assert isinstance(result, InvokeCodingAgent)
     assert result.argv == ["stub"]
