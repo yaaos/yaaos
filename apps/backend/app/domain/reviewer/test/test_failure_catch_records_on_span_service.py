@@ -44,7 +44,7 @@ async def test_secrets_scan_post_comment_failure_sets_span_error(db_session) -> 
 
         async def fetch_diff(self, org_id: UUID, external_id: str) -> Diff:
             del org_id, external_id
-            return Diff(raw="+AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n", files=[])
+            return Diff(raw="+AWS_KEY = 'AKIAQWERTYUIOPASDFGH'\n", files=[])
 
         async def post_comment(self, org_id: UUID, external_id: str, *, body: str) -> str:
             raise RuntimeError("simulated post_comment failure")

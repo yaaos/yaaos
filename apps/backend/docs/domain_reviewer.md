@@ -18,6 +18,8 @@ One workflow in `domain/reviewer/workflows/`, plus reused workspace lifecycle co
 
 `CheckShouldReview` reads `is_draft`, `is_fork`, `labels`, `author_login` from its typed `CheckShouldReviewInputs` and returns `skip` on draft, fork, `yaaos-skip`/`no-review`/`wip` labels (case-insensitive), or `*[bot]`/`*-bot` author. `CleanupWorkspace` runs as the workflow's `finalizer` `StepRef` on any terminal-fail, exactly once.
 
+`SecretsScan` runs a deterministic regex sweep (`secrets_detection.detect_secrets`) over `+`-prefixed diff lines for AWS access keys, GitHub tokens, Anthropic/OpenAI keys, and PEM private keys; on a match it posts a refusal comment via `vcs.post_comment` and returns `skip`. AWS-published example keys (`AKIAIOSFODNN7EXAMPLE`, `AKIAI44QH8DHBEXAMPLE`) are allowlisted so PRs shipping AWS doc snippets or fixtures aren't refused.
+
 ## Core flow
 
 For the top-level review arc see [`docs/system-architecture.md`](../../../docs/system-architecture.md). Reviewer-internal detail only:
