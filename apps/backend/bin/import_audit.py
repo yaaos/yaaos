@@ -212,7 +212,7 @@ class _ImportAuditFinder(MetaPathFinder):
             importer_path = Path(importer).resolve()
             if importer_path in {p.resolve() for p in COMPOSITION_ROOTS}:
                 return None
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
         owner = _owning_module_for_path(importer)
         # Within-module submodule import — fine.
@@ -222,7 +222,7 @@ class _ImportAuditFinder(MetaPathFinder):
         # Both surface — no exemptions beyond D1/D2 above.
         try:
             importer_rel = str(Path(importer).resolve().relative_to(BACKEND.resolve()))
-        except (ValueError, OSError):
+        except ValueError, OSError:
             importer_rel = importer
         key = (importer_rel, fullname)
         if key in _seen_keys:

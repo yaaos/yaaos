@@ -43,6 +43,11 @@ COMPOSITION_ROOTS: tuple[Path, ...] = (
     APP / "worker.py",
 )
 
+# Sentinel returned by parse_module_interface on SyntaxError so that a broken
+# __init__.py is loudly caught by check_syntax_errors rather than silently
+# producing misleading "interface empty" violations downstream.
+_SYNTAX_ERROR_SENTINEL: str = "__SYNTAX_ERROR__"
+
 
 def discover_modules() -> list[tuple[str, str]]:
     """Return [(layer, name), ...] for every backend module. Sorted."""
@@ -67,8 +72,9 @@ def parse_module_interface(layer: str, name: str) -> list[str]:
         return []
     try:
         tree = ast.parse(init.read_text(), filename=str(init))
-    except SyntaxError:
-        return []
+    except SyntaxError as exc:
+        print(f"sync_modules: SyntaxError in {init}: {exc}", file=sys.stderr)
+        return [_SYNTAX_ERROR_SENTINEL]
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
@@ -87,6 +93,26 @@ def parse_module_interface(layer: str, name: str) -> list[str]:
                 symbols.append(elt.value)
         return sorted(symbols)
     return []
+
+
+def check_syntax_errors(modules: list[tuple[str, str]]) -> list[str]:
+    """Return an error entry for every module whose ``__init__.py`` has a SyntaxError.
+
+    ``parse_module_interface`` prints the diagnostic to stderr and returns
+    ``[_SYNTAX_ERROR_SENTINEL]`` on ``SyntaxError``; this function detects the
+    sentinel and surfaces it as a gate-level error so a broken ``__init__.py``
+    always fails CI rather than silently producing misleading "interface empty"
+    violations downstream.
+    """
+    errors: list[str] = []
+    for layer, name in modules:
+        result = parse_module_interface(layer, name)
+        if _SYNTAX_ERROR_SENTINEL in result:
+            errors.append(
+                f"syntax error: app.{layer}.{name}.__init__.py has a SyntaxError"
+                " (see stderr for the file path and error details)"
+            )
+    return errors
 
 
 def parse_module_deps(layer: str, name: str) -> list[str]:
@@ -350,6 +376,12 @@ _TEST_SEAM_PATTERNS: tuple[str, ...] = (
     "get_test_*",
 )
 
+# Sanctioned test-only binder — the single cross-module seam every registry
+# module exposes after the D5 registry refactor.  A ``set_*_for_tests``
+# symbol in ``__all__`` is permitted even with zero production importers
+# because its sole callers are autouse fixtures in ``app/testing/``.
+_SANCTIONED_TEST_BINDER_PATTERN: str = "set_*_for_tests"
+
 # Files that count as production importers — the composition roots that legitimately
 # call bind_* and other seam-named symbols at startup.
 _PRODUCTION_ROOTS: frozenset[str] = frozenset(
@@ -449,6 +481,12 @@ def check_test_helper_exports(modules: list[tuple[str, str]]) -> list[str]:
         public_names = parse_module_interface(layer, name)
         for sym in public_names:
             if not _is_seam_name(sym):
+                continue
+            # Sanctioned test binder: set_*_for_tests is always permitted in
+            # __all__ without a production importer — its callers live in
+            # app/testing/isolation.py (autouse fixtures) which counts as
+            # test scope.
+            if fnmatch.fnmatch(sym, _SANCTIONED_TEST_BINDER_PATTERN):
                 continue
             if not _has_production_importer(sym, layer, name):
                 errors.append(
@@ -838,6 +876,12 @@ class _PrivateReachVisitor(ast.NodeVisitor):
         self.errors: list[str] = []
 
     def _is_tainted_expr(self, node: ast.expr) -> bool:
+        if isinstance(node, ast.NamedExpr):
+            # (eng := get_engine())._workflows.clear() — walk the assigned value.
+            return self._is_tainted_expr(node.value)
+        if isinstance(node, ast.Subscript):
+            # registry["X"]._internal — walk the indexed receiver.
+            return self._is_tainted_expr(node.value)
         if isinstance(node, ast.Name):
             return node.id in self.tainted
         if isinstance(node, ast.Call):
@@ -881,13 +925,15 @@ class _PrivateReachVisitor(ast.NodeVisitor):
                 self.tainted.discard(node.target.id)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:  # noqa: N802
-        if isinstance(node.value, ast.Name) and node.value.id in self.tainted:
-            if self._is_private_attr(node.attr):
-                self.errors.append(
-                    f"Rule-7 violation: {self.rel_path}:{node.lineno}: "
-                    f'"{node.value.id}.{node.attr}" — private attribute reach '
-                    f"on cross-module receiver"
-                )
+        if self._is_tainted_expr(node.value) and self._is_private_attr(node.attr):
+            # Use the Name id when available; fall back to a placeholder for
+            # complex receivers such as walrus (NamedExpr) and subscript.
+            recv = node.value.id if isinstance(node.value, ast.Name) else "<expr>"
+            self.errors.append(
+                f"Rule-7 violation: {self.rel_path}:{node.lineno}: "
+                f'"{recv}.{node.attr}" — private attribute reach '
+                f"on cross-module receiver"
+            )
         self.generic_visit(node)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
@@ -1362,8 +1408,12 @@ def run_tach_check() -> int:
             check=False,
         ).returncode
     except FileNotFoundError:
-        print("warning: `uv` not on PATH — skipping `tach check`", file=sys.stderr)
-        return 0
+        print(
+            "error: `uv` not found on PATH — tach check cannot run.\n"
+            "Install uv to fix: curl -LsSf https://astral.sh/uv/install.sh | sh",
+            file=sys.stderr,
+        )
+        return 2
 
 
 def main() -> int:
@@ -1388,6 +1438,7 @@ def main() -> int:
         print(f"wrote {TACH_TOML.name}")
 
     all_checks: list[tuple[str, list[str]]] = [
+        ("__init__.py syntax errors", check_syntax_errors(modules)),
         ("layering violations", check_layering(modules)),
         ("Rule-1 / Rule-5 __all__ boundary violations", check_all_boundary_violations(modules)),
         ("test-seam exports (seam-name AND no production importer)", check_test_helper_exports(modules)),

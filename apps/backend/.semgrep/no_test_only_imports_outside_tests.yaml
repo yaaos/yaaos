@@ -1,0 +1,18 @@
+rules:
+  - id: no-test-only-imports-outside-tests
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Importing a test-only seam symbol (set_*_for_tests, _reset_*_for_tests,
+      _canonical_*, _*_for_tests) outside a test directory or app/testing is a
+      boundary violation. These names are test scaffolding and must never appear
+      in production or worker code.
+      See apps/backend/docs/patterns.md § Module structure — Cardinal rule.
+    patterns:
+      - pattern: from $MODULE import $NAME
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: "^(set_[a-z_]+_for_tests|_reset_[a-z_]+|_canonical_[a-z_]+|_[a-z_]+_for_tests)$"
+    # The semgrep scan already excludes app/testing and test_*.py files via
+    # CLI flags in bin/ci; this rule is the belt-and-suspenders for any
+    # production file that might accidentally import a test seam.

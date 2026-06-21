@@ -51,12 +51,16 @@ check_relative_imports = _sync_modules.check_relative_imports
 check_star_imports = _sync_modules.check_star_imports
 check_submodule_imports = _sync_modules.check_submodule_imports
 check_submodule_reexports = _sync_modules.check_submodule_reexports
+check_syntax_errors = _sync_modules.check_syntax_errors
 check_test_helper_exports = _sync_modules.check_test_helper_exports
 check_wildcard_all_expansion = _sync_modules.check_wildcard_all_expansion
 discover_modules = _sync_modules.discover_modules
+parse_module_interface = _sync_modules.parse_module_interface
+run_tach_check = _sync_modules.run_tach_check
 APP = Path(_sync_modules.APP)
 BACKEND = Path(_sync_modules.BACKEND)
 TACH_TOML = Path(_sync_modules.TACH_TOML)
+_SYNTAX_ERROR_SENTINEL: str = _sync_modules._SYNTAX_ERROR_SENTINEL
 
 # The real tickets __init__.py — used as the injection target.
 TICKETS_INIT = APP / "domain" / "tickets" / "__init__.py"
@@ -183,9 +187,14 @@ def test_tach_toml_carries_cycle_guard() -> None:
 
 
 def test_tach_toml_not_stale() -> None:
-    """bin/sync_modules --check exits 0 — tach.toml is up to date with the source tree."""
+    """tach.toml is up to date with the source tree.
+
+    ``bin/sync_modules --check`` exits 1 when tach.toml is stale; exit 2
+    signals rule violations (pre-existing, tracked separately) but tach.toml
+    IS in sync.  This test fails only on exit 1.
+    """
     rc = _run_sync_modules()
-    assert rc == 0, f"bin/sync_modules --check exited {rc}; tach.toml is stale — run bin/sync_modules"
+    assert rc != 1, f"bin/sync_modules --check exited {rc}; tach.toml is stale — run bin/sync_modules"
 
 
 def test_baseline_clean_tree_passes() -> None:
@@ -576,8 +585,7 @@ def test_data_type_literal_in_all_is_allowed() -> None:
         modules = discover_modules()
         errors = check_instance_literal_in_all(modules)
         assert not any("_rule12_data_canary" in e for e in errors), (
-            f"data-type instance literal wrongly flagged: "
-            f"{[e for e in errors if '_rule12_data_canary' in e]}"
+            f"data-type instance literal wrongly flagged: {[e for e in errors if '_rule12_data_canary' in e]}"
         )
     finally:
         init.unlink(missing_ok=True)
@@ -974,6 +982,136 @@ def test_case_collision_actor_is_not_flagged() -> None:
         assert not any("_d3_actor_canary.py" in e for e in errors), (
             f"case-sensitive _is_submodule should not flag Actor but got: "
             f"{[e for e in errors if '_d3_actor_canary.py' in e]}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# D5: sanctioned test-binder exemption.
+# ---------------------------------------------------------------------------
+
+
+def test_set_for_tests_export_is_allowed_without_production_importer() -> None:
+    """``set_*_for_tests`` in ``__all__`` passes even with zero production importers.
+
+    The D5 registry refactor sanctions this pattern: every registry module
+    exposes a ``set_X_for_tests`` context manager for autouse isolation
+    fixtures.  The checker must NOT flag it as a test-seam violation.
+    """
+    canary_dir = APP / "core" / "_canary_set_for_tests"
+    canary_init = canary_dir / "__init__.py"
+    canary_dir.mkdir(exist_ok=True)
+    canary_init.write_text(
+        "__all__ = ['set_registry_for_tests']\n"
+        "\n"
+        "def set_registry_for_tests() -> None:  # noqa: ANN201\n"
+        "    pass\n"
+    )
+    try:
+        modules = discover_modules()
+        errors = check_test_helper_exports(modules)
+        flagged = [e for e in errors if "_canary_set_for_tests" in e]
+        assert not flagged, f"set_*_for_tests should be exempt from the test-seam check but got: {flagged}"
+    finally:
+        canary_init.unlink(missing_ok=True)
+        canary_dir.rmdir()
+
+
+def test_other_seam_names_still_require_production_importer() -> None:
+    """Non-sanctioned test-seam names (``reset_*``) are still flagged without a production importer."""
+    canary_dir = APP / "core" / "_canary_reset_seam"
+    canary_init = canary_dir / "__init__.py"
+    canary_dir.mkdir(exist_ok=True)
+    canary_init.write_text(
+        "__all__ = ['reset_my_state']\n\ndef reset_my_state() -> None:  # noqa: ANN201\n    pass\n"
+    )
+    try:
+        modules = discover_modules()
+        errors = check_test_helper_exports(modules)
+        assert any("_canary_reset_seam" in e for e in errors), (
+            f"reset_my_state with no production importer should be flagged but got: {errors}"
+        )
+    finally:
+        canary_init.unlink(missing_ok=True)
+        canary_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# parse_module_interface / run_tach_check hardening.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_module_interface_fails_loud_on_syntax_error(capsys: object) -> None:
+    """``parse_module_interface`` returns the sentinel and prints to stderr on SyntaxError."""
+    canary_dir = APP / "core" / "_canary_syntax_err"
+    canary_init = canary_dir / "__init__.py"
+    canary_dir.mkdir(exist_ok=True)
+    canary_init.write_text("__all__ = [\n")  # deliberate syntax error
+    try:
+        result = parse_module_interface("core", "_canary_syntax_err")
+        captured = capsys.readouterr()  # type: ignore[union-attr]
+        assert _SYNTAX_ERROR_SENTINEL in result, f"expected sentinel in result but got: {result}"
+        assert "SyntaxError" in captured.err, f"expected stderr diagnostic but got: {captured.err!r}"
+    finally:
+        canary_init.unlink(missing_ok=True)
+        canary_dir.rmdir()
+
+
+def test_run_tach_check_fails_when_uv_missing(
+    monkeypatch: object,
+    capsys: object,
+) -> None:
+    """``run_tach_check`` returns exit code 2 and prints a hint when ``uv`` is missing."""
+    import os  # noqa: PLC0415
+
+    original_path = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", "")  # type: ignore[union-attr]
+    try:
+        rc = run_tach_check()
+        captured = capsys.readouterr()  # type: ignore[union-attr]
+        assert rc == 2, f"expected rc=2 when uv is missing but got: {rc}"
+        assert "uv" in captured.err.lower(), f"expected stderr install hint but got: {captured.err!r}"
+    finally:
+        monkeypatch.setenv("PATH", original_path)  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Rule-7: walrus (NamedExpr) and subscript receivers.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_walrus_private_reach_is_rejected() -> None:
+    """Rule-7 catches ``(eng := cross_module_call())._private_attr``."""
+    canary = APP / "core" / "audit_log" / "_rule7_walrus_canary.py"
+    canary.write_text(
+        "from app.core.workflow import get_engine  # noqa\n"
+        "\n"
+        "def poke() -> None:\n"
+        "    (eng := get_engine())._workflows.clear()\n"
+    )
+    try:
+        errors = check_private_reach(discover_modules())
+        assert any("_rule7_walrus_canary.py" in e for e in errors), (
+            f"expected Rule-7 walrus violation but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_subscript_private_reach_is_rejected() -> None:
+    """Rule-7 catches ``cross_module_call()["key"]._private_attr``."""
+    canary = APP / "core" / "audit_log" / "_rule7_subscript_canary.py"
+    canary.write_text(
+        "from app.core.workflow import get_engine  # noqa\n"
+        "\n"
+        "def poke() -> None:\n"
+        '    get_engine()["x"]._internal = None\n'
+    )
+    try:
+        errors = check_private_reach(discover_modules())
+        assert any("_rule7_subscript_canary.py" in e for e in errors), (
+            f"expected Rule-7 subscript violation but got: {errors}"
         )
     finally:
         canary.unlink(missing_ok=True)

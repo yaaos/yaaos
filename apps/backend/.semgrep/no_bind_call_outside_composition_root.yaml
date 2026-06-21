@@ -1,0 +1,28 @@
+rules:
+  - id: no-bind-call-outside-composition-root
+    languages: [python]
+    severity: ERROR
+    message: >-
+      bind_*(<instance>) calls may only appear in the composition roots
+      (app/web.py, app/worker.py) and app/testing/isolation.py.
+      Calling a registry binder outside these three locations means a
+      singleton is being re-bound in a non-startup context — a Cardinal-rule
+      violation that defeats per-test isolation and process-lifetime guarantees.
+      See apps/backend/docs/patterns.md § Cardinal rule.
+    # Match any call whose function-name part contains `.bind_` (qualified, e.g.
+    # redis.bind_pubsub) or starts with `bind_` (bare, e.g. bind_email_inbox).
+    # Exactly-one-positional-arg constraint (`$FUNC($INSTANCE)` without `...`)
+    # excludes third-party functions like structlog's bind_contextvars that take
+    # only keyword arguments.
+    patterns:
+      - pattern: $FUNC($INSTANCE)
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: "(^|\\.)bind_"
+    paths:
+      # The composition roots are the only production locations allowed to call
+      # bind_* at process startup. app/testing/ is already excluded by the
+      # --exclude app/testing flag in bin/ci; the two roots need explicit exclusion.
+      exclude:
+        - "web.py"
+        - "worker.py"
