@@ -12,10 +12,9 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.agent_gateway import (
-    bearers,
-    get_subscriber_registry,
-)
+from app.core.agent_gateway import bearers
+from app.core.agent_gateway.bearers import _verify_override as _bearer_verify_override
+from app.core.agent_gateway.subscribers import _get as _get_subscriber_registry
 from app.core.sse import subscribe_workspace_activity
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
@@ -39,7 +38,9 @@ def _install_bearer_stub(agent_id: UUID) -> tuple[str, UUID]:
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    bearers.set_verify_override(_stub)
+    # Set the verify override directly — the bearer_verify_isolation autouse
+    # fixture restores the prior value after each test.
+    _bearer_verify_override.set(_stub)
     return expected, org_id
 
 
@@ -74,12 +75,14 @@ def test_ws_accepts_bearer_and_registers_sender() -> None:
             headers={"Authorization": f"Bearer {bearer}"},
         ):
             # While the WS is open, the registry has a sender for this agent.
-            sender_open = get_subscriber_registry().has_sender(agent_id)
+            sender_open = _get_subscriber_registry().has_sender(agent_id)
     # TestClient.__exit__ shuts down the portal and waits for all in-flight
     # handlers to complete — the server's finally block (unregister_sender)
     # has run by this point.
     assert sender_open, "sender should be registered while WS is open"
-    assert not get_subscriber_registry().has_sender(agent_id), "sender should be unregistered after WS closes"
+    assert not _get_subscriber_registry().has_sender(agent_id), (
+        "sender should be unregistered after WS closes"
+    )
 
 
 @pytest.mark.asyncio

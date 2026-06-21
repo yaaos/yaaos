@@ -36,7 +36,7 @@ from app.core.workflow import (
     get_execution_summary,
     step,
 )
-from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
+from app.core.workspace import register_workspace_provider
 from app.testing.seed import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import scoped_engine
 
@@ -159,7 +159,7 @@ async def test_heartbeat_with_no_workspaces_returns_empty_forget_list(db_session
 
 
 @pytest.mark.asyncio
-async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
+async def test_terminal_event_advances_workflow_to_done(db_session, workspace_providers_isolation) -> None:
     """A terminal AgentEvent for a Workspace step causes the workflow to
     advance: record_agent_event enqueues handle_agent_event, and draining
     that task drives the workflow to DONE."""
@@ -201,7 +201,6 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             )
         )
 
-        bind_workspace_registry(WorkspaceRegistry())
         register_workspace_provider(_MinimalWorkspaceProvider())
 
         exec_id = await eng.start(
@@ -279,7 +278,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_event_does_not_advance_workflow(db_session) -> None:
+async def test_progress_event_does_not_advance_workflow(db_session, workspace_providers_isolation) -> None:
     """A PROGRESS AgentEvent does not advance the workflow — the execution
     stays in AWAITING_AGENT after the event is processed."""
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
@@ -320,7 +319,6 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             )
         )
 
-        bind_workspace_registry(WorkspaceRegistry())
         register_workspace_provider(_MinimalWorkspaceProvider())
 
         exec_id = await eng.start(
@@ -393,14 +391,13 @@ async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> Non
     workspace-activity channel so the SPA's live-tail picks them up."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.redis import RedisPubsub, bind_pubsub  # noqa: PLC0415
     from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import subscribe_workspace_activity  # noqa: PLC0415
 
     await redis_shutdown()
-    # redis_shutdown() clears the ContextVar binding; restore it so
-    # subscribe_workspace_activity (which calls get_pubsub()) does not raise.
-    bind_pubsub(RedisPubsub())
+    # pubsub_isolation (autouse) already bound a fresh instance; redis_shutdown
+    # just called aclose() on it (which clears local subscriber counts). The
+    # instance is still usable for new subscriptions after aclose().
 
     ws = await _seed_workspace(db_session)
     cmd_id = ws["command_id"]

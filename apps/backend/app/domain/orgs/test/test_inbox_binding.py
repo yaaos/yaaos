@@ -1,13 +1,13 @@
-"""Service-level coverage of the ContextVar-based email inbox binding."""
+"""Service-level coverage of the ContextVar-based email inbox isolation."""
 
 from __future__ import annotations
 
 import pytest
 
-from app.domain.orgs.email import _Inbox, bind_email_inbox, get_email_inbox, send_plain
+from app.domain.orgs.email import send_plain, set_email_inbox_for_tests
 from app.testing.seed import read_email_inbox
 
-# ── Binding / isolation ────────────────────────────────────────────────
+# ── Isolation ─────────────────────────────────────────────────────────────
 
 
 def test_fresh_bind_gives_empty_inbox() -> None:
@@ -27,28 +27,29 @@ async def test_send_plain_writes_to_bound_inbox() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fresh_bind_hides_prior_messages() -> None:
-    """Binding a new _Inbox after a send hides the prior messages —
-    isolation works across explicit re-binds within a test."""
+async def test_set_email_inbox_for_tests_hides_outer_messages() -> None:
+    """Nesting set_email_inbox_for_tests hides messages from the outer context."""
     await send_plain(to="before@example.com", subject="s", body="b")
     assert len(read_email_inbox()) == 1
 
-    # Rebind — prior messages gone.
-    bind_email_inbox(_Inbox())
-    assert read_email_inbox() == []
+    # Enter a fresh inbox — outer messages no longer visible.
+    with set_email_inbox_for_tests():
+        assert read_email_inbox() == []
+        await send_plain(to="inner@example.com", subject="s2", body="b2")
+        assert len(read_email_inbox()) == 1
+
+    # Outer inbox is restored.
+    assert len(read_email_inbox()) == 1
+    assert read_email_inbox()[0].to == "before@example.com"
 
 
-def test_get_email_inbox_raises_before_bind() -> None:
-    """Deliberately unbind and verify the fail-fast RuntimeError fires."""
-    from app.domain.orgs.email import _inbox_var  # noqa: PLC0415
+@pytest.mark.asyncio
+async def test_eager_default_is_stable() -> None:
+    """The inbox is always available — no bind required before use."""
+    from app.domain.orgs.email import read_sent_emails  # noqa: PLC0415
 
-    token = _inbox_var.set(None)
-    try:
-        with pytest.raises(RuntimeError, match="email inbox not bound"):
-            get_email_inbox()
-    finally:
-        _inbox_var.reset(token)
-        bind_email_inbox(_Inbox())
+    # No explicit bind; eager default already in place.
+    assert read_sent_emails() == []
 
 
 @pytest.mark.asyncio

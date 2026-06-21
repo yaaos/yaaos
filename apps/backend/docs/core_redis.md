@@ -15,9 +15,7 @@
 
 **`decode_responses=False`** — the client speaks bytes; the JSON bus (`pubsub.py`) owns encode/decode so callers publish/subscribe `dict` events.
 
-**ContextVar-bound bus** — the active `RedisPubsub` instance lives in `_pubsub_var: ContextVar`. The composition root (`app/web.py`, `app/worker.py`) calls `bind_pubsub(RedisPubsub())` at startup before any code can call `get_pubsub()`. `get_pubsub()` raises `RuntimeError` when unbound — deliberate fail-fast that surfaces forgotten startup binds immediately. The `pubsub_isolation` fixture in `app/testing/isolation` calls `bind_pubsub` per test so every test gets a fresh instance without any reset call.
-
-**`bind_pubsub` is the production DI seam.** It appears in `__all__` because the composition root is the intended importer. `reset_pubsub` does not exist — tests use the fixture, not a reset helper.
+**ContextVar-bound bus** — the active `_RedisPubsub` instance lives in `_pubsub_var: ContextVar[_RedisPubsub | None]` with `default=None`. `_get()` lazily creates the instance on first call in each context and stores it via `_pubsub_var.set(val)`. Production composition roots do nothing at startup — the default instance materialises on first access. The `pubsub_isolation` fixture in `app/testing/isolation` calls `set_pubsub_for_tests()` per test so every test gets a fresh instance; restores the prior binding on exit.
 
 **Self-registers `shutdown()`** with both web and worker shutdown registries at import time — it closes every cached client and clears the ContextVar binding. No explicit caller required. See [patterns.md § Two process lifecycles, two registries](patterns.md).
 
@@ -46,4 +44,4 @@ Each primitive is a single async function in its own file, mirroring `sliding_wi
 
 - **`subscriber_count(channel)` is process-local** — not cluster-wide (`PUBSUB NUMSUB`); don't use it for load decisions.
 - **`sliding_window_hit` owns the ZSET mechanics, not the policy** — it returns `True`/`False`; the caller (e.g. `core/agent_gateway/rate_limit.py`) decides the limit, the axis, and what to raise. Approximate at sub-second resolution.
-- **`get_pubsub()` raises if unbound** — if a code path hits this at startup, `bind_pubsub` was not called before that code ran. Fix the startup order; don't restore lazy init.
+- **`_get()` creates on first call per context** — the `default=None` ContextVar plus lazy-init pattern ensures each asyncio context gets exactly one `_RedisPubsub` on demand. Tests use `set_pubsub_for_tests()` to inject a fresh instance; production needs no startup call.

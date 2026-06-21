@@ -40,10 +40,7 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
     """compile_invocation failure records exception event + ERROR on active span."""
     from app.core import byok  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
-    from app.core.coding_agent import (  # noqa: PLC0415
-        bind_coding_agent_registry,
-        current_coding_agent_registry,
-    )
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.domain.orgs import create_org  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview, CodeReviewInputs  # noqa: PLC0415
@@ -68,12 +65,9 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
     await db_session.commit()
 
     # Swap the coding-agent registry so the raising stub is under "claude_code".
-    prior_registry = current_coding_agent_registry()
-    fresh_registry = prior_registry.copy()
-    fresh_registry.replace(_RaisingPlugin())  # type: ignore[arg-type]
-    bind_coding_agent_registry(fresh_registry)
+    with set_coding_agents_for_tests() as fresh_registry:
+        fresh_registry.replace(_RaisingPlugin())  # type: ignore[arg-type]
 
-    try:
         cmd = CodeReview()
         ctx = CommandContext(
             ticket_id=str(uuid4()),
@@ -95,8 +89,6 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
             with tracer.start_as_current_span("workflow.start_step.CodeReview"):
                 with pytest.raises(RuntimeError, match="simulated"):
                     await cmd.dispatch(inputs, ctx, session=db_session)
-    finally:
-        bind_coding_agent_registry(prior_registry)
 
     spans = exporter.get_finished_spans()
     target = next(

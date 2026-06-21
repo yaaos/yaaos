@@ -46,6 +46,9 @@ import hashlib
 import json
 import re
 import ssl
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -352,8 +355,11 @@ async def replay_caller_identity(
 
 # ── Production entry point ────────────────────────────────────────────
 
+_VerifyCallback = Callable[[str], Awaitable["VerifiedIdentity"]]
 
-_verify_override = None
+_verify_override_var: ContextVar[_VerifyCallback | None] = ContextVar(
+    "sts_verifier._verify_override", default=None
+)
 
 
 async def verify_identity(signed_request: str) -> VerifiedIdentity:
@@ -362,10 +368,11 @@ async def verify_identity(signed_request: str) -> VerifiedIdentity:
     with a `FailureCategory` otherwise.
 
     Tests can swap the production path wholesale via
-    `set_verify_identity_override(callback)`.
+    `set_sts_verify_for_tests(callback)`.
     """
-    if _verify_override is not None:
-        return await _verify_override(signed_request)
+    override = _verify_override_var.get()
+    if override is not None:
+        return await override(signed_request)
     signed = parse_signed_request(signed_request)
     if not await _check_and_add_nonce(
         signed.headers.get("authorization", ""),
@@ -384,13 +391,21 @@ async def verify_identity(signed_request: str) -> VerifiedIdentity:
     )
 
 
-def set_verify_identity_override(callback) -> None:  # type: ignore[no-untyped-def]
-    """Test hook: swap the production `verify_identity` for a stub.
+@contextmanager
+def set_sts_verify_for_tests(
+    callback: _VerifyCallback | None = None,
+) -> Iterator[None]:
+    """Context manager: install a stub callback for `verify_identity` for the duration.
 
-    Stubs return a `VerifiedIdentity`. Pass `None` to restore.
+    With `callback=None` (the default) any prior override is cleared so the real
+    STS replay runs. With `callback=<coro fn>` the stub is called instead.
+    Restores the prior value on exit — even on exception.
     """
-    global _verify_override
-    _verify_override = callback
+    token = _verify_override_var.set(callback)
+    try:
+        yield
+    finally:
+        _verify_override_var.reset(token)
 
 
 __all__ = [
@@ -402,5 +417,6 @@ __all__ = [
     "extract_instance_id",
     "parse_signed_request",
     "replay_caller_identity",
+    "set_sts_verify_for_tests",
     "verify_identity",
 ]

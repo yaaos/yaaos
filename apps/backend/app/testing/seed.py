@@ -39,9 +39,9 @@ def read_email_inbox() -> list:
     The list is mutable — tests may call `.clear()` on it if they need to
     discard prior messages within a single test body.
     """
-    from app.domain.orgs.email import get_email_inbox  # noqa: PLC0415
+    from app.domain.orgs import read_sent_emails  # noqa: PLC0415
 
-    return get_email_inbox().messages
+    return read_sent_emails()
 
 
 async def seed_agent(

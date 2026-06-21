@@ -69,12 +69,8 @@ from app.core.agent_gateway.service import (
     stale_agent_ids,
 )
 from app.core.agent_gateway.subscribers import (
-    SubscriberRegistry,
-    bind_subscriber_registry,
+    set_subscriber_registry_for_tests,
     shutdown,
-)
-from app.core.agent_gateway.subscribers import (
-    get_registry as get_subscriber_registry,
 )
 from app.core.agent_gateway.types import (
     TERMINAL_EVENT_KINDS,
@@ -138,7 +134,6 @@ __all__ = [
     "RefreshWorkspaceAuthCommand",
     "RepoRef",
     "StaleClaimError",
-    "SubscriberRegistry",
     "UnauthorizedError",
     "WorkspaceAgentReportSink",
     "WorkspaceEvent",
@@ -148,7 +143,6 @@ __all__ = [
     "WriteFilesCommand",
     "WriteFilesEntry",
     "acknowledge_command_received",
-    "bind_subscriber_registry",
     "claim_next",
     "clear_byok_secrets_provider",
     "clear_run_sink",
@@ -165,7 +159,6 @@ __all__ = [
     "get_command_workflow_execution_id",
     "get_report_sink",
     "get_run_sink",
-    "get_subscriber_registry",
     "has_any_reachable_agent",
     "list_agents_for_org",
     "lookup_org_by_arn",
@@ -183,6 +176,7 @@ __all__ = [
     "revoke_all_for_agent",
     "revoke_all_for_arn",
     "revoke_all_for_org",
+    "set_subscriber_registry_for_tests",
     "shutdown",
     "stale_agent_ids",
 ]

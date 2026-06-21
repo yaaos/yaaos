@@ -9,17 +9,15 @@ import pytest
 
 from app.core.coding_agent import (
     ActivityLog,
-    CodingAgentRegistry,
     Invocation,
     InvokeCodingAgent,
     PluginNotFoundError,
     RunResult,
     Usage,
-    bind_coding_agent_registry,
     get_plugin,
     register_plugin,
 )
-from app.core.coding_agent.service import current_coding_agent_registry
+from app.core.coding_agent.service import CodingAgentRegistry, _get, _registry_var
 
 
 class _StubPlugin:
@@ -40,10 +38,11 @@ class _StubPlugin:
 
 @pytest.fixture(autouse=True)
 def _fresh_registry():
-    """Bind a clean CodingAgentRegistry before each test so registrations don't
+    """Bind an empty CodingAgentRegistry before each test so registrations don't
     bleed across tests."""
-    bind_coding_agent_registry(CodingAgentRegistry())
+    tok = _registry_var.set(CodingAgentRegistry())
     yield
+    _registry_var.reset(tok)
 
 
 def test_register_and_get_plugin() -> None:
@@ -90,7 +89,7 @@ def test_list_registered_plugins_returns_insertion_order() -> None:
 
     register_plugin(_A())
     register_plugin(_B())
-    result = current_coding_agent_registry().list()
+    result = _get().list()
     assert [p.plugin_id for p in result] == ["aaa", "bbb"]
 
 
@@ -98,7 +97,7 @@ def test_registry_items_returns_tuple_of_pairs() -> None:
     """items() returns a tuple of (plugin_id, plugin) pairs matching registered entries."""
     plugin = _StubPlugin()
     register_plugin(plugin)
-    result = current_coding_agent_registry().items()
+    result = _get().items()
     assert isinstance(result, tuple)
     assert len(result) == 1
     pid, p = result[0]
@@ -109,7 +108,7 @@ def test_registry_items_returns_tuple_of_pairs() -> None:
 def test_registry_items_is_immutable_snapshot() -> None:
     """Mutating the tuple returned by items() does not affect the registry."""
     register_plugin(_StubPlugin())
-    reg = current_coding_agent_registry()
+    reg = _get()
     snapshot = reg.items()
     # Replace the entry in a local copy — registry must be unchanged.
     modified = list(snapshot)

@@ -52,13 +52,13 @@ os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
 # is deferred until after env vars are set because app.testing.isolation triggers
 # app.core.redis → app.core.config at import time.
 from app.testing.isolation import (  # noqa: E402, F401
-    _canonical_registries,
     bearer_verify_isolation,
     email_inbox_isolation,
     plugin_registries_isolation,
     pubsub_isolation,
     scheduler_registry_isolation,
     sse_shutdown_event_isolation,
+    sts_verify_isolation,
     subscriber_registry_isolation,
     workspace_providers_isolation,
 )

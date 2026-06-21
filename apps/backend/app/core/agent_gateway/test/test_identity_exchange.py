@@ -5,7 +5,7 @@ is unit-tested in `test_sts_verifier.py`; here we test the endpoint's
 wiring of verifier + org-by-ARN lookup + agent-row persistence + 401/403
 error mapping.
 
-Tests use `set_verify_identity_override` to swap the production verifier
+Tests use `set_sts_verify_for_tests` to swap the production verifier
 for a synchronous stub so no httpx machinery is needed.
 
 Each test supplies a unique source IP via `_client(ip)` so per-IP rate-limit
@@ -27,7 +27,7 @@ from app.core.agent_gateway.sts_verifier import (
     FailureCategory,
     InvalidSignedRequestError,
     VerifiedIdentity,
-    set_verify_identity_override,
+    set_sts_verify_for_tests,
 )
 from app.core.tenancy import update_org_fields
 from app.domain.orgs import repository as orgs_repo
@@ -74,12 +74,6 @@ def _client(ip: str | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-@pytest.fixture(autouse=True)
-def _reset_verifier():
-    yield
-    set_verify_identity_override(None)
-
-
 _AUDIENCE = "app.yaaos.dev"
 _SIGNED_PAYLOAD = (
     '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
@@ -105,18 +99,17 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.2.3",
-                "agent_metadata": {"os": "linux", "cpu_count": 2, "memory_bytes": 8192},
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.2.3",
+                    "agent_metadata": {"os": "linux", "cpu_count": 2, "memory_bytes": 8192},
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Real bearer: ~43-char urlsafe-base64 secret.
@@ -169,18 +162,17 @@ async def test_identity_exchange_bearer_ttl_is_one_hour(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
     before = datetime.now(UTC)
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     after = datetime.now(UTC)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -215,17 +207,16 @@ async def test_identity_exchange_rotation_non_revoking(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
     payload = {
         "kind": "aws-sts",
         "agent_version": "1.0.0",
         "payload": _SIGNED_PAYLOAD,
     }
 
-    async with _client() as c:
-        first = await c.post(_ENDPOINT, json=payload)
-        second = await c.post(_ENDPOINT, json=payload)
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            first = await c.post(_ENDPOINT, json=payload)
+            second = await c.post(_ENDPOINT, json=payload)
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
@@ -251,17 +242,16 @@ async def test_identity_exchange_unregistered_arn_returns_403(db_session) -> Non
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "0.0.1",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "0.0.1",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 403
     assert resp.json()["detail"]["detail"] == "forbidden_unregistered_arn"
     rows = (await db_session.execute(select(WorkspaceAgentRow))).scalars().all()
@@ -286,17 +276,16 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, region="eu-west-1")
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "0.0.1",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "0.0.1",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 401
     assert resp.json()["detail"]["detail"] == "sts_verification_failed"
     # No agent row or bearer issued.
@@ -313,17 +302,16 @@ async def test_identity_exchange_invalid_signature_returns_401(db_session) -> No
     async def _stub(_payload: str) -> VerifiedIdentity:
         raise InvalidSignedRequestError("forged signature", FailureCategory.AWS_REJECTED)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "0.0.1",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "0.0.1",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 401
     assert resp.json()["detail"]["detail"] == "sts_verification_failed"
 
@@ -368,17 +356,16 @@ async def test_identity_exchange_response_includes_org_id(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "org_id" in body, "response must include org_id"
@@ -406,8 +393,6 @@ async def test_identity_exchange_audience_mismatch_returns_401(db_session, monke
     async def _stub(_payload: str) -> VerifiedIdentity:  # unreachable after audience check
         return _verified("arn:aws:iam::123456789012:role/yaaos-agent")
 
-    set_verify_identity_override(_stub)
-
     payload_with_wrong_audience = _json.dumps(
         {
             "url": "https://sts.amazonaws.com/",
@@ -421,11 +406,12 @@ async def test_identity_exchange_audience_mismatch_returns_401(db_session, monke
         }
     )
 
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={"kind": "aws-sts", "agent_version": "0.0.1", "payload": payload_with_wrong_audience},
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={"kind": "aws-sts", "agent_version": "0.0.1", "payload": payload_with_wrong_audience},
+            )
     assert resp.status_code == 401
     assert "audience_mismatch" in resp.json()["detail"]["detail"]
 
@@ -446,8 +432,6 @@ async def test_identity_exchange_missing_audience_returns_401(db_session, monkey
     async def _stub(_payload: str) -> VerifiedIdentity:  # unreachable after audience check
         return _verified("arn:aws:iam::123456789012:role/yaaos-agent")
 
-    set_verify_identity_override(_stub)
-
     # Payload with no x-yaaos-audience header at all.
     payload_no_audience = _json.dumps(
         {
@@ -461,10 +445,11 @@ async def test_identity_exchange_missing_audience_returns_401(db_session, monkey
         }
     )
 
-    async with _client() as c:
-        resp = await c.post(
-            _ENDPOINT,
-            json={"kind": "aws-sts", "agent_version": "0.0.1", "payload": payload_no_audience},
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _ENDPOINT,
+                json={"kind": "aws-sts", "agent_version": "0.0.1", "payload": payload_no_audience},
+            )
     assert resp.status_code == 401
     assert "audience_mismatch" in resp.json()["detail"]["detail"]

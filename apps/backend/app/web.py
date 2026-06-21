@@ -14,13 +14,11 @@ from app.core import config  # noqa: F401
 # database — anything imported later (tasks, sse, agent_gateway)
 # registers afterwards and therefore shuts down first.
 from app.core import database  # noqa: F401
-from app.core import redis
+from app.core import redis  # noqa: F401
 from app.core import observability
 
-redis.bind_pubsub(redis.RedisPubsub())
-
-import asyncio  # noqa: E402
-from app.core import sse as _core_sse  # noqa: E402
+import asyncio
+from app.core import sse as _core_sse
 
 _core_sse.bind_shutdown_event(asyncio.Event())
 
@@ -35,9 +33,7 @@ from app.core import audit_log, coding_agent, vcs, workspace  # noqa: F401, E402
 # 4a. workflow engine + agent gateway. Workflow engine registers the
 # three taskiq task names at import; agent_gateway registers `/v1/*` routes.
 from app.core import workflow as _core_workflow  # noqa: F401, E402
-from app.core import agent_gateway as _core_agent_gateway  # noqa: E402
-
-_core_agent_gateway.bind_subscriber_registry(_core_agent_gateway.SubscriberRegistry())
+from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
 
 # 4b. Intake router — pure infrastructure; no domain imports.
 from app.core import intake as _core_intake  # noqa: F401, E402
@@ -47,9 +43,6 @@ from app.core import intake as _core_intake  # noqa: F401, E402
 # `Depends(public_route)` so the contextvars + middleware classes exist.
 from app.core import identity  # noqa: F401, E402
 from app.domain import orgs  # noqa: F401, E402
-from app.domain.orgs.email import _Inbox, bind_email_inbox  # noqa: E402
-
-bind_email_inbox(_Inbox())
 from app.core import auth  # noqa: F401, E402
 from app.core import sessions  # noqa: F401, E402
 

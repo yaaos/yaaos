@@ -240,26 +240,28 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
     Binds the real ClaudeCodePlugin (not the stub) so validation actually runs.
     The stub's validate_settings is a no-op pass-through by design.
     """
-    from app.core.coding_agent import CodingAgentRegistry, bind_coding_agent_registry  # noqa: PLC0415
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
     from app.plugins.claude_code import ClaudeCodePlugin  # noqa: PLC0415
 
-    real_registry = CodingAgentRegistry()
-    real_registry.replace(ClaudeCodePlugin())
-    bind_coding_agent_registry(real_registry)
+    with set_coding_agents_for_tests() as reg:
+        reg.replace(ClaudeCodePlugin())
 
-    async with _client() as c:
-        r = await c.post(
-            "/api/coding-agents",
-            json={"plugin_id": "claude_code", "settings": {"rogue": "value"}},
-            cookies={
-                "yaaos_session": seeded["admin_sess"].raw_token,
-                "yaaos_csrf": seeded["admin_sess"].csrf_token,
-            },
-            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
-        )
-    assert r.status_code == 422
-    body = r.json()
-    assert body["detail"]["error"] == "invalid_settings"
+        async with _client() as c:
+            r = await c.post(
+                "/api/coding-agents",
+                json={"plugin_id": "claude_code", "settings": {"rogue": "value"}},
+                cookies={
+                    "yaaos_session": seeded["admin_sess"].raw_token,
+                    "yaaos_csrf": seeded["admin_sess"].csrf_token,
+                },
+                headers={
+                    "X-Yaaos-Org-Slug": seeded["org"].slug,
+                    "X-CSRF-Token": seeded["admin_sess"].csrf_token,
+                },
+            )
+        assert r.status_code == 422
+        body = r.json()
+        assert body["detail"]["error"] == "invalid_settings"
 
 
 @pytest.mark.asyncio

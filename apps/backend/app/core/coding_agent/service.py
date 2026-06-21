@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import structlog
@@ -67,28 +69,52 @@ class CodingAgentRegistry:
 
 
 _registry_var: ContextVar[CodingAgentRegistry | None] = ContextVar("_coding_agent_registry_var", default=None)
-# Import-time default: plugins that call register_plugin() at module-import
-# time (bootstrap()) land here when no per-test binding is active. Production
-# never calls bind_coding_agent_registry(); the ContextVar exists solely for
-# per-test isolation.
-_default_registry = CodingAgentRegistry()
 
 
-def bind_coding_agent_registry(instance: CodingAgentRegistry) -> None:
-    _registry_var.set(instance)
+def _get() -> CodingAgentRegistry:
+    val = _registry_var.get()
+    if val is None:
+        val = CodingAgentRegistry()
+        _registry_var.set(val)
+    return val
 
 
-def current_coding_agent_registry() -> CodingAgentRegistry:
-    return _registry_var.get() or _default_registry
+@contextmanager
+def set_coding_agents_for_tests(
+    *, scenario: Literal["default", "empty"] = "default"
+) -> Iterator[CodingAgentRegistry]:
+    """Context manager: bind an isolated registry for the duration.
+
+    ``scenario="default"`` (the default) gives a copy of the current registry,
+    preserving production-registered + stub-wrapped plugins. ``scenario="empty"``
+    gives a brand-new empty registry — useful for tests that register their own
+    plugin set from scratch. Restores the prior binding on exit — even on exception.
+    """
+    instance = CodingAgentRegistry() if scenario == "empty" else _get().copy()
+    token = _registry_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _registry_var.reset(token)
 
 
 def register_plugin(plugin: CodingAgentPlugin) -> None:
     """Register a coding-agent plugin. Raises ValueError if id already taken."""
-    current_coding_agent_registry().register(plugin)
+    _get().register(plugin)
+
+
+def replace_plugin(plugin: CodingAgentPlugin) -> None:
+    """Overwrite-or-insert a plugin in the current registry; used by stub helpers."""
+    _get().replace(plugin)
 
 
 def get_plugin(plugin_id: str) -> CodingAgentPlugin:
-    return current_coding_agent_registry().get(plugin_id)
+    return _get().get(plugin_id)
+
+
+def list_plugins() -> list[CodingAgentPlugin]:
+    """Return all registered coding-agent plugins."""
+    return _get().list()
 
 
 async def dispatch_invocation(

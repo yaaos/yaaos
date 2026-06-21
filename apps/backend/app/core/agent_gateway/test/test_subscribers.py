@@ -17,19 +17,22 @@ from uuid import uuid4, uuid7
 
 import pytest
 
-from app.core.agent_gateway import (
+from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
-    get_subscriber_registry,
+    _wfx_subscribers_key,
 )
-from app.core.agent_gateway.subscribers import _wfx_subscribers_key
+from app.core.agent_gateway.subscribers import (
+    _get as _get_subscriber_registry,
+)
 from app.core.redis import zset_card
 
 # ── Tests that don't require Redis (no track/untrack) ─────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_subscriber_registry_singleton() -> None:
-    assert get_subscriber_registry() is get_subscriber_registry()
+async def test_subscriber_registry_eager_default_is_stable() -> None:
+    # _get() returns the same ContextVar value within one test context.
+    assert _get_subscriber_registry() is _get_subscriber_registry()
 
 
 @pytest.mark.asyncio

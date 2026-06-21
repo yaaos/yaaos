@@ -28,16 +28,16 @@ EXPECTED_ALL = frozenset(
         "ActivityEvent",
         "ActivityLog",
         "ACTIVITY_EVENT_KINDS",
-        # Registry (also needed by testing layer for per-test isolation)
-        "CodingAgentRegistry",
-        "bind_coding_agent_registry",
-        "current_coding_agent_registry",
         # Dispatch + query APIs
         "register_plugin",
+        "replace_plugin",
         "get_plugin",
+        "list_plugins",
         "dispatch_invocation",
         "create_run",
         "get_step_activity",
+        # Test isolation seam
+        "set_coding_agents_for_tests",
         # BYOK secrets provider
         "build_byok_secrets_for_org",
     ]

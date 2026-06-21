@@ -26,7 +26,7 @@ Mirrors `meta` from the real provider. Wrapped instance is held but never delega
 
 ### `wrap_all_registered_workspace_providers()`
 
-Reads the current `WorkspaceRegistry` via `current_workspace_registry()`, builds a fresh `WorkspaceRegistry` with each entry wrapped, and binds it via `bind_workspace_registry()`. Idempotent — already-wrapped entries are kept as-is. Future workspace providers (Docker, K8s) require zero changes here.
+Reads all registered workspace providers via `list_workspace_providers()` from `core/workspace`, wraps each with `StubWorkspaceProvider`, and re-registers via `replace_workspace_provider`. Idempotent — already-wrapped entries are kept as-is. Future workspace providers (Docker, K8s) require zero changes here.
 
 ### Why a wrapper, not a free-standing fake
 

@@ -25,8 +25,7 @@ from app.core.vcs import (
     Diff,
     FileSummary,
     VCSPullRequest,
-    bind_vcs_registry,
-    current_vcs_registry,
+    set_vcs_for_tests,
 )
 
 
@@ -216,11 +215,5 @@ def register_stub_vcs(*, plugin_id: str = "github") -> Iterator[StubVCSPlugin]:
     registry binding on exit. Never mutates the canonical registry dict.
     """
     stub = StubVCSPlugin(plugin_id=plugin_id)
-    prior = current_vcs_registry()
-    fresh = prior.copy()
-    fresh.replace(stub)  # type: ignore[arg-type]
-    bind_vcs_registry(fresh)
-    try:
+    with set_vcs_for_tests(plugin=stub):  # type: ignore[arg-type]
         yield stub
-    finally:
-        bind_vcs_registry(prior)

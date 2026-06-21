@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from app.core.redis import publish, subscribe, subscriber_count
-from app.core.redis.pubsub import RedisPubsub, get_pubsub
+from app.core.redis.pubsub import _get, _RedisPubsub
 
 
 def _unique_channel() -> str:
@@ -80,10 +80,10 @@ async def test_subscriber_count_balances_on_iterator_exit(redis_or_skip) -> None
 
 
 @pytest.mark.asyncio
-async def test_get_pubsub_returns_bound_instance() -> None:
-    # pubsub_isolation (autouse) has already called bind_pubsub; just verify
-    # get_pubsub() works and returns a RedisPubsub. No Redis needed.
-    instance = get_pubsub()
-    assert isinstance(instance, RedisPubsub)
+async def test_pubsub_eager_default_is_stable() -> None:
+    # pubsub_isolation (autouse) provides a fresh _RedisPubsub per test.
+    # Verify _get() returns a valid instance and is stable within one Context.
+    instance = _get()
+    assert isinstance(instance, _RedisPubsub)
     # Stable across calls within the same Context.
-    assert get_pubsub() is instance
+    assert _get() is instance

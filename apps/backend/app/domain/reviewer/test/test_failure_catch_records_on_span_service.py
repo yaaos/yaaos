@@ -32,10 +32,9 @@ pytestmark = pytest.mark.service
 async def test_secrets_scan_post_comment_failure_sets_span_error(db_session) -> None:  # type: ignore[no-untyped-def]
     """When post_comment raises after detecting a secret, SecretsScan records
     exception + ERROR on the active span but still returns success(label='skip')."""
-    from app.core.vcs import Diff  # noqa: PLC0415
+    from app.core.vcs import Diff, set_vcs_for_tests  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.domain.reviewer.commands import SecretsScan, SecretsScanInputs  # noqa: PLC0415
-    from app.testing.isolation import scoped_vcs_plugin  # noqa: PLC0415
 
     class _RaisingOnComment:
         """VCS plugin that returns a diff with a secret but raises on post_comment."""
@@ -109,7 +108,7 @@ async def test_secrets_scan_post_comment_failure_sets_span_error(db_session) -> 
     with span_capture() as exporter:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("workflow.command.SecretsScan"):
-            with scoped_vcs_plugin(_RaisingOnComment()):  # type: ignore[arg-type]
+            with set_vcs_for_tests(plugin=_RaisingOnComment()):  # type: ignore[arg-type]
                 outcome = await SecretsScan().execute(inputs, ctx, session=db_session)
 
     # Outcome is still success/skip — the post_comment failure is non-fatal.
@@ -221,7 +220,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     re-raising, and PostFindings.execute's outer catch called it again —
     producing two duplicate exception events on the same span.
     """
-    from app.core.vcs import VCSPullRequest, bind_vcs_registry, current_vcs_registry  # noqa: PLC0415
+    from app.core.vcs import VCSPullRequest, set_vcs_for_tests  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.domain.reviewer.commands import PostFindings, PostFindingsInputs  # noqa: PLC0415
     from app.domain.tickets import create_from_pr as create_ticket  # noqa: PLC0415
@@ -298,13 +297,7 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
     )
 
     # Swap in the raising VCS plugin.
-    raising_plugin = _RaisingVCSPlugin()
-    prior_registry = current_vcs_registry()
-    fresh_registry = prior_registry.copy()
-    fresh_registry.replace(raising_plugin)  # type: ignore[arg-type]
-    bind_vcs_registry(fresh_registry)
-
-    try:
+    with set_vcs_for_tests(plugin=_RaisingVCSPlugin()):  # type: ignore[arg-type]
         with span_capture() as exporter:
             tracer = trace.get_tracer(__name__)
             # OTel records the propagating exception automatically on the span
@@ -313,8 +306,6 @@ async def test_post_findings_vcs_failure_records_exactly_one_exception_event(
             with pytest.raises(RuntimeError, match="simulated VCS post failure"):
                 with tracer.start_as_current_span("workflow.command.PostFindings"):
                     await PostFindings().execute(inputs, ctx, session=db_session)
-    finally:
-        bind_vcs_registry(prior_registry)
 
     # The exception propagated: PostFindings no longer catches non-ValueError
     # exceptions. The engine's _safe_execute records it on the same span.

@@ -20,6 +20,7 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.agent_gateway import bearers
+from app.core.agent_gateway.bearers import _verify_override as _bearer_verify_override
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.auth import current_org_id
 from app.domain.orgs import repository as orgs_repo
@@ -129,7 +130,8 @@ async def test_activity_ws_endpoint_enters_org_context(db_session) -> None:
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    bearers.set_verify_override(_bearer_stub)
+    # Set override directly — bearer_verify_isolation autouse fixture restores after test.
+    _bearer_verify_override.set(_bearer_stub)
 
     captured: list[UUID | None] = []
 

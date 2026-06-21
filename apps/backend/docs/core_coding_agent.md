@@ -63,7 +63,7 @@ Returns `command_id`. `org_id` is resolved from the workspace row, not a caller 
 
 ## Registry
 
-`app/core/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map in a `ContextVar`. A module-level `_default_registry` captures all import-time `bootstrap()` calls — production never calls `bind_coding_agent_registry()`. Per-test isolation binds a fresh `.copy()` via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
+`app/core/coding_agent/service.py`. `CodingAgentRegistry` holds the plugin map in a `ContextVar[CodingAgentRegistry | None]` with `default=None`; `_get()` lazily creates the instance on first access per context. Production composition roots do nothing — the default instance materialises on first `register_plugin` call. `list_plugins()` returns all registered plugins. Per-test isolation binds a fresh `.copy()` via `plugin_registries_isolation` in `app/testing/isolation.py`. `register_plugin` rejects duplicates. `get_plugin` raises `PluginNotFoundError` on miss.
 
 ## Run lifecycle
 
@@ -118,7 +118,7 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 
 ## How it's tested
 
-- `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `bind_coding_agent_registry` isolation.
+- `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
 - `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `byok_requirement` + `parse_result` + `validate_settings`, retired names not importable.
 - `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns UUIDv7, inserts run row, resolvable via `get_run_id_for_command`.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.

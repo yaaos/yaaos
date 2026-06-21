@@ -22,7 +22,7 @@ from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    set_verify_identity_override,
+    set_sts_verify_for_tests,
 )
 from app.core.audit_log import list_for_entity
 from app.core.tenancy import update_org_fields
@@ -97,10 +97,7 @@ async def _seed_org_and_agent(db_session, *, iam_arn: str = "arn:aws:iam::111122
     return org, agent
 
 
-@pytest.fixture(autouse=True)
-def _reset_sts_verifier():
-    yield
-    set_verify_identity_override(None)
+# sts_verify_isolation autouse fixture (in app/testing/isolation.py) handles reset.
 
 
 # ── DELETE /api/v1/agent/identity ─────────────────────────────────────────
@@ -341,22 +338,21 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
     async def _stub(_payload: str) -> VerifiedIdentity:
         return VerifiedIdentity(canonical_arn=canonical_arn, raw_arn=canonical_arn, region="eu-west-1")
 
-    set_verify_identity_override(_stub)
-
     _signed_payload = (
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    async with _agent_client() as c:
-        resp = await c.post(
-            "/api/v1/agent/identity",
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "agent_metadata": {},
-                "payload": _signed_payload,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _agent_client() as c:
+            resp = await c.post(
+                "/api/v1/agent/identity",
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "agent_metadata": {},
+                    "payload": _signed_payload,
+                },
+            )
     assert resp.status_code == 401
 
     # Verify audit row via public list_for_entity.
@@ -379,22 +375,21 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return VerifiedIdentity(canonical_arn=unregistered_arn, raw_arn=unregistered_arn, region="eu-west-1")
 
-    set_verify_identity_override(_stub)
-
     _signed_payload = (
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    async with _agent_client() as c:
-        resp = await c.post(
-            "/api/v1/agent/identity",
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "agent_metadata": {},
-                "payload": _signed_payload,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _agent_client() as c:
+            resp = await c.post(
+                "/api/v1/agent/identity",
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "agent_metadata": {},
+                    "payload": _signed_payload,
+                },
+            )
     # No org → 403 (unregistered ARN)
     assert resp.status_code == 403
 

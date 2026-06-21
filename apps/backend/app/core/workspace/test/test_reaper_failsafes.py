@@ -23,12 +23,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
-from app.core.workspace import (
-    WorkspaceRegistry,
-    register_workspace_provider,
-)
+from app.core.workspace import register_workspace_provider
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import (
+    WorkspaceRegistry,
     _attempt_destroy,
     _reaper_sweep_once,
     _utcnow,

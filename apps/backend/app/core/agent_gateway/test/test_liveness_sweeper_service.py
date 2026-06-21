@@ -203,12 +203,10 @@ async def test_liveness_emits_sse_on_transition(db_session, redis_or_skip) -> No
     import asyncio  # noqa: PLC0415
 
     from app.core.agent_gateway.service import compute_agent_liveness_transitions  # noqa: PLC0415
-    from app.core.redis import RedisPubsub, bind_pubsub  # noqa: PLC0415
     from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import GeneralEventKind, subscribe_general  # noqa: PLC0415
 
     await redis_shutdown()
-    bind_pubsub(RedisPubsub())
 
     org_id = uuid4()
     await _seed_agent_row(db_session, org_id=org_id, state="reachable", heartbeat_age_seconds=70)

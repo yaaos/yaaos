@@ -40,13 +40,14 @@ from app.core.coding_agent.run_service import (
     get_step_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
+from app.core.coding_agent.service import _get as _get_coding_agent_registry
 from app.core.coding_agent.service import (
-    CodingAgentRegistry,
-    bind_coding_agent_registry,
-    current_coding_agent_registry,
     dispatch_invocation,
     get_plugin,
+    list_plugins,
     register_plugin,
+    replace_plugin,
+    set_coding_agents_for_tests,
 )
 from app.core.coding_agent.types import (
     ACTIVITY_EVENT_KINDS,
@@ -81,9 +82,8 @@ async def build_byok_secrets_for_org(
     """
     import app.core.byok as _byok  # noqa: PLC0415
 
-    registry = current_coding_agent_registry()
     result: dict[str, SecretStr] = {}
-    for plugin in registry.list():
+    for plugin in _get_coding_agent_registry().list():
         req = plugin.byok_requirement()
         if req is None:
             continue
@@ -117,7 +117,6 @@ __all__ = [
     "CodingAgentCommand",
     "CodingAgentError",
     "CodingAgentPlugin",
-    "CodingAgentRegistry",
     "Effort",
     "Invocation",
     "InvokeCodingAgent",
@@ -125,12 +124,13 @@ __all__ = [
     "RunResult",
     "RunStatus",
     "Usage",
-    "bind_coding_agent_registry",
     "build_byok_secrets_for_org",
     "create_run",
-    "current_coding_agent_registry",
     "dispatch_invocation",
     "get_plugin",
     "get_step_activity",
+    "list_plugins",
     "register_plugin",
+    "replace_plugin",
+    "set_coding_agents_for_tests",
 ]

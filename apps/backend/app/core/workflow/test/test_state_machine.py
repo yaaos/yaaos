@@ -44,7 +44,7 @@ from app.core.workflow import (
     workflow_input,
 )
 from app.core.workflow.models import PendingHumanDecisionRow, WorkflowExecutionRow
-from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
+from app.core.workspace import register_workspace_provider, set_workspace_providers_for_tests
 
 # ── Command factory helpers ──────────────────────────────────────────────
 # `kind` is a CLASS attribute (not a constructor arg) on all command types.
@@ -233,10 +233,9 @@ def _reset_engine():  # type: ignore[no-untyped-def]
 def _with_stub_workspace_provider():
     """Register exactly one workspace provider so Workspace-step dispatch
     in `start_step` passes the single-provider guard."""
-    bind_workspace_registry(WorkspaceRegistry())
-    register_workspace_provider(_MinimalWorkspaceProvider())
-    yield
-    bind_workspace_registry(WorkspaceRegistry())
+    with set_workspace_providers_for_tests(scenario="empty"):
+        register_workspace_provider(_MinimalWorkspaceProvider())
+        yield
 
 
 def _engine_with(*commands: Any, workflow: Workflow) -> WorkflowEngine:

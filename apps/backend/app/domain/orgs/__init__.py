@@ -14,7 +14,7 @@ from app.domain.orgs.coding_agents import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
-from app.domain.orgs.email import SentEmail, send_plain
+from app.domain.orgs.email import SentEmail, read_sent_emails, send_plain, set_email_inbox_for_tests
 from app.domain.orgs.invitations import (
     InvitationExpiredError,
     InvitationInvalidError,
@@ -109,6 +109,7 @@ __all__ = [
     "list_active_member_ids",
     "list_coding_agents",
     "org_settings_web",
+    "read_sent_emails",
     "register_assertion_verifier",
     "register_onboarding_contributor",
     "register_vcs_clear_hook",
@@ -116,6 +117,7 @@ __all__ = [
     "repository",
     "run_assertion_verifier",
     "send_plain",
+    "set_email_inbox_for_tests",
     "set_vcs",
     "sp_metadata_xml",
     "sso",

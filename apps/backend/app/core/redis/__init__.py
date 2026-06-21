@@ -6,16 +6,15 @@ operation is a named primitive — the health `ping`, the JSON pub/sub bus
 rate-limit counter. Per-loop client cache lives in `service.py` so cross-loop
 reuse doesn't fail.
 
-The active `RedisPubsub` instance is ContextVar-bound. `bind_pubsub` is the
-production DI seam — the composition root calls it at startup; the
-`pubsub_isolation` fixture in `app/testing/isolation` calls it per test.
+The active pub/sub instance is ContextVar-bound with an eager default —
+production never needs a startup bind. `set_pubsub_for_tests` is the test
+seam; the `pubsub_isolation` fixture in `app/testing/isolation` uses it.
 """
 
 from app.core.redis.hash_ops import hash_delete, hash_get_all, hash_set
 from app.core.redis.pubsub import (
-    RedisPubsub,
-    bind_pubsub,
     publish,
+    set_pubsub_for_tests,
     subscribe,
     subscriber_count,
 )
@@ -43,8 +42,6 @@ async def shutdown() -> None:
 
 
 __all__ = [
-    "RedisPubsub",
-    "bind_pubsub",
     "delete_keys_with_prefix",
     "hash_delete",
     "hash_get_all",
@@ -55,6 +52,7 @@ __all__ = [
     "set_add",
     "set_if_absent",
     "set_members",
+    "set_pubsub_for_tests",
     "set_remove",
     "shutdown",
     "sliding_window_hit",

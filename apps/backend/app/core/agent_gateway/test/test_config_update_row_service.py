@@ -34,7 +34,7 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    set_verify_identity_override,
+    set_sts_verify_for_tests,
 )
 from app.core.agent_gateway.types import (
     AgentCommandKind,
@@ -102,10 +102,7 @@ def _make_provision_cmd(org_id: UUID, workspace_id: UUID | None = None) -> Provi
     )
 
 
-@pytest.fixture(autouse=True)
-def _reset_sts_verifier():
-    yield
-    set_verify_identity_override(None)
+# sts_verify_isolation autouse fixture (in app/testing/isolation.py) handles reset.
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────
@@ -130,17 +127,16 @@ async def test_identity_exchange_enqueues_config_update_row(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _IDENTITY_ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _IDENTITY_ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 200, resp.text
     agent_id = UUID(resp.json()["agent_id"])
 

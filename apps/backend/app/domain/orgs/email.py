@@ -5,20 +5,22 @@ relay the operator configured. Synchronous `smtplib` wrapped in
 `asyncio.to_thread` — invitation volume is low and `aiosmtplib` would only
 add a dep for no real win.
 
-The active `_Inbox` instance is ContextVar-bound. `bind_email_inbox` is the
-production DI seam — the composition root calls it at startup; the
-`email_inbox_isolation` fixture in `app/testing/isolation` binds a fresh
-instance per test and exposes a `read_email_inbox` accessor. `send_plain`
-writes to the ContextVar-bound inbox in test env instead of hitting SMTP.
-`get_email_inbox()` raises `RuntimeError` if called before any bind in test env.
+The active `_Inbox` instance is held in a ContextVar. `_get()` lazily creates
+one on first access in each context. `set_email_inbox_for_tests` is the
+test seam; the `email_inbox_isolation` fixture in `app/testing/isolation`
+uses it to bind a fresh instance per test. `send_plain` appends to the
+ContextVar-bound inbox in test env instead of hitting SMTP. `read_sent_emails`
+returns the list of captured messages.
 """
 
 from __future__ import annotations
 
 import asyncio
 import smtplib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from email.message import EmailMessage
 
 from app.core.config import get_settings
@@ -31,37 +33,45 @@ class SentEmail:
     body: str
 
 
-@dataclass
 class _Inbox:
     """Captures emails in `test` env."""
 
-    messages: list[SentEmail] = field(default_factory=list)
+    def __init__(self) -> None:
+        self.messages: list[SentEmail] = []
 
 
 _inbox_var: ContextVar[_Inbox | None] = ContextVar("_inbox_var", default=None)
 
 
-def bind_email_inbox(instance: _Inbox) -> None:
-    """Bind `instance` as the active email inbox for the current Context.
+def _get() -> _Inbox:
+    val = _inbox_var.get()
+    if val is None:
+        val = _Inbox()
+        _inbox_var.set(val)
+    return val
 
-    Called once at process startup (composition root) and once per test
-    (isolation fixture). Subsequent calls in the same Context replace the
-    prior binding.
+
+@contextmanager
+def set_email_inbox_for_tests() -> Iterator[_Inbox]:
+    """Context manager: bind a fresh email inbox for the duration.
+
+    Each test gets a clean inbox. Restores the prior binding on exit.
     """
-    _inbox_var.set(instance)
+    instance = _Inbox()
+    token = _inbox_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _inbox_var.reset(token)
 
 
-def get_email_inbox() -> _Inbox:
-    """Return the active email inbox. Raises `RuntimeError` if
-    `bind_email_inbox` has not been called — fail-fast so forgotten startup
-    binds surface immediately rather than silently dropping emails."""
-    instance = _inbox_var.get()
-    if instance is None:
-        raise RuntimeError(
-            "email inbox not bound: call bind_email_inbox(_Inbox()) at process "
-            "startup or use the email_inbox_isolation fixture in tests."
-        )
-    return instance
+def read_sent_emails() -> list[SentEmail]:
+    """Return the live messages list from the current test inbox.
+
+    Mutable — callers may call `.clear()` to reset between assertions
+    within a single test body.
+    """
+    return _get().messages
 
 
 def _send_blocking(msg: EmailMessage) -> None:
@@ -81,11 +91,11 @@ def _send_blocking(msg: EmailMessage) -> None:
 
 async def send_plain(*, to: str, subject: str, body: str) -> None:
     """Send a plain-text email. In `test` env, append to the ContextVar-bound
-    inbox and skip the SMTP round-trip; tests read the inbox via the
-    `email_inbox_isolation` fixture's accessor."""
+    inbox and skip the SMTP round-trip; tests read the inbox via
+    `read_sent_emails()`."""
     settings = get_settings()
     if settings.is_test:
-        get_email_inbox().messages.append(SentEmail(to=to, subject=subject, body=body))
+        _get().messages.append(SentEmail(to=to, subject=subject, body=body))
         return
     msg = EmailMessage()
     msg["From"] = settings.smtp_from
@@ -95,4 +105,4 @@ async def send_plain(*, to: str, subject: str, body: str) -> None:
     await asyncio.to_thread(_send_blocking, msg)
 
 
-__all__ = ["SentEmail", "_Inbox", "bind_email_inbox", "get_email_inbox", "send_plain"]
+__all__ = ["SentEmail", "read_sent_emails", "send_plain", "set_email_inbox_for_tests"]

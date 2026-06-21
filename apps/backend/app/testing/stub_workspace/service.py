@@ -105,24 +105,18 @@ class StubWorkspaceProvider:
 def wrap_all_registered_workspace_providers() -> int:
     """Replace every registered workspace provider with a stub wrapping it.
 
-    Idempotent. Binds a fresh registry with wrapped entries; never mutates the
-    canonical registry dict.
+    Mutates the current registry in-place via `replace_workspace_provider`.
+    Idempotent — already-wrapped stubs are left as-is. Each subsequent test
+    isolation block (`set_workspace_providers_for_tests`) copies the
+    now-stub-enriched default.
     """
-    from app.core.workspace import (  # noqa: PLC0415
-        WorkspaceRegistry,
-        bind_workspace_registry,
-        current_workspace_registry,
-    )
+    from app.core.workspace import list_workspace_providers, replace_workspace_provider  # noqa: PLC0415
 
-    originals = current_workspace_registry().list()
-    fresh = WorkspaceRegistry()
     count = 0
-    for real in originals:
+    for real in list_workspace_providers():
         if isinstance(real, StubWorkspaceProvider):
-            fresh.replace(real)
-        else:
-            fresh.replace(StubWorkspaceProvider(wrapped=real))
-            count += 1
-    bind_workspace_registry(fresh)
+            continue
+        replace_workspace_provider(StubWorkspaceProvider(wrapped=real))
+        count += 1
     log.debug("stub_workspace.wrapped_all", count=count)
     return count

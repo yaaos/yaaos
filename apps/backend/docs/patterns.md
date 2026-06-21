@@ -534,11 +534,11 @@ The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceReg
 
 Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): imports the three plugin packages (triggering import-time bootstrap), optionally wraps with stubs, then snapshots the bound registries via `.copy()`. Runs once per session.
 
-Function-scoped autouse `plugin_registries_isolation` fixture: calls `bind_*()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test rebinds canonical — no restore, no leak, no order dependence.
+Function-scoped autouse `plugin_registries_isolation` fixture: calls `set_X_for_tests()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test gets a fresh canonical copy — no restore, no leak, no order dependence.
 
 Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shutdown_event(asyncio.Event())` before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
 
-`app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
+`core.vcs.set_vcs_for_tests(plugin=X)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy of the current registry with the plugin replaced and restores the prior binding on exit. Import from `app.core.vcs`.
 
 `app.testing.workflow_harness.scoped_engine(engine=None)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh (or supplied) engine, restores the prior process-singleton on exit — even on exception. Supply an `engine` argument to install a pre-built subclass (e.g. a recording engine). Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
 
@@ -546,7 +546,7 @@ Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shut
 
 Rules:
 - No wholesale-wipe or `unregister_*` loop between tests. The autouse fixture handles isolation structurally.
-- `scoped_vcs_plugin` / `scoped_engine` / `scoped_workflow` bind on entry, restore prior binding on exit. The yielded value is the same object passed in.
+- `set_vcs_for_tests` / `scoped_engine` / `scoped_workflow` bind on entry, restore prior binding on exit. The yielded value is the same object passed in.
 - Never alias the canonical registry dict in a helper — always `.copy()` to prevent leakage.
 
 ## Subscription self-cleanup (async generator pattern)

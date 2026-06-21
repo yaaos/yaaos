@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from app.core.agent_gateway import bearers
+from app.core.agent_gateway.bearers import _verify_override as _bearer_verify_override
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.sse import subscribe_workspace_activity
 from app.domain.orgs import repository as orgs_repo
@@ -81,7 +82,8 @@ async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> 
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    bearers.set_verify_override(_bearer_stub)
+    # Set override directly — bearer_verify_isolation autouse fixture restores after test.
+    _bearer_verify_override.set(_bearer_stub)
 
     received: list[dict] = []
 
