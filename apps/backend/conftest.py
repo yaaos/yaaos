@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import warnings
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
+
+# Runtime import audit — install BEFORE any app.* import so the meta-path
+# finder observes every backend module load. Defense-in-depth on top of
+# bin/sync_modules' static checks: catches dynamic-Python reaches
+# (importlib.import_module, __import__, getattr-triggered lazy loads,
+# string-built plugin dispatch) that no AST analysis can see. See
+# bin/import_audit.py for the rule definition.
+_BIN_DIR = Path(__file__).resolve().parent / "bin"
+if str(_BIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_BIN_DIR))
+import import_audit  # noqa: E402
+
+import_audit.install()
 
 # Set test env vars BEFORE any app imports so module-level `get_settings()` works.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://yaaos:yaaos@localhost:5432/yaaos_test")
@@ -36,7 +51,7 @@ os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
 # Re-export autouse isolation fixtures so pytest auto-discovers them. The import
 # is deferred until after env vars are set because app.testing.isolation triggers
 # app.core.redis → app.core.config at import time.
-from app.testing.isolation import (  # noqa: F401
+from app.testing.isolation import (  # noqa: E402, F401
     _canonical_registries,
     bearer_verify_isolation,
     email_inbox_isolation,
@@ -47,6 +62,19 @@ from app.testing.isolation import (  # noqa: F401
     subscriber_registry_isolation,
     workspace_providers_isolation,
 )
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Flush the runtime import-audit report and fail the suite on any violation.
+
+    Writes `tmp/import_audit_violations.json` when non-empty; overrides
+    pytest's exit status to 2 so `bin/ci`'s `set -e` halts. The sentinel file
+    `tmp/import_audit_ran` (written at install) lets `bin/ci` independently
+    prove the guard ran even when the run is otherwise green.
+    """
+    count = import_audit.flush_and_report()
+    if count and session.exitstatus == 0:
+        session.exitstatus = 2
 
 
 @pytest.fixture(scope="session", autouse=True)

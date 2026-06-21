@@ -36,6 +36,8 @@ _spec.loader.exec_module(_sync_modules)  # type: ignore[union-attr]
 
 check_all_boundary_violations = _sync_modules.check_all_boundary_violations
 check_layering = _sync_modules.check_layering
+check_private_reach = _sync_modules.check_private_reach
+check_submodule_imports = _sync_modules.check_submodule_imports
 check_test_helper_exports = _sync_modules.check_test_helper_exports
 discover_modules = _sync_modules.discover_modules
 APP = Path(_sync_modules.APP)
@@ -255,6 +257,148 @@ def test_clean_tree_has_no_test_helper_exports() -> None:
     modules = discover_modules()
     errs = check_test_helper_exports(modules)
     assert not errs, "check_test_helper_exports found violations on the clean tree:\n" + "\n".join(errs)
+
+
+# ---------------------------------------------------------------------------
+# Rule-6 / Rule-7 canaries.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_submodule_import_is_rejected() -> None:
+    """Rule-6: ``import app.<other_mod>.<sub>`` from another module is flagged.
+
+    Injects a canary file into ``app/core/audit_log/`` that does the exact reach
+    PR #67 (arch-004) flagged — ``import app.core.workflow.service as _wf``.
+    Restores the canary in ``finally``.
+    """
+    canary = APP / "core" / "audit_log" / "_rule6_canary.py"
+    canary.write_text("import app.core.workflow.service as _wf  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_submodule_imports(modules)
+        assert errors, "expected Rule-6 violation but check_submodule_imports returned none"
+        assert any("_rule6_canary.py" in e and "app.core.workflow.service" in e for e in errors), (
+            f"expected Rule-6 hit on _rule6_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_submodule_from_import_is_rejected() -> None:
+    """Rule-6: ``from app.<other_mod> import <submodule>`` is flagged.
+
+    Distinct from a symbol import: the imported name resolves to a submodule
+    file/dir, not an entry in the target module's ``__all__``. This is the
+    side-effect-import shape composition roots use; outside the carve-out it's
+    a private-state reach.
+    """
+    canary = APP / "core" / "audit_log" / "_rule6_from_canary.py"
+    # workflow has a `service` submodule but `service` is not in its __all__.
+    canary.write_text("from app.core.workflow import service  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_submodule_imports(modules)
+        assert errors, "expected Rule-6 violation but check_submodule_imports returned none"
+        assert any("_rule6_from_canary.py" in e and "service" in e for e in errors), (
+            f"expected Rule-6 hit on _rule6_from_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_intra_module_submodule_import_is_allowed() -> None:
+    """Rule-6: a module's own files may import its own submodules.
+
+    Inside ``app/core/audit_log/`` a file may freely ``from app.core.audit_log.X
+    import Y`` — only cross-module submodule reach is forbidden.
+    """
+    canary = APP / "core" / "audit_log" / "_rule6_intra_canary.py"
+    canary.write_text("from app.core.audit_log import models  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_submodule_imports(modules)
+        assert not any("_rule6_intra_canary.py" in e for e in errors), (
+            f"intra-module submodule import wrongly flagged: "
+            f"{[e for e in errors if '_rule6_intra_canary.py' in e]}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_private_attr_via_alias_is_rejected() -> None:
+    """Rule-7: ``<cross_mod_alias>._private`` write is flagged.
+
+    Mirrors ``_wf_svc._engine = fresh`` in
+    ``app/testing/workflow_harness.py`` — the exact reach PR #67 flagged.
+    """
+    canary = APP / "core" / "audit_log" / "_rule7_alias_canary.py"
+    canary.write_text("import app.core.workflow.service as _wf  # noqa\n_wf._engine = None  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_private_reach(modules)
+        assert errors, "expected Rule-7 violation but check_private_reach returned none"
+        assert any("_rule7_alias_canary.py" in e and "_engine" in e for e in errors), (
+            f"expected Rule-7 hit on _rule7_alias_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_private_attr_via_return_taint_is_rejected() -> None:
+    """Rule-7: ``engine._workflows`` flagged when ``engine`` was returned from
+    a cross-module call.
+
+    Mirrors the second reach in ``app/testing/workflow_harness.py``:
+    ``engine = get_engine(); engine._workflows.pop(...)``.
+    """
+    canary = APP / "core" / "audit_log" / "_rule7_taint_canary.py"
+    canary.write_text(
+        "from app.core.workflow import get_engine  # noqa\n"
+        "\n"
+        "def poke() -> None:\n"
+        "    engine = get_engine()\n"
+        '    engine._workflows.pop("x", None)\n'
+    )
+    try:
+        modules = discover_modules()
+        errors = check_private_reach(modules)
+        assert errors, "expected Rule-7 violation but check_private_reach returned none"
+        assert any("_rule7_taint_canary.py" in e and "_workflows" in e for e in errors), (
+            f"expected Rule-7 hit on _rule7_taint_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_dunder_attr_on_cross_module_receiver_is_allowed() -> None:
+    """Rule-7: dunder access (``__init__`` etc.) is NOT a private reach.
+
+    Dunders are Python protocol, not module-private state. The visitor must
+    skip them.
+    """
+    canary = APP / "core" / "audit_log" / "_rule7_dunder_canary.py"
+    canary.write_text("import app.core.workflow.service as _wf  # noqa\n_name = _wf.__name__  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_private_reach(modules)
+        assert not any("_rule7_dunder_canary.py" in e for e in errors), (
+            f"dunder access wrongly flagged: {[e for e in errors if '_rule7_dunder_canary.py' in e]}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_composition_root_submodule_imports_are_allowed() -> None:
+    """Rule-6 carve-out: ``app/web.py`` and ``app/worker.py`` may side-effect-
+    import submodules to wire bootstrap (route registration, shutdown hooks).
+
+    Asserts the real, unmodified composition roots produce no Rule-6 violations
+    against themselves.
+    """
+    modules = discover_modules()
+    errors = check_submodule_imports(modules)
+    bad = [e for e in errors if "app/web.py" in e or "app/worker.py" in e]
+    assert not bad, f"composition root carve-out leaked Rule-6 violations: {bad}"
 
 
 def test_injected_core_to_domain_is_rejected() -> None:

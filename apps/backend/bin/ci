@@ -26,7 +26,24 @@ bin/check_table_access
 
 echo "==> pytest"
 mkdir -p tmp
+# Clear stale sentinel/dump from any prior run so the post-pytest assertions
+# below reflect THIS run, not the previous one. The sentinel is rewritten by
+# bin/import_audit.install() at conftest load; the dump is only written when
+# violations exist.
+rm -f tmp/import_audit_ran tmp/import_audit_violations.json
 uv run pytest -q --report-log=tmp/pytest-reportlog.json
+
+# Belt-and-suspenders for the runtime import audit (bin/import_audit.py):
+# pytest's sessionfinish hook already exits non-zero on violations, but these
+# two checks catch the failure mode where the guard never installed (broken
+# conftest, missing import_audit module) — pytest would exit 0 and silently
+# leave the audit off. The sentinel proves install() ran; the dump check
+# re-surfaces violations after pytest's own output.
+test -f tmp/import_audit_ran || { echo "import_audit guard did not run — conftest broken?" >&2; exit 2; }
+if [ -s tmp/import_audit_violations.json ]; then
+    echo "runtime import audit recorded violations — see tmp/import_audit_violations.json" >&2
+    exit 2
+fi
 
 echo "==> semgrep (static security: p/python + p/owasp-top-ten)"
 # `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
