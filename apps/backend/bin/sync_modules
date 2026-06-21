@@ -513,9 +513,32 @@ def _is_submodule(layer: str, mod_name: str, sub_name: str) -> bool:
     """Return True iff ``<sub_name>`` is a Python submodule of ``app.<layer>.<mod_name>``.
 
     Either ``<sub_name>.py`` or ``<sub_name>/__init__.py`` qualifies.
+
+    Case-SENSITIVE — uses ``os.scandir`` + exact string equality so macOS APFS
+    doesn't false-positive ``Actor`` against ``actor.py`` (D3).
     """
     base = APP / layer / mod_name
-    return (base / f"{sub_name}.py").exists() or (base / sub_name / "__init__.py").exists()
+    if not base.exists():
+        return False
+    import os  # noqa: PLC0415
+
+    try:
+        entries = list(os.scandir(base))
+    except OSError:
+        return False
+    file_match = f"{sub_name}.py"
+    for entry in entries:
+        if entry.name == file_match and entry.is_file():
+            return True
+        if entry.name == sub_name and entry.is_dir():
+            # Check the sub_name/__init__.py exists case-sensitively too.
+            try:
+                for sub_entry in os.scandir(entry.path):
+                    if sub_entry.name == "__init__.py" and sub_entry.is_file():
+                        return True
+            except OSError:
+                continue
+    return False
 
 
 def _iter_app_py_files() -> list[Path]:
@@ -526,6 +549,139 @@ def _iter_app_py_files() -> list[Path]:
             continue
         out.append(py)
     return out
+
+
+_BINDING_NAMESPACE_HANDLE = "namespace_handle"
+_BINDING_SYMBOL_REEXPORT = "symbol_reexport"
+_BINDING_INLINE_DEF = "inline_def"
+_BINDING_CONTEXTVAR = "contextvar"
+_BINDING_INSTANCE_LITERAL = "instance_literal"
+_BINDING_MUTABLE_CONTAINER = "mutable_container"
+_BINDING_FACTORY_RETURNS_SINGLETON = "factory_returns_singleton"
+_BINDING_OTHER = "other"
+_BINDING_UNBOUND = "unbound"
+
+# Class names whose instance is a "data type" — instance-literal exports of
+# these are NOT cardinal-rule violations (they're vocabulary, not state).
+_DATA_TYPE_BASE_HINTS: frozenset[str] = frozenset({
+    "BaseModel", "Enum", "IntEnum", "StrEnum", "TypedDict", "NamedTuple",
+    "Workflow", "WorkflowInputRef", "StepRef", "TerminalAction",
+})
+
+
+def _classify_init_bindings(layer: str, mod_name: str) -> dict[str, str]:
+    """Return ``{top_level_name → binding_kind}`` for every name bound in
+    ``app/<layer>/<mod_name>/__init__.py``.
+
+    Used by Rule-6 (decides whether `from X import sub` is a symbol re-export
+    or a namespace handle) AND by Rules 9 / 10 / 12 / 15 / 16 (each rejects a
+    different binding kind in ``__all__``).
+    """
+    bindings: dict[str, str] = {}
+    init = APP / layer / mod_name / "__init__.py"
+    if not init.exists():
+        return bindings
+    try:
+        tree = ast.parse(init.read_text(), filename=str(init))
+    except SyntaxError:
+        return bindings
+
+    def _classify_value(value: ast.expr) -> str:
+        if isinstance(value, ast.Call):
+            func = value.func
+            func_name = ""
+            if isinstance(func, ast.Name):
+                func_name = func.id
+            elif isinstance(func, ast.Attribute):
+                func_name = func.attr
+            if func_name == "ContextVar":
+                return _BINDING_CONTEXTVAR
+            if func_name in _DATA_TYPE_BASE_HINTS:
+                return _BINDING_OTHER  # data type literal — allowed
+            return _BINDING_INSTANCE_LITERAL
+        if isinstance(value, (ast.List, ast.Dict, ast.Set)):
+            return _BINDING_MUTABLE_CONTAINER
+        return _BINDING_OTHER
+
+    for node in tree.body:
+        # `import X[.Y][.Z] [as alias]` → first-segment / alias bound.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname if alias.asname else alias.name.split(".")[0]
+                parts = alias.name.split(".")
+                # Anything resolving inside our own module is a namespace handle.
+                if (
+                    len(parts) >= 3
+                    and parts[0] == "app"
+                    and parts[1] == layer
+                    and parts[2] == mod_name
+                ):
+                    if len(parts) > 3:
+                        bindings[local] = _BINDING_NAMESPACE_HANDLE
+                    else:
+                        bindings.setdefault(local, _BINDING_OTHER)
+                else:
+                    bindings.setdefault(local, _BINDING_OTHER)
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            parts = mod.split(".")
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local = alias.asname if alias.asname else alias.name
+                # `from app.<layer>.<mod_name>.<sub> import name` → symbol re-export.
+                if (
+                    len(parts) >= 4
+                    and parts[0] == "app"
+                    and parts[1] == layer
+                    and parts[2] == mod_name
+                ):
+                    bindings[local] = _BINDING_SYMBOL_REEXPORT
+                # `from app.<layer>.<mod_name> import sub` → if sub is a submodule
+                # of THIS module, it's a namespace handle.
+                elif (
+                    len(parts) == 3
+                    and parts[0] == "app"
+                    and parts[1] == layer
+                    and parts[2] == mod_name
+                    and _is_submodule(layer, mod_name, alias.name)
+                ):
+                    bindings[local] = _BINDING_NAMESPACE_HANDLE
+                else:
+                    bindings.setdefault(local, _BINDING_OTHER)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Detect factory-returns-singleton shape: single `return <name>`
+            # or `return <name>.get()` body.
+            kind = _BINDING_INLINE_DEF
+            body = [s for s in node.body if not isinstance(s, ast.Expr)]
+            if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None:
+                ret = body[0].value
+                target_name = None
+                if isinstance(ret, ast.Name):
+                    target_name = ret.id
+                elif (
+                    isinstance(ret, ast.Call)
+                    and isinstance(ret.func, ast.Attribute)
+                    and ret.func.attr == "get"
+                    and isinstance(ret.func.value, ast.Name)
+                ):
+                    target_name = ret.func.value.id
+                if target_name and bindings.get(target_name) in (
+                    _BINDING_CONTEXTVAR,
+                    _BINDING_INSTANCE_LITERAL,
+                ):
+                    kind = _BINDING_FACTORY_RETURNS_SINGLETON
+            bindings[node.name] = kind
+        elif isinstance(node, ast.ClassDef):
+            bindings[node.name] = _BINDING_INLINE_DEF
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = _classify_value(node.value)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.value is not None:
+                bindings[node.target.id] = _classify_value(node.value)
+    return bindings
 
 
 def check_submodule_imports(modules: list[tuple[str, str]]) -> list[str]:
@@ -540,9 +696,16 @@ def check_submodule_imports(modules: list[tuple[str, str]]) -> list[str]:
       - ``import app.B.sub [as alias]``
       - ``from app.B.sub import X``
       - ``from app.B import sub`` when ``sub`` is a submodule (not a public symbol)
+
+    Disambiguation: the third shape consults the target module's
+    ``__init__.py`` AST classifier — ``from observability import spawn`` is
+    fine when ``spawn`` is a function re-exported from ``observability.spawn``;
+    only true namespace handles (``from identity import repository`` where
+    ``repository`` is bound by ``from … import repository``) fire.
     """
     discovered = frozenset(modules)
     comp_roots = {p.resolve() for p in COMPOSITION_ROOTS}
+    bindings_cache: dict[tuple[str, str], dict[str, str]] = {}
     errors: list[str] = []
     for py in _iter_app_py_files():
         if py.resolve() in comp_roots:
@@ -550,7 +713,7 @@ def check_submodule_imports(modules: list[tuple[str, str]]) -> list[str]:
         try:
             source = py.read_text()
             tree = ast.parse(source, filename=str(py))
-        except OSError, SyntaxError:
+        except (OSError, SyntaxError):
             continue
         owner = _owning_module_for_file(py)
         try:
@@ -589,15 +752,30 @@ def check_submodule_imports(modules: list[tuple[str, str]]) -> list[str]:
                         f"app.{layer}.{mod_name} (import from the module root)"
                     )
                 else:
+                    cache_key = (layer, mod_name)
+                    if cache_key not in bindings_cache:
+                        bindings_cache[cache_key] = _classify_init_bindings(layer, mod_name)
+                    target_bindings = bindings_cache[cache_key]
                     for alias in node.names:
                         if alias.name == "*":
                             continue
-                        if _is_submodule(layer, mod_name, alias.name):
+                        kind = target_bindings.get(alias.name)
+                        # Only fire when target classifies as a namespace handle
+                        # OR when the name doesn't appear in the target's __init__.py
+                        # but a sibling file with that name exists (rare bare-export).
+                        if kind == _BINDING_NAMESPACE_HANDLE:
                             errors.append(
                                 f"Rule-6 violation: {rel}:{node.lineno}: "
                                 f'"from {mod} import {alias.name}" imports a '
                                 f"submodule of app.{layer}.{mod_name} "
                                 f"(use the module's public seam)"
+                            )
+                        elif kind is None and _is_submodule(layer, mod_name, alias.name):
+                            errors.append(
+                                f"Rule-6 violation: {rel}:{node.lineno}: "
+                                f'"from {mod} import {alias.name}" imports a '
+                                f"submodule of app.{layer}.{mod_name} (bare submodule "
+                                f"reach — add the symbol to __init__.py first)"
                             )
     return errors
 
@@ -761,6 +939,388 @@ def check_private_reach(modules: list[tuple[str, str]]) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# Rule-9: forbid submodule namespace handles in __all__.
+# Rule-10: forbid ContextVar in __all__.
+# Rule-12: forbid instance literal in __all__.
+# Rule-15: forbid factory-returns-singleton in __all__.
+# Rule-16: forbid mutable container in __all__.
+# Rule-17: forbid bind_* in __all__.
+# All driven by _classify_init_bindings.
+# ---------------------------------------------------------------------------
+
+
+def _iter_all_with_bindings(
+    modules: list[tuple[str, str]],
+) -> list[tuple[str, str, list[str], dict[str, str]]]:
+    """Return ``(layer, mod_name, __all__ entries, classifier bindings)`` per module."""
+    out: list[tuple[str, str, list[str], dict[str, str]]] = []
+    for layer, name in modules:
+        entries = parse_module_interface(layer, name)
+        if not entries:
+            continue
+        bindings = _classify_init_bindings(layer, name)
+        out.append((layer, name, entries, bindings))
+    return out
+
+
+def check_submodule_reexports(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-9: forbid submodule namespace handles in ``__all__``.
+
+    Uses the AST-binding classifier — entries classified as ``namespace_handle``
+    are rejected. Re-exported functions/classes (``symbol_reexport``) and inline
+    defs/classes (``inline_def``) pass. Side-effect-only ``web``/``*_web``
+    submodules belong in ``from … import web  # noqa: F401`` lines that are NOT
+    in ``__all__`` — keep the side-effect import, drop the listing.
+    """
+    errors: list[str] = []
+    for layer, name, entries, bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if bindings.get(entry) == _BINDING_NAMESPACE_HANDLE:
+                errors.append(
+                    f"Rule-9 violation: app.{layer}.{name}: "
+                    f'"{entry}" is a submodule namespace handle exported in '
+                    f"__all__ (replace with flat re-exports of the functions "
+                    f"callers use through it)"
+                )
+    return errors
+
+
+def check_contextvar_in_all(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-10: forbid ``ContextVar(...)`` bindings in ``__all__``.
+
+    A ContextVar IS the storage of an owned singleton; exporting it defeats
+    the Cardinal rule regardless of the entry name.
+    """
+    errors: list[str] = []
+    for layer, name, entries, bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if bindings.get(entry) == _BINDING_CONTEXTVAR:
+                errors.append(
+                    f"Rule-10 violation: app.{layer}.{name}: "
+                    f'"{entry}" is a ContextVar exported in __all__ '
+                    f"(Cardinal rule: never export the instance)"
+                )
+    return errors
+
+
+def check_instance_literal_in_all(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-12: forbid module-level instance-literal bindings in ``__all__``.
+
+    Catches ``engine = WorkflowEngine()`` exported. Data type literals
+    (Pydantic ``BaseModel``, ``Enum``, ``Workflow``, etc.) are exempt — they
+    are vocabulary, not state.
+    """
+    errors: list[str] = []
+    for layer, name, entries, bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if bindings.get(entry) == _BINDING_INSTANCE_LITERAL:
+                errors.append(
+                    f"Rule-12 violation: app.{layer}.{name}: "
+                    f'"{entry}" is an instance-literal binding in __all__ '
+                    f"(Cardinal rule: never export the instance)"
+                )
+    return errors
+
+
+def check_factory_returns_singleton(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-15: forbid factory functions in ``__all__`` that just return the
+    live singleton.
+
+    Catches ``def get_pubsub(): return _pubsub_var.get()`` and
+    ``def current_engine(): return _engine`` shapes.
+    """
+    errors: list[str] = []
+    for layer, name, entries, bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if bindings.get(entry) == _BINDING_FACTORY_RETURNS_SINGLETON:
+                errors.append(
+                    f"Rule-15 violation: app.{layer}.{name}: "
+                    f'"{entry}" is a factory that returns a module-level '
+                    f"singleton — Cardinal rule forbids the caller holding the "
+                    f"instance; expose behavior as free functions instead"
+                )
+    return errors
+
+
+def check_mutable_container_in_all(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-16: forbid mutable container literals in ``__all__``.
+
+    Catches ``REGISTRY: dict = {}`` / ``CACHE = []`` / ``KEYS = set()``
+    exported as shared mutable state.
+    """
+    errors: list[str] = []
+    for layer, name, entries, bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if bindings.get(entry) == _BINDING_MUTABLE_CONTAINER:
+                errors.append(
+                    f"Rule-16 violation: app.{layer}.{name}: "
+                    f'"{entry}" is a mutable container exported in __all__ '
+                    f"(shared mutable state across modules)"
+                )
+    return errors
+
+
+def check_bind_in_all(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-17: forbid ``bind_*`` entries in ``__all__``.
+
+    After D5 every ``bind_*`` collapses into ``set_*_for_tests``. Production
+    composition roots use the eager-default ContextVar (or lazy ``_get()``);
+    the only legitimate binding swap is the test-only context manager.
+    """
+    errors: list[str] = []
+    for layer, name, entries, _bindings in _iter_all_with_bindings(modules):
+        for entry in entries:
+            if entry.startswith("bind_"):
+                errors.append(
+                    f"Rule-17 violation: app.{layer}.{name}: "
+                    f'"{entry}" — bind_* exports are forbidden; use the eager-'
+                    f"default ContextVar pattern + set_*_for_tests seam"
+                )
+    return errors
+
+
+def check_private_in_all(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid underscore-prefixed entries in ``__all__`` (excluding dunders)."""
+    errors: list[str] = []
+    for layer, name in modules:
+        entries = parse_module_interface(layer, name)
+        for entry in entries:
+            if entry.startswith("_") and not (entry.startswith("__") and entry.endswith("__")):
+                errors.append(
+                    f"private-in-__all__ violation: app.{layer}.{name}: "
+                    f'"{entry}" — _private names cannot appear in __all__'
+                )
+    return errors
+
+
+def check_init_dunder_getattr(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid module-level ``def __getattr__`` in ``__init__.py``.
+
+    PEP 562 lets a module-level ``__getattr__`` return arbitrary attributes
+    that aren't in ``__all__``. We forbid the construct outright.
+    """
+    errors: list[str] = []
+    for layer, name in modules:
+        init = APP / layer / name / "__init__.py"
+        if not init.exists():
+            continue
+        try:
+            tree = ast.parse(init.read_text(), filename=str(init))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__getattr__":
+                errors.append(
+                    f"__getattr__-in-__init__ violation: app.{layer}.{name}:{node.lineno}: "
+                    f"__getattr__ bypasses __all__"
+                )
+    return errors
+
+
+def check_init_business_logic(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-18: forbid ``def`` and ``class`` declarations in ``__init__.py``.
+
+    All implementation belongs in named submodules per patterns.md § Module
+    structure. Allowed statements: imports, ``__all__`` assignment, top-level
+    docstring, ``if TYPE_CHECKING:`` blocks, bare call expressions
+    (``register_routes(...)``), and simple variable bindings.
+    """
+    errors: list[str] = []
+    for layer, name in modules:
+        init = APP / layer / name / "__init__.py"
+        if not init.exists():
+            continue
+        try:
+            tree = ast.parse(init.read_text(), filename=str(init))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                errors.append(
+                    f"Rule-18 violation: app.{layer}.{name}:{node.lineno}: "
+                    f'"def {node.name}" in __init__.py — move to a submodule'
+                )
+            elif isinstance(node, ast.ClassDef):
+                errors.append(
+                    f"Rule-18 violation: app.{layer}.{name}:{node.lineno}: "
+                    f'"class {node.name}" in __init__.py — move to a submodule'
+                )
+    return errors
+
+
+def check_wildcard_all_expansion(modules: list[tuple[str, str]]) -> list[str]:
+    """Rule-19: forbid dynamically-computed ``__all__``.
+
+    ``__all__`` must be a literal ``list`` or ``tuple`` of string constants.
+    Concatenation, comprehensions, function calls — all rejected.
+    """
+    errors: list[str] = []
+    for layer, name in modules:
+        init = APP / layer / name / "__init__.py"
+        if not init.exists():
+            continue
+        try:
+            tree = ast.parse(init.read_text(), filename=str(init))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                if len(node.targets) != 1:
+                    continue
+                target = node.targets[0]
+                if not (isinstance(target, ast.Name) and target.id == "__all__"):
+                    continue
+                value = node.value
+                if not isinstance(value, (ast.List, ast.Tuple)):
+                    errors.append(
+                        f"Rule-19 violation: app.{layer}.{name}:{node.lineno}: "
+                        f"__all__ is not a literal list/tuple of string constants"
+                    )
+                    continue
+                for elt in value.elts:
+                    if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+                        errors.append(
+                            f"Rule-19 violation: app.{layer}.{name}:{node.lineno}: "
+                            f"__all__ contains a non-string-literal element"
+                        )
+                        break
+    return errors
+
+
+def check_anchor_imports(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid 1- and 2-segment ``app.*`` imports.
+
+    ``import app``, ``from app import core``, ``from app.core import identity``
+    all bypass ``_resolve_module_target`` (which requires ``len(parts) >= 3``).
+    Composition roots are exempt.
+    """
+    comp_roots = {p.resolve() for p in COMPOSITION_ROOTS}
+    errors: list[str] = []
+    for py in _iter_app_py_files():
+        if py.resolve() in comp_roots:
+            continue
+        try:
+            tree = ast.parse(py.read_text(), filename=str(py))
+        except (OSError, SyntaxError):
+            continue
+        try:
+            rel = py.relative_to(BACKEND)
+        except ValueError:
+            rel = py
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    if parts[0] == "app" and len(parts) < 3:
+                        errors.append(
+                            f"anchor-import violation: {rel}:{node.lineno}: "
+                            f'"import {alias.name}" — use a module-root import '
+                            f"(``app.<layer>.<module>``)"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                # `from app import X` (level=0)
+                if mod == "app" and node.level == 0:
+                    errors.append(
+                        f"anchor-import violation: {rel}:{node.lineno}: "
+                        f'"from app import …" — use module-root imports'
+                    )
+                # `from app.<layer> import X` where X may or may not be a module
+                if mod.startswith("app.") and mod.count(".") == 1 and node.level == 0:
+                    errors.append(
+                        f"anchor-import violation: {rel}:{node.lineno}: "
+                        f'"from {mod} import …" — use module-root imports'
+                    )
+    return errors
+
+
+def check_relative_imports(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid relative imports inside ``app/`` (``from .foo``, ``from ..bar``).
+
+    Absolute imports are mandatory per patterns.md § Imports; relative imports
+    obscure the module a name comes from and bypass Rule-6.
+    """
+    errors: list[str] = []
+    for py in _iter_app_py_files():
+        try:
+            tree = ast.parse(py.read_text(), filename=str(py))
+        except (OSError, SyntaxError):
+            continue
+        try:
+            rel = py.relative_to(BACKEND)
+        except ValueError:
+            rel = py
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level > 0:
+                errors.append(
+                    f"relative-import violation: {rel}:{node.lineno}: "
+                    f"relative imports are forbidden under app/ — use absolute"
+                )
+    return errors
+
+
+def check_dynamic_imports(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid ``importlib.import_module``, ``__import__``, ``exec``, ``eval``.
+
+    Any of these can construct an import string at runtime, bypassing every
+    static check. No exemptions — replace the call site with a static import.
+    """
+    bad_calls = {"import_module", "__import__", "exec", "eval"}
+    errors: list[str] = []
+    for py in _iter_app_py_files():
+        try:
+            tree = ast.parse(py.read_text(), filename=str(py))
+        except (OSError, SyntaxError):
+            continue
+        try:
+            rel = py.relative_to(BACKEND)
+        except ValueError:
+            rel = py
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = ""
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            if name in bad_calls:
+                errors.append(
+                    f"dynamic-import violation: {rel}:{node.lineno}: "
+                    f"{name}(...) — replace with a static `import` statement"
+                )
+    return errors
+
+
+def check_star_imports(modules: list[tuple[str, str]]) -> list[str]:
+    """Forbid ``from X import *`` anywhere under ``app/``.
+
+    Star imports defeat ``__all__``-based static analysis. Replace with
+    explicit re-exports.
+    """
+    errors: list[str] = []
+    for py in _iter_app_py_files():
+        try:
+            tree = ast.parse(py.read_text(), filename=str(py))
+        except (OSError, SyntaxError):
+            continue
+        try:
+            rel = py.relative_to(BACKEND)
+        except ValueError:
+            rel = py
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":
+                        errors.append(
+                            f"star-import violation: {rel}:{node.lineno}: "
+                            f'"from {node.module or ""} import *" forbidden'
+                        )
+    return errors
+
+
 def check_layering(modules: list[tuple[str, str]]) -> list[str]:
     """Return human-readable layering violations, empty list if clean.
 
@@ -827,40 +1387,39 @@ def main() -> int:
         TACH_TOML.write_text(new_content)
         print(f"wrote {TACH_TOML.name}")
 
-    errs = check_layering(modules)
-    if errs:
-        print("layering violations:", file=sys.stderr)
-        for e in errs:
-            print(f"  {e}", file=sys.stderr)
-        return 2
-
-    boundary_errs = check_all_boundary_violations(modules)
-    if boundary_errs:
-        print("__all__ boundary violations (Rule-1 / Rule-5):", file=sys.stderr)
-        for e in boundary_errs:
-            print(f"  {e}", file=sys.stderr)
-        return 2
-
-    seam_errs = check_test_helper_exports(modules)
-    if seam_errs:
-        print("test-seam exports (seam-name AND no production importer):", file=sys.stderr)
-        for e in seam_errs:
-            print(f"  {e}", file=sys.stderr)
-        return 2
-
-    submod_errs = check_submodule_imports(modules)
-    if submod_errs:
-        print("Rule-6 cross-module submodule imports:", file=sys.stderr)
-        for e in submod_errs:
-            print(f"  {e}", file=sys.stderr)
-        return 2
-
-    reach_errs = check_private_reach(modules)
-    if reach_errs:
-        print("Rule-7 private-attribute reach across modules:", file=sys.stderr)
-        for e in reach_errs:
-            print(f"  {e}", file=sys.stderr)
-        return 2
+    all_checks: list[tuple[str, list[str]]] = [
+        ("layering violations", check_layering(modules)),
+        ("Rule-1 / Rule-5 __all__ boundary violations", check_all_boundary_violations(modules)),
+        ("test-seam exports (seam-name AND no production importer)", check_test_helper_exports(modules)),
+        ("Rule-6 cross-module submodule imports", check_submodule_imports(modules)),
+        ("Rule-7 private-attribute reach across modules", check_private_reach(modules)),
+        ("Rule-9 submodule namespace handles in __all__", check_submodule_reexports(modules)),
+        ("Rule-10 ContextVar in __all__", check_contextvar_in_all(modules)),
+        ("Rule-12 instance literal in __all__", check_instance_literal_in_all(modules)),
+        ("Rule-15 factory returns singleton in __all__", check_factory_returns_singleton(modules)),
+        ("Rule-16 mutable container in __all__", check_mutable_container_in_all(modules)),
+        ("Rule-17 bind_* in __all__", check_bind_in_all(modules)),
+        ("private name in __all__", check_private_in_all(modules)),
+        ("__getattr__ in __init__.py", check_init_dunder_getattr(modules)),
+        ("Rule-18 def/class in __init__.py", check_init_business_logic(modules)),
+        ("Rule-19 dynamic __all__", check_wildcard_all_expansion(modules)),
+        ("anchor (1/2-segment) app imports", check_anchor_imports(modules)),
+        ("relative imports under app/", check_relative_imports(modules)),
+        ("dynamic imports (importlib/__import__/exec/eval)", check_dynamic_imports(modules)),
+        ("star imports under app/", check_star_imports(modules)),
+    ]
+    rc = 0
+    total = 0
+    for label, errs in all_checks:
+        if errs:
+            print(f"{label} ({len(errs)}):", file=sys.stderr)
+            for e in errs:
+                print(f"  {e}", file=sys.stderr)
+            total += len(errs)
+            rc = 2
+    if rc:
+        print(f"\n{total} total violations across all rules.", file=sys.stderr)
+        return rc
 
     return run_tach_check()
 

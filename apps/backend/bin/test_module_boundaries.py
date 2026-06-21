@@ -35,10 +35,24 @@ sys.modules.setdefault("sync_modules", _sync_modules)
 _spec.loader.exec_module(_sync_modules)  # type: ignore[union-attr]
 
 check_all_boundary_violations = _sync_modules.check_all_boundary_violations
+check_anchor_imports = _sync_modules.check_anchor_imports
+check_bind_in_all = _sync_modules.check_bind_in_all
+check_contextvar_in_all = _sync_modules.check_contextvar_in_all
+check_dynamic_imports = _sync_modules.check_dynamic_imports
+check_factory_returns_singleton = _sync_modules.check_factory_returns_singleton
+check_init_business_logic = _sync_modules.check_init_business_logic
+check_init_dunder_getattr = _sync_modules.check_init_dunder_getattr
+check_instance_literal_in_all = _sync_modules.check_instance_literal_in_all
 check_layering = _sync_modules.check_layering
+check_mutable_container_in_all = _sync_modules.check_mutable_container_in_all
+check_private_in_all = _sync_modules.check_private_in_all
 check_private_reach = _sync_modules.check_private_reach
+check_relative_imports = _sync_modules.check_relative_imports
+check_star_imports = _sync_modules.check_star_imports
 check_submodule_imports = _sync_modules.check_submodule_imports
+check_submodule_reexports = _sync_modules.check_submodule_reexports
 check_test_helper_exports = _sync_modules.check_test_helper_exports
+check_wildcard_all_expansion = _sync_modules.check_wildcard_all_expansion
 discover_modules = _sync_modules.discover_modules
 APP = Path(_sync_modules.APP)
 BACKEND = Path(_sync_modules.BACKEND)
@@ -428,3 +442,538 @@ def test_injected_core_to_domain_is_rejected() -> None:
         AUDIT_LOG_INIT.write_text(original)
         # Restore tach.toml to match the clean tree.
         _run_sync_modules_write()
+
+
+# ---------------------------------------------------------------------------
+# Rule-9 canary (namespace-handle in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_namespace_handle_in_all_is_rejected() -> None:
+    """Rule-9: a submodule reference in __all__ is flagged.
+
+    Injects a fresh module under app/core with `__init__.py` containing
+    `from app.core.<mod>._impl import _impl` and `__all__ = ["_impl"]` —
+    where `_impl` is a sibling submodule. The classifier detects the
+    namespace-handle binding and fires.
+    """
+    mod_dir = APP / "core" / "_rule9_canary"
+    init = mod_dir / "__init__.py"
+    sub = mod_dir / "_impl.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    sub.write_text("X = 1\n")
+    init.write_text(
+        textwrap.dedent(
+            """\
+            from app.core._rule9_canary import _impl  # type: ignore[unused-ignore]
+            __all__ = ["_impl"]
+            """
+        )
+    )
+    # Need also a module.py so it can be picked up by discover_modules — not
+    # strictly required, the discover_modules pattern is "has __init__.py".
+    try:
+        modules = discover_modules()
+        errors = check_submodule_reexports(modules)
+        assert errors, "expected Rule-9 violation but check_submodule_reexports returned none"
+        assert any("_rule9_canary" in e and "_impl" in e for e in errors), (
+            f"expected Rule-9 hit on _rule9_canary but got: {errors}"
+        )
+    finally:
+        sub.unlink(missing_ok=True)
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# Rule-10 canary (ContextVar in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_contextvar_in_all_is_rejected() -> None:
+    """Rule-10: a ContextVar binding in __all__ is flagged."""
+    mod_dir = APP / "core" / "_rule10_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            from contextvars import ContextVar
+            X = ContextVar("X", default=None)
+            __all__ = ["X"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_contextvar_in_all(modules)
+        assert errors, "expected Rule-10 violation but check_contextvar_in_all returned none"
+        assert any("_rule10_canary" in e and '"X"' in e for e in errors), (
+            f"expected Rule-10 hit on _rule10_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_contextvar_in_all() -> None:
+    """Clean tree: no module exports a ContextVar."""
+    errors = check_contextvar_in_all(discover_modules())
+    assert not errors, f"clean tree should have zero Rule-10 violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule-12 canary (instance literal in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_instance_literal_in_all_is_rejected() -> None:
+    """Rule-12: a class-instance binding in __all__ is flagged.
+
+    Uses a fake non-data-type class (not in _DATA_TYPE_BASE_HINTS).
+    """
+    mod_dir = APP / "core" / "_rule12_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            class _Registry:
+                pass
+            engine = _Registry()
+            __all__ = ["engine"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_instance_literal_in_all(modules)
+        assert errors, "expected Rule-12 violation but check_instance_literal_in_all returned none"
+        assert any("_rule12_canary" in e and '"engine"' in e for e in errors), (
+            f"expected Rule-12 hit on _rule12_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_data_type_literal_in_all_is_allowed() -> None:
+    """Rule-12: a data-type class instance (e.g. Workflow(...)) in __all__ is allowed."""
+    mod_dir = APP / "core" / "_rule12_data_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            class Workflow:
+                pass
+            pr_review = Workflow()
+            __all__ = ["pr_review"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_instance_literal_in_all(modules)
+        assert not any("_rule12_data_canary" in e for e in errors), (
+            f"data-type instance literal wrongly flagged: "
+            f"{[e for e in errors if '_rule12_data_canary' in e]}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_instance_literal_in_all() -> None:
+    """Clean tree: no module exports a non-data instance literal."""
+    errors = check_instance_literal_in_all(discover_modules())
+    assert not errors, f"clean tree should have zero Rule-12 violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule-15 canary (factory returns singleton in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_factory_returns_singleton_is_rejected() -> None:
+    """Rule-15: ``def get_X(): return _Y_var.get()`` in __all__ is flagged."""
+    mod_dir = APP / "core" / "_rule15_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            from contextvars import ContextVar
+            _var = ContextVar("_var", default=None)
+            def get_thing():
+                return _var.get()
+            __all__ = ["get_thing"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_factory_returns_singleton(modules)
+        assert errors, "expected Rule-15 violation but check_factory_returns_singleton returned none"
+        assert any("_rule15_canary" in e and '"get_thing"' in e for e in errors), (
+            f"expected Rule-15 hit on _rule15_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_factory_returns_singleton() -> None:
+    """Clean tree: no module exports a factory that returns the live singleton."""
+    errors = check_factory_returns_singleton(discover_modules())
+    assert not errors, f"clean tree should have zero Rule-15 violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule-16 canary (mutable container in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_mutable_container_in_all_is_rejected() -> None:
+    """Rule-16: ``REGISTRY: dict = {}`` exported is flagged."""
+    mod_dir = APP / "core" / "_rule16_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            REGISTRY: dict = {}
+            __all__ = ["REGISTRY"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_mutable_container_in_all(modules)
+        assert errors, "expected Rule-16 violation but check_mutable_container_in_all returned none"
+        assert any("_rule16_canary" in e and '"REGISTRY"' in e for e in errors), (
+            f"expected Rule-16 hit on _rule16_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_mutable_container_in_all() -> None:
+    """Clean tree: no module exports a mutable container literal."""
+    errors = check_mutable_container_in_all(discover_modules())
+    assert not errors, f"clean tree should have zero Rule-16 violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule-17 canary (bind_* in __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_bind_in_all_is_rejected() -> None:
+    """Rule-17: a ``bind_*`` name in __all__ is flagged regardless of binding."""
+    mod_dir = APP / "core" / "_rule17_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            def bind_thing(x):
+                pass
+            __all__ = ["bind_thing"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_bind_in_all(modules)
+        assert errors, "expected Rule-17 violation but check_bind_in_all returned none"
+        assert any("_rule17_canary" in e and '"bind_thing"' in e for e in errors), (
+            f"expected Rule-17 hit on _rule17_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# private-in-__all__ canary.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_private_name_in_all_is_rejected() -> None:
+    """Underscore-prefixed entries in __all__ are flagged (dunders exempt)."""
+    mod_dir = APP / "core" / "_rule_private_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            _SECRET = 1
+            __all__ = ["_SECRET"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_private_in_all(modules)
+        assert errors, "expected private-in-__all__ violation but got none"
+        assert any("_rule_private_canary" in e and '"_SECRET"' in e for e in errors), (
+            f"expected private-in-__all__ hit on _rule_private_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# __getattr__ in __init__.py canary.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_dunder_getattr_in_init_is_rejected() -> None:
+    """``def __getattr__`` at module level in __init__.py is flagged."""
+    mod_dir = APP / "core" / "_rule_getattr_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            def __getattr__(name):
+                return None
+            __all__ = []
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_init_dunder_getattr(modules)
+        assert errors, "expected __getattr__-in-__init__ violation but got none"
+        assert any("_rule_getattr_canary" in e for e in errors), (
+            f"expected __getattr__-in-__init__ hit on _rule_getattr_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_dunder_getattr_in_init() -> None:
+    """Clean tree: no module declares __getattr__ in __init__.py."""
+    errors = check_init_dunder_getattr(discover_modules())
+    assert not errors, f"clean tree should have zero __getattr__-in-__init__ violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule-18 canary (def/class in __init__.py).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_def_in_init_is_rejected() -> None:
+    """Rule-18: a top-level ``def`` in __init__.py is flagged."""
+    mod_dir = APP / "core" / "_rule18_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            def helper():
+                return 1
+            __all__ = ["helper"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_init_business_logic(modules)
+        assert errors, "expected Rule-18 violation but check_init_business_logic returned none"
+        assert any("_rule18_canary" in e and "helper" in e for e in errors), (
+            f"expected Rule-18 hit on _rule18_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# Rule-19 canary (dynamic __all__).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_dynamic_all_is_rejected() -> None:
+    """Rule-19: __all__ built by concatenation or call is flagged."""
+    mod_dir = APP / "core" / "_rule19_canary"
+    init = mod_dir / "__init__.py"
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    init.write_text(
+        textwrap.dedent(
+            """\
+            _BASE = ["foo"]
+            __all__ = _BASE + ["bar"]
+            """
+        )
+    )
+    try:
+        modules = discover_modules()
+        errors = check_wildcard_all_expansion(modules)
+        assert errors, "expected Rule-19 violation but check_wildcard_all_expansion returned none"
+        assert any("_rule19_canary" in e for e in errors), (
+            f"expected Rule-19 hit on _rule19_canary but got: {errors}"
+        )
+    finally:
+        init.unlink(missing_ok=True)
+        mod_dir.rmdir()
+
+
+def test_clean_tree_has_no_dynamic_all() -> None:
+    """Clean tree: every __all__ is a literal list/tuple of string constants."""
+    errors = check_wildcard_all_expansion(discover_modules())
+    assert not errors, f"clean tree should have zero Rule-19 violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# anchor-import canary (1- and 2-segment app.* imports).
+# ---------------------------------------------------------------------------
+
+
+def test_injected_anchor_import_is_rejected() -> None:
+    """``from app.core import X`` is flagged as an anchor import."""
+    canary = APP / "core" / "audit_log" / "_anchor_canary.py"
+    canary.write_text("from app.core import audit_log  # noqa\n")
+    try:
+        errors = check_anchor_imports(discover_modules())
+        assert errors, "expected anchor-import violation but check_anchor_imports returned none"
+        assert any("_anchor_canary.py" in e for e in errors), (
+            f"expected anchor-import hit on _anchor_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_bare_app_import_is_rejected() -> None:
+    """``import app`` (1-segment) is flagged."""
+    canary = APP / "core" / "audit_log" / "_bare_app_canary.py"
+    canary.write_text("import app  # noqa\n")
+    try:
+        errors = check_anchor_imports(discover_modules())
+        assert errors, "expected anchor-import violation but check_anchor_imports returned none"
+        assert any("_bare_app_canary.py" in e for e in errors), (
+            f"expected anchor-import hit on _bare_app_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# relative-import canary.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_relative_import_is_rejected() -> None:
+    """``from .foo import X`` and ``from ..bar import Y`` are flagged."""
+    canary = APP / "core" / "audit_log" / "_relative_canary.py"
+    canary.write_text("from . import actor  # noqa\n")
+    try:
+        errors = check_relative_imports(discover_modules())
+        assert errors, "expected relative-import violation but check_relative_imports returned none"
+        assert any("_relative_canary.py" in e for e in errors), (
+            f"expected relative-import hit on _relative_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_clean_tree_has_no_relative_imports() -> None:
+    """Clean tree: every import in app/ is absolute."""
+    errors = check_relative_imports(discover_modules())
+    assert not errors, f"clean tree should have zero relative-import violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# dynamic-import canary.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_importlib_call_is_rejected() -> None:
+    """``importlib.import_module(...)`` anywhere under app/ is flagged."""
+    canary = APP / "core" / "audit_log" / "_dynamic_canary.py"
+    canary.write_text(
+        textwrap.dedent(
+            """\
+            import importlib
+            def f():
+                return importlib.import_module("os")
+            """
+        )
+    )
+    try:
+        errors = check_dynamic_imports(discover_modules())
+        assert errors, "expected dynamic-import violation but check_dynamic_imports returned none"
+        assert any("_dynamic_canary.py" in e for e in errors), (
+            f"expected dynamic-import hit on _dynamic_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_injected_dunder_import_call_is_rejected() -> None:
+    """``__import__('x')`` is flagged."""
+    canary = APP / "core" / "audit_log" / "_dunder_import_canary.py"
+    canary.write_text("def f():\n    return __import__('os')\n")
+    try:
+        errors = check_dynamic_imports(discover_modules())
+        assert errors, "expected dynamic-import violation but got none"
+        assert any("_dunder_import_canary.py" in e for e in errors), (
+            f"expected dynamic-import hit on _dunder_import_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# star-import canary.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_star_import_is_rejected() -> None:
+    """``from X import *`` is flagged."""
+    canary = APP / "core" / "audit_log" / "_star_canary.py"
+    canary.write_text("from os import *  # noqa\n")
+    try:
+        errors = check_star_imports(discover_modules())
+        assert errors, "expected star-import violation but check_star_imports returned none"
+        assert any("_star_canary.py" in e for e in errors), (
+            f"expected star-import hit on _star_canary.py but got: {errors}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_clean_tree_has_no_star_imports() -> None:
+    """Clean tree: no ``from X import *`` anywhere under app/."""
+    errors = check_star_imports(discover_modules())
+    assert not errors, f"clean tree should have zero star-import violations but got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# D3 case-sensitivity canary.
+# ---------------------------------------------------------------------------
+
+
+def test_case_collision_actor_is_not_flagged() -> None:
+    """D3: ``from app.core.audit_log import Actor`` is NOT a Rule-6 violation.
+
+    ``Actor`` is a class re-exported from ``actor.py``; ``actor.py`` exists as
+    a sibling but the case-sensitive ``_is_submodule`` (and the AST classifier)
+    distinguish the function/class re-export from a namespace handle.
+    """
+    canary = APP / "core" / "workflow" / "_d3_actor_canary.py"
+    canary.write_text("from app.core.audit_log import Actor  # noqa\n")
+    try:
+        modules = discover_modules()
+        errors = check_submodule_imports(modules)
+        assert not any("_d3_actor_canary.py" in e for e in errors), (
+            f"case-sensitive _is_submodule should not flag Actor but got: "
+            f"{[e for e in errors if '_d3_actor_canary.py' in e]}"
+        )
+    finally:
+        canary.unlink(missing_ok=True)

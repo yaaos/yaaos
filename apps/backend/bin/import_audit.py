@@ -47,6 +47,16 @@ DUMP = TMP / "import_audit_violations.json"
 
 LAYERS = ("core", "domain", "plugins", "testing")
 
+# D1 (architecture.md § _ImportAuditFinder.find_spec): composition roots are
+# exempt from cross-module-reach detection on the importer side. They side-
+# effect-import submodules at boot to wire registration. Duplicated from
+# bin/sync_modules.COMPOSITION_ROOTS — moving a comp root requires touching
+# both files (acceptable per D8).
+COMPOSITION_ROOTS: tuple[Path, ...] = (
+    APP / "web.py",
+    APP / "worker.py",
+)
+
 
 # Module-scope state. Persists for the lifetime of the pytest process.
 # `_violations` carries `(importer_rel, target_fullname, traceback_block)`.
@@ -179,6 +189,12 @@ class _ImportAuditFinder(MetaPathFinder):
         # Fast path: anything outside app.* is invisible to the audit.
         if not fullname.startswith("app."):
             return None
+        # D2 carve-in: target inside a module's own test/ subtree is structurally
+        # within-module — pytest collection/discovery/fixture lookup pathways
+        # always target test files. Segment-equality on the literal "test"
+        # avoids substring false positives on "testing", "contest", etc.
+        if "test" in fullname.split("."):
+            return None
         resolved = _resolve_module_target(fullname)
         if resolved is None:
             return None
@@ -190,15 +206,23 @@ class _ImportAuditFinder(MetaPathFinder):
         importer, tb = _find_importer_frame()
         if importer is None:
             importer = "<unknown>"
+        # D1 carve-in: composition roots side-effect-import submodules to wire
+        # bootstrap. Allowed.
+        try:
+            importer_path = Path(importer).resolve()
+            if importer_path in {p.resolve() for p in COMPOSITION_ROOTS}:
+                return None
+        except (OSError, ValueError):
+            pass
         owner = _owning_module_for_path(importer)
         # Within-module submodule import — fine.
         if owner == (layer, mod_name):
             return None
         # Cross-module submodule reach OR loose-file-to-submodule reach.
-        # Both surface — no exemptions.
+        # Both surface — no exemptions beyond D1/D2 above.
         try:
             importer_rel = str(Path(importer).resolve().relative_to(BACKEND.resolve()))
-        except ValueError, OSError:
+        except (ValueError, OSError):
             importer_rel = importer
         key = (importer_rel, fullname)
         if key in _seen_keys:
