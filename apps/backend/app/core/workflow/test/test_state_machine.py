@@ -22,7 +22,7 @@ from typing import Any, ClassVar
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from sqlalchemy import select
 
 from app.core.tasks import drain_once, get_pending_task_names
@@ -60,7 +60,13 @@ def _recording(kind: str, outputs: dict[str, Any] | None = None):
     discovers command classes from `wf.steps[*].command_class` automatically.
     """
     _calls: list[dict] = []
-    _out = outputs or {}
+    _raw = outputs or {}
+    # Build a typed Pydantic model from the outputs dict so Outcome.success
+    # receives a BaseModel (not a bare dict). The field types are inferred from
+    # the values and are only used internally by the engine's serialisation path.
+    _fields: dict[str, Any] = {k: (type(v), v) for k, v in _raw.items()}
+    _OutModel: type[BaseModel] = create_model(f"_{kind}Out", **_fields) if _fields else Empty  # type: ignore[assignment]
+    _out_instance: BaseModel = _OutModel() if not _fields else _OutModel(**_raw)
 
     class _Cmd:
         Inputs = Empty
@@ -75,7 +81,7 @@ def _recording(kind: str, outputs: dict[str, Any] | None = None):
                     "attempt": ctx.attempt,
                 }
             )
-            return Outcome.success(outputs=_out)
+            return Outcome.success(outputs=_out_instance)
 
     _Cmd.kind = kind  # class attribute — readable via getattr(_Cmd, "kind")
     return _Cmd, _calls
@@ -116,6 +122,10 @@ def _raising(kind: str) -> type:
 # ── Concrete test commands that need class-level kind ────────────────────
 
 
+class _HitlQuestion(BaseModel):
+    prompt: str
+
+
 class _HitlAsk(HITLCommand):
     kind = "AskHuman"
     Inputs = Empty
@@ -123,7 +133,7 @@ class _HitlAsk(HITLCommand):
 
     async def execute(self, inputs: BaseModel, ctx: CommandContext) -> Outcome:
         del inputs, ctx
-        return Outcome.hitl_pending(question={"prompt": "approve?"})
+        return Outcome.hitl_pending(question=_HitlQuestion(prompt="approve?"))
 
 
 class _WorkspaceStub(AgentDispatchCommand):

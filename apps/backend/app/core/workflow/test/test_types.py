@@ -50,11 +50,15 @@ def test_retry_policy_validation() -> None:
 
 
 def test_outcome_factories() -> None:
-    s = Outcome.success(outputs={"workspace_id": "abc"})
+    class _Out(BaseModel):
+        workspace_id: str
+
+    class _Question(BaseModel):
+        prompt: str
+
+    s = Outcome.success(outputs=_Out(workspace_id="abc"))
     assert s.kind is OutcomeKind.SUCCESS
-    # _DynModel supports both dict equality and item access for backward compat.
-    assert s.outputs == {"workspace_id": "abc"}
-    assert s.outputs["workspace_id"] == "abc"
+    assert s.outputs.workspace_id == "abc"  # type: ignore[attr-defined]
     assert s.failure_reason is None
     assert s.hitl_question is None
 
@@ -62,9 +66,9 @@ def test_outcome_factories() -> None:
     assert f.kind is OutcomeKind.FAILURE
     assert f.failure_reason == "boom"
 
-    h = Outcome.hitl_pending(question={"prompt": "approve?"})
+    h = Outcome.hitl_pending(question=_Question(prompt="approve?"))
     assert h.kind is OutcomeKind.HITL_PENDING
-    assert h.hitl_question == {"prompt": "approve?"}
+    assert h.hitl_question.prompt == "approve?"  # type: ignore[union-attr]
 
 
 def test_outcome_with_typed_outputs() -> None:

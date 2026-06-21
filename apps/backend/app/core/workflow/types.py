@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,26 +68,6 @@ class Empty(BaseModel):
     for workflow commands that don't declare any."""
 
     model_config = ConfigDict(frozen=True)
-
-
-class _DynModel(BaseModel):
-    """Internal fallback for `Outcome.outputs` / `hitl_question` when a raw
-    dict is passed for backward compatibility. Extra fields are stored and
-    accessible as attributes."""
-
-    model_config = ConfigDict(extra="allow")
-
-    def __getitem__(self, key: str) -> Any:
-        """Attribute-style access via dict syntax for backward-compat test assertions."""
-        extras = self.model_extra or {}
-        if key in extras:
-            return extras[key]
-        return getattr(self, key)
-
-    def __eq__(self, other: Any) -> bool:
-        if isinstance(other, dict):
-            return self.model_dump() == other
-        return super().__eq__(other)
 
 
 # ── ContextVar for step-output access in input lambdas ─────────────────
@@ -259,35 +239,17 @@ class Outcome(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
     kind: OutcomeKind
     label: str = "success"
-    outputs: Any = Field(default_factory=Empty)
+    outputs: BaseModel = Field(default_factory=Empty)
     failure_reason: str | None = None
     retryable: bool = True
-    hitl_question: Any = None
-
-    @field_validator("outputs", mode="before")
-    @classmethod
-    def _coerce_outputs(cls, v: Any) -> BaseModel:
-        if isinstance(v, BaseModel):
-            return v
-        if isinstance(v, dict):
-            return _DynModel(**v) if v else Empty()
-        return Empty()
-
-    @field_validator("hitl_question", mode="before")
-    @classmethod
-    def _coerce_hitl_question(cls, v: Any) -> BaseModel | None:
-        if v is None or isinstance(v, BaseModel):
-            return v
-        if isinstance(v, dict):
-            return _DynModel(**v)
-        return None
+    hitl_question: BaseModel | None = None
 
     @classmethod
     def success(
         cls,
         *,
         label: str = "success",
-        outputs: BaseModel | Mapping[str, Any] | None = None,
+        outputs: BaseModel | None = None,
     ) -> Outcome:
         return cls(
             kind=OutcomeKind.SUCCESS,
@@ -301,7 +263,7 @@ class Outcome(BaseModel):
         *,
         reason: str,
         label: str = "failure",
-        outputs: BaseModel | Mapping[str, Any] | None = None,
+        outputs: BaseModel | None = None,
         retryable: bool = True,
     ) -> Outcome:
         return cls(
@@ -313,7 +275,7 @@ class Outcome(BaseModel):
         )
 
     @classmethod
-    def hitl_pending(cls, *, question: BaseModel | Mapping[str, Any]) -> Outcome:
+    def hitl_pending(cls, *, question: BaseModel) -> Outcome:
         return cls(kind=OutcomeKind.HITL_PENDING, label="hitl_pending", hitl_question=question)
 
 
