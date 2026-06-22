@@ -19,8 +19,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from app.core.agent_gateway import bearers
-from app.core.agent_gateway.bearers import _verify_override as _bearer_verify_override
+from app.core.agent_gateway import bearers, set_bearer_verify_for_tests
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.auth import current_org_id
 from app.domain.orgs import insert_org
@@ -130,48 +129,46 @@ async def test_activity_ws_endpoint_enters_org_context(db_session) -> None:
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    # Set override directly — bearer_verify_isolation autouse fixture restores after test.
-    _bearer_verify_override.set(_bearer_stub)
+    with set_bearer_verify_for_tests(verify=_bearer_stub):
+        captured: list[UUID | None] = []
 
-    captured: list[UUID | None] = []
+        import app.core.agent_gateway.web as gw_web  # noqa: PLC0415
 
-    import app.core.agent_gateway.web as gw_web  # noqa: PLC0415
+        real_publish_workspace_activity = gw_web.publish_workspace_activity
 
-    real_publish_workspace_activity = gw_web.publish_workspace_activity
+        async def _capturing_publish_workspace_activity(*, org_id, workflow_execution_id, payload):
+            captured.append(current_org_id())
+            # Don't actually hit Redis in this test — just capture.
 
-    async def _capturing_publish_workspace_activity(*, org_id, workflow_execution_id, payload):
-        captured.append(current_org_id())
-        # Don't actually hit Redis in this test — just capture.
+        gw_web.publish_workspace_activity = _capturing_publish_workspace_activity
 
-    gw_web.publish_workspace_activity = _capturing_publish_workspace_activity
+        try:
+            from starlette.testclient import TestClient  # noqa: PLC0415
 
-    try:
-        from starlette.testclient import TestClient  # noqa: PLC0415
+            workflow_id = uuid4()
+            app = _app()
+            with TestClient(app) as client:
+                with client.websocket_connect(
+                    "/api/v1/agent/activity",
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as ws:
+                    ws.send_json(
+                        {
+                            "type": "activity_batch",
+                            "workflow_execution_id": str(workflow_id),
+                            "events": [{"kind": "progress", "message": "running"}],
+                        }
+                    )
+                    # Give the server time to process the message.
+                    import time  # noqa: PLC0415
 
-        workflow_id = uuid4()
-        app = _app()
-        with TestClient(app) as client:
-            with client.websocket_connect(
-                "/api/v1/agent/activity",
-                headers={"Authorization": f"Bearer {token}"},
-            ) as ws:
-                ws.send_json(
-                    {
-                        "type": "activity_batch",
-                        "workflow_execution_id": str(workflow_id),
-                        "events": [{"kind": "progress", "message": "running"}],
-                    }
-                )
-                # Give the server time to process the message.
-                import time  # noqa: PLC0415
+                    time.sleep(0.1)
+        finally:
+            gw_web.publish_workspace_activity = real_publish_workspace_activity
 
-                time.sleep(0.1)
-    finally:
-        gw_web.publish_workspace_activity = real_publish_workspace_activity
-
-    assert len(captured) >= 1, (
-        "publish_workspace_activity should have been called at least once from within the WS handler"
-    )
-    assert captured[0] == org_id, (
-        f"current_org_id() inside the WS handler was {captured[0]!r}; expected {org_id!r}"
-    )
+        assert len(captured) >= 1, (
+            "publish_workspace_activity should have been called at least once from within the WS handler"
+        )
+        assert captured[0] == org_id, (
+            f"current_org_id() inside the WS handler was {captured[0]!r}; expected {org_id!r}"
+        )
