@@ -55,7 +55,7 @@ echo "==> semgrep — third-party packs (p/python + p/owasp-top-ten)"
 uv run semgrep scan \
     --config p/python \
     --config p/owasp-top-ten \
-    --exclude app/testing \
+    --exclude testing \
     --exclude 'test_*.py' \
     --error \
     --metrics off \
@@ -63,14 +63,16 @@ uv run semgrep scan \
     app
 
 echo "==> semgrep — project rules (.semgrep)"
-# Excludes match the third-party invocation above. Per-rule `paths.exclude`
-# inside .semgrep/ is unreliable: semgrep strips the target arg (`app`) from
-# the path it matches against, so a rule glob like `**/app/testing/**` never
-# fires. Until a project rule genuinely needs to scan app/testing/, the CLI
+# Excludes match the third-party invocation above. semgrep's --exclude is a
+# basename/glob match, not a path prefix — `--exclude app/testing` does NOT
+# match files under app/testing/ when the target is `app`. The bare directory
+# name `testing` matches every directory named that, which here is only
+# app/testing/. Per-rule `paths.exclude` inside .semgrep/ is unreliable for
+# the same reason. Until a project rule needs to scan app/testing/, the CLI
 # flag is the authoritative gate.
 uv run semgrep scan \
     --config .semgrep \
-    --exclude app/testing \
+    --exclude testing \
     --exclude 'test_*.py' \
     --error \
     --metrics off \
