@@ -230,8 +230,14 @@ def _collect_row_names(tree: ast.Module) -> set[str]:
     """Return local names that are SQLAlchemy Row/mapped classes in this AST.
 
     A name is a Row if it was imported ``from <any>.models import X`` or is a
-    class defined here that inherits from a name containing "Base".  Detection
-    is purely textual — import-free and env-free.
+    class defined here that inherits *directly* from a base named ``Base``
+    (the project's single SQLAlchemy declarative base in
+    ``app/core/database/service.py``). Detection is purely textual.
+
+    The base-name match is exact — substring "Base" would match Pydantic
+    (``BaseModel``) and pydantic-settings (``BaseSettings``), classifying
+    value objects as Rows and producing the kind of cross-file false
+    positive that Rule-5's expanded resolver would then amplify.
     """
     row_names: set[str] = set()
     for node in ast.walk(tree):
@@ -251,7 +257,7 @@ def _collect_row_names(tree: ast.Module) -> set[str]:
                     base_name = base.id
                 elif isinstance(base, ast.Attribute):
                     base_name = base.attr
-                if "Base" in base_name:
+                if base_name == "Base":
                     row_names.add(node.name)
     return row_names
 
@@ -292,75 +298,373 @@ def _annotation_names(annotation: ast.expr) -> set[str]:
     return names
 
 
-def check_all_boundary_violations(modules: list[tuple[str, str]]) -> list[str]:
+def _parse_path(path: Path) -> ast.Module | None:
+    """Parse a Python source file; return None on absence or SyntaxError.
+
+    No caching — Rule-5 is invoked from at most a handful of resolver hops per
+    public symbol; re-parses are cheap and avoid stale reads under test
+    fixtures that overwrite files in place.
+    """
+    if not path.exists():
+        return None
+    try:
+        return ast.parse(path.read_text(), filename=str(path))
+    except SyntaxError:
+        return None
+
+
+def _module_to_file(mod: str, app_root: Path) -> Path | None:
+    """Resolve ``app.core.identity.repository`` to its source file under app_root.
+
+    Returns the package's ``__init__.py`` if it's a package, else the
+    ``.py`` file, else None. ``app_root`` is the directory whose name is ``app``
+    (e.g. ``apps/backend/app``).
+    """
+    if not mod.startswith("app."):
+        return None
+    parts = mod.split(".")[1:]
+    if not parts:
+        return None
+    base = app_root.joinpath(*parts)
+    pkg_init = base / "__init__.py"
+    if pkg_init.exists():
+        return pkg_init
+    file_path = base.with_suffix(".py")
+    if file_path.exists():
+        return file_path
+    return None
+
+
+def _module_level_alias_closure(tree: ast.Module, seed: set[str]) -> set[str]:
+    """Close ``seed`` over module-level type-alias bindings.
+
+    Catches every shape a contributor can use to launder a Row name through a
+    friendlier identifier:
+
+      ``X = Y``                  (Assign, RHS via `_annotation_names`)
+      ``X: TypeAlias = Y``       (AnnAssign with value)
+      ``type X = Y``             (PEP 695 ``ast.TypeAlias``)
+      ``X = list[Y]``            (subscripted RHS — Y bleeds through)
+      ``X = Y | None``           (union RHS)
+
+    Iterates to a fixed point so ``A = Row; B = A`` closes both. Module scope
+    only: assignments inside a function body do not count.
+    """
+    closed = set(seed)
+    candidates: list[tuple[str, set[str]]] = []
+    for node in tree.body:
+        target_name: str | None = None
+        value: ast.expr | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target_name = node.targets[0].id
+            value = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        ):
+            target_name = node.target.id
+            value = node.value
+        elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
+            target_name = node.name.id
+            value = node.value
+        if target_name is None or value is None:
+            continue
+        rhs_names = _annotation_names(value)
+        if rhs_names:
+            candidates.append((target_name, rhs_names))
+
+    changed = True
+    while changed:
+        changed = False
+        for target, rhs in candidates:
+            if target in closed:
+                continue
+            if rhs & closed:
+                closed.add(target)
+                changed = True
+    return closed
+
+
+def _row_names_for_file(
+    path: Path,
+    app_root: Path,
+    seen: set[Path] | None = None,
+) -> set[str]:
+    """All names visible at module scope of ``path`` that resolve to a Row.
+
+    Closure beyond the same-file ``_collect_row_names`` seed:
+
+      - Cross-file: ``from app.<m> import X`` where X is a Row in <m>
+        (with ``as`` aliasing) — guards cycles via ``seen``.
+      - Subclass-of-Row: ``class X(UserRow)`` — fixed-point inheritance walk so
+        Row → MidRow → SubRow all join the set.
+      - Same-file type aliases — see ``_module_level_alias_closure``.
+    """
+    seen = set() if seen is None else seen
+    if path in seen:
+        return set()
+    seen.add(path)
+    tree = _parse_path(path)
+    if tree is None:
+        return set()
+
+    seed = _collect_row_names(tree)
+
+    # Cross-file Row imports: if `from app.<m> import X` brings in something
+    # that is a Row in <m>, treat the (possibly aliased) local name as a Row.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        mod = node.module or ""
+        if not mod.startswith("app."):
+            continue
+        target_file = _module_to_file(mod, app_root)
+        if target_file is None or target_file in seen:
+            continue
+        target_rows = _row_names_for_file(target_file, app_root, seen)
+        if not target_rows:
+            continue
+        for alias in node.names:
+            local = alias.asname if alias.asname else alias.name
+            if alias.name in target_rows:
+                seed.add(local)
+
+    # ClassDef whose base names reference a known Row — fixed point so
+    # multi-level subclass chains close fully.
+    changed = True
+    while changed:
+        changed = False
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if node.name in seed:
+                continue
+            base_names: set[str] = set()
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    base_names.add(base.id)
+                elif isinstance(base, ast.Attribute):
+                    base_names.add(base.attr)
+            if base_names & seed:
+                seed.add(node.name)
+                changed = True
+
+    return _module_level_alias_closure(tree, seed)
+
+
+def _resolve_reexport(
+    init_path: Path,
+    public_name: str,
+    app_root: Path,
+    max_hops: int = 8,
+) -> tuple[Path, str] | None:
+    """Follow ``from app.<m> import X`` chains until reaching a definition.
+
+    Returns ``(file_path, local_name)`` where the file defines ``local_name``
+    inline as a FunctionDef / AsyncFunctionDef / ClassDef. Returns None when
+    the chain can't be resolved (file missing, cycle, depth exceeded, or the
+    name simply isn't a re-export — e.g. it's bound by an Assign).
+
+    Honors ``as``-aliasing at every hop. The first hop typically lands in a
+    sibling submodule (intra-module re-export); deeper hops keep going across
+    any ``app.*`` boundary so Row laundering through facades can't recur.
+    """
+    current_path = init_path
+    current_name = public_name
+    visited: set[tuple[str, str]] = set()
+    for _ in range(max_hops):
+        key = (str(current_path), current_name)
+        if key in visited:
+            return None
+        visited.add(key)
+        tree = _parse_path(current_path)
+        if tree is None:
+            return None
+
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == current_name
+            ):
+                return (current_path, current_name)
+
+        next_hop: tuple[str, str] | None = None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            mod = node.module or ""
+            if not mod.startswith("app."):
+                continue
+            for alias in node.names:
+                local = alias.asname if alias.asname else alias.name
+                if local == current_name:
+                    next_hop = (mod, alias.name)
+                    break
+            if next_hop is not None:
+                break
+
+        if next_hop is None:
+            return None
+        target_file = _module_to_file(next_hop[0], app_root)
+        if target_file is None:
+            return None
+        current_path = target_file
+        current_name = next_hop[1]
+
+    return None
+
+
+def _function_annotation_nodes(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.expr]:
+    """Return every annotation expression on this function's signature."""
+    nodes: list[ast.expr] = []
+    if func.returns is not None:
+        nodes.append(func.returns)
+    for arg in (
+        func.args.args
+        + func.args.posonlyargs
+        + func.args.kwonlyargs
+        + ([func.args.vararg] if func.args.vararg else [])
+        + ([func.args.kwarg] if func.args.kwarg else [])
+    ):
+        if arg.annotation is not None:
+            nodes.append(arg.annotation)
+    return nodes
+
+
+def check_all_boundary_violations(
+    modules: list[tuple[str, str]],
+    app_root: Path = APP,
+) -> list[str]:
     """Return human-readable Rule-1 / Rule-5 violations across modules.
 
     Rule-1: a name in ``__all__`` resolves to a SQLAlchemy mapped/Row class.
-    Rule-5: a function listed in ``__all__`` carries a Row type in its signature
-            (return annotation or parameter annotation).
+    Rule-5: a function listed in ``__all__`` carries a Row type in its
+            signature (return annotation or parameter annotation). The check
+            follows ``from app.<m> import X`` re-exports back to the function's
+            definition site (depth-bounded, cycle-safe) before inspecting
+            annotations; per-file row-name resolution closes over module-level
+            type aliases, subclass-of-Row chains, and cross-file Row imports
+            so renaming at the boundary cannot launder past the gate.
+
+    ``app_root`` defaults to the project's ``apps/backend/app`` directory;
+    tests pass a synthetic root to exercise the resolver under tmp_path.
 
     Detection is AST-based: import-free, env-free, noqa-immune.
     """
     errors: list[str] = []
     for layer, name in modules:
-        init = APP / layer / name / "__init__.py"
-        if not init.exists():
-            continue
-        try:
-            tree = ast.parse(init.read_text(), filename=str(init))
-        except SyntaxError:
+        init = app_root / layer / name / "__init__.py"
+        tree = _parse_path(init)
+        if tree is None:
             continue
 
-        row_names = _collect_row_names(tree)
-        if not row_names:
-            continue
-
-        public_names = set(parse_module_interface(layer, name))
+        public_names = _extract_all_names(tree)
         if not public_names:
             continue
 
+        row_names_in_init = _row_names_for_file(init, app_root)
+
         # Rule-1: any __all__ name that is itself a Row/mapped class.
         for sym in sorted(public_names):
-            if sym in row_names:
+            if sym in row_names_in_init:
                 errors.append(
                     f"Rule-1 violation: app.{layer}.{name}: "
                     f'"{sym}" in __all__ is a SQLAlchemy Row/mapped class'
                 )
 
-        # Rule-5: any __all__ function whose annotation references a Row name.
-        # Collect top-level function and async-function definitions.
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if node.name not in public_names:
+        # Rule-5: for every public name, find its definition site (inline or
+        # via a re-export chain) and inspect annotations there.
+        inline_funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inline_funcs[node.name] = node
+
+        for sym in sorted(public_names):
+            target_path: Path
+            target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+            if sym in inline_funcs:
+                target_path = init
+                target_func = inline_funcs[sym]
+            else:
+                resolved = _resolve_reexport(init, sym, app_root)
+                if resolved is None:
+                    continue
+                resolved_path, resolved_name = resolved
+                target_tree = _parse_path(resolved_path)
+                if target_tree is None:
+                    continue
+                for node in target_tree.body:
+                    if (
+                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name == resolved_name
+                    ):
+                        target_path = resolved_path
+                        target_func = node
+                        break
+                if target_func is None:
+                    continue
+
+            target_rows = _row_names_for_file(target_path, app_root)
+            if not target_rows:
                 continue
 
-            # Gather all annotation nodes for this function.
-            annotation_nodes: list[ast.expr] = []
-            if node.returns is not None:
-                annotation_nodes.append(node.returns)
-            for arg in (
-                node.args.args
-                + node.args.posonlyargs
-                + node.args.kwonlyargs
-                + ([node.args.vararg] if node.args.vararg else [])
-                + ([node.args.kwarg] if node.args.kwarg else [])
-            ):
-                if arg.annotation is not None:
-                    annotation_nodes.append(arg.annotation)
-
-            for ann in annotation_nodes:
+            for ann in _function_annotation_nodes(target_func):
                 referenced = _annotation_names(ann)
-                offending = referenced & row_names
-                if offending:
+                offending = referenced & target_rows
+                if not offending:
+                    continue
+                if target_path == init:
                     errors.append(
                         f"Rule-5 violation: app.{layer}.{name}: "
-                        f'function "{node.name}" in __all__ uses Row type(s) '
+                        f'function "{sym}" in __all__ uses Row type(s) '
                         f"in its signature: {sorted(offending)}"
                     )
-                    break  # one error per function is enough
+                else:
+                    try:
+                        rel = target_path.relative_to(app_root.parent)
+                    except ValueError:
+                        rel = target_path
+                    errors.append(
+                        f"Rule-5 violation: app.{layer}.{name}: "
+                        f'function "{sym}" in __all__ (defined in {rel}) '
+                        f"uses Row type(s) in its signature: {sorted(offending)}"
+                    )
+                break  # one error per function is enough
 
     return errors
+
+
+def _extract_all_names(tree: ast.Module) -> set[str]:
+    """Return the ``__all__`` symbols declared in this tree's module scope.
+
+    A literal-only mirror of ``parse_module_interface`` that operates on an
+    already-parsed AST, so synthetic test trees rooted under a tmp ``app_root``
+    don't need to live at ``APP/<layer>/<name>``.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not (isinstance(target, ast.Name) and target.id == "__all__"):
+            continue
+        value = node.value
+        if not isinstance(value, ast.List):
+            continue
+        names: set[str] = set()
+        for elt in value.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                names.add(elt.value)
+        return names
+    return set()
 
 
 # Glob patterns that flag a symbol as a potential test-seam name.
@@ -968,7 +1272,7 @@ def check_private_reach(modules: list[tuple[str, str]]) -> list[str]:
         try:
             source = py.read_text()
             tree = ast.parse(source, filename=str(py))
-        except OSError, SyntaxError:
+        except (OSError, SyntaxError):
             continue
         owner = _owning_module_for_file(py)
         initial = _build_cross_module_names(tree, owner, discovered)

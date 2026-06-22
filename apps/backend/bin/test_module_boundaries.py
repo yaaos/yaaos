@@ -150,6 +150,484 @@ def test_row_in_public_signature_is_rejected(tmp_path: Path) -> None:
         TICKETS_INIT.write_text(original)
 
 
+# ---------------------------------------------------------------------------
+# Rule-5 cross-file resolution canaries
+# ---------------------------------------------------------------------------
+#
+# These exercise the resolver/closure that follow `from app.<m> import X`
+# re-exports back to a definition site and treat locally renamed Row types
+# (Assign / TypeAlias / `type` / subclass-of-Row / aliased import) as Rows.
+# Synthetic backend trees under tmp_path; check_all_boundary_violations is
+# called with app_root=<tmp app dir>.
+
+
+def _write(path: Path, body: str) -> None:
+    """Write a Python source file, creating parent directories as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(body).lstrip())
+
+
+def _make_synthetic_app(tmp_path: Path) -> Path:
+    """Return the synthetic `app/` root with an empty layer skeleton."""
+    app = tmp_path / "app"
+    for layer in ("core", "domain", "plugins", "testing"):
+        (app / layer).mkdir(parents=True, exist_ok=True)
+    return app
+
+
+def test_rule5_inline_function_still_caught(tmp_path: Path) -> None:
+    """Baseline: an inline FunctionDef returning a Row is still flagged."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base):
+            id: int
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        def get_widget() -> WidgetRow: ...
+
+        __all__ = ["get_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("get_widget" in e and "WidgetRow" in e for e in errs), errs
+
+
+def test_rule5_one_hop_reexport_is_caught(tmp_path: Path) -> None:
+    """`__init__` re-exports a Row-returning function from a sibling submodule."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        def insert_widget() -> WidgetRow: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+    assert any("repository.py" in e for e in errs), errs
+
+
+def test_rule5_two_hop_reexport_is_caught(tmp_path: Path) -> None:
+    """`__init__` → `service` → `repository`; the Row is two hops away."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        def insert_widget() -> WidgetRow: ...
+    """,
+    )
+    _write(
+        mod / "service.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.service import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_aliased_reexport_is_caught(tmp_path: Path) -> None:
+    """`from .repo import insert_widget as create_widget` — name renamed at the seam."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        def insert_widget() -> WidgetRow: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget as create_widget
+
+        __all__ = ["create_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("create_widget" in e for e in errs), errs
+
+
+def test_rule5_local_type_alias_laundering_is_caught(tmp_path: Path) -> None:
+    """`WidgetResult = WidgetRow` inside the definition file."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        WidgetResult = WidgetRow
+
+        def insert_widget() -> WidgetResult: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_pep695_type_alias_is_caught(tmp_path: Path) -> None:
+    """PEP 695: `type WidgetResult = WidgetRow` — same defense."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        type WidgetResult = WidgetRow
+
+        def insert_widget() -> WidgetResult: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_typing_typealias_value_is_caught(tmp_path: Path) -> None:
+    """`WidgetResult: TypeAlias = WidgetRow` (AnnAssign form)."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from typing import TypeAlias
+        from app.domain.widgets.models import WidgetRow
+
+        WidgetResult: TypeAlias = WidgetRow
+
+        def insert_widget() -> WidgetResult: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_chained_alias_is_caught(tmp_path: Path) -> None:
+    """`A = WidgetRow; B = A` — chained alias closure must reach B."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        WidgetRef = WidgetRow
+        WidgetHandle = WidgetRef
+
+        def insert_widget() -> WidgetHandle: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_subscripted_alias_is_caught(tmp_path: Path) -> None:
+    """`WidgetList = list[WidgetRow]` — RHS subscript still surfaces the Row."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        WidgetList = list[WidgetRow]
+
+        def list_widgets() -> WidgetList: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import list_widgets
+
+        __all__ = ["list_widgets"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("list_widgets" in e for e in errs), errs
+
+
+def test_rule5_subclass_of_row_is_caught(tmp_path: Path) -> None:
+    """`class WidgetResult(WidgetRow)` — subclass-of-Row laundering."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        class WidgetResult(WidgetRow): ...
+
+        def insert_widget() -> WidgetResult: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_aliased_row_import_is_caught(tmp_path: Path) -> None:
+    """`from .models import WidgetRow as WidgetResult` — alias at import site."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow as WidgetResult
+
+        def insert_widget() -> WidgetResult: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("insert_widget" in e for e in errs), errs
+
+
+def test_rule5_clean_reexport_is_not_flagged(tmp_path: Path) -> None:
+    """Re-exporting a function returning a plain dataclass must not trip Rule-5."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from dataclasses import dataclass
+
+        @dataclass
+        class WidgetView:
+            id: int
+
+        def insert_widget() -> WidgetView: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert errs == [], errs
+
+
+def test_rule5_parameter_annotation_via_reexport_is_caught(tmp_path: Path) -> None:
+    """Parameter annotations also count — `def x(w: WidgetRow)` through a re-export."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "models.py",
+        """
+        class Base: ...
+        class WidgetRow(Base): ...
+    """,
+    )
+    _write(
+        mod / "repository.py",
+        """
+        from app.domain.widgets.models import WidgetRow
+
+        def touch_widget(w: WidgetRow) -> None: ...
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.repository import touch_widget
+
+        __all__ = ["touch_widget"]
+    """,
+    )
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert any("touch_widget" in e for e in errs), errs
+
+
+def test_rule5_cycle_is_safe(tmp_path: Path) -> None:
+    """A re-export cycle must terminate (no infinite loop, no false flag)."""
+    app = _make_synthetic_app(tmp_path)
+    mod = app / "domain" / "widgets"
+    _write(
+        mod / "a.py",
+        """
+        from app.domain.widgets.b import insert_widget
+    """,
+    )
+    _write(
+        mod / "b.py",
+        """
+        from app.domain.widgets.a import insert_widget
+    """,
+    )
+    _write(
+        mod / "__init__.py",
+        """
+        from app.domain.widgets.a import insert_widget
+
+        __all__ = ["insert_widget"]
+    """,
+    )
+    # No definition anywhere — resolver returns None; rule does not crash and
+    # does not emit a violation for an unresolvable chain.
+    errs = check_all_boundary_violations([("domain", "widgets")], app_root=app)
+    assert errs == [], errs
+
+
 def test_noqa_on_violation_still_fails(tmp_path: Path) -> None:
     """A violation line carrying # noqa is NOT exempted — noqa suppresses linters, not guards."""
     original = TICKETS_INIT.read_text()

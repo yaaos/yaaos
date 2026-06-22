@@ -419,7 +419,6 @@ expose = [
   "find_user_by_email",
   "get_provider",
   "get_session_by_hash",
-  "get_totp_secret",
   "get_user",
   "has_verified_totp",
   "hash_token",
@@ -440,7 +439,6 @@ expose = [
   "set_user_display_name",
   "set_user_github_username",
   "touch_session",
-  "upsert_totp_secret",
   "verify_totp",
 ]
 from = ["app.core.identity"]

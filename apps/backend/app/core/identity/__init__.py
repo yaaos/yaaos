@@ -31,7 +31,6 @@ from app.core.identity.repository import (
     find_oauth_identity,
     find_user_by_email,
     get_session_by_hash,
-    get_totp_secret,
     get_user,
     hash_token,
     insert_session,
@@ -39,7 +38,6 @@ from app.core.identity.repository import (
     list_emails_for_user,
     set_user_display_name,
     set_user_github_username,
-    upsert_totp_secret,
 )
 from app.core.identity.service import (
     EmailAlreadyLinkedError,
@@ -122,7 +120,6 @@ __all__ = [
     "find_user_by_email",
     "get_provider",
     "get_session_by_hash",
-    "get_totp_secret",
     "get_user",
     "has_verified_totp",
     "hash_token",
@@ -143,7 +140,6 @@ __all__ = [
     "set_user_display_name",
     "set_user_github_username",
     "touch_session",
-    "upsert_totp_secret",
     "verify_totp",
 ]
 
