@@ -4,10 +4,11 @@ rules:
     severity: ERROR
     message: >-
       bind_*(<instance>) calls may only appear in the composition roots
-      (app/web.py, app/worker.py) and app/testing/isolation.py.
-      Calling a registry binder outside these three locations means a
-      singleton is being re-bound in a non-startup context — a Cardinal-rule
-      violation that defeats per-test isolation and process-lifetime guarantees.
+      app/web.py and app/worker.py. Use set_X_for_tests() context managers
+      for test isolation instead — calling a registry binder outside the
+      composition roots re-binds a singleton in a non-startup context, a
+      Cardinal-rule violation that defeats per-test isolation and
+      process-lifetime guarantees.
       See apps/backend/docs/patterns.md § Cardinal rule.
     # Match any call whose function-name part contains `.bind_` (qualified, e.g.
     # redis.bind_pubsub) or starts with `bind_` (bare, e.g. bind_email_inbox).
