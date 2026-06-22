@@ -17,12 +17,12 @@ from itsdangerous import URLSafeTimedSerializer
 from pydantic import SecretStr
 from sqlalchemy import select
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.config import get_settings
 from app.core.identity import insert_user, mint_session
 from app.core.oauth import ProviderConfig, Tokens
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.integrations import web as _integ_web  # noqa: F401
 from app.domain.integrations.types import _REGISTRY
 from app.domain.orgs import insert_membership, insert_org

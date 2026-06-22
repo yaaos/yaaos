@@ -20,11 +20,11 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers /api/auth/me route registration
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
 from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import require
-from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/me
 from app.domain.orgs import insert_membership, insert_org
 from app.testing.seed import set_session_last_seen as _set_session_last_seen_for_tests
 

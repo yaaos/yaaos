@@ -10,13 +10,14 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, lookup_session, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.dep load
 from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import invite as invite_service
-from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
+
+# web is loaded by domain.orgs.__init__ — no explicit import needed
 from app.testing.seed import read_email_inbox
 
 

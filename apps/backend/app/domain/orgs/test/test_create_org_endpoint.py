@@ -15,7 +15,8 @@ from fastapi import FastAPI
 from app.core.auth import AuthMiddleware
 from app.core.identity import insert_user, mint_session
 from app.domain.orgs import get_membership, insert_org
-from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
+
+# org_settings_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 def _app() -> FastAPI:

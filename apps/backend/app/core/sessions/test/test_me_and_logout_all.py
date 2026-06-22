@@ -6,9 +6,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import add_email, insert_user, lookup_session, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
 
 

@@ -7,10 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core import byok as byok_service
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import byok_routes as _byok_routes  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
 

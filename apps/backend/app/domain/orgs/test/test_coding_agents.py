@@ -7,10 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import (
     CodingAgentAlreadyInstalledError,
     CodingAgentNotInstalledError,
@@ -19,9 +19,8 @@ from app.domain.orgs import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
-from app.domain.orgs import (
-    coding_agents_web as _ca_web,  # noqa: F401
-)
+
+# coding_agents_web is loaded by domain.orgs.__init__ — no explicit import needed
 from app.domain.orgs import (
     repository as orgs_repo,
 )

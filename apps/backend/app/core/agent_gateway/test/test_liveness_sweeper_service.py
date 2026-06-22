@@ -18,9 +18,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import app.core.sessions  # side-effect: triggers auth route registration
+import app.domain.orgs  # noqa: F401  -- triggers orgs route registration
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.core.sessions import web as _sessions_web  # noqa: F401 — registers session routes + auth deps
-from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401 — registers /api/orgs/* routes
 
 # ── App / client helpers ─────────────────────────────────────────────────
 

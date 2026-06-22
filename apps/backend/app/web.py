@@ -43,15 +43,6 @@ from app.domain import orgs  # noqa: F401, E402
 from app.core import auth  # noqa: F401, E402
 from app.core import sessions  # noqa: F401, E402
 
-# Register `/api/memberships/*` and `/api/audit/*` after both `domain.orgs`
-# and `core.sessions` are loaded — `orgs.web` imports `core.sessions.dependencies`,
-# which imports back into `domain.orgs`, so the cycle must break here, not in
-# `orgs/__init__`.
-from app.core.identity import user_web as _identity_user_web  # noqa: F401, E402
-from app.domain.orgs import audit_web as _orgs_audit_web  # noqa: F401, E402
-from app.domain.orgs import sso_web as _orgs_sso_web  # noqa: F401, E402
-from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
-
 # 5. Domain modules — order: types first (lessons), then leaf domain modules,
 #    then domain modules that depend on others.
 from app.domain import lessons  # noqa: F401, E402
@@ -69,13 +60,9 @@ register_workspace_providers()
 from app.core.agent_gateway import get_run_sink as _get_run_sink  # noqa: E402
 
 assert _get_run_sink() is not None, "coding-agent run sink must be registered"
-from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
-from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402
-from app.domain.orgs import coding_agents_web as _orgs_coding_agents_web  # noqa: F401, E402
-from app.domain.orgs import org_settings_web as _orgs_org_settings_web  # noqa: F401, E402
+import app.domain.mcp_proxy  # noqa: E402 — triggers mcp_proxy web route registration
 from app.core.workspace import web as _core_workspace_web  # noqa: F401, E402
-from app.domain.orgs import vcs_web as _orgs_vcs_web  # noqa: F401, E402
 from app.core.notifications import web as _notifications_web  # noqa: F401, E402
 from app.core.sse import web as _core_sse_web  # noqa: F401, E402
 

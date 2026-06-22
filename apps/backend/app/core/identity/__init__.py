@@ -93,10 +93,6 @@ from app.core.identity.totp import (
     verify as verify_totp,
 )
 
-# NOTE: `identity.user_web` is not imported here to avoid circular imports at
-# load time. It appears in `__all__` so tach allows side-effect imports from
-# `app/web.py` and tests that do `from app.core.identity import user_web`.
-
 __all__ = [
     "CreatedSession",
     "EmailAlreadyLinkedError",
@@ -146,6 +142,8 @@ __all__ = [
     "set_user_github_username",
     "touch_session",
     "upsert_totp_secret",
-    "user_web",
     "verify_totp",
 ]
+
+# Side-effect import: registers /api/user/* routes. Not in __all__ (Rule-9).
+import app.core.identity.user_web  # noqa: F401

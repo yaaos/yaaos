@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware
 from app.core.identity import (
     ProviderProfile,
@@ -20,7 +21,6 @@ from app.core.identity import (
     lookup_session,
     mint_session,
 )
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.plugins.oauth_test import set_next_profile
 
 

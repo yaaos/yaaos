@@ -8,12 +8,13 @@ import pytest_asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, audit
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
+
+# audit_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 class _Payload(BaseModel):

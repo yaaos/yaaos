@@ -92,11 +92,6 @@ from app.domain.orgs.vcs import (
 
 _register_arn_lookup(_arn_lookup_impl)
 
-# NOTE: `orgs.web`, `orgs.audit_web`, and `orgs.sso_web` are registered from
-# `main.py` (after `core.sessions` loads), not imported here — they cycle
-# through `core.sessions.dependencies`. They appear in `__all__` so tach
-# allows cross-module side-effect imports.
-
 __all__ = [
     "CodingAgentAlreadyInstalledError",
     "CodingAgentInstall",
@@ -119,7 +114,6 @@ __all__ = [
     "VcsClearHook",
     "VcsState",
     "accept_invitation",
-    "audit_web",
     "change_role",
     "clear_global_inbox",
     "clear_vcs",
@@ -145,7 +139,6 @@ __all__ = [
     "list_active_member_ids",
     "list_coding_agents",
     "list_memberships_for_org",
-    "org_settings_web",
     "read_sent_emails",
     "register_assertion_verifier",
     "register_onboarding_contributor",
@@ -156,10 +149,20 @@ __all__ = [
     "set_email_inbox_for_tests",
     "set_vcs",
     "sp_metadata_xml",
-    "sso_web",
     "uninstall_coding_agent",
     "update_coding_agent_settings",
     "update_role",
     "upsert_config",
-    "web",
 ]
+
+# Side-effect imports: load route-registering web submodules at package import
+# time so callers need only `import app.domain.orgs`. Not in __all__ (Rule-9).
+# These web files import from `app.core.sessions` which is loaded on demand
+# here and never creates a cycle (sessions has no dependency on domain.orgs).
+import app.domain.orgs.audit_web  # noqa: E402
+import app.domain.orgs.byok_routes  # noqa: E402
+import app.domain.orgs.coding_agents_web  # noqa: E402
+import app.domain.orgs.org_settings_web  # noqa: E402
+import app.domain.orgs.sso_web  # noqa: E402
+import app.domain.orgs.vcs_web  # noqa: E402
+import app.domain.orgs.web  # noqa: E402, F401

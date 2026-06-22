@@ -7,9 +7,9 @@ import pyotp
 import pytest
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware
 from app.core.identity import insert_user, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 
 
 def _app() -> FastAPI:

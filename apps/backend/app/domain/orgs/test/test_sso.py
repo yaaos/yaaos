@@ -19,9 +19,9 @@ from app.core.identity import (
     verify_totp,
 )
 from app.core.sessions import require
-from app.domain.orgs import audit_web as _audit_web  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org, upsert_config
-from app.domain.orgs import sso_web as _sso_web  # noqa: F401
+
+# audit_web and sso_web are loaded by domain.orgs.__init__ — no explicit import needed
 from app.plugins.saml_test import sign_assertion
 
 

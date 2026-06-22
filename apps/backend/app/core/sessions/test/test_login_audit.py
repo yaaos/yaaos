@@ -7,10 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import ProviderProfile, add_email, add_oauth_identity, insert_user
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
 from app.plugins.oauth_test import set_next_profile
 

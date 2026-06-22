@@ -439,7 +439,6 @@ expose = [
   "set_user_github_username",
   "touch_session",
   "upsert_totp_secret",
-  "user_web",
   "verify_totp",
 ]
 from = ["app.core.identity"]
@@ -564,7 +563,6 @@ expose = [
   "public_route",
   "require",
   "required_role_for",
-  "web",
 ]
 from = ["app.core.sessions"]
 
@@ -868,7 +866,6 @@ expose = [
   "mint_token",
   "record_broken_creds",
   "revoke_token",
-  "web",
 ]
 from = ["app.domain.mcp_proxy"]
 
@@ -895,7 +892,6 @@ expose = [
   "VcsClearHook",
   "VcsState",
   "accept_invitation",
-  "audit_web",
   "change_role",
   "clear_global_inbox",
   "clear_vcs",
@@ -921,7 +917,6 @@ expose = [
   "list_active_member_ids",
   "list_coding_agents",
   "list_memberships_for_org",
-  "org_settings_web",
   "read_sent_emails",
   "register_assertion_verifier",
   "register_onboarding_contributor",
@@ -932,12 +927,10 @@ expose = [
   "set_email_inbox_for_tests",
   "set_vcs",
   "sp_metadata_xml",
-  "sso_web",
   "uninstall_coding_agent",
   "update_coding_agent_settings",
   "update_role",
   "upsert_config",
-  "web",
 ]
 from = ["app.domain.orgs"]
 

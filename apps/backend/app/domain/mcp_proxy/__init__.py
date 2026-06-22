@@ -12,9 +12,6 @@ from app.domain.mcp_proxy.service import (
     revoke_token,
 )
 
-# NOTE: `mcp_proxy.web` is not imported here to avoid potential circular imports.
-# It appears in `__all__` so tach allows side-effect imports from other modules.
-
 __all__ = [
     "REVIEW_TOKEN_TTL",
     "McpToken",
@@ -25,5 +22,7 @@ __all__ = [
     "mint_token",
     "record_broken_creds",
     "revoke_token",
-    "web",
 ]
+
+# Side-effect import: registers /api/mcp/* routes. Not in __all__ (Rule-9).
+import app.domain.mcp_proxy.web  # noqa: F401

@@ -47,8 +47,9 @@ def _agent_client() -> httpx.AsyncClient:
 
 def _orgs_app() -> FastAPI:
     # Side-effect imports: register routes before mounting specs.
-    import app.core.sessions.web  # noqa: PLC0415
-    import app.domain.orgs.org_settings_web  # noqa: PLC0415
+    # Importing the packages triggers web-submodule loading via __init__.py.
+    import app.core.sessions  # noqa: PLC0415
+    import app.domain.orgs  # noqa: PLC0415
     from app.core.auth import AuthMiddleware  # noqa: PLC0415
     from app.core.webserver import mount_specs  # noqa: PLC0415
 

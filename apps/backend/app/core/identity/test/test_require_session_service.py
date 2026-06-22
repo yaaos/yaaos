@@ -14,11 +14,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.identity
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, register_handler
-from app.core.identity import user_web as _user_web  # noqa: F401  -- registers /api/user/*
 from app.core.identity.repository import add_email, hash_token, insert_session, insert_user
 from app.core.identity.sessions import create as _create_session
-from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/*
 
 
 def _make_app() -> FastAPI:

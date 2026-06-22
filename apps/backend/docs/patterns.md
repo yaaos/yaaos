@@ -127,6 +127,13 @@ Each subdirectory of a layer is a module. Standard files:
 - Call `register_routes(RouteSpec(...))` at the bottom; one prefix per module, enforced at boot.
 - See [core_webserver.md](core_webserver.md) for the full `RouteSpec` registry contract.
 
+### Side-effect-only `web` / `*_web` submodules
+
+- `web.py`, `user_web.py`, `org_settings_web.py`, `sso_web.py`, `audit_web.py`, `coding_agents_web.py`, `vcs_web.py`, `byok_routes.py` are **side-effect-only** route-registration modules — never imported for their symbols.
+- They are NOT exported in their owning module's `__all__`. Adding them violates Rule-9 (submodule namespace handle in `__all__`).
+- Route registration fires via a bare body-level import inside the owning `__init__.py`: `import app.<layer>.<module>.<web_file>  # noqa: F401`. The `noqa: F401` tags the import as intentional-side-effect; the `__init__.py` body's import order keeps composition deterministic.
+- Cross-module callers (tests + production) that need a `*_web` module's routes loaded use the same shape — `import app.<layer>.<module>  # noqa: F401` (the package's `__init__.py` side-effect already triggers every `*_web` registration). Never `from app.<layer>.<module> import <web_file>` — that's the Rule-6 violation the C9 sweep retired.
+
 ### `bin/sync_modules` workflow
 
 Runs the full module-sync sequence. All checks run in one pass and accumulate violations — every rule that fires is reported in the same exit-2 output, so a contributor sees the full surface in one run.

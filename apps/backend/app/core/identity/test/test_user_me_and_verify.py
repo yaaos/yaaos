@@ -9,11 +9,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.identity
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import user_web as _user_web  # noqa: F401
 from app.core.identity.repository import add_email, insert_user, set_user_github_username
 from app.core.identity.sessions import create as _create_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
 
 
@@ -137,7 +137,7 @@ async def test_patch_clears_github_username(seeded, db_session) -> None:
 
 
 def _memberships_app() -> FastAPI:
-    from app.domain.orgs import web as _orgs_web  # noqa: F401, PLC0415
+    import app.domain.orgs  # noqa: PLC0415  -- triggers memberships route registration
 
     app = FastAPI()
     app.add_middleware(AuthMiddleware)

@@ -15,7 +15,8 @@ from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
 from app.domain.orgs import insert_org, upsert_config
-from app.domain.orgs import sso_web as _sso_web  # noqa: F401 — mounts /api/sso/*
+
+# sso_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 def _sso_app() -> FastAPI:
@@ -33,7 +34,7 @@ def _sso_client() -> httpx.AsyncClient:
 
 def _sessions_app() -> FastAPI:
     """Auth-only app — verify /api/auth/sso/discover is gone."""
-    from app.core.sessions import web as _sessions_web  # noqa: PLC0415, F401
+    import app.core.sessions  # noqa: PLC0415  -- triggers auth route registration
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
     app = FastAPI()

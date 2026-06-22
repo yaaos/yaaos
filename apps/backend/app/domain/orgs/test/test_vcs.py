@@ -7,12 +7,13 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.orgs import clear_vcs, get_vcs, insert_membership, insert_org, set_vcs
-from app.domain.orgs import vcs_web as _vcs_web  # noqa: F401
+
+# vcs_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 @pytest.fixture(autouse=True)

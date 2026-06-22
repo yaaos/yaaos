@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
+import app.domain.mcp_proxy  # noqa: F401  -- triggers mcp route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
 from app.core.identity import insert_user
@@ -30,7 +31,6 @@ from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
 from app.domain.integrations import _REGISTRY, create_credential
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
-from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
 from app.domain.orgs import insert_org
 from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
 from app.domain.reviewer.mcp_wiring import (
