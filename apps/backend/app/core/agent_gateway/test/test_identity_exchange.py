@@ -99,7 +99,7 @@ async def test_identity_exchange_happy_path_persists_agent_row(db_session) -> No
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -163,7 +163,7 @@ async def test_identity_exchange_bearer_ttl_is_one_hour(db_session) -> None:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
     before = datetime.now(UTC)
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -213,7 +213,7 @@ async def test_identity_exchange_rotation_non_revoking(db_session) -> None:
         "payload": _SIGNED_PAYLOAD,
     }
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             first = await c.post(_ENDPOINT, json=payload)
             second = await c.post(_ENDPOINT, json=payload)
@@ -242,7 +242,7 @@ async def test_identity_exchange_unregistered_arn_returns_403(db_session) -> Non
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn)
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -297,7 +297,7 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, region="eu-west-1")
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -333,7 +333,7 @@ async def test_identity_exchange_invalid_signature_returns_401(db_session) -> No
     async def _stub(_payload: str) -> VerifiedIdentity:
         raise InvalidSignedRequestError("forged signature", FailureCategory.AWS_REJECTED)
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -387,7 +387,7 @@ async def test_identity_exchange_response_includes_org_id(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -437,7 +437,7 @@ async def test_identity_exchange_audience_mismatch_returns_401(db_session, monke
         }
     )
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,
@@ -476,7 +476,7 @@ async def test_identity_exchange_missing_audience_returns_401(db_session, monkey
         }
     )
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _ENDPOINT,

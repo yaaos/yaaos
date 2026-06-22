@@ -128,7 +128,7 @@ async def test_identity_exchange_enqueues_config_update_row(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _client() as c:
             resp = await c.post(
                 _IDENTITY_ENDPOINT,

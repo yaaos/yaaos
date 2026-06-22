@@ -368,7 +368,7 @@ async def verify_identity(signed_request: str) -> VerifiedIdentity:
     with a `FailureCategory` otherwise.
 
     Tests can swap the production path wholesale via
-    `set_sts_verify_for_tests(callback)`.
+    `set_sts_verify_for_tests(callback=…)`.
     """
     override = _verify_override_var.get()
     if override is not None:
@@ -393,6 +393,7 @@ async def verify_identity(signed_request: str) -> VerifiedIdentity:
 
 @contextmanager
 def set_sts_verify_for_tests(
+    *,
     callback: _VerifyCallback | None = None,
 ) -> Iterator[None]:
     """Context manager: install a stub callback for `verify_identity` for the duration.

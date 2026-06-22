@@ -337,7 +337,7 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _agent_client() as c:
             resp = await c.post(
                 "/api/v1/agent/identity",
@@ -374,7 +374,7 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    with set_sts_verify_for_tests(_stub):
+    with set_sts_verify_for_tests(callback=_stub):
         async with _agent_client() as c:
             resp = await c.post(
                 "/api/v1/agent/identity",
