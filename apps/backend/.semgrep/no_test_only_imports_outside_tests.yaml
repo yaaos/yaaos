@@ -14,18 +14,20 @@ rules:
           metavariable: $NAME
           regex: "^(set_[a-z_]+_for_tests|_reset_[a-z_]+|_canonical_[a-z_]+|_[a-z_]+_for_tests)$"
     paths:
+      # app/testing/ IS the canonical home for set_*_for_tests imports —
+      # autouse isolation fixtures, stub plugins, workflow harness. Exempting
+      # it here (rather than in the global .semgrepignore) keeps the rest of
+      # the .semgrep/ rule pack scanning that directory.
+      # __init__.py files are excluded because they are module-interface
+      # re-export barrels: importing set_*_for_tests there is a deliberate
+      # re-export into the module's __all__, not a usage in production logic.
+      # bin/sync_modules Rule-17 and the test-seam-export check already gate
+      # what may appear in __all__.
+      # Test directories are listed both unanchored (**/test/**) and as a
+      # basename glob (test_*.py) so semgrep's Semgrepignore-v2 matching
+      # catches files regardless of where in the tree they sit.
       exclude:
         - "**/__init__.py"
-        - "app/testing/**"
         - "**/app/testing/**"
         - "**/test/**"
-        - "test_*.py"
         - "**/test_*.py"
-    # bin/ci also passes `--exclude app/testing` / `--exclude test_*.py`, but
-    # cloud semgrep's CLI exclude resolution has proven unreliable across
-    # versions; the rule-level `paths.exclude` is the authoritative gate.
-    # __init__.py files are excluded because they are module-interface re-export
-    # barrels: importing set_*_for_tests there is a deliberate re-export into
-    # the module's __all__, not a usage in production logic. bin/sync_modules
-    # Rule-17 and the test-seam-export check already gate what may appear in
-    # __all__.

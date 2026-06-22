@@ -45,21 +45,31 @@ if [ -s tmp/import_audit_violations.json ]; then
     exit 2
 fi
 
-echo "==> semgrep (static security: p/python + p/owasp-top-ten)"
-# `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
-# telemetry. `--exclude` paths bypass the test-scaffolding layer (`app/testing/`
-# is excluded from production wheels — see pyproject.toml — and its
-# DB-truncate helpers legitimately use raw `text()` that the OWASP rules
-# flag) and all unit-test files (they execute against test fixtures, not
-# user input). Inline CLI excludes rather than `.semgrepignore` because
-# the latter's path resolution proved unreliable across local vs Docker
-# environments.
+echo "==> semgrep — third-party packs (p/python + p/owasp-top-ten)"
+# Third-party rule packs are tuned for production code; they false-positive
+# on test scaffolding (DB TRUNCATE, fake creds, bypassed auth). The
+# test-scaffolding layer is excluded from production wheels (see
+# pyproject.toml [tool.hatch.build.targets.wheel]) and gated by
+# is_dev_env() at the HTTP boundary, so the exclusion here doesn't widen
+# the prod surface — it just suppresses known noise on test fixtures.
 uv run semgrep scan \
     --config p/python \
     --config p/owasp-top-ten \
-    --config .semgrep \
     --exclude app/testing \
     --exclude 'test_*.py' \
+    --error \
+    --metrics off \
+    --quiet \
+    app
+
+echo "==> semgrep — project rules (.semgrep)"
+# Project-specific rules know the codebase: each rule declares its own
+# paths.exclude when test scaffolding is exempt (see e.g.
+# .semgrep/no_test_only_imports_outside_tests.yaml). Default is to apply
+# broadly — including to app/testing — so drift in test-scaffolding code
+# doesn't pass silently.
+uv run semgrep scan \
+    --config .semgrep \
     --error \
     --metrics off \
     --quiet \

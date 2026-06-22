@@ -25,8 +25,9 @@ rules:
       # paths here are relative to apps/backend/. Use full anchored paths —
       # bare basenames like "web.py" match every web.py in the tree (~17 files),
       # silently exempting non-root route files from this rule.
-      # Only the two composition roots are allowed to call bind_*().
-      # app/testing/ is already excluded by the --exclude app/testing flag in bin/ci.
+      # Only the two composition roots are allowed to call bind_*(). Project
+      # rules scan app/testing/ — test fixtures use set_X_for_tests() context
+      # managers, never bind_*(), so this rule legitimately applies there too.
       exclude:
         - "/app/web.py"
         - "/app/worker.py"
