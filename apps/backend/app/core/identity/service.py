@@ -200,19 +200,13 @@ async def find_oauth_identity(
     db: AsyncSession, *, provider: str, external_subject: str
 ) -> OAuthIdentity | None:
     """Lookup an oauth identity by (provider, external_subject) and return it as a value object, or None."""
-    row = await _repo_find_oauth_identity(
-        db, provider=provider, external_subject=external_subject
-    )
+    row = await _repo_find_oauth_identity(db, provider=provider, external_subject=external_subject)
     return None if row is None else OAuthIdentity.from_row(row)
 
 
-async def change_display_name(
-    db: AsyncSession, *, user_id: UUID, display_name: str
-) -> User | None:
+async def change_display_name(db: AsyncSession, *, user_id: UUID, display_name: str) -> User | None:
     """Update the user's display_name; returns the resulting user as a value object, or None if not found."""
-    row = await _repo_set_user_display_name(
-        db, user_id=user_id, display_name=display_name
-    )
+    row = await _repo_set_user_display_name(db, user_id=user_id, display_name=display_name)
     return None if row is None else User.from_row(row)
 
 
@@ -220,9 +214,7 @@ async def update_github_handle(
     db: AsyncSession, *, user_id: UUID, github_username: str | None
 ) -> User | None:
     """Write the user's github_username denorm; returns the resulting user as a value object, or None if not found."""
-    row = await _repo_set_user_github_username(
-        db, user_id=user_id, github_username=github_username
-    )
+    row = await _repo_set_user_github_username(db, user_id=user_id, github_username=github_username)
     return None if row is None else User.from_row(row)
 
 

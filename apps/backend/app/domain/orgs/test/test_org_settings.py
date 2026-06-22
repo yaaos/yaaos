@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import hash_token, create_user, mint_session
+from app.core.identity import create_user, hash_token, mint_session
 from app.core.tenancy import get_org_full, update_org_fields
 from app.domain.orgs import insert_membership, insert_org
 

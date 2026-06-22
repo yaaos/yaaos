@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI
 import app.core.sessions  # noqa: F401  -- triggers /api/auth/me route registration
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import hash_token, create_user, mint_session
+from app.core.identity import create_user, hash_token, mint_session
 from app.core.sessions import require
 from app.domain.orgs import insert_membership, insert_org
 from app.testing.e2e_setup import set_session_last_seen as _set_session_last_seen_for_tests
