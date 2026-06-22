@@ -179,7 +179,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_identity_exchange.py` covers: happy-path bearer issuance (row persisted by `instance_id`, OS metadata stored, bearer returned with `instance_id` in response); bearer TTL is 1 hour; non-revoking rotation (second call issues new bearer, old stays valid); ARN mismatch → 403; region mismatch → 401; invalid signature → 401; empty payload → 401; unsupported kind → 401; audience mismatch → 401; response includes `org_id` and `instance_id`.
 
-`test/test_queue_binding.py` covers ContextVar isolation for `SubscriberRegistry`: fresh bind hides prior state; fail-fast `RuntimeError` fires before bind.
+`test/test_queue_binding.py` covers `SubscriberRegistry` ContextVar isolation — the autouse fixture provides a fresh isolated instance per test, `set_subscriber_registry_for_tests` swaps the registry for the block and restores on exit, and mutations inside the block don't leak to the next test.
 
 `test/test_report_sink_delegation.py` covers sink delegation: heartbeat reconciliation via stub sink; workspace-event dispatch and rejection via stub sink; stale-claim guard raises `StaleClaimError` on `accepted=False` outcome.
 
